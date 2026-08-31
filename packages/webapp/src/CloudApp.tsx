@@ -45,6 +45,13 @@ import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
 import { LodySessionsRegion } from './lody/LodySessionsRegion';
+import { SurfaceTabContent } from './lody/SurfaceTabContent';
+import {
+  surfaceTabId,
+  toSessionSurfaceTabs,
+  workspaceTabIdFromSurfaceTabId,
+  type SurfaceTabsBinding,
+} from './lody/surface-tabs';
 import { useLodyRail, type LodyRailSessions } from './lody/use-lody-rail';
 import { useLodySessionsCapability } from './lody/box-capability';
 import { useSharedSessions } from './lody/use-shared-sessions';
@@ -1110,15 +1117,38 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     ? ttydActiveType
     : null;
   const closeChat = lodyRail.closeChat;
+  // WHERE A WORKSPACE TAB IS SELECTED (plans/LODY-TERMINAL-TABS.md §4.1-§4.2).
+  //
+  // With the flag on and a box that serves the surface, a terminal is a TAB of
+  // the session strip: selecting one does not hand the view back to the panes,
+  // it moves the address to that tab inside the surface. Everywhere else —
+  // flag off, or a box on a pre-Lody image — it is the panes' own selection and
+  // the chat surface steps aside, exactly as phase 4 shipped it.
+  //
+  // DESKTOP ONLY, and that is §5.5's "mobile is not in v1" taken literally
+  // rather than left implicit. The vendored strip is a desktop component —
+  // mobile draws `MobileSessionTabSheet`, whose kind enum seam patch 5 does not
+  // widen — and the host content rides in `desktopChatSurfaces`. So a mobile
+  // workspace that hid its native strip would have no tab control at all.
+  const surfaceTabsEnabled = lodyRail.available && !mobileWebApp;
+  const openTerminalTab = lodyRail.openTerminal;
+  const selectWorkspaceTab = useCallback((id: string) => {
+    if (surfaceTabsEnabled) openTerminalTab(id);
+    else closeChat();
+  }, [closeChat, openTerminalTab, surfaceTabsEnabled]);
+  // `appendTab` hands the new tab `tabs.nextId`, so the id a fresh tab will
+  // carry is knowable before the write — which is what lets the selection above
+  // follow a spawn without reading state back out of a setState updater.
+  const nextWorkspaceTabId = activeWorkspaceTabs?.nextId ?? null;
   const addWorkspaceTab = useCallback((
     createTab: (id: number) => WorkspaceTab,
     region: WorkspaceRegion = 'main',
   ) => {
     updateWorkspaceTabs((tabs) => appendTab(tabs, region, createTab));
     setFocusedRegion(region);
-    // A new tab is a request for the panes, so the chat surface steps aside.
-    closeChat();
-  }, [closeChat, updateWorkspaceTabs]);
+    if (nextWorkspaceTabId === null) closeChat();
+    else selectWorkspaceTab(String(nextWorkspaceTabId));
+  }, [closeChat, nextWorkspaceTabId, selectWorkspaceTab, updateWorkspaceTabs]);
   const spawnTtydSession = (type: SpawnSessionType) => {
     addWorkspaceTab((id) => ({ id, type }));
   };
@@ -1127,8 +1157,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (session === undefined) return;
     setFocusedRegion(surfaceRegion(session));
     updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
-    closeChat();
-  }, [activeWorkspaceId, closeChat, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
+    selectWorkspaceTab(id);
+  }, [selectWorkspaceTab, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
       (session) => session.type === 'file' && session.filePath === filePath,
@@ -1308,6 +1338,31 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         && retainedSessions.ids.has(sessionId)
       );
   });
+  // The address may name a tab this workspace no longer holds: the member just
+  // closed it, or a link was opened against a different document. `closeTab`
+  // has already picked the successor, so follow the pane's own choice; with no
+  // tab left, fall back to the host page the address named.
+  const mainActiveIdString = mainActiveId === null ? null : String(mainActiveId);
+  const addressTerminalId = lodyRail.terminalId;
+  const addressSessionId = lodyRail.sessionId;
+  const { openTerminal, openSession, openLanding } = lodyRail;
+  useEffect(() => {
+    if (!surfaceTabsEnabled || !tabsLoaded || addressTerminalId === null) return;
+    if (ttydSessions.some((tab) => String(tab.id) === addressTerminalId)) return;
+    if (mainActiveIdString !== null) openTerminal(mainActiveIdString);
+    else if (addressSessionId !== null) openSession(addressSessionId);
+    else openLanding();
+  }, [
+    addressSessionId,
+    addressTerminalId,
+    mainActiveIdString,
+    openLanding,
+    openSession,
+    openTerminal,
+    surfaceTabsEnabled,
+    tabsLoaded,
+    ttydSessions,
+  ]);
   const loadingStage = activeWorkspace === undefined
     ? 'starting · workspace terminal'
     : workspaceProvisioning
@@ -1444,6 +1499,71 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       </button>
     </div>
   );
+
+  // ONE BODY PER TAB, IN EXACTLY ONE HOST
+  // (plans/LODY-TERMINAL-TABS.md §4.6).
+  //
+  // A workspace tab's body is a `SurfaceTabContent`, and two of them for one
+  // tab would be two ttyd sockets attaching the same tmux session. So the pane
+  // grid and the session strip never draw it at the same time: while the
+  // surface covers the panes it owns every body, and the moment the address
+  // hands the view back to the panes (`/workspaces/:id`, from a bookmark) the
+  // panes own them again. The switch costs one tmux re-attach, which is the
+  // same event a page refresh already causes.
+  const surfaceHostsTabs = surfaceTabsEnabled && lodyRail.visible;
+  const paneSessions = surfaceHostsTabs ? NO_WORKSPACE_TABS : renderedSessions;
+  const surfaceTabBody = (workspaceTabId: string): ReactNode => {
+    // `renderedSessions` is the mount rule, unchanged: a tab that has never
+    // been visited renders nothing, and a visited one stays mounted.
+    const session = surfaceHostsTabs
+      ? renderedSessions.find((tab) => String(tab.id) === workspaceTabId)
+      : undefined;
+    if (session === undefined) return null;
+    return (
+      <SurfaceTabContent
+        session={session}
+        active={lodyRail.terminalId === workspaceTabId}
+        client={client}
+        activeWorkspace={activeWorkspace}
+        activeWorkspaceId={activeWorkspaceId}
+        activeWorkspaceRunning={activeWorkspaceRunning}
+        activeSessionUrl={activeSessionUrl}
+        activeFilesBase={activeFilesBase}
+        filesClient={filesClient}
+        filesSidebar={filesSidebar}
+        orgName={store.viewer?.org.name ?? 'Organization'}
+        workspaceWakingStage={workspaceWakingStage}
+        livePorts={orderedLivePorts}
+        previewLinks={orderedPreviewLinks}
+        pendingRequests={activePendingRequests}
+        pendingRequestsError={pendingRequestsError}
+        connectionsFocus={connectionsFocus}
+        onResolveRequest={resolveWorkspaceRequest}
+        onFileDirtyChange={updateFileDirty}
+        onFilesRefresh={() => setFilesRefreshVersion((version) => version + 1)}
+        onUnauthorized={handleUnauthorized}
+        onSignInUrl={setTerminalSignInUrl}
+        onOpenPreview={openPreviewPort}
+        onOpenPreviewLink={openPreviewLink}
+      />
+    );
+  };
+  const surfaceTabs: SurfaceTabsBinding | undefined = surfaceTabsEnabled
+    ? {
+        tabs: toSessionSurfaceTabs(ttydTabs, surfaceTabBody),
+        activeTabId: lodyRail.terminalId === null
+          ? null
+          : surfaceTabId(lodyRail.terminalId),
+        onSelect: (tabId) => {
+          const workspaceTabId = workspaceTabIdFromSurfaceTabId(tabId);
+          if (workspaceTabId !== null) selectTtydSession(workspaceTabId);
+        },
+        onClose: (tabId) => {
+          const workspaceTabId = workspaceTabIdFromSurfaceTabId(tabId);
+          if (workspaceTabId !== null) closeTtydSession(workspaceTabId);
+        },
+      }
+    : undefined;
 
   const shellNav = (railActiveWorkspaceId: string | null) => (
     <ShellNav
@@ -1687,12 +1807,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               onSelectSharedSession={(row) => {
                 lodyRail.openSharedSession(row.ownerMembershipId, row.sessionId);
               }}
+              {...(surfaceTabs === undefined ? {} : { surfaceTabs })}
             />
             <WorkPanes
               client={client}
               panesRef={panesRef}
               visibleRegions={visibleRegions}
-              renderedSessions={renderedSessions}
+              renderedSessions={paneSessions}
               surfaceRegion={surfaceRegion}
               paneActiveId={paneActiveId}
               paneTabModels={paneTabModels}
@@ -1701,6 +1822,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               paneResizing={paneResizing}
               tabDrag={tabDrag}
               splitEnabled={splitEnabled}
+              tabStrips={!surfaceTabsEnabled}
               mobile={mobileWebApp}
               drawerOpen={drawerOpen}
               tabsLoaded={tabsLoaded}

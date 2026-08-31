@@ -8,9 +8,10 @@ import type {
 import type { CredentialRequestView } from '@blitzos/schema';
 import type { WebDAVClient } from 'webdav';
 import type { ControlPlaneClient } from '../api';
-import { FileEditor } from '../FileEditor';
-import { PreviewPanel } from '../PreviewPanel';
-import { TtydTerminal } from '../TtydTerminal';
+import {
+  SurfaceTabContent,
+  surfaceTabPaneClassName,
+} from '../lody/SurfaceTabContent';
 import {
   WebAppHeader,
   type SpawnSessionType,
@@ -19,10 +20,7 @@ import {
 import type { LivePort, PreviewLink } from '../preview';
 import type { WorkspaceRegion, WorkspaceTab } from '../storage';
 import type { CloudWorkspaceModel } from '../workspace-store';
-import {
-  WorkspacePanelContent,
-  type ConnectionsPanelFocus,
-} from '../WorkspaceDrawer';
+import type { ConnectionsPanelFocus } from '../WorkspaceDrawer';
 import type { TabDrag } from '../use-workspace-tab-drag';
 
 export type WorkPanesProps = {
@@ -38,6 +36,18 @@ export type WorkPanesProps = {
   paneResizing: boolean;
   tabDrag: TabDrag | null;
   splitEnabled: boolean;
+  /**
+   * Whether this column draws its own tab strips
+   * (plans/LODY-TERMINAL-TABS.md §4.6).
+   *
+   * `false` only when the Lody session strip is drawing the same tabs — the
+   * build flag is on, the box answers `present`, and this is a desktop layout.
+   * With the flag off, on a box that serves no daemon, or on mobile (where the
+   * vendored strip does not exist), it is `true` and the panes are exactly what
+   * they were. Nothing else changes here: `WebAppHeader`, `NewTabMenu` and the
+   * context menu all stay in the tree.
+   */
+  tabStrips: boolean;
   mobile: boolean;
   drawerOpen: boolean;
   tabsLoaded: boolean;
@@ -95,6 +105,7 @@ export function WorkPanes({
   paneResizing,
   tabDrag,
   splitEnabled,
+  tabStrips,
   mobile,
   drawerOpen,
   tabsLoaded,
@@ -144,7 +155,7 @@ export function WorkPanes({
       onDragOver={onTabDragOver}
       onDrop={onTabDrop}
     >
-      {visibleRegions.map((region) => (
+      {tabStrips && visibleRegions.map((region) => (
         <div className="webapp-pane-strip" data-region={region} key={`strip-${region}`}>
           <WebAppHeader
             tabs={paneTabModels(region)}
@@ -194,92 +205,38 @@ export function WorkPanes({
         const sessionId = String(session.id);
         const region = surfaceRegion(session);
         const active = paneActiveId(region) === sessionId;
-        if (session.type === 'panel') {
-          return (
-            <div
-              className="webapp-workspace-session webapp-pane-panel"
-              data-region={region}
-              hidden={!active}
-              key={sessionId}
-            >
-              <WorkspacePanelContent
-                panel={session.panel}
-                client={client}
-                workspaceId={activeWorkspaceId}
-                orgName={orgName}
-                visible={active}
-                files={filesSidebar}
-                pendingRequests={pendingRequests}
-                pendingRequestsError={pendingRequestsError}
-                workspaceConnections={activeWorkspace?.connections ?? []}
-                connectionsFocus={connectionsFocus}
-                readOnly={activeWorkspace?.accessRole === 'viewer'}
-                onResolveRequest={onResolveRequest}
-                livePorts={livePorts}
-                previewLinks={previewLinks}
-                filesBase={activeFilesBase}
-                previewReady={activeWorkspaceRunning}
-                onOpenPreview={(port) => { onOpenPreview(port); }}
-                onOpenPreviewLink={(url, title) => { onOpenPreviewLink(url, title); }}
-              />
-            </div>
-          );
-        }
-        if (session.type === 'preview') {
-          return (
-            <div
-              className="webapp-workspace-session webapp-pane-preview"
-              data-region={region}
-              hidden={!active}
-              key={sessionId}
-            >
-              <PreviewPanel
-                target={'port' in session
-                  ? session.port
-                  : { url: session.url, title: session.title }}
-                path={'port' in session ? session.path : undefined}
-                filesBase={activeFilesBase}
-                running={activeWorkspaceRunning}
-              />
-            </div>
-          );
-        }
-        if (session.type === 'file') {
-          return (
-            <div
-              className="webapp-workspace-session"
-              data-region={region}
-              hidden={!active || filesClient === null}
-              key={sessionId}
-            >
-              <FileEditor
-                active={active}
-                client={filesClient}
-                filePath={session.filePath}
-                unavailableStage={workspaceWakingStage}
-                onDirtyChange={(dirty) => onFileDirtyChange(sessionId, dirty)}
-                onSaved={onFilesRefresh}
-                onTreeRefresh={onFilesRefresh}
-                onUnauthorized={onUnauthorized}
-              />
-            </div>
-          );
-        }
         return (
           <div
-            className="webapp-workspace-session"
+            className={surfaceTabPaneClassName(session)}
             data-region={region}
-            hidden={!active}
+            hidden={!active || (session.type === 'file' && filesClient === null)}
             key={sessionId}
           >
-            <TtydTerminal
-              url={activeSessionUrl ?? ''}
-              sessionType={session.type}
-              sessionKey={sessionId}
+            <SurfaceTabContent
+              session={session}
               active={active}
-              readOnly={activeWorkspace?.accessRole === 'viewer'}
+              client={client}
+              activeWorkspace={activeWorkspace}
+              activeWorkspaceId={activeWorkspaceId}
+              activeWorkspaceRunning={activeWorkspaceRunning}
+              activeSessionUrl={activeSessionUrl}
+              activeFilesBase={activeFilesBase}
+              filesClient={filesClient}
+              filesSidebar={filesSidebar}
+              orgName={orgName}
+              workspaceWakingStage={workspaceWakingStage}
+              livePorts={livePorts}
+              previewLinks={previewLinks}
+              pendingRequests={pendingRequests}
+              pendingRequestsError={pendingRequestsError}
+              connectionsFocus={connectionsFocus}
+              onResolveRequest={onResolveRequest}
+              onFileDirtyChange={onFileDirtyChange}
+              onFilesRefresh={onFilesRefresh}
+              onUnauthorized={onUnauthorized}
               onSignInUrl={onSignInUrl}
               onOpenPreview={onOpenPreview}
+              onOpenPreviewLink={onOpenPreviewLink}
             />
           </div>
         );

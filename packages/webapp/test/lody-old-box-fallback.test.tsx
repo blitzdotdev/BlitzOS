@@ -33,6 +33,8 @@ import type { AppRoute } from "../src/sessions-page-state.js";
 import type { LodyRailState } from "../src/lody/use-lody-rail.js";
 import type { LodySessionsCapability } from "../src/lody/box-capability.js";
 import { SessionRail } from "../src/shell/SessionRail.js";
+import { WorkPanes, type WorkPanesProps } from "../src/shell/WorkPanes.js";
+import type { ControlPlaneClient } from "../src/api.js";
 import { render, settle } from "./dom.js";
 import { workspaceModelFixture } from "./workspace-fixtures.js";
 
@@ -181,6 +183,70 @@ describe("the capability probe", () => {
   });
 });
 
+/**
+ * The pane column, with nothing in it but its strips.
+ *
+ * Every prop below is required and none of them is what is under test: with no
+ * rendered session and no fallback, `WorkPanes` draws its strips and the drop
+ * plumbing and nothing else, which is exactly the thing §4.6 of
+ * plans/LODY-TERMINAL-TABS.md moves.
+ */
+function workPanesProps(tabStrips: boolean): WorkPanesProps {
+  return {
+    // SAFETY: no rendered session means no surface asks the client for
+    // anything; stating a whole `ControlPlaneClient` would say nothing here.
+    client: {} as ControlPlaneClient,
+    panesRef: { current: null },
+    visibleRegions: ["main"],
+    renderedSessions: [],
+    surfaceRegion: () => "main",
+    paneActiveId: () => null,
+    paneTabModels: () => [{ id: "12", label: "bash", agent: "terminal", pending: false }],
+    paneFallback: () => null,
+    sidePaneWidth: 320,
+    paneResizing: false,
+    tabDrag: null,
+    splitEnabled: true,
+    tabStrips,
+    mobile: false,
+    drawerOpen: false,
+    tabsLoaded: true,
+    workspaceWaking: false,
+    canEditWorkspaceLayout: true,
+    activeWorkspace: undefined,
+    activeWorkspaceId: "ws-1",
+    activeWorkspaceRunning: true,
+    activeSessionUrl: null,
+    activeFilesBase: null,
+    filesClient: null,
+    filesSidebar: null,
+    orgName: "Org",
+    workspaceWakingStage: undefined,
+    livePorts: [],
+    previewLinks: [],
+    pendingRequests: [],
+    pendingRequestsError: null,
+    connectionsFocus: null,
+    onOpenDrawer: () => undefined,
+    onSelectSession: () => undefined,
+    onCloseSession: () => undefined,
+    onRenameSession: () => undefined,
+    onSpawnSession: () => undefined,
+    onTabDragStart: () => undefined,
+    onTabDragEnd: () => undefined,
+    onTabDragOver: () => undefined,
+    onTabDrop: () => undefined,
+    onOpenPreview: () => false,
+    onOpenPreviewLink: () => false,
+    onResolveRequest: async () => undefined,
+    onFileDirtyChange: () => undefined,
+    onFilesRefresh: () => undefined,
+    onUnauthorized: () => undefined,
+    onSignInUrl: () => undefined,
+    onBeginPaneResize: () => undefined,
+  };
+}
+
 interface Mounted {
   seen: { rail: LodyRailState | null };
   /** How many times the 3.5 MB surface module was imported. */
@@ -234,6 +300,8 @@ async function mountFallback(options: {
     });
     seen.rail = rail;
     return (
+      <>
+      <WorkPanes {...workPanesProps(!rail.available)} />
       <LodySessionsRegion
         endpoints={ENDPOINTS}
         sessions={capability}
@@ -248,6 +316,7 @@ async function mountFallback(options: {
         onOpenSession={rail.openSession}
         onOpenLanding={rail.openLanding}
       />
+      </>
     );
   }
 
@@ -269,6 +338,12 @@ describe("a workspace whose box serves no session daemon", () => {
     expect(mounted.seen.rail?.onVendorHost).toBeUndefined();
     expect(mounted.seen.rail?.visible).toBe(false);
     expect(mounted.surfaceImports()).toBe(0);
+    // plans/LODY-TERMINAL-TABS.md §4.5 and §4.6: the strip suppression is gated
+    // on the SAME signal, and only that signal. A box that cannot run the
+    // surface keeps the native pane strip, because that strip is the only tab
+    // control it has.
+    expect(mounted.seen.rail?.available).toBe(false);
+    expect(mounted.view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
     await mounted.view.unmount();
   });
 
@@ -310,6 +385,10 @@ describe("a workspace whose box serves no session daemon", () => {
     expect(mounted.seen.rail?.visible).toBe(true);
     expect(mounted.surfaceImports()).toBe(1);
     expect(mounted.legacyDefaults()).toBe(0);
+    // The other half of §4.6: on a box that serves the surface the terminals
+    // are tabs of Lody's strip, so the native one is not drawn at all.
+    expect(mounted.seen.rail?.available).toBe(true);
+    expect(mounted.view.container.querySelector(".webapp-pane-strip")).toBeNull();
     await mounted.view.unmount();
   });
 

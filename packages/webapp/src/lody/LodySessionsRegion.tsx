@@ -25,6 +25,7 @@ import type { LodySessionsCapability } from "./box-capability.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 import type { LodyRailBinding, LodySessionSurfaceApi } from "./SessionSurface.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
+import type { SurfaceTabsBinding } from "./surface-tabs.js";
 
 const SessionSurface = lazy(async () => await import("./SessionSurface.js"));
 
@@ -63,6 +64,10 @@ export interface LodySessionsRegionProps {
   /** The rail's "Shared with you" rows, and what a click on one does. */
   sharedSessions?: SharedSessionRow[];
   onSelectSharedSession?: (row: SharedSessionRow) => void;
+  /** The workspace's own tabs, as tabs of the session tab strip
+   * (plans/LODY-TERMINAL-TABS.md §3.5). Never reaches a shared surface — see
+   * where it is read below. */
+  surfaceTabs?: SurfaceTabsBinding;
   /**
    * The shared session the address names, with the endpoints of the box that
    * runs it. `null` whenever the grantee is looking at their own box.
@@ -165,6 +170,14 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
           shared: { sessionId: sharedOpen.sessionId },
           readOnly: sharedOpen.level === "ro",
         };
+  // NO HOST TABS ON A SHARED SURFACE (plans/LODY-TERMINAL-TABS.md §5.1). A
+  // terminal is an arbitrary shell on the OWNER's box, and no share level in
+  // §0.1 grants that — the same reason the bridge refuses `/control` outright
+  // and narrows `/platform` to three fields. There is no gateway path, no
+  // bridge door and no ACL to write, because there is nothing to permit.
+  const hostTabs = sharedOpen !== null || props.surfaceTabs === undefined
+    ? {}
+    : { surfaceTabs: props.surfaceTabs };
   return (
     <Suspense fallback={null}>
       <SessionSurface
@@ -176,6 +189,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
         railHost={props.railHost}
         rail={rail}
         readOnly={surfaceProps.readOnly}
+        {...hostTabs}
         {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
         {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
         {...(props.onActiveSessionChange === undefined

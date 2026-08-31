@@ -51,6 +51,8 @@ import SessionDetail from "@lody/components/components/sessions/session-detail";
 import { AppThemeShell } from "@lody/components/components/app-theme-shell";
 import { useWorkspaceContextAtoms } from "@lody/components/hooks/use-workspace-context-atoms";
 import { WorkspaceRouteTargetProvider } from "@lody/components/providers/workspace-route-target";
+import { TerminalTabsHost } from "./TerminalTabsStrip.js";
+import { useSurfaceTabs } from "./surface-tabs.js";
 
 /** Every address their components navigate to that we render as nothing.
  *
@@ -154,6 +156,7 @@ function ChatRoute() {
   const { workspaceName } = useParams({ from: "/$workspaceName" });
   const search = useSearch({ from: "/$workspaceName/_auth/chat" });
   const navigate = useNavigate();
+  const surfaceTabs = useSurfaceTabs();
   // Selection steering corrects the current address in place; it is not a visit
   // to a new page, so the mirror always replaces (their comment, their rule).
   const onSelectionUrlSync = useCallback(
@@ -162,7 +165,7 @@ function ChatRoute() {
     },
     [navigate],
   );
-  return (
+  const landing = (
     <ChatLanding
       workspaceSlug={workspaceName}
       preSelectedContext={search.context}
@@ -173,6 +176,11 @@ function ChatRoute() {
       onSelectionUrlSync={onSelectionUrlSync}
     />
   );
+  // No shell around this mount contributes tabs — a headless render, a router
+  // unit test, a surface mounted against another member's box (§5.1) — so the
+  // landing is exactly what phase 4 shipped.
+  if (surfaceTabs === null) return landing;
+  return <TerminalTabsHost surfaceTabs={surfaceTabs} landing={landing} />;
 }
 
 /** Their `routes/$workspaceName/_auth/sessions/$sessionId.tsx`, minus mobile.
@@ -185,6 +193,18 @@ function sessionDetailRouteComponent(readOnly: boolean) {
   return function SessionDetailRoute() {
     const { sessionId } = useParams({ from: "/$workspaceName/_auth/sessions/$sessionId" });
     const search = useSearch({ from: "/$workspaceName/_auth/sessions/$sessionId" });
+    const surfaceTabs = useSurfaceTabs();
+    // The four props of seam patch 5. Absent when no shell contributes tabs,
+    // which is the render every upstream call site does and the one the
+    // inertness test pins.
+    const hostTabs = surfaceTabs === null
+      ? {}
+      : {
+          surfaceTabs: surfaceTabs.tabs,
+          activeSurfaceTabId: surfaceTabs.activeTabId,
+          onSurfaceTabSelect: surfaceTabs.onSelect,
+          onSurfaceTabClose: surfaceTabs.onClose,
+        };
     return (
       <AppThemeShell>
         <SessionDetail
@@ -193,6 +213,7 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           urlPrNumber={search.pr}
           urlBrowser={search.browser}
           readOnly={readOnly}
+          {...hostTabs}
         />
       </AppThemeShell>
     );

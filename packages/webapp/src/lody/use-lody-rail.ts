@@ -43,7 +43,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppRoute, ChatAddress } from "../sessions-page-state.js";
 import {
+  chatSharedFrom,
+  isChatTerminalAddress,
   workspaceChatPath,
+  workspaceChatTerminalPath,
   workspacePath,
   workspaceSharedChatPath,
 } from "../sessions-page-state.js";
@@ -51,6 +54,15 @@ import type { LodySessionsCapability } from "./box-capability.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 
 export interface LodyRailState {
+  /**
+   * The build flag AND the box together: `VITE_BLITZ_LODY_SESSIONS` is on and
+   * the workspace's own machine serves a session daemon.
+   *
+   * It is the ONE signal §4.6 of plans/LODY-TERMINAL-TABS.md gates the native
+   * pane strips on. A box that cannot run the surface keeps them, which is the
+   * whole flag-off experience and the correct answer for that machine.
+   */
+  available: boolean;
   /** `true` while the chat surface should cover the panes. */
   visible: boolean;
   /** The session the address names on the grantee's OWN box, or `null` on the
@@ -68,6 +80,13 @@ export interface LodyRailState {
   openSession: (sessionId: string) => void;
   /** One session another member shared, on that member's machine. */
   openSharedSession: (ownerMembershipId: string, sessionId: string) => void;
+  /** The workspace tab the address selects in the strip, or `null` when a
+   * session tab, the landing or the panes own the view. */
+  terminalId: string | null;
+  /** Select one workspace tab in the strip. It keeps whichever host the address
+   * is already in: a session's strip stays on that session, the landing's stays
+   * on the landing. */
+  openTerminal: (terminalId: string) => void;
   /** The other direction: the surface navigated itself — the landing's send
    * creates a session and goes to it — so the address follows. Compares before
    * it acts, which is what keeps it from looping against the effect that drives
@@ -136,6 +155,28 @@ export function useLodyRail(
       }),
     [activeWorkspaceId, go],
   );
+  const openTerminal = useCallback(
+    (terminalId: string) => {
+      // The HOST is whichever one the address is already in. A terminal opened
+      // while a session is on screen becomes a tab of that session's strip; one
+      // opened from the landing becomes a tab of the landing's.
+      const sessionId =
+        chat === null || chat === "landing"
+          ? undefined
+          : isChatTerminalAddress(chat)
+            ? chat.sessionId
+            // A grantee's surface contributes no tabs at all (§5.1), so a
+            // shared address can never be the host of one.
+            : chat.sharedFrom === undefined
+              ? chat.sessionId
+              : undefined;
+      const next: ChatAddress =
+        sessionId === undefined ? { terminalId } : { sessionId, terminalId };
+      go(workspaceChatTerminalPath(activeWorkspaceId, terminalId, sessionId), next);
+    },
+    [activeWorkspaceId, chat, go],
+  );
+
   const mirror = useCallback(
     (sessionId: string | null) => {
       // `chat === null` means the panes own the view; a background navigation
@@ -143,7 +184,14 @@ export function useLodyRail(
       // session's address be overwritten by the OWN surface's router, which
       // keeps navigating in the background while it is hidden.
       if (!LODY_SESSIONS_ENABLED || chat === null) return;
-      if (chat !== "landing" && chat.sharedFrom !== undefined) return;
+      // A terminal selection is OURS, not the vendored router's: the router
+      // does not know the tab exists, so its resolved address always names the
+      // host page and never the tab. Following it here would drop the selection
+      // on the first navigation. It is dropped only when the member moves the
+      // surface to a DIFFERENT host page than the address names.
+      if (isChatTerminalAddress(chat)) {
+        if ((chat.sessionId ?? null) === sessionId) return;
+      } else if (chatSharedFrom(chat) !== undefined) return;
       if (sessionId === null) {
         if (chat !== "landing") openLanding();
         return;
@@ -192,19 +240,28 @@ export function useLodyRail(
   ]);
 
   return {
+    available,
     visible: available && chat !== null,
     // A shared session is NOT this surface's address: it is mounted against
     // another box, by a second surface, so the own surface stays where it was.
+    // A terminal address still names its HOST page, so the surface opens the
+    // session whose strip the tab belongs to — or the landing, when it has none.
     sessionId:
-      chat === null || chat === "landing" || chat.sharedFrom !== undefined
+      chat === null || chat === "landing"
         ? null
-        : chat.sessionId,
+        : isChatTerminalAddress(chat)
+          ? chat.sessionId ?? null
+          : chat.sharedFrom !== undefined
+            ? null
+            : chat.sessionId,
+    terminalId: isChatTerminalAddress(chat) ? chat.terminalId : null,
     chat,
     onVendorHost: available ? setRailHost : undefined,
     railHost,
     openLanding,
     openSession,
     openSharedSession,
+    openTerminal,
     mirror,
     closeChat,
   };
