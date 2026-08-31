@@ -337,6 +337,15 @@ export function OrgPresence({
           ? <span aria-hidden="true"><PresenceFaceStack members={members} compact /></span>
           : <span className="org-presence-empty-icon codicon codicon-person" aria-hidden="true" />}
       </button>
+      {open && (
+        <button
+          className="webapp-org-backdrop"
+          type="button"
+          aria-label="Close presence"
+          tabIndex={-1}
+          onMouseDown={() => setOpen(false)}
+        />
+      )}
       <div
         className="org-presence-popover"
         id="org-presence-popover"

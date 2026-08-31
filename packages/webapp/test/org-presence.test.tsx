@@ -175,6 +175,28 @@ describe('organization presence UI', () => {
     await view.unmount();
   });
 
+  it('closes from a click anywhere outside, through the backdrop', async () => {
+    // The workspace surface is mostly iframes; a click inside one never
+    // reaches a window listener, so a fixed backdrop does the closing.
+    const view = await render(
+      <OrgPresence
+        snapshot={snapshot([self, here])}
+        stale={false}
+        viewerMembershipId="self"
+        activeWorkspaceId="workspace-one"
+        onNavigate={() => undefined}
+      />,
+    );
+    const trigger = view.container.querySelector<HTMLButtonElement>('.org-presence-trigger');
+    await act(async () => trigger?.click());
+    const backdrop = view.container.querySelector<HTMLButtonElement>('.webapp-org-backdrop');
+    expect(backdrop).not.toBeNull();
+    await act(async () => backdrop?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+    expect(view.container.querySelector<HTMLElement>('[role="dialog"]')?.hidden).toBe(true);
+    expect(view.container.querySelector('.webapp-org-backdrop')).toBeNull();
+    await view.unmount();
+  });
+
   it('moves focus into the popover on open and only takes it back when it still owns it', async () => {
     const view = await render(
       <OrgPresence

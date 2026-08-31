@@ -2,25 +2,42 @@
   display: flex;
   flex: none;
   align-items: center;
-  margin-right: 7px;
 }
 
-/* Scoped under the rail to outrank its button reset without !important. */
-.webapp-rail .org-presence-trigger {
+/* In the shell strip the trigger sits below the org mark, sized like a small
+ * tile in the same Discord-style column. */
+.shell-strip .org-presence {
+  position: relative;
+  flex: none;
   display: grid;
-  min-width: 34px;
-  height: 34px;
   place-items: center;
-  padding: 0 7px;
-  border-radius: 8px;
-  color: var(--muted);
 }
 
-.webapp-rail .org-presence-trigger:hover,
-.webapp-rail .org-presence-trigger:focus-visible,
-.webapp-rail .org-presence-trigger[aria-expanded='true'] {
+.shell-strip .org-presence-trigger {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.shell-strip .org-presence-trigger:hover,
+.shell-strip .org-presence-trigger:focus-visible,
+.shell-strip .org-presence-trigger[aria-expanded='true'] {
   color: var(--ink);
   background: var(--hover);
+}
+
+/* The popover flies out to the right of the column, at trigger height, and
+ * sits above the fixed backdrop that closes it. */
+.shell-strip .org-presence-popover {
+  top: -6px;
+  left: calc(100% + 10px);
 }
 
 /* Last known people, not live ones: dim until a poll succeeds again. */
@@ -315,7 +332,11 @@
 }
 
 @media (max-width: 899px) {
-  .org-presence-popover {
+  /* Both selectors, so this outranks the desktop strip flyout rule above. In
+   * the drawer the transformed .shell-nav is the containing block for fixed,
+   * which is what we want: the popover overlays the drawer itself. */
+  .org-presence-popover,
+  .shell-strip .org-presence-popover {
     position: fixed;
     top: calc(var(--mobile-viewport-top, 0px) + var(--headerH) - 4px);
     right: 8px;
