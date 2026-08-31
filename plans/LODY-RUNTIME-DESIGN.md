@@ -2211,3 +2211,110 @@ pins the status table, the single probe, the bounded retry, the chunk that is
 not imported, the tabs that are seeded instead of a landing, and the notice with
 its wire — and one case asserts the `present` path is unchanged, which is the
 property the daemon suites would otherwise be alone in defending.
+
+---
+
+---
+
+## 18. The approved picture the product could not produce (2026-08-31)
+
+§14 shipped the theme, §16 made it apply unconditionally, and on a fresh box the
+surface then painted the Blitz palette — pixel-verified, `#16181d` everywhere,
+the accent periwinkle — and still looked nothing like the page the design was
+approved against. No section definition, no borders, a floating grey "New
+session" slab, generic composer chrome.
+
+Both halves of that were the same mistake, made twice: **the harness rendered
+the surface somewhere the product never renders it.**
+
+### 18.1 The preview was styled by files the product does not load
+
+`theme-review.css` gave the page its shell grid, the rule under the tab strip
+and the composer band; the generator inlined four of the sixteen stylesheets
+`main.tsx` loads. So the approved picture contained borders and spacing the
+product had never had — and, far worse, it OMITTED the two stylesheets that were
+breaking the product.
+
+The preview is now `surface-preview.html` → `test/surface-preview/`. It declares
+no CSS at all, imports exactly `main.tsx`'s list in `main.tsx`'s order, keeps
+the Lody sheets behind the same lazy boundary `LodySessionsRegion` puts them
+behind, and renders only class names the product renders —
+`main.drive-shell.drive-shell--workspace`, `.shell-nav`, `.session-rail`,
+`.drive-ws-frame > .webapp-workspace-view`, `.session-list--vendor`.
+`lody-preview-fidelity.test.ts` holds every one of those properties, because
+they are exactly the properties that decay the moment somebody needs "just one
+rule" to make a page sit right.
+
+### 18.2 `.drive-shell` is an ancestor of the surface, and the compensation forgot
+
+`lody-compensation.css` gives NATIVE elements their user-agent defaults back
+after Tailwind's preflight, scoped to `.drive-shell` and `.webapp-shell`. Its
+own docblock reasons carefully about `#root`:
+
+> `.lody-surface` lives under `#root`, so an `#root`-DESCENDANT rule would reach
+> into the surface and revert their buttons too.
+
+It got the hazard exactly right and the selector exactly wrong. In the product
+the surface is `main.drive-shell > .drive-ws-frame > section.webapp-workspace-view
+> div.lody-surface` (`CloudApp.tsx:1582`), and the rail's vendored zone is
+`main.drive-shell > .shell-nav > .session-rail > .session-list--vendor`. So
+every `:where(.drive-shell, …) :where(button, input, textarea, a, h1…h6, ul, ol,
+li, img, table)` rule was matching LODY's elements and reverting `appearance`,
+`background-color`, `border`, `border-radius`, `padding`, `color`,
+`letter-spacing`, `opacity` and `cursor` — unlayered, so it beat every utility in
+`@layer lody`.
+
+Measured in Chrome over CDP, `CSS.getMatchedStylesForNode` on
+`.lody-surface textarea`, winning rule last:
+
+```
+regular  layer=lody>base       button, input, …   background-color:transparent
+regular  layer=lody>utilities  .bg-transparent    background-color:transparent
+regular  layer=                :where(.drive-shell, .webapp-shell) :where(button, input, select, textarea)
+                               appearance:revert; background-color:revert; border-radius:revert; color:revert …
+```
+
+The composer's textarea painted `rgb(59,59,59)` on a `rgb(133,133,133)` 1px
+border at 16px — Chrome's default textarea — and every button in the surface and
+the rail was a grey UA slab. That is the "floating grey New session slab" and the
+"generic composer chrome", exactly.
+
+### 18.3 And `webapp-base.css` reached in too
+
+`button, input, select { font: inherit }` (`webapp-base.css:59`) is unlayered, so
+inside the surface it beat every `text-sm` in `@layer lody`. The sidebar's "New
+session" label painted 16px/normal where Lody asks for 14px/20px, and every
+control label in the surface sat at body size. `a { color: --accent }` had the
+same reach.
+
+### 18.4 The fix, and why `:where()`
+
+Both files now carry
+`:where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *))`
+on the rules that over-match. The `:where()` wrapper is load-bearing: a bare
+`:not(.lody-surface *)` takes its argument's specificity and would raise every
+compensation rule to (0,1,0), so the file would stop being the zero-specificity
+floor it advertises and start beating our own CSS.
+
+The native Terminals rows that live INSIDE the vendored zone keep their
+compensation, because they are covered by the unscoped
+`:where(.shell-s, .files-tree-row)` rules the exclusion does not touch.
+
+After the fix, a computed-style diff of the two pages over CDP — rail column,
+rail head, vendored zone, sidebar root, session row, selected row, surface pane,
+composer textarea, "New session" affordance, both section headers — reports
+`identical` for every element that carries the surface's design. The four
+remaining differences are all the OLD preview being wrong: its container `color`
+was Lody's slate `#f1f5f9` rather than our `--ink`, its zero-width borders were
+Lody's `--border` rather than `--rule`, it was 34px shorter because of its
+legend bar, and its surface carried a `review-surface` class that does not exist.
+
+### 18.5 The method, and what it cost to not use it
+
+A real browser answered in one call what three rounds of source reading and
+jsdom had not: `dockerd` runs on this box, `chromedp/headless-shell` is a 300 MB
+image, and playwright-core drives it over CDP. `getComputedStyle` and
+`CSS.getMatchedStylesForNode` are the two facts that matter, and neither exists
+in jsdom — which is why every harness in this repo agreed with itself and with
+nothing a member ever saw.
+

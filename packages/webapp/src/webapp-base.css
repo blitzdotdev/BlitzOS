@@ -56,17 +56,33 @@ body {
   color: var(--ink);
 }
 
-button,
-input,
-select {
+/*
+ * OUR controls, and not the vendored Lody surface's
+ * (plans/LODY-RUNTIME-DESIGN.md §18).
+ *
+ * `font: inherit` is unlayered, so on a `<button>` inside the Lody surface or
+ * the rail's vendored zone it beat every `text-sm` / `text-xs` / `font-medium`
+ * in `@layer lody`: measured in Chrome, the sidebar's "New session" label
+ * painted at 16px/normal where Lody asks for 14px/20px, and every control label
+ * in the surface sat at body size. `a { color: --accent }` has the same reach —
+ * it repainted anchors Lody deliberately renders muted.
+ *
+ * The exclusion names Lody's two mounts (plans/LODY-SESSIONS.md §0.3) and is
+ * wrapped in `:where()`, so these rules keep the specificity they had. The
+ * surface gets its control type and its link colour from the Blitz theme
+ * instead, which is the layer that owns them.
+ */
+button:where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)),
+input:where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)),
+select:where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   font: inherit;
 }
 
-button {
+button:where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   -webkit-tap-highlight-color: transparent;
 }
 
-a {
+a:where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   color: var(--accent);
 }
 
