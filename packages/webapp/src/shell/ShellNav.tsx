@@ -25,6 +25,8 @@ export type ShellNavProps = {
   onVendorHost?: (node: HTMLDivElement | null) => void;
   /** See `SessionRailProps.sessionsNeedNewerMachine`. */
   sessionsNeedNewerMachine?: boolean;
+  /** See `SessionRailProps.sessionsNeedMachine`. */
+  sessionsNeedMachine?: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   onOpenWorkspaceSettings: (workspaceId: string) => void;
@@ -60,6 +62,7 @@ export function ShellNav({
   drawerOpen,
   onVendorHost,
   sessionsNeedNewerMachine,
+  sessionsNeedMachine,
   onSelectWorkspace,
   onRenameWorkspace,
   onOpenWorkspaceSettings,
@@ -105,6 +108,7 @@ export function ShellNav({
             previewLinks={previewLinks}
             {...(onVendorHost === undefined ? {} : { onVendorHost })}
             {...(sessionsNeedNewerMachine === undefined ? {} : { sessionsNeedNewerMachine })}
+            {...(sessionsNeedMachine === undefined ? {} : { sessionsNeedMachine })}
             onSelectSession={onSelectSession}
             onSpawnSession={onSpawnSession}
             onOpenPreview={onOpenPreview}

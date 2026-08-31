@@ -25,8 +25,19 @@
  * DAEMON-FREE. Everything here is the wiring between a status code and a rail,
  * which is where the defect was; the daemon suites are unchanged and stay the
  * proof that the NEW image's path still works.
+ *
+ * WAVE 4 ADDS THE SECOND STRUCTURAL ABSENCE, and it arrives on a status this
+ * file used to read as transient. An org member with no machine in a workspace
+ * is refused by the CONTROL PLANE with 409 before anything reaches a box, so the
+ * probe retried five times, concluded `present`, mounted the surface, and left
+ * the member watching "connecting" for as long as they were willing to. The
+ * fallback it needs is the one already here; what is new is telling that 409
+ * apart from the two transient ones, and saying a different sentence.
  */
 import { act, useState } from "react";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoxEndpoints } from "../src/resolver.js";
 import type { AppRoute } from "../src/sessions-page-state.js";
@@ -45,6 +56,8 @@ afterEach(() => {
   vi.resetModules();
   window.history.replaceState({}, "", "/");
 });
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 const PLATFORM_URL = "https://box.invalid/webapp/7445/lody/platform";
 
@@ -76,6 +89,27 @@ function answering(...statuses: number[]) {
   });
 }
 
+/** The control plane's own envelope (`core/app.ts`: `{ error, retryAction }`),
+ * which is the only thing that can answer 409 on this path. */
+function refusing(message: string) {
+  return vi.fn(
+    async () =>
+      new Response(JSON.stringify({ error: message, retryAction: null }), { status: 409 }),
+  );
+}
+
+/** The exact sentence `machineForRequest` throws, read out of the control plane
+ * rather than restated here. */
+function noMachineRefusal(): string {
+  const source = readFileSync(
+    join(here, "..", "..", "control-plane", "core", "workspaces.ts"),
+    "utf8",
+  );
+  const match = /"(you have no machine in this workspace[^"]*)"/u.exec(source);
+  expect(match, "core/workspaces.ts still refuses a machineless member by name").not.toBeNull();
+  return match?.[1] ?? "";
+}
+
 describe("reading the platform door's status", () => {
   it("separates a structural absence from a box that is still coming up", async () => {
     const { readLodyDoorStatus } = await import("../src/lody/box-capability.js");
@@ -88,6 +122,33 @@ describe("reading the platform door's status", () => {
     expect(readLodyDoorStatus(502)).toBe("retry");
     expect(readLodyDoorStatus(401)).toBe("retry");
     expect(readLodyDoorStatus(200)).toBe("present");
+  });
+
+  it("tells the machineless 409 apart from the two transient ones", async () => {
+    const { readNoMachineRefusal, probeLodySessionsDoor } = await import(
+      "../src/lody/box-capability.js"
+    );
+    // The refusal `machineForRequest` writes, as the control plane writes it.
+    expect(readNoMachineRefusal(JSON.stringify({ error: noMachineRefusal() }))).toBe(true);
+    // The other two 409s that route can produce. Both are a box between states,
+    // and both resolve without anybody doing anything — so both stay `retry`
+    // and the member gets the surface once the machine is up.
+    for (const message of [
+      "your machine in this workspace is not running",
+      "workspace is not ready for webapp access",
+    ]) {
+      expect(readNoMachineRefusal(JSON.stringify({ error: message })), message).toBe(false);
+      expect(await probeLodySessionsDoor(PLATFORM_URL, { fetchImpl: refusing(message) })).toBe(
+        "retry",
+      );
+    }
+    // A body that is not the envelope says nothing, and the safe direction is
+    // transient: it costs four more probes, never a wrong verdict.
+    expect(readNoMachineRefusal("<html>nope</html>")).toBe(false);
+    expect(readNoMachineRefusal("null")).toBe(false);
+    expect(
+      await probeLodySessionsDoor(PLATFORM_URL, { fetchImpl: refusing(noMachineRefusal()) }),
+    ).toBe("noMachine");
   });
 
   it("reads a network error as transient, because it says nothing about the image", async () => {
@@ -129,6 +190,24 @@ describe("the capability probe", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     // One quiet line, and nothing on the error channel: an older image is a
     // fact about the fleet, not a fault.
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(error).not.toHaveBeenCalled();
+    await view.unmount();
+  });
+
+  it("settles on noMachine after ONE 409 that names the reason, and never asks again", async () => {
+    const fetchImpl = refusing(noMachineRefusal());
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { seen, view } = await mountCapability(fetchImpl);
+    await settle();
+    expect(seen.capability).toBe("noMachine");
+    // The retry budget is what made this an endless "connecting": five probes,
+    // then the optimistic `present`, then a platform poller with nothing behind
+    // the address. One probe now, and the answer is held.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await settle();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(info).toHaveBeenCalledTimes(1);
     expect(error).not.toHaveBeenCalled();
     await view.unmount();
@@ -361,6 +440,24 @@ describe("a workspace whose box serves no session daemon", () => {
     await mounted.view.unmount();
   });
 
+  it("falls back exactly as it does for an old image when the member has no machine", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const mounted = await mountFallback({
+      fetchImpl: refusing(noMachineRefusal()),
+      path: "/workspaces/ws-1",
+      tabCount: 2,
+    });
+    // The rail behaves identically for both structural absences — that is what
+    // `lodySessionsUnavailable` is for, and it is why a fourth reading needed no
+    // new branch in `useLodyRail` or in the chunk gate.
+    expect(mounted.seen.rail?.onVendorHost).toBeUndefined();
+    expect(mounted.seen.rail?.visible).toBe(false);
+    expect(mounted.seen.rail?.available).toBe(false);
+    expect(mounted.surfaceImports()).toBe(0);
+    expect(mounted.view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    await mounted.view.unmount();
+  });
+
   it("holds a deep-linked chat address off the panes rather than showing nothing", async () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     const mounted = await mountFallback({
@@ -446,6 +543,38 @@ describe("the rail's notice", () => {
     // The dialog with the Recreate button in it, opened by the wire the rail
     // head already held.
     expect(onOpenMachine).toHaveBeenCalledWith("workspace-one");
+    await view.unmount();
+  });
+
+  it("says the member has no machine here, and who provisions one", async () => {
+    const onOpenMachine = vi.fn();
+    const view = await railWith({ sessionsNeedMachine: true, onOpenMachine });
+    const notice = view.container.querySelector(".rail-notice");
+    expect(notice?.textContent).toContain("You have no machine in this workspace");
+    // Not the old-image sentence: there is nothing here to recreate.
+    expect(notice?.textContent).not.toContain("Recreate");
+    // The same flag-off rail underneath, for the same reason.
+    expect(view.container.querySelector('button[aria-label="New tab"]')).not.toBeNull();
+
+    const action = notice?.querySelector<HTMLButtonElement>(".rail-notice__a");
+    expect(action?.textContent).toBe("Open My machine to provision one");
+    await act(async () => action?.click());
+    // "My machine" is where Provision is, and it is the dialog that tells a
+    // non-admin whom to ask.
+    expect(onOpenMachine).toHaveBeenCalledWith("workspace-one");
+    await view.unmount();
+  });
+
+  it("tells a member who cannot open the dialog whom to ask instead", async () => {
+    const view = await railWith({
+      workspace: workspaceModelFixture({ title: "rail-workspace", canControl: false }),
+      sessionsNeedMachine: true,
+    });
+    const notice = view.container.querySelector(".rail-notice");
+    expect(notice?.querySelector(".rail-notice__a")).toBeNull();
+    expect(notice?.querySelector(".rail-notice__d")?.textContent).toBe(
+      "Ask a workspace admin to provision one for you",
+    );
     await view.unmount();
   });
 

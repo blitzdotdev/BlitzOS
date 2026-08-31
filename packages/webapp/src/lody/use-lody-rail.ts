@@ -50,7 +50,7 @@ import {
   workspacePath,
   workspaceSharedChatPath,
 } from "../sessions-page-state.js";
-import type { LodySessionsCapability } from "./box-capability.js";
+import { lodySessionsUnavailable, type LodySessionsCapability } from "./box-capability.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 
 export interface LodyRailState {
@@ -131,9 +131,10 @@ export function useLodyRail(
   const { capability, onLegacyDefaultTabs } = sessions;
   // `probing` keeps the vendored zone, because the probe is one round trip and
   // the chunk behind it is 3.5 MB: the rail would flicker from legacy to
-  // vendored on every good box to save nothing. Only a settled `absent` takes
-  // the zone back.
-  const available = LODY_SESSIONS_ENABLED && capability !== "absent";
+  // vendored on every good box to save nothing. Only a SETTLED unavailable takes
+  // the zone back — an old image or a member with no machine here, which the
+  // rail treats identically because neither has a session plane to draw.
+  const available = LODY_SESSIONS_ENABLED && !lodySessionsUnavailable(capability);
 
   const go = useCallback(
     (path: string, next: ChatAddress, options?: { replace?: boolean }) => {
@@ -263,7 +264,7 @@ export function useLodyRail(
     if (defaulted.current.has(activeWorkspaceId)) return;
     defaulted.current.add(activeWorkspaceId);
     if (route.chat !== null || tabCount > 0) return;
-    if (capability === "absent") {
+    if (lodySessionsUnavailable(capability)) {
       // §0.4's other half, for a box that cannot serve the landing.
       // `defaultWorkspaceTabs()` gave this fresh workspace no tabs because the
       // BUILD has sessions on; the BOX does not, so the flag-off tab set goes

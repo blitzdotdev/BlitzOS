@@ -97,7 +97,7 @@ export interface SharedSurfaceTarget {
  * body and no surface — a blank screen.
  *
  * `available` in `useLodyRail` is NOT this question. It is
- * `capability !== 'absent'`, which is deliberately true throughout `probing` so
+ * `!lodySessionsUnavailable(capability)`, which is deliberately true throughout `probing` so
  * the rail does not flicker back to its legacy list for one round trip — and
  * `probing` is where a workspace with no running box stays for good
  * (`box-capability.ts`: the hook returns early on a null platform URL). The
@@ -155,8 +155,9 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const { endpoints } = props;
   // THE PROBE COMES BEFORE THE IMPORT (plans/LODY-RUNTIME-DESIGN.md §17). A box
   // on a pre-Lody image cannot use a byte of the chunk, and `probing` is one
-  // round trip — far shorter than the fetch it gates — so neither `absent` nor
-  // `probing` may reach `lazy()`.
+  // round trip — far shorter than the fetch it gates — so nothing but `present`
+  // may reach `lazy()`. That the gate is `=== "present"` and not `!== "absent"`
+  // is why wave 4's fourth reading needed no change here.
   // The null check is repeated ahead of the predicate only to narrow the type
   // for the rest of this function; the predicate is still where the condition
   // is decided, and `CloudApp` asks the same one.

@@ -29,15 +29,62 @@
  *   catalog yet. Bounded retries, and then `present`, because the optimistic
  *   answer is the safe one: mounting the surface against a slow box costs a
  *   spinner, and stranding a good box on the legacy rail costs the feature.
+ *
+ * A SECOND STRUCTURAL ABSENCE, AND IT IS NOT ABOUT THE IMAGE (wave 4, C4).
+ *
+ * An org member who holds no machine in a workspace reaches no box at all: the
+ * control plane refuses every `/workspaces/:id/webapp/7445/*` call with 409 and
+ * the sentence `machineForRequest` writes (`core/workspaces.ts`). 409 is not one
+ * of the two statuses above, so it read as TRANSIENT — five probes, then the
+ * optimistic `present`, then a surface whose platform poller can never settle
+ * because there is nothing behind the address. The member watched "connecting"
+ * for as long as they were willing to.
+ *
+ * The fix is not "409 is absent". Two of the three 409s that route can produce
+ * ARE transient — a machine that is stopped, and a workspace whose VM id has not
+ * landed yet — and folding them in would strand a member on the legacy rail for
+ * the ten seconds their box takes to start. So this reading, alone among them,
+ * looks at the BODY: the control plane's error envelope is ours
+ * (`core/app.ts`: `{ error, retryAction }`), and one of its three sentences means
+ * "there is no machine here and polling will not make one".
+ *
+ * IT IS A FOURTH CAPABILITY AND NOT A FIELD BESIDE THE THIRD. A box on an old
+ * image and a member with no machine both mean "no session plane for you here",
+ * and the rail, the chunk gate and the fresh-workspace default behave
+ * identically for both; only the notice's words differ. So the value carries the
+ * distinction and `lodySessionsUnavailable` carries the sameness — a caller that
+ * kept comparing against `"absent"` would have been silently wrong, which is
+ * why there is no such comparison left.
  */
 import { useEffect, useState } from "react";
+import { isJsonObject, isJsonString, parseJson } from "@blitzos/schema";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 
-/** What the browser believes about one box's session plane. */
-export type LodySessionsCapability = "probing" | "present" | "absent";
+/**
+ * What the browser believes about one box's session plane.
+ *
+ * `absent` and `noMachine` are BOTH settled structural answers: the surface does
+ * not mount, the chunk is not fetched and the rail goes back to its flag-off
+ * shape for either. Read them through `lodySessionsUnavailable` rather than by
+ * comparing against `"absent"`, which was the whole set before wave 4 and is
+ * now half of it.
+ */
+export type LodySessionsCapability = "probing" | "present" | "absent" | "noMachine";
 
 /** One probe's reading. `retry` is not a state a surface may act on. */
-export type LodyDoorReading = "present" | "absent" | "retry";
+export type LodyDoorReading = "present" | "absent" | "noMachine" | "retry";
+
+/**
+ * This member has no session plane on this box, whatever the reason.
+ *
+ * The rail, the chunk gate and the fresh-workspace default all ask this and
+ * nothing finer: they behave identically for an old image and for a member with
+ * no machine. Only `SessionRail`'s notice tells the two apart, because only the
+ * notice has anything different to say.
+ */
+export function lodySessionsUnavailable(capability: LodySessionsCapability): boolean {
+  return capability === "absent" || capability === "noMachine";
+}
 
 /**
  * A pre-Lody box answers 403 (dufs, reached by fall-through) or 404 (a gateway
@@ -52,6 +99,36 @@ function isStructuralAbsence(status: number): boolean {
   return status === 403 || status === 404;
 }
 
+/**
+ * The control plane's refusal for a caller who holds no machine here
+ * (`machineForRequest`, `packages/control-plane/core/workspaces.ts`). Matched as
+ * a PREFIX of `{ error }` so the advice half of that sentence can be reworded
+ * without breaking the reading; `lody-old-box-fallback.test.tsx` reads the
+ * control-plane source and fails if this string leaves it.
+ */
+export const NO_MACHINE_REFUSAL = "you have no machine in this workspace";
+
+/**
+ * The one 409 that is a fact rather than a phase.
+ *
+ * The other two that route produces — "your machine in this workspace is not
+ * running" and "workspace is not ready for webapp access" — are a box between
+ * states, and they resolve without anybody doing anything. This one resolves
+ * only when an admin provisions a machine, which is not something a poller can
+ * wait for.
+ *
+ * The body is the control plane's own envelope and nobody else's: the proxy
+ * refuses before it reaches the box, so a 409 here can only have been written by
+ * `core/app.ts`. A body that does not parse is read as transient, which is the
+ * safe direction — it costs four more probes, not a wrong verdict.
+ */
+export function readNoMachineRefusal(body: string): boolean {
+  const decoded = parseJson(body);
+  if (!isJsonObject(decoded)) return false;
+  const message = decoded.error;
+  return message !== undefined && isJsonString(message) && message.startsWith(NO_MACHINE_REFUSAL);
+}
+
 export function readLodyDoorStatus(status: number): LodyDoorReading {
   if (status >= 200 && status < 300) return "present";
   if (isStructuralAbsence(status)) return "absent";
@@ -64,12 +141,16 @@ export interface LodyDoorProbeOptions {
 }
 
 /**
- * Reads `/lody/platform` once, for its STATUS and nothing else.
+ * Reads `/lody/platform` once, for its STATUS — and, on a 409 alone, its body.
  *
  * Deliberately not `fetchLodyPlatformSnapshot`: that parser folds every non-ok
  * status into `null`, which is exactly the collapse this module exists to undo.
- * The body is not read at all — a 403 body is dufs's HTML, and sniffing it for
- * a reason would be a parser for a page nobody owns.
+ *
+ * THE BODY IS READ FOR ONE STATUS AND NO OTHER. A 403 body is dufs's HTML and a
+ * 503's belongs to the bridge; sniffing either would be a parser for a page
+ * nobody owns. A 409 on this path can only come from the control plane's proxy,
+ * whose envelope is ours, and it is the one status whose meaning the number does
+ * not carry.
  */
 export async function probeLodySessionsDoor(
   platformUrl: string,
@@ -80,6 +161,9 @@ export async function probeLodySessionsDoor(
   if (options?.signal !== undefined) request.signal = options.signal;
   try {
     const response = await fetchImpl(platformUrl, request);
+    if (response.status === 409) {
+      return readNoMachineRefusal(await response.text()) ? "noMachine" : "retry";
+    }
     return readLodyDoorStatus(response.status);
   } catch {
     // A network error is not an answer about the image. It is the tunnel, or a
@@ -125,14 +209,17 @@ export function useLodySessionsCapability(
     const attempt = async (index: number): Promise<void> => {
       const reading = await probeLodySessionsDoor(platformUrl, options);
       if (cancelled) return;
-      if (reading === "absent") {
-        // The one line this path is allowed to write. Not an error: a box on an
-        // older image is a fact about the fleet, and the rail says so in words
-        // a member can act on.
-        console.info("lody: this box serves no session daemon; using the legacy rail", {
-          platformUrl,
-        });
-        setCapability("absent");
+      if (reading === "absent" || reading === "noMachine") {
+        // The one line this path is allowed to write. Not an error: an older
+        // image and a member without a machine are both facts about the fleet,
+        // and the rail says which in words a member can act on.
+        console.info(
+          reading === "absent"
+            ? "lody: this box serves no session daemon; using the legacy rail"
+            : "lody: you hold no machine in this workspace; using the legacy rail",
+          { platformUrl },
+        );
+        setCapability(reading);
         return;
       }
       const delay = PROBE_RETRY_DELAYS_MS[index];

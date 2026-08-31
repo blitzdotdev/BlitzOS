@@ -43,6 +43,18 @@ export type SessionRailProps = {
    * a feature that does not work.
    */
   sessionsNeedNewerMachine?: boolean;
+  /**
+   * The build has sessions on, this member holds NO machine in this workspace,
+   * and so every call to the box is refused before it reaches one
+   * (`lody/box-capability.ts`; the control plane's 409 in `machineForRequest`).
+   *
+   * The same line as `sessionsNeedNewerMachine` in every respect but its words:
+   * the rail is already back to its flag-off shape, and what a member can act on
+   * here is a machine that does not exist rather than one that is too old. The
+   * two are mutually exclusive — one probe answers one thing — so the notice
+   * renders at most once.
+   */
+  sessionsNeedMachine?: boolean;
   onSelectSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
   onOpenPreview: (port: number) => void;
@@ -60,6 +72,14 @@ export type SessionRailProps = {
  * second one for the same act. */
 const RECREATE_TO_ENABLE_SESSIONS = "Recreate this workspace's machine to enable sessions";
 
+/** The same pair one step earlier: there is no machine to recreate. "Provision"
+ * is again the verb "My machine" carries (`MyMachineDialog.tsx` `ACTION_LABELS`),
+ * and provisioning where no machine row exists is workspace-admin work — which
+ * is why the member who cannot open that dialog is told whom to ask instead of
+ * being handed a button that would only show them the same sentence. */
+const PROVISION_TO_ENABLE_SESSIONS = "Open My machine to provision one";
+const ASK_ADMIN_FOR_A_MACHINE = "Ask a workspace admin to provision one for you";
+
 /** Column two of the shell (plans/mockups/session-rail.html `#rail`): the
  * workspace head, and below it either the vendored session sections or — with
  * Lody sessions off — the pinned New tab action and one row per managed tab.
@@ -73,6 +93,7 @@ export function SessionRail({
   previewLinks,
   onVendorHost,
   sessionsNeedNewerMachine,
+  sessionsNeedMachine,
   onSelectSession,
   onSpawnSession,
   onOpenPreview,
@@ -142,6 +163,21 @@ export function SessionRail({
             >{RECREATE_TO_ENABLE_SESSIONS}</button>
           ) : (
             <span className="rail-notice__d">{RECREATE_TO_ENABLE_SESSIONS}</span>
+          )}
+        </div>
+      )}
+
+      {sessionsNeedMachine === true && (
+        <div className="rail-notice" role="status">
+          <span className="rail-notice__t">You have no machine in this workspace</span>
+          {workspace.canControl ? (
+            <button
+              className="rail-notice__a"
+              type="button"
+              onClick={() => onOpenMachine(workspace.id)}
+            >{PROVISION_TO_ENABLE_SESSIONS}</button>
+          ) : (
+            <span className="rail-notice__d">{ASK_ADMIN_FOR_A_MACHINE}</span>
           )}
         </div>
       )}

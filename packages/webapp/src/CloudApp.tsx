@@ -1123,7 +1123,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // own mount condition, asked here rather than restated: the panes give up
   // their tab strips (§4.6) and every tab body to the strip, so a render where
   // the strip does not exist is a workspace with nothing in it. §4.6 named
-  // `available` for this and `available` is `capability !== 'absent'`, which
+  // `available` for this and `available` is "the probe has not ruled it out",
   // stays true while the probe is unsettled — for good on a workspace whose box
   // is not running. That is the blank the address change walked into.
   const surfaceTabsEnabled = lodyRail.available
@@ -1722,6 +1722,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         ? {}
         : { onVendorHost: lodyRail.onVendorHost })}
       sessionsNeedNewerMachine={lodySessions === 'absent'}
+      sessionsNeedMachine={lodySessions === 'noMachine'}
       onSelectWorkspace={selectWorkspace}
       onRenameWorkspace={renameWorkspace}
       onOpenWorkspaceSettings={(workspaceId) => {
