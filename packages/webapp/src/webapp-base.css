@@ -58,7 +58,7 @@ body {
 
 /*
  * OUR controls, and not the vendored Lody surface's
- * (plans/LODY-RUNTIME-DESIGN.md §17).
+ * (plans/LODY-RUNTIME-DESIGN.md §18).
  *
  * `font: inherit` is unlayered, so on a `<button>` inside the Lody surface or
  * the rail's vendored zone it beat every `text-sm` / `text-xs` / `font-medium`

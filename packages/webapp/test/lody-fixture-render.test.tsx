@@ -23,7 +23,7 @@
  *    that changed. Every selector the skin scopes to the vendored rail must
  *    MATCH SOMETHING here. A rule that matches nothing has silently stopped
  *    skinning.
- * The review page moved OUT of this file (§17). It used to be generated here as
+ * The review page moved OUT of this file (§18). It used to be generated here as
  * a self-contained HTML artefact, and because it carried its own stylesheet it
  * showed a composition the product could not produce. It is now
  * `surface-preview.html`, which loads only the product's own stylesheets, and

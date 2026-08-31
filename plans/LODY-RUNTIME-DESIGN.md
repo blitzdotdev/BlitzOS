@@ -2084,9 +2084,139 @@ hand-built jsdom instead, and why its docblock states plainly that it mounts no
 React.
 
 
+## 17. What the fourth canary dogfood found (2026-08-31)
+
+**One report: "the sessions feature does not work on my workspace."** Not a
+crash, not a wrong colour, not a refusal — nothing at all. The rail's session
+zone was empty, the panes were where they always were, and the only trace was a
+403 repeating in the console.
+
+The workspace's machine ran a **pre-Lody box image**, and every layer read that
+correctly except the one that had to act on it.
+
+### 17.1 The 403, and why nothing said so
+
+An old gateway has no `/lody/*` route. Its `serveMux` falls unknown paths
+through to dufs, and dufs answers **403** — not the 404 §13.2 of
+`plans/LODY-SESSIONS.md` predicted, which matters only because a reader looking
+for 404 in a log finds nothing.
+
+The collapse is one line, and it is in a parser that is right about its own job:
+
+```ts
+// platform-snapshot.ts
+if (!response.ok) return null;
+```
+
+`null` means "not ready yet", and it is the correct reading of the 503 the
+bridge serves while the daemon provisions its implicit workspace. It is the
+WRONG reading of a 403, and the difference never reached a caller. So:
+
+| What the member saw | Why |
+|---|---|
+| an empty vendored zone in the rail | `SessionSurface` mounts the sidebar portal INSIDE its own gated branch; `snapshot === null` means the branch never renders |
+| no explanation anywhere | the notice at `SessionSurface.tsx:455` is gated on `error !== null`, and `error` is set only by a MALFORMED catalog. A 403 sets neither |
+| a 403 every 500 ms, forever | `useLodyPlatformSnapshot` polls at `SNAPSHOT_POLL_INTERVAL_MS` and settles only on a parsed snapshot or a parse error |
+| no terminal either | §0.4: the build has sessions on, so `defaultWorkspaceTabs()` gave this fresh workspace NO tabs, and `useLodyRail` sent it to a chat landing the box cannot serve |
+
+Four symptoms, one cause, and the fourth is the one that made it look like a
+broken product rather than a missing feature.
+
+### 17.2 Why the answer is a probe and not a fourth capability cutoff
+
+§13.2 left "this image runs the Lody daemon" as the capability nobody had
+added. Adding it would not have worked. All three existing cutoffs
+(`webAppTicketsSinceMs`, `webAppViewerGuardsSinceMs`,
+`webAppSharedSessionsSinceMs`) answer **when was this VM created**, and that is
+a proxy for the image only as long as nothing replaces the image under a VM.
+A machine RECREATE does exactly that, at any moment, and the control plane
+records nothing about the image the new VM came up on. A cutoff would be stale
+in both directions on the same fleet.
+
+The box already knows the answer and will say so in one round trip. So the
+browser asks it: **`GET /lody/platform`, read for its STATUS and nothing else**
+(`packages/webapp/src/lody/box-capability.ts`). Three readings:
+
+| Reading | From | What it means | What happens |
+|---|---|---|---|
+| `present` | 2xx | the door answered | the surface mounts; its own poller handles a cold daemon |
+| `absent` | 403, 404 | STRUCTURAL — this image has no session daemon | one probe, no retry; the workspace degrades |
+| `retry` | everything else, and a thrown fetch | TRANSIENT — a booting box, a tunnel blip, a bridge 503 | four bounded retries (500 ms, 1 s, 2 s, 4 s), then `present` |
+
+**The budget ends on `present`, deliberately.** Mounting the surface against a
+slow box costs a spinner it already knows how to draw; stranding a healthy box
+on the legacy rail costs the feature. The optimistic ending is the safe one, so
+the budget's length only decides how long the rail waits, never what it
+concludes.
+
+**The answer is not memoised across boxes.** It lives in the effect that read
+it, keyed by the platform URL. A member who acts on the notice below — recreates
+the machine — passes through "no running box", the URL goes `null`, and the new
+box is asked again with no reload. A page-lifetime cache would have to be
+invalidated by hand at exactly that moment, and would be stale precisely when it
+mattered.
+
+### 17.3 What `absent` renders
+
+The full flag-off experience, in four places that each had to be told:
+
+1. **The rail's shape.** `useLodyRail` withholds `onVendorHost`, which is the
+   same signal `VITE_BLITZ_LODY_SESSIONS=false` produces, so `SessionRail` draws
+   the New tab bar and one native row per managed tab — its non-vendored branch,
+   unchanged and already tested by `test/session-rail.test.tsx`.
+2. **The chunk.** `LodySessionsRegion` requires `present` before `lazy()`, so a
+   box that cannot use a byte of the 3.5 MB renderer never fetches it. `probing`
+   is gated the same way and costs one round trip, which is far less than the
+   fetch it holds back. The vendored ZONE is kept while probing, so a good box
+   does not flicker from legacy to vendored on the way to mounting.
+3. **The fresh-workspace default (§0.4's other half).** A fresh workspace held
+   no tabs because the BUILD has sessions on. The BOX does not, so
+   `useLodyRail` seeds `terminalFirstWorkspaceTabs()` — the flag-off tab set,
+   split out of `defaultWorkspaceTabs` for this — instead of moving the address
+   to a landing that cannot exist. The decision is still taken once per
+   workspace id, and it now waits for the probe, because it is not reversible.
+4. **One quiet line.** `.rail-notice` in `strip-rail.css`, above the New tab bar:
+   "Sessions need a newer machine", and under it "Recreate this workspace's
+   machine to enable sessions", wired to `onOpenMachine` — the button the rail
+   head already carries, which opens the "My machine" dialog where `Recreate`
+   is. **"Recreate" and not "recycle"**, because that is the word on the button
+   a member will press. A member without `canControl` has no such dialog, so
+   they get the same sentence as text.
+
+Nothing on this path writes to `console.error`. The structural reading writes
+one `console.info`, once, and that is the whole of it.
+
+**The probe is about the member's OWN box, and the shared surface follows it.**
+`LodySessionsRegion` mounts one surface at a time — its own or an owner's
+(§6.3 of `plans/LODY-SHARING.md`) — and `absent` withholds both. That is not a
+narrowing: "Shared with you" is drawn by `SessionRailSidebar`, which is
+portalled INSIDE the surface, so a member whose own box has no daemon could
+never see or click a shared row anyway. The behaviour is what it was; what
+changed is that it now says so. The grant-side read is separately safe already:
+`useSharedSessions` fetches each owner's `/lody/platform` once per revision and
+keeps the row on any failure.
+
+### 17.4 Why no test caught it
+
+Every Lody suite in the tree drives a box that HAS the daemon: the daemon-backed
+suites start a real `lody@0.88.1` and skip without the bundle, and the
+daemon-free suites (`lody-rail-interactions`, `lody-rail-defaults`,
+`lody-shared-rail`) mock `SessionSurface` and therefore never exercise the
+platform door at all. There was no case anywhere for "the box answers a status
+the parser folds away", which is §12.4 and §15.3's finding said a third time:
+the paths that reach a member first are the ones no harness stands on.
+
+`test/lody-old-box-fallback.test.tsx` is that case, daemon-free on purpose. It
+pins the status table, the single probe, the bounded retry, the chunk that is
+not imported, the tabs that are seeded instead of a landing, and the notice with
+its wire — and one case asserts the `present` path is unchanged, which is the
+property the daemon suites would otherwise be alone in defending.
+
 ---
 
-## 17. The approved picture the product could not produce (2026-08-31)
+---
+
+## 18. The approved picture the product could not produce (2026-08-31)
 
 §14 shipped the theme, §16 made it apply unconditionally, and on a fresh box the
 surface then painted the Blitz palette — pixel-verified, `#16181d` everywhere,
@@ -2097,7 +2227,7 @@ session" slab, generic composer chrome.
 Both halves of that were the same mistake, made twice: **the harness rendered
 the surface somewhere the product never renders it.**
 
-### 17.1 The preview was styled by files the product does not load
+### 18.1 The preview was styled by files the product does not load
 
 `theme-review.css` gave the page its shell grid, the rule under the tab strip
 and the composer band; the generator inlined four of the sixteen stylesheets
@@ -2115,7 +2245,7 @@ behind, and renders only class names the product renders —
 they are exactly the properties that decay the moment somebody needs "just one
 rule" to make a page sit right.
 
-### 17.2 `.drive-shell` is an ancestor of the surface, and the compensation forgot
+### 18.2 `.drive-shell` is an ancestor of the surface, and the compensation forgot
 
 `lody-compensation.css` gives NATIVE elements their user-agent defaults back
 after Tailwind's preflight, scoped to `.drive-shell` and `.webapp-shell`. Its
@@ -2149,7 +2279,7 @@ border at 16px — Chrome's default textarea — and every button in the surface
 the rail was a grey UA slab. That is the "floating grey New session slab" and the
 "generic composer chrome", exactly.
 
-### 17.3 And `webapp-base.css` reached in too
+### 18.3 And `webapp-base.css` reached in too
 
 `button, input, select { font: inherit }` (`webapp-base.css:59`) is unlayered, so
 inside the surface it beat every `text-sm` in `@layer lody`. The sidebar's "New
@@ -2157,7 +2287,7 @@ session" label painted 16px/normal where Lody asks for 14px/20px, and every
 control label in the surface sat at body size. `a { color: --accent }` had the
 same reach.
 
-### 17.4 The fix, and why `:where()`
+### 18.4 The fix, and why `:where()`
 
 Both files now carry
 `:where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *))`
@@ -2179,7 +2309,7 @@ was Lody's slate `#f1f5f9` rather than our `--ink`, its zero-width borders were
 Lody's `--border` rather than `--rule`, it was 34px shorter because of its
 legend bar, and its surface carried a `review-surface` class that does not exist.
 
-### 17.5 The method, and what it cost to not use it
+### 18.5 The method, and what it cost to not use it
 
 A real browser answered in one call what three rounds of source reading and
 jsdom had not: `dockerd` runs on this box, `chromedp/headless-shell` is a 300 MB
@@ -2187,3 +2317,4 @@ image, and playwright-core drives it over CDP. `getComputedStyle` and
 `CSS.getMatchedStylesForNode` are the two facts that matter, and neither exists
 in jsdom — which is why every harness in this repo agreed with itself and with
 nothing a member ever saw.
+

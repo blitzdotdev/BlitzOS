@@ -21,6 +21,7 @@ import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import type { SessionShareLevel } from "@blitzos/schema";
 import type { BoxEndpoints } from "../resolver.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
+import type { LodySessionsCapability } from "./box-capability.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 import type { LodyRailBinding, LodySessionSurfaceApi } from "./SessionSurface.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
@@ -31,6 +32,14 @@ export interface LodySessionsRegionProps {
   /** `null` until the box is running — the surface must not dial a box that
    * has no daemon yet, and every URL it needs comes from here. */
   endpoints: BoxEndpoints | null;
+  /**
+   * Whether that box serves a session daemon at all (`box-capability.ts`).
+   *
+   * Required rather than defaulted, because it decides whether 3.5 MB is
+   * fetched: a default would make forgetting it invisible, which is the exact
+   * failure mode this file's whole existence is about.
+   */
+  sessions: LodySessionsCapability;
   viewerName: string;
   viewerAvatarUrl: string | null;
   workspaceTitle: string;
@@ -114,7 +123,16 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   }, [wanted]);
 
   const { endpoints } = props;
-  if (!LODY_SESSIONS_ENABLED || endpoints === null || !everRequested) return null;
+  // THE PROBE COMES BEFORE THE IMPORT (plans/LODY-RUNTIME-DESIGN.md §17). A box
+  // on a pre-Lody image cannot use a byte of the chunk, and `probing` is one
+  // round trip — far shorter than the fetch it gates — so neither `absent` nor
+  // `probing` may reach `lazy()`.
+  if (
+    !LODY_SESSIONS_ENABLED
+    || endpoints === null
+    || props.sessions !== "present"
+    || !everRequested
+  ) return null;
 
   const viewer = { name: props.viewerName, avatarUrl: props.viewerAvatarUrl };
   // EXACTLY ONE SURFACE IS MOUNTED, and this is the constraint that decides it:

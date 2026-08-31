@@ -27,7 +27,7 @@
  * reach the surface either.
  *
  * AND `.drive-shell` IS SUCH AN ANCESTOR TOO — the bug this file shipped with
- * (plans/LODY-RUNTIME-DESIGN.md §17). The paragraph above got the hazard right
+ * (plans/LODY-RUNTIME-DESIGN.md §18). The paragraph above got the hazard right
  * and the selector wrong: in the product the surface is
  * `main.drive-shell > .drive-ws-frame > section.webapp-workspace-view >
  * div.lody-surface` (`CloudApp.tsx:1582`), and the rail's vendored zone is

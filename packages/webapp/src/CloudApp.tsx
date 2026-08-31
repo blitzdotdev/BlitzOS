@@ -45,7 +45,8 @@ import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
 import { LodySessionsRegion } from './lody/LodySessionsRegion';
-import { useLodyRail } from './lody/use-lody-rail';
+import { useLodyRail, type LodyRailSessions } from './lody/use-lody-rail';
+import { useLodySessionsCapability } from './lody/box-capability';
 import { useSharedSessions } from './lody/use-shared-sessions';
 import type { LodySessionSurfaceApi } from './lody/SessionSurface';
 import {
@@ -61,6 +62,7 @@ import {
   defaultWorkspaceFiles,
   isManagedWorkspaceTab,
   tabRegion,
+  terminalFirstWorkspaceTabs,
   withPreviewTabPath,
   type StorageNamespace,
   type WorkspaceDrawerSegment,
@@ -938,15 +940,33 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
   }, [activeWorkspaceId, mainActiveId, sideActiveId]);
   const tabsLoaded = activeWorkspaceTabs !== null;
+  // Does this workspace's own MACHINE serve sessions? The build flag cannot
+  // answer that — a box on a pre-Lody image has no `/lody/*` door at all — so
+  // the browser asks it once, before anything commits to the session plane
+  // (plans/LODY-RUNTIME-DESIGN.md §17).
+  const lodySessions = useLodySessionsCapability(
+    activeWorkspaceRunning ? activeIngressEntry?.lodyPlatformUrl ?? null : null,
+  );
+  const lodyRailSessions = useMemo<LodyRailSessions>(() => ({
+    capability: lodySessions,
+    // The fresh workspace held no tabs because the BUILD has sessions on. The
+    // box does not, so it gets the flag-off tab set instead of a chat landing
+    // that cannot exist.
+    onLegacyDefaultTabs: () => {
+      updateWorkspaceTabs((tabs) => tabs.tabs.length === 0 ? terminalFirstWorkspaceTabs() : tabs);
+    },
+  }), [lodySessions, updateWorkspaceTabs]);
   // Lody sessions (plans/LODY-SESSIONS.md §8). The hook owns the rail's portal
-  // host, the chat address and the fresh-workspace default; with the flag off
-  // every field is inert and the rail keeps its native list.
+  // host, the chat address and the fresh-workspace default; with the flag off,
+  // or against a box that serves no daemon, every field is inert and the rail
+  // keeps its native list.
   const lodyRail = useLodyRail(
     route,
     setRoute,
     activeWorkspaceId,
     tabsLoaded,
     activeWorkspaceTabs?.tabs.length ?? 0,
+    lodyRailSessions,
   );
   const [lodyApi, setLodyApi] = useState<LodySessionSurfaceApi | null>(null);
   // Which session the share dialog is open on. One piece of state, because the
@@ -1437,6 +1457,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       {...(lodyRail.onVendorHost === undefined
         ? {}
         : { onVendorHost: lodyRail.onVendorHost })}
+      sessionsNeedNewerMachine={lodySessions === 'absent'}
       onSelectWorkspace={selectWorkspace}
       onRenameWorkspace={renameWorkspace}
       onOpenWorkspaceSettings={(workspaceId) => {
@@ -1631,6 +1652,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 switch. */}
             <LodySessionsRegion
               endpoints={activeWorkspaceRunning ? activeIngressEntry : null}
+              sessions={lodySessions}
               viewerName={store.viewer?.identity.name ?? 'You'}
               viewerAvatarUrl={store.viewer?.identity.avatarUrl ?? null}
               workspaceTitle={activeWorkspace?.title ?? 'Workspace'}

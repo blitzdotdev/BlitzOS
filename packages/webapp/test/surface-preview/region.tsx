@@ -17,6 +17,15 @@
  * absolutely-positioned `.lody-surface` over `.webapp-workspace-view` — the
  * same two mounts, sharing one provider stack, that
  * `plans/LODY-SESSIONS.md` §0.3 describes.
+ *
+ * WHAT IT DELIBERATELY DOES NOT MIRROR: the capability probe. §17 put a
+ * `sessions !== "present"` gate in front of the lazy import, so a box on a
+ * pre-Lody image never fetches the chunk and `SessionRail` withholds the
+ * vendored host entirely (`box-capability.ts`, `use-lody-rail.ts`). There is no
+ * box behind this page, so there is nothing to probe and the gate has no
+ * meaning here — the preview mounts as though the capability were `present`,
+ * which is the only state that has a surface to look at. The LAZY BOUNDARY is
+ * mirrored, because that is the part the cascade depends on.
  */
 import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";

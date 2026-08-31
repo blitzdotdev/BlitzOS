@@ -33,6 +33,16 @@ export type SessionRailProps = {
    * is exactly what it was: New tab, then one row per managed tab.
    */
   onVendorHost?: (node: HTMLDivElement | null) => void;
+  /**
+   * The build has sessions on and this workspace's MACHINE does not serve them
+   * (`lody/box-capability.ts`, plans/LODY-RUNTIME-DESIGN.md §17).
+   *
+   * The rail is already back to its flag-off shape by then, because
+   * `onVendorHost` is absent for the same reason. This is the one line that
+   * says why, so the gap reads as a machine that needs replacing rather than as
+   * a feature that does not work.
+   */
+  sessionsNeedNewerMachine?: boolean;
   onSelectSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
   onOpenPreview: (port: number) => void;
@@ -44,6 +54,11 @@ export type SessionRailProps = {
   /** The member's own machine in this workspace (§2.1). */
   onOpenMachine: (workspaceId: string) => void;
 };
+
+/** "Recreate" is the verb the "My machine" dialog's own button carries
+ * (`MyMachineDialog.tsx` `ACTION_LABELS`), so the rail uses that word and not a
+ * second one for the same act. */
+const RECREATE_TO_ENABLE_SESSIONS = "Recreate this workspace's machine to enable sessions";
 
 /** Column two of the shell (plans/mockups/session-rail.html `#rail`): the
  * workspace head, and below it either the vendored session sections or — with
@@ -57,6 +72,7 @@ export function SessionRail({
   livePorts,
   previewLinks,
   onVendorHost,
+  sessionsNeedNewerMachine,
   onSelectSession,
   onSpawnSession,
   onOpenPreview,
@@ -110,6 +126,25 @@ export function SessionRail({
           ><span className="codicon codicon-ellipsis" aria-hidden="true" /></button>
         )}
       </div>
+
+      {sessionsNeedNewerMachine === true && (
+        <div className="rail-notice" role="status">
+          <span className="rail-notice__t">Sessions need a newer machine</span>
+          {/* The action is a wire the rail already holds: `onOpenMachine` opens
+            * "My machine", where Recreate is. A member without `canControl` has
+            * no such button in the head above and no dialog to open, so they
+            * get the same sentence as text. */}
+          {workspace.canControl ? (
+            <button
+              className="rail-notice__a"
+              type="button"
+              onClick={() => onOpenMachine(workspace.id)}
+            >{RECREATE_TO_ENABLE_SESSIONS}</button>
+          ) : (
+            <span className="rail-notice__d">{RECREATE_TO_ENABLE_SESSIONS}</span>
+          )}
+        </div>
+      )}
 
       {!vendored && (
         <NewTabControl

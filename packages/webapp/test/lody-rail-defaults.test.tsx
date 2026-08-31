@@ -13,7 +13,7 @@
 import { act, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppRoute } from "../src/sessions-page-state.js";
-import type { LodyRailState } from "../src/lody/use-lody-rail.js";
+import type { LodyRailSessions, LodyRailState } from "../src/lody/use-lody-rail.js";
 import { render, settle } from "./dom.js";
 
 afterEach(() => {
@@ -27,6 +27,13 @@ async function loadStorage(flag: boolean) {
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", flag ? "true" : "false");
   return await import("../src/storage.js");
 }
+
+/** The box answered `/lody/platform`, which is every case below: what is under
+ * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`). */
+const SESSIONS_PRESENT = {
+  capability: "present",
+  onLegacyDefaultTabs: () => {},
+} satisfies LodyRailSessions;
 
 /** Mounts the hook with a route it also owns, the way `CloudApp` does. */
 async function mountRail(options: {
@@ -50,6 +57,7 @@ async function mountRail(options: {
       route.workspaceId ?? "",
       options.tabsLoaded ?? true,
       options.tabCount,
+      SESSIONS_PRESENT,
     );
     seen.rail = rail;
     seen.route = route;

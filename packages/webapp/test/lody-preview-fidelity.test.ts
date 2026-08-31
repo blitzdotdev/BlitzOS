@@ -1,5 +1,5 @@
 /**
- * The preview cannot lie again (plans/LODY-RUNTIME-DESIGN.md §17).
+ * The preview cannot lie again (plans/LODY-RUNTIME-DESIGN.md §18).
  *
  * WHAT WENT WRONG. The reskin was approved against a page that carried its own
  * stylesheet — a shell grid, a rule under the tab strip, a composer band — and
@@ -14,7 +14,7 @@
  * holds that property, because it is the sort of property that decays the
  * moment somebody needs "just one rule" to make the page sit right.
  *
- * The second half pins the two exclusions §17 added. Both are the same shape —
+ * The second half pins the two exclusions §18 added. Both are the same shape —
  * a product rule that reaches into Lody's mounts and must not — and both are
  * invisible in any harness that does not render the surface inside
  * `.drive-shell`, which is every harness this repo had.
@@ -120,7 +120,7 @@ function selectorsIn(css: string): string[] {
   return selectors;
 }
 
-/** The exclusion §17 added, verbatim. */
+/** The exclusion §18 added, verbatim. */
 const EXCLUSION =
   ":where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *))";
 
