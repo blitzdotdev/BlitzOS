@@ -175,7 +175,7 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     expect(readme, "the baselines name the commit they were taken from").toContain(pin ?? "");
   });
 
-  it("declares the same five props on both sides of the seam", () => {
+  it("declares the same six props on both sides of the seam", () => {
     const detail = readFileSync(join(vendorDir, "session-detail.tsx"), "utf8");
     for (const prop of [
       "surfaceTabs?: readonly SessionSurfaceTab[];",
@@ -183,6 +183,9 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       "onSurfaceTabSelect?: (tabId: string) => void;",
       "onSurfaceTabClose?: (tabId: string) => void;",
       "onSessionTabSelect?: (tabId: string) => void;",
+      // Hunk 19, added in wave 3: the page returns above the strip when the
+      // session does not exist, and the host loses every tab with it.
+      "onSessionMissing?: (sessionId: string) => void;",
     ]) {
       expect(detail, `seam patch 5 declares ${prop}`).toContain(prop);
     }
@@ -316,6 +319,7 @@ function binding(overrides: Partial<SurfaceTabsBinding> = {}): SurfaceTabsBindin
     onSelect: () => undefined,
     onClose: () => undefined,
     onDeselect: () => undefined,
+    onSessionMissing: () => undefined,
     ...overrides,
   };
 }
