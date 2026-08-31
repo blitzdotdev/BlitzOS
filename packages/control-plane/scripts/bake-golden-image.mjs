@@ -122,6 +122,13 @@ install -d -m 0755 /etc/ssh/sshd_config.d
 cat >/etc/ssh/sshd_config.d/00-blitz.conf <<'SSHD_CONFIG'
 Port 2222
 SSHD_CONFIG
+# sshd -t refuses to run without its privilege separation directory, and /run
+# is a tmpfs that only ssh.service populates -- which socket activation has not
+# started yet at this point in first boot. Without this line the test exits 255
+# on "Missing privilege separation directory: /run/sshd", the ERR trap fires,
+# and the builder powers off HERE: after the expensive image pull and before
+# every line below. That is what produced the first two golden snapshots.
+install -d -m 0755 /run/sshd
 /usr/sbin/sshd -t
 systemctl disable ssh.socket 2>/dev/null || true
 systemctl mask ssh.socket
@@ -140,7 +147,13 @@ done
 # host cannot be debugged. Lock the password instead: no password login, no
 # expiry, keys still work.
 usermod -p '*' root
-chage -I -1 -m 0 -M 99999 -E -1 root
+# -d is the one that matters and the one that was missing. The other flags
+# clear the inactivity, min, max and account-expiry fields; none of them touch
+# sp_lstchg, and Hetzner's image ships it as 0. A 0 there does not mean "old",
+# it means "must be changed at next login", so PAM refuses a key login with
+# "Your password has expired" no matter how open the rest of the aging fields
+# are. Stamping today's date is what actually lets a golden box be debugged.
+chage -d "$(date +%F)" -I -1 -m 0 -M 99999 -E -1 root
 # Undoing the expiry once is not enough: cloud-init runs again on every clone
 # and re-expires root, because the Ubuntu cloud image defaults to
 # a chpasswd expire default. Turning that default off is what survives.
@@ -307,6 +320,43 @@ async function verifySnapshot(token, imageId, location, serverType, deadline) {
   }
 }
 
+/**
+ * The builder script is a template literal, so an unescaped backtick anywhere
+ * inside it silently ends the string early and the rest parses as JavaScript
+ * that is never evaluated. That is not a syntax error and not a runtime error:
+ * `node --check` passes, the function returns, and the builder simply receives
+ * a shorter script than the file appears to contain.
+ *
+ * It happened, and it cost two unusable snapshots. A comment reading
+ * "`|| true` throughout" cut the script off just before lever 2, taking the
+ * root-password fix, the identity stripping, the marker and the final
+ * `shutdown -h now` with it. The bake only ever finished because a separate
+ * failure tripped the ERR trap, whose handler powers the machine off.
+ *
+ * So assert the two ends of the script are present before spending a VM on it.
+ */
+function assertWholeScript(userData) {
+  const required = [
+    ["the box image setup", "bake: box image present as"],
+    ["lever 2", "unattended-upgrades.service"],
+    ["the root-password fix", "chage -d"],
+    ["the identity strip", "truncate -s 0 /etc/machine-id"],
+    ["the golden marker", "/etc/blitz-golden-image"],
+  ];
+  const missing = required.filter(([, needle]) => !userData.includes(needle));
+  if (missing.length > 0) {
+    throw new Error(
+      `builder script is truncated -- missing ${missing.map(([name]) => name).join(", ")}. `
+      + "An unescaped backtick inside the template literal ends it early.",
+    );
+  }
+  // Without this line the builder cannot stop itself, and the bake waits out
+  // its whole timeout for a shutdown that was never in the script.
+  if (!userData.trimEnd().endsWith("shutdown -h now")) {
+    throw new Error("builder script does not end in `shutdown -h now`");
+  }
+}
+
 async function main() {
   const token = requireEnv("HETZNER_API_TOKEN");
   const image = {
@@ -318,6 +368,9 @@ async function main() {
   const serverType = argument("server-type", "cx23");
   const deadline = Date.now() + BUILD_TIMEOUT_MS;
 
+  const userData = builderUserData(image);
+  assertWholeScript(userData);
+
   console.log(`bake: builder ${serverType}@${location} for ${image.boxImageRef}`);
   const created = await hetzner(token, "/servers", {
     method: "POST",
@@ -326,7 +379,7 @@ async function main() {
       server_type: serverType,
       image: "ubuntu-24.04",
       location,
-      user_data: builderUserData(image),
+      user_data: userData,
       labels: { "blitz-purpose": "golden-builder" },
     }),
   });
