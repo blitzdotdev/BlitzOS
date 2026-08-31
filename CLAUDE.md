@@ -101,6 +101,26 @@ Legacy phone-home shapes are accepted ONLY inside
 `adaptLegacyPhoneHomeRequestForInFlightImages` in `core/workspaces.ts`.
 Do not add aliases anywhere else.
 
+## Vendored Lody: rules and upstream merges
+
+`vendor/lody` is a squashed git subtree of https://github.com/LodyAI/Lody
+(Apache-2.0). The box does NOT build it — it installs the prebuilt npm `lody`
+daemon (`packages/box/Dockerfile`). The subtree commit and the npm version are
+one verified pair, both pinned in `vendor/lody/UPSTREAM.md`: bump them together.
+
+- Integration code never goes inside `vendor/lody`; it lives in
+  `packages/webapp/src/lody/`.
+- The ONLY allowed in-vendor edits are the seam patches declared in
+  `vendor/lody/BLITZ-PATCHES.md`, each with an upstream-PR sketch. Declare a new
+  vendor edit there first, or do not make it.
+- The daemon patches in `packages/box/patches/` (`lody-local-platform.mjs`,
+  cloud→local platform; `lody-acp-auth-queue.mjs`, the ACP-auth queue chain) are
+  guarded against the published bundle (sha256; version + anchor count) and must
+  be re-verified on every daemon bump.
+- Upstream merges follow the runbook `docs/LODY-MERGE.md`. Where Lody upstream
+  and BlitzOS disagree, copy Lody's behavior rather than reconcile the two
+  (`plans/LODY-SESSIONS.md` §0 bias rule).
+
 ## Member machines: what a workspace is now
 
 `plans/MEMBER-MACHINES.md` landed in migrations 0041-0044. Two invariants an
