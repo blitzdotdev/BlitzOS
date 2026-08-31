@@ -30,7 +30,9 @@ import { WebSocket as NodeWebSocket } from "ws";
 import type { LodySessionSurfaceApi, LodySessionSurfaceProps } from "../src/lody/SessionSurface";
 import { fetchLodyPlatformSnapshot } from "../src/lody/platform-snapshot";
 import { installLodyDomStubs } from "./lody-dom-stubs";
+import { hexColorToHslChannel } from "@lody/components/lib/vscode-theme";
 import { render, settle } from "./dom";
+import { readBlitzPalette } from "../src/lody/blitz-palette";
 import {
   claudeCredentialAvailable,
   lodyDaemonAvailable,
@@ -155,6 +157,27 @@ describe.skipIf(!lodyDaemonAvailable())("phase 3: the mounted Lody session surfa
     expect(consoleErrors.filter((line) => /must be used within|is not available/u.test(line))).toEqual([]);
     expect(api?.unsupportedIpcChannels()).toEqual([]);
   }, 90_000);
+
+  it("wears the Blitz palette, applied to the html element", () => {
+    // The reskin's end of the chain, on the REAL surface: `SessionSurface` ->
+    // `LodySurfaceProviders` -> `BlitzThemedLodyTree` -> their `ThemeProvider`,
+    // and then `ShellThemeBridge` re-asserting over whatever they applied
+    // (plans/LODY-RUNTIME-DESIGN.md §16). Every other theme test mounts a
+    // smaller tree than this one; this is the only place the whole provider
+    // stack is real.
+    //
+    // Inline style, not `getComputedStyle`: jsdom does not cascade custom
+    // properties, and both appliers write inline anyway.
+    const palette = readBlitzPalette(null, "dark");
+    const root = document.documentElement;
+    expect(root.style.getPropertyValue("--vscode-editor-background")).toBe(
+      palette.paper.toUpperCase(),
+    );
+    expect(root.style.getPropertyValue("--primary")).toBe(hexColorToHslChannel(palette.accent));
+    // Vesper's accent, which drew the warm hairline at the pane's top edge.
+    expect(root.style.getPropertyValue("--primary")).not.toBe(hexColorToHslChannel("#FFC799"));
+    expect(document.getElementById("blitz-lody-theme")).not.toBeNull();
+  }, 20_000);
 
   it("arms the composer once a prompt is typed", async () => {
     const composer = mounted.container.querySelector("textarea");

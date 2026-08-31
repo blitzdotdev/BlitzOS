@@ -426,13 +426,87 @@ export function installBlitzVSCodeThemes(
       files,
     },
   ]);
-  return isBlitzThemeInstalled();
+  if (isBlitzThemeInstalled()) return true;
+  // LOUD, because every way this can fail is silent. `resolveBundledThemeDescriptorSync`
+  // returns a CACHED entry rather than replacing it, so anything that resolved
+  // one of these two ids first wins and says nothing; and
+  // `resolveBundledVSCodeThemesFromExtensions` swallows a malformed theme into
+  // a `console.warn` and carries on with the stock one. Either way the surface
+  // silently keeps Lody's palette, which is exactly how the reskin reached
+  // canary looking unchanged. The surface no longer DEPENDS on this — see
+  // `applyBlitzThemeToRoot` — but a failure here still costs the terminal
+  // palette and the diff viewer's syntax theme, so it must be visible.
+  console.error(
+    "[blitz-theme] the Blitz VS Code themes did not take in the bundled registry;",
+    "the surface falls back to the overlay and their terminal/diff themes stay Lody's.",
+    {
+      registry: Object.fromEntries(
+        (["dark", "light"] as const).map((mode) => [
+          BLITZ_THEME_IDS[mode],
+          registeredThemeLabel(mode) ?? null,
+        ]),
+      ),
+      expected: BLITZ_THEME_LABELS,
+    },
+  );
+  return false;
+}
+
+/**
+ * Applies the Blitz theme's variables to the html element, whatever the
+ * registry did.
+ *
+ * WHY THIS EXISTS AT ALL. `LodyThemeProvider` looks its theme up by id in a
+ * cache that never replaces an entry (`bundled-vscode-themes.ts:516`), so the
+ * whole reskin used to rest on `installBlitzVSCodeThemes` running before the
+ * first lookup. That is a RACE, not a guarantee: it holds for the mount order
+ * this tree happens to have today, and nothing upstream promises to keep it —
+ * a second surface mount, a component that reads `useActiveVSCodeTheme` from
+ * above the provider, or an upstream eager resolve would each flip it, silently
+ * and product-wide.
+ *
+ * So the surface stops depending on the race. This writes the same compiled
+ * variables the registry seed would have produced, from a `useEffect` in
+ * `ShellThemeBridge` — a PASSIVE effect, which React runs after every layout
+ * effect in the commit, `LodyThemeProvider`'s included. Whatever they applied,
+ * ours is what stands.
+ *
+ * `mode` is THEIR resolved theme, not the shell's: the two agree because
+ * `adoptShellTheme` seeds it and the bridge keeps it in step, and reading it
+ * from their side means we overwrite exactly the application they just made.
+ */
+export function applyBlitzThemeToRoot(mode: BlitzThemeMode): () => void {
+  const root = document.documentElement;
+  const palette = readBlitzPalette(root, mode);
+  return applyVSCodeThemeCssVariables(root, createBlitzVSCodeTheme(mode, palette)).dispose;
+}
+
+/**
+ * The label the bundled registry currently holds for one of the two fixed ids.
+ *
+ * SAFETY: their `LodyResolvedVSCodeTheme` declares `label` as a required string
+ * (`vscode-theme-schemas.ts:59`) and `getBundledVSCodeThemeByIdSync` returns it
+ * or `undefined`; the vendor type seam erases every `@lody/*` export to `any`
+ * (`vendor-modules.d.ts`), so the one field this file reads is restated here
+ * rather than borrowed. Nothing else is read, and a wrong guess could only
+ * yield `undefined` — which reports as "not installed" and is louder, never a
+ * wrong theme.
+ */
+function registeredThemeLabel(mode: BlitzThemeMode): string | undefined {
+  // SAFETY: their schema declares `label` as a required string on a resolved
+  // theme (`vscode-theme-schemas.ts:59`), and this getter returns a resolved
+  // theme or `undefined`. The narrowing is weaker than the truth, and the only
+  // field read is the one being narrowed to.
+  const theme = getBundledVSCodeThemeByIdSync(BLITZ_THEME_IDS[mode]) as
+    | { label?: string }
+    | undefined;
+  return theme?.label;
 }
 
 /** Whether the registry answers with Blitz for both fixed ids. */
 export function isBlitzThemeInstalled(): boolean {
   return (["dark", "light"] as const).every(
-    (mode) => getBundledVSCodeThemeByIdSync(BLITZ_THEME_IDS[mode])?.label === BLITZ_THEME_LABELS[mode],
+    (mode) => registeredThemeLabel(mode) === BLITZ_THEME_LABELS[mode],
   );
 }
 
@@ -503,10 +577,11 @@ export function installBlitzLodyTheme(mode: BlitzThemeMode): void {
 }
 
 /**
- * Applies a Blitz theme's variables to one element with the vendored applier.
+ * `applyBlitzThemeToRoot`, aimed at any element.
  *
- * Only the review harness uses it: the app relies on `LodyThemeProvider` calling
- * the same function on `<html>`, and on the generated sheet for everything else.
+ * The review harness uses it to theme a detached surface, and the tests use it
+ * to read the applied palette back off an element's inline style — the one
+ * place a value can be measured without a cascade.
  */
 export function applyBlitzThemeTo(element: HTMLElement, mode: BlitzThemeMode): () => void {
   const palette = readBlitzPalette(element.ownerDocument.documentElement, mode);
