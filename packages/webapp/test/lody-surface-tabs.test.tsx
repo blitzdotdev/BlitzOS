@@ -7,12 +7,21 @@
  * 1. THE PATCH IS INERT. The whole claim that makes this seam safe to carry —
  *    and safe to upstream — is that with every new prop absent the two vendored
  *    files render byte-for-byte what upstream renders. That is checked against
- *    the real upstream source: the pinned commit is a real object in this
- *    repository (`vendor/lody/UPSTREAM.md`), so `git show` hands back the
- *    unpatched file and the diff is compared to the anchor table in
- *    `vendor/lody/BLITZ-PATCHES.md`. Every line the patch REMOVES from upstream
- *    is enumerated here; a merge that drops a hunk, or an edit that touches the
- *    vendored file anywhere undeclared, fails on the line it changed.
+ *    the real upstream source, committed beside this file as
+ *    `upstream-baseline/` (see the README there for provenance and how to
+ *    refresh it at a merge). Every line the seam REMOVES from upstream is named
+ *    here BY LINE NUMBER, and everything else upstream wrote must still appear,
+ *    in order, in the patched file. So a merge that drops a hunk, or an edit
+ *    that touches the vendored file anywhere undeclared, fails on the line it
+ *    changed.
+ *
+ *    IT READS NOTHING BUT CHECKED-OUT FILES. The first version of this test
+ *    asked `git show <pin>:<upstream path>` for the pristine source, which works
+ *    in a full clone of this repository and fails in CI: the checkout resolves
+ *    the subtree squash's commit object but its tree carries the upstream paths
+ *    at their own root, and a shallow or partial clone may not carry the object
+ *    at all. A pin check must not depend on the shape of the clone.
+ *
  * 2. THE PATCH WORKS. The real vendored `SessionTabBar` is mounted through our
  *    two hosts and driven: a contributed tab appears, selecting it reports the
  *    namespaced id, closing it reports the namespaced id, and its content is in
@@ -26,9 +35,7 @@
  * with the same rule (mounted always, `hidden` when inactive).
  */
 import { act } from "react";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { I18nextProvider } from "react-i18next";
@@ -54,85 +61,102 @@ const vendorDir = join(
   repoRoot,
   "vendor/lody/packages/components/src/components/sessions",
 );
-const upstreamDir = "packages/components/src/components/sessions";
+const baselineDir = join(here, "upstream-baseline");
 
-/** The pin `vendor/lody/UPSTREAM.md` states, read from the file rather than
- * copied here — a stale sha in a test would compare against the wrong tree. */
-function upstreamPin(): string {
-  const upstream = readFileSync(join(repoRoot, "vendor/lody/UPSTREAM.md"), "utf8");
-  const match = /\| Pinned commit \| `([0-9a-f]{40})` \|/u.exec(upstream);
-  if (match === null) throw new Error("UPSTREAM.md no longer states a pinned commit");
-  return match[1]!;
-}
+const readLines = (path: string): string[] => readFileSync(path, "utf8").split("\n");
 
-/** Every line the seam patch REMOVES from one vendored file, in `git diff`
- * order. This is the whole inertness statement: nothing else upstream wrote is
- * gone, so with the new props absent there is no changed branch to take. */
-function removedLines(file: string): string[] {
-  const pin = upstreamPin();
-  const dir = mkdtempSync(join(tmpdir(), "lody-seam-"));
-  const before = join(dir, "before.tsx");
-  const after = join(dir, "after.tsx");
-  writeFileSync(
-    before,
-    execFileSync("git", ["show", `${pin}:${upstreamDir}/${file}`], {
-      cwd: repoRoot,
-      maxBuffer: 32 * 1024 * 1024,
-    }),
-  );
-  writeFileSync(after, readFileSync(join(vendorDir, file)));
-  let diff = "";
-  try {
-    diff = execFileSync("git", ["diff", "--no-index", "-U0", before, after], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      maxBuffer: 32 * 1024 * 1024,
-    });
-  } catch (error) {
-    // `git diff --no-index` exits 1 when the files differ, which is the only
-    // interesting case; the diff itself is on stdout either way.
-    const failure = error as { status?: number; stdout?: string };
-    if (failure.status !== 1 || failure.stdout === undefined) throw error;
-    diff = failure.stdout;
+/** One line the seam removes from upstream, by its line number in the pristine
+ * file. The number is what makes an anchor unambiguous: `        )}` occurs
+ * dozens of times in `session-tab-bar.tsx`, and "the first one" is not a
+ * statement about anything. */
+type Anchor = readonly [line: number, text: string];
+
+/**
+ * Asserts one vendored file against its pristine upstream baseline.
+ *
+ * Two claims, and the second is the one that carries the inertness:
+ *
+ * 1. Each declared anchor is the line upstream actually has at that number, so
+ *    the table in `BLITZ-PATCHES.md` describes this tree and not a remembered
+ *    one.
+ * 2. Upstream MINUS those lines is still a subsequence of the patched file.
+ *    Every other line upstream wrote survives, in order — so the patch only
+ *    ADDS, and the branches upstream takes with the new props absent are the
+ *    branches it took before. An undeclared deletion, or a reworded line, fails
+ *    with the first upstream line that could not be found.
+ */
+function expectSeam(file: string, anchors: readonly Anchor[]): void {
+  const upstream = readLines(join(baselineDir, `${file}.txt`));
+  const patched = readLines(join(vendorDir, file));
+  const removed = new Set<number>();
+  for (const [line, text] of anchors) {
+    expect(upstream[line - 1], `${file}:${line} is the anchor BLITZ-PATCHES.md names`).toBe(text);
+    removed.add(line);
   }
-  return diff
-    .split("\n")
-    .filter((line) => line.startsWith("-") && !line.startsWith("---"))
-    .map((line) => line.slice(1));
+  expect(removed.size, "an anchor is declared twice").toBe(anchors.length);
+
+  const kept = upstream.filter((_line, index) => !removed.has(index + 1));
+  // Greedy is exact for a subsequence test: the earliest match never rules out
+  // a later one, so a failure here is a line the patched file really lost.
+  let cursor = 0;
+  for (const line of kept) {
+    while (cursor < patched.length && patched[cursor] !== line) cursor += 1;
+    expect(
+      cursor,
+      `${file} no longer carries an upstream line the seam does not declare: ${JSON.stringify(line)}`,
+    ).toBeLessThan(patched.length);
+    cursor += 1;
+  }
 }
 
 describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
-  it("removes nothing from session-tab-bar.tsx but the six declared anchors", () => {
-    expect(removedLines("session-tab-bar.tsx")).toEqual([
-      // 1. the `react` import gains `type ReactNode`
-      "import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';",
-      // 2. `ViewerTabItem` gains `'custom'` and `icon`
-      "/** A viewer tab item (file or diff) displayed in the tab bar. */",
-      "  type: 'file' | 'diff';",
-      // 4. `parentSession` becomes optional
-      "  parentSession: SessionMeta;",
-      // 3. `ViewerTabContent` draws the host's glyph
-      "        {tab.type === 'file' && tab.filePath ? (",
-      "        )}",
-      // 5. `visibleTabIds` reads the parent id only when there is one
-      "    () => (showSessionTabs ? [parentSession.id, ...sortableIds] : sortableIds),",
-      "    [parentSession.id, showSessionTabs, sortableIds]",
-      // 6. the parent strip item is guarded on the same thing
-      "        {showSessionTabs && (",
+  it("removes nothing from session-tab-bar.tsx but the declared anchors", () => {
+    expectSeam("session-tab-bar.tsx", [
+      // hunk 1: the `react` import gains `type ReactNode`
+      [1, "import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';"],
+      // hunk 2: `ViewerTabItem` gains `'custom'` and `icon`
+      [42, "/** A viewer tab item (file or diff) displayed in the tab bar. */"],
+      [45, "  type: 'file' | 'diff';"],
+      // hunk 4: `parentSession` becomes optional
+      [58, "  parentSession: SessionMeta;"],
+      // hunk 3: `ViewerTabContent` draws the host's glyph
+      [466, "        {tab.type === 'file' && tab.filePath ? ("],
+      [470, "        )}"],
+      // hunk 5: `visibleTabIds` reads the parent id only when there is one
+      [726, "    () => (showSessionTabs ? [parentSession.id, ...sortableIds] : sortableIds),"],
+      [727, "    [parentSession.id, showSessionTabs, sortableIds]"],
+      // hunk 6: the parent strip item is guarded on the same thing
+      [765, "        {showSessionTabs && ("],
     ]);
   });
 
   it("removes nothing from session-detail.tsx but seam patches 4 and 5's anchors", () => {
-    expect(removedLines("session-detail.tsx")).toEqual([
-      // seam patch 4's hunks are additive and remove nothing.
-      // seam patch 5, hunk 7: the `react` import gains `type ReactNode`
-      "import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';",
+    expectSeam("session-detail.tsx", [
+      // Seam patch 4's hunks are additive and remove nothing, which is why they
+      // are absent from this list and still covered by the subsequence check.
+      // hunk 7: the `react` import gains `type ReactNode`
+      [
+        90,
+        "import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';",
+      ],
       // hunk 11: the strip's variant follows the host's list
-      '      variant="session"',
+      [5505, '      variant="session"'],
       // hunk 14: an active host tab deselects the conversation surfaces
-      "        const isActive = tabSession.id === activeTabSessionId;",
-      "        const isActive = draft.id === activeTabSessionId;",
+      [5587, "        const isActive = tabSession.id === activeTabSessionId;"],
+      [5621, "        const isActive = draft.id === activeTabSessionId;"],
     ]);
+  });
+
+  it("holds a baseline of the commit vendor/lody/UPSTREAM.md pins", () => {
+    // The baselines are only evidence while they are the pin's own bytes, and
+    // nothing else in the tree would notice them going stale. `docs/LODY-MERGE.md`
+    // §4 says to refresh them in the same change as the merge; this is what
+    // fails when that is forgotten.
+    const upstream = readFileSync(join(repoRoot, "vendor/lody/UPSTREAM.md"), "utf8");
+    const pin = /\| Pinned commit \| `([0-9a-f]{40})` \|/u.exec(upstream)?.[1];
+    expect(pin, "UPSTREAM.md still states a pinned commit").toBeDefined();
+    const readme = readFileSync(join(baselineDir, "README.md"), "utf8");
+    expect(readme, "the baselines name the commit they were taken from").toContain(pin ?? "");
   });
 
   it("declares the same four props on both sides of the seam", () => {

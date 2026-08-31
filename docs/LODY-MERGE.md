@@ -186,6 +186,26 @@ merge moves most of them. A stale anchor is worse than no anchor: §7's whole
 question is whether upstream fixed a defect, and an anchor pointing at the wrong
 line reads as "yes".
 
+**Re-take the seam baselines too.** `packages/webapp/test/upstream-baseline/`
+holds pristine copies of the two files seam patch 5 patches, and
+`packages/webapp/test/lody-surface-tabs.test.tsx` uses them to prove the
+vendored tree lost no line `BLITZ-PATCHES.md` does not declare. They are
+committed rather than read out of git on demand, because the upstream commit's
+tree is only reachable from a full clone and CI does not have one. Refresh them
+from a clone that DOES have the new commit, in the same change as the merge:
+
+```sh
+PIN=<the new upstream sha>
+for f in session-tab-bar session-detail; do
+  git show "$PIN:packages/components/src/components/sessions/$f.tsx" \
+    > packages/webapp/test/upstream-baseline/"$f.tsx.txt"
+done
+```
+
+Then move the sha in that directory's `README.md` and every anchor line number
+in the test. The test fails when the README no longer names the pin
+`UPSTREAM.md` states, so a forgotten refresh is loud rather than silent.
+
 **Three of these patches DELETE when their upstream pull request lands.** Check
 before re-applying — re-applying a patch upstream has already accepted is how a
 fork starts:
