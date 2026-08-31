@@ -599,6 +599,29 @@ are unavailable on this workspace". Acceptable while the flag is off everywhere
 and every canary box is recycled onto the new image; if the flag ever reaches a
 fleet with mixed images, that capability is the next thing to add.
 
+**FIELD NOTE (2026-08-31, the fourth canary dogfood): the paragraph above got
+two things wrong, and the gap it named is now closed in the browser instead of
+in a cutoff.** Measured on a workspace whose machine ran a pre-Lody image:
+
+- The status is **403, not 404**. The old gateway has no `/lody/*` route, so the
+  path falls through to dufs, and dufs refuses it.
+- **Nothing reported anything.** `fetchLodyPlatformSnapshot` folds every non-ok
+  status into `null` — "the daemon has not written its catalog yet" — so the
+  surface's poller never settled, its gated branch never mounted, and `error`
+  stayed `null`, which is the only thing that renders "Sessions are unavailable
+  on this workspace". What a member actually got was the legacy rail with an
+  empty vendored zone, no explanation, and one 403 in the console every 500 ms.
+  It reads as "the reskin does not work".
+
+**A fourth cutoff is still the wrong instrument, and now for a stated reason.**
+`createdAt` cannot answer this question: a machine can be recreated onto a new
+image at any moment and the control plane learns nothing about the image it
+came up on, so a cutoff would be wrong in both directions on the same fleet.
+The browser asks the box instead — one GET of `/lody/platform`, read for its
+STATUS — and degrades the whole workspace when the answer is structural. The
+mechanism is `packages/webapp/src/lody/box-capability.ts` and the design note is
+`plans/LODY-RUNTIME-DESIGN.md` §17.
+
 **#112's machine-stats needs no fourth cutoff either, and the reason is worth
 naming**, because it is the shape a guest feature should have. The guest POSTs
 to `/workspaces/self/machine-stats` every ten minutes and the control plane

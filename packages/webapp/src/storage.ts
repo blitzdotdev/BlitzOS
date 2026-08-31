@@ -148,27 +148,24 @@ export function storedWorkspacePreference(
   return preference;
 }
 
-export function defaultWorkspaceTabs(): WorkspaceTabs {
-  // WITH LODY SESSIONS ON, a fresh workspace opens the CHAT LANDING and holds
-  // no tabs at all (plans/LODY-SESSIONS.md §0.4). TUI tabs become opt-in,
-  // through the `+` menu in the tab strip and in the rail's Terminals section.
-  // `useLodyRail` is the other half of the rule: no tabs is what it reads as
-  // "fresh", and it is what puts the landing on screen.
-  //
-  // Only a FRESH workspace is affected. This function answers for a workspace
-  // whose persisted document the server has never seen; a workspace that
-  // already has one keeps every tab in it, flag or no flag. Nothing migrates.
-  if (LODY_SESSIONS_ENABLED) {
-    return { version: 1, tabs: [], activeId: null, nextId: 1 };
-  }
-  // A fresh workspace opens straight into Claude; Files rides along in the
-  // side pane, the way the drawer used to default open.
-  //
-  // There was briefly a third tab holding `claude remote-control`. It never
-  // worked: remote-control exits immediately on a logged-out box, so the tmux
-  // session the bootstrap pre-created was gone before anyone opened the tab,
-  // and the tab attached to a plain shell. Remote control now runs as a
-  // detached retry loop with no tab at all.
+/**
+ * The tab set a fresh workspace held before Lody sessions, and holds again
+ * wherever the session plane is not available.
+ *
+ * A fresh workspace opens straight into Claude; Files rides along in the side
+ * pane, the way the drawer used to default open.
+ *
+ * There was briefly a third tab holding `claude remote-control`. It never
+ * worked: remote-control exits immediately on a logged-out box, so the tmux
+ * session the bootstrap pre-created was gone before anyone opened the tab, and
+ * the tab attached to a plain shell. Remote control now runs as a detached
+ * retry loop with no tab at all.
+ *
+ * Named separately from `defaultWorkspaceTabs` because `useLodyRail` seeds
+ * exactly these when the BOX turns out to run a pre-Lody image, which the build
+ * flag cannot know (`lody/box-capability.ts`).
+ */
+export function terminalFirstWorkspaceTabs(): WorkspaceTabs {
   return {
     version: 1,
     tabs: [
@@ -179,6 +176,23 @@ export function defaultWorkspaceTabs(): WorkspaceTabs {
     nextId: 3,
     sideActiveId: 2,
   };
+}
+
+export function defaultWorkspaceTabs(): WorkspaceTabs {
+  // WITH LODY SESSIONS ON, a fresh workspace opens the CHAT LANDING and holds
+  // no tabs at all (plans/LODY-SESSIONS.md §0.4). TUI tabs become opt-in,
+  // through the `+` menu in the tab strip and in the rail's Terminals section.
+  // `useLodyRail` is the other half of the rule: no tabs is what it reads as
+  // "fresh", and it is what puts the landing on screen — or, on a box that
+  // serves no session daemon, what puts `terminalFirstWorkspaceTabs()` in.
+  //
+  // Only a FRESH workspace is affected. This function answers for a workspace
+  // whose persisted document the server has never seen; a workspace that
+  // already has one keeps every tab in it, flag or no flag. Nothing migrates.
+  if (LODY_SESSIONS_ENABLED) {
+    return { version: 1, tabs: [], activeId: null, nextId: 1 };
+  }
+  return terminalFirstWorkspaceTabs();
 }
 
 /** A tab with no stored region lives in the main pane. */

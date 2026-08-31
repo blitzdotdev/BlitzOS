@@ -32,6 +32,13 @@
  *    Once per workspace id, and with `replaceState`, so the back button is not
  *    given a step the member never took, and a member who deliberately closed
  *    the landing is not sent back to it.
+ *
+ * ALL THREE ARE GATED ON THE BOX, not only on the build flag
+ * (`box-capability.ts`, plans/LODY-RUNTIME-DESIGN.md §17). A workspace whose
+ * machine runs a pre-Lody image gets the FULL flag-off rail back — the New tab
+ * bar, one native row per managed tab — and its fresh-workspace default becomes
+ * the flag-off tab set, because a chat landing that cannot exist is a worse
+ * place to strand a member than a terminal.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppRoute, ChatAddress } from "../sessions-page-state.js";
@@ -40,6 +47,7 @@ import {
   workspacePath,
   workspaceSharedChatPath,
 } from "../sessions-page-state.js";
+import type { LodySessionsCapability } from "./box-capability.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 
 export interface LodyRailState {
@@ -69,6 +77,17 @@ export interface LodyRailState {
   closeChat: () => void;
 }
 
+/** What the active workspace's own box can do, and what to do instead when it
+ * cannot. Both halves belong to one caller, so they arrive as one argument. */
+export interface LodyRailSessions {
+  /** `useLodySessionsCapability` for the ACTIVE workspace's box. */
+  capability: LodySessionsCapability;
+  /** Seeds the flag-off tab set into a fresh workspace whose box turns out not
+   * to serve sessions. Called at most once per workspace id, from the same
+   * decision that would otherwise have opened the chat landing. */
+  onLegacyDefaultTabs: () => void;
+}
+
 export function useLodyRail(
   route: AppRoute,
   setRoute: (route: AppRoute) => void,
@@ -77,9 +96,16 @@ export function useLodyRail(
   tabsLoaded: boolean,
   /** How many tabs that document holds. Zero is the fresh-workspace signal. */
   tabCount: number,
+  sessions: LodyRailSessions,
 ): LodyRailState {
   const [railHost, setRailHost] = useState<HTMLElement | null>(null);
   const chat: ChatAddress = route.page === "webApp" ? route.chat : null;
+  const { capability, onLegacyDefaultTabs } = sessions;
+  // `probing` keeps the vendored zone, because the probe is one round trip and
+  // the chunk behind it is 3.5 MB: the rail would flicker from legacy to
+  // vendored on every good box to save nothing. Only a settled `absent` takes
+  // the zone back.
+  const available = LODY_SESSIONS_ENABLED && capability !== "absent";
 
   const go = useCallback(
     (path: string, next: ChatAddress) => {
@@ -138,15 +164,35 @@ export function useLodyRail(
   useEffect(() => {
     if (!LODY_SESSIONS_ENABLED) return;
     if (route.page !== "webApp" || activeWorkspaceId === "" || !tabsLoaded) return;
+    // The probe has not answered yet, and this decision is not reversible: it
+    // is taken once per workspace and it either moves the address or writes
+    // tabs. Waiting costs one round trip and is the only way to take it once.
+    if (capability === "probing") return;
     if (defaulted.current.has(activeWorkspaceId)) return;
     defaulted.current.add(activeWorkspaceId);
     if (route.chat !== null || tabCount > 0) return;
+    if (capability === "absent") {
+      // §0.4's other half, for a box that cannot serve the landing.
+      // `defaultWorkspaceTabs()` gave this fresh workspace no tabs because the
+      // BUILD has sessions on; the BOX does not, so the flag-off tab set goes
+      // in and the member lands on a terminal instead of on nothing.
+      onLegacyDefaultTabs();
+      return;
+    }
     window.history.replaceState({}, "", workspaceChatPath(activeWorkspaceId));
     setRoute({ workspaceId: activeWorkspaceId, page: "webApp", chat: "landing" });
-  }, [activeWorkspaceId, route, setRoute, tabCount, tabsLoaded]);
+  }, [
+    activeWorkspaceId,
+    capability,
+    onLegacyDefaultTabs,
+    route,
+    setRoute,
+    tabCount,
+    tabsLoaded,
+  ]);
 
   return {
-    visible: LODY_SESSIONS_ENABLED && chat !== null,
+    visible: available && chat !== null,
     // A shared session is NOT this surface's address: it is mounted against
     // another box, by a second surface, so the own surface stays where it was.
     sessionId:
@@ -154,7 +200,7 @@ export function useLodyRail(
         ? null
         : chat.sessionId,
     chat,
-    onVendorHost: LODY_SESSIONS_ENABLED ? setRailHost : undefined,
+    onVendorHost: available ? setRailHost : undefined,
     railHost,
     openLanding,
     openSession,
