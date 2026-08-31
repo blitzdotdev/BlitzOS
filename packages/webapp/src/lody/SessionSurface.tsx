@@ -73,6 +73,7 @@ import type { LodyAtomStore, LodyRuntimeEndpoints } from "./runtime.js";
 import { initLodyI18n } from "./i18n.js";
 import { SessionRailSidebar } from "./SessionRailSidebar.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
+import { SurfaceTabsContext, type SurfaceTabsBinding } from "./surface-tabs.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
 import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
@@ -156,6 +157,17 @@ export interface LodySessionSurfaceProps {
    * Terminal tabs are `webapp_state`, never sessions — the daemon never sees
    * them — so they arrive as props and leave through this callback. */
   rail?: LodyRailBinding;
+  /**
+   * The workspace's own tabs, drawn as tabs of Lody's session tab strip
+   * (plans/LODY-TERMINAL-TABS.md §3.5).
+   *
+   * A SIBLING of `rail`, and for the same reason: a terminal is `webapp_state`,
+   * never a session, so the list arrives as props and every verb leaves through
+   * a callback. Absent leaves both hosts drawing exactly what phase 4 shipped —
+   * which is what a grantee's surface gets, because a terminal is an arbitrary
+   * shell on the owner's box and no share level grants that (§5.1).
+   */
+  surfaceTabs?: SurfaceTabsBinding;
   /** Handed the imperative API once the daemon's identity settles, and `null`
    * on teardown. */
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
@@ -472,20 +484,22 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
                   // panel could only ever answer `share_forbidden`.
                   {...(isShared ? {} : { machineId: snapshot.machineId })}
                 />
-                {isShared ? (
-                  // A grantee's surface writes no agent configs at all — the
-                  // rows belong to the owner's machine Flock, which the relay
-                  // refuses — so there is nothing to gate on.
-                  <RouterProvider router={router} />
-                ) : (
-                  <LodyAgentConfigGate
-                    store={store}
-                    machineId={snapshot.machineId}
-                    endpoints={endpoints}
-                  >
+                <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>
+                  {isShared ? (
+                    // A grantee's surface writes no agent configs at all — the
+                    // rows belong to the owner's machine Flock, which the relay
+                    // refuses — so there is nothing to gate on.
                     <RouterProvider router={router} />
-                  </LodyAgentConfigGate>
-                )}
+                  ) : (
+                    <LodyAgentConfigGate
+                      store={store}
+                      machineId={snapshot.machineId}
+                      endpoints={endpoints}
+                    >
+                      <RouterProvider router={router} />
+                    </LodyAgentConfigGate>
+                  )}
+                </SurfaceTabsContext.Provider>
               </RuntimeProvider>
             </LodySurfaceProviders>
           </BlitzPlatformProviders>
