@@ -13,7 +13,7 @@
  * product surface does not build its runtime there — their `RuntimeProvider`
  * does, and this is the only place of ours that holds the atom it writes.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { runtimeAtom } from "@lody/components/atoms/runtime";
 import { bootstrapLodyAgentConfigs, refreshLodyAcpCapabilities } from "./agent-configs.js";
 import {
@@ -66,6 +66,18 @@ export function LodyAgentConfigGate(props: {
 }) {
   const { store, machineId, endpoints } = props;
   const [ready, setReady] = useState(false);
+  // KEYED ON THE BOX, NOT ON THE OBJECT (wave 3, ADJ2).
+  //
+  // `endpoints` is a fresh literal on every render of the shell — `CloudApp`
+  // re-renders on a keystroke, a poll and a tab switch — so an effect keyed on
+  // its identity tore this subscription down and re-ran the whole bootstrap
+  // each time: a Flock round trip, a machine-meta mirror, a project publish and
+  // an ACP capability sweep per shell render. What the effect actually depends
+  // on is WHICH BOX it is talking to, and `projectUrl` names exactly that. The
+  // object itself travels through a ref, so the run always uses the current one.
+  const endpointsRef = useRef(endpoints);
+  endpointsRef.current = endpoints;
+  const { projectUrl } = endpoints;
   useEffect(() => {
     let cancelled = false;
     let started: LodyWorkspaceRuntime | null = null;
@@ -112,7 +124,7 @@ export function LodyAgentConfigGate(props: {
         // name is in the workspace's connected-repo list, and without that
         // field the session is a chat to the rail and to the daemon's diff
         // stats alike. See `local-projects.ts`.
-        await publishBoxReposAsWorkspaceRepos(store, endpoints, runtime, machineId);
+        await publishBoxReposAsWorkspaceRepos(store, endpointsRef.current, runtime, machineId);
         // Second, and only after the rows exist: the capabilities pass keys off
         // them. A config that fails to report costs the composer that agent's
         // selectors and nothing else, so it is warned about rather than raised
@@ -138,6 +150,6 @@ export function LodyAgentConfigGate(props: {
       aborter.abort();
       unsubscribe();
     };
-  }, [store, machineId, endpoints]);
+  }, [store, machineId, projectUrl]);
   return ready ? props.children : null;
 }

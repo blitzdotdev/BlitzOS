@@ -54,6 +54,7 @@ Two files.
 | 15 | the end of `desktopChatSurfaces` | mounts each host tab's content, hidden when inactive |
 | 16 | the inline props type | declares `onSessionTabSelect` |
 | 17-18 | the `activeTabSessionId` state | the setter becomes the one place a conversation-tab selection is announced |
+| 19-20 | the props type and the `not-found` effect | declares `onSessionMissing` and calls it when the page returns above the strip |
 
 ## PR title
 
@@ -108,12 +109,24 @@ onSurfaceTabSelect?: (tabId: string) => void;
 onSurfaceTabClose?: (tabId: string) => void;
 /** This page selected a CONVERSATION tab, so no host tab is selected now. */
 onSessionTabSelect?: (tabId: string) => void;
+/** This page has no session to draw, so it returns above the strip and the
+ *  host's tabs go with it. */
+onSessionMissing?: (sessionId: string) => void;
 ```
 
 The host owns the list, the selection and both verbs; the page owns the drawing
 and the layout. There is no registry, no atom and no context, because there is
 no extension mechanism in the tree to hook into and this is the smallest thing
 that could be one.
+
+`onSessionMissing` is the sixth, and it is the other thing the host cannot see.
+`SessionDetail` renders `SessionNotFound` and returns ABOVE the tab strip, so
+every host tab disappears with it — including the one the user is looking at,
+whose content may be a live process the host owns. Without the callback the host
+is holding a selection in a strip that is not on screen and has no way to learn
+it. It fires from inside the existing `sessionPresenceState === 'not-found'`
+effect, above the once-per-session analytics guard, because what a host does
+with it is move an address and an address can come back.
 
 `onSessionTabSelect` is the fifth, and it is what makes the other four
 survivable. An active host tab hides the conversation surfaces, and the page's
@@ -185,7 +198,15 @@ a strip in.
   usually is not.
 - Keyboard shortcuts: `getSessionTabCloseTarget`
   (`lib/session-tab-close-target.ts:8`) still resolves Cmd+W to a conversation
-  or side-panel tab, and is not patched.
+  or side-panel tab, and is not patched. `session.archiveCurrent`,
+  `session.closeFocusedTab` and the `session.nextTab` / `session.previousTab`
+  cycle likewise resolve against `activeTabSessionId` alone, so with a host tab
+  active they act on the conversation behind it. Resolving all of them over the
+  same `viewerTabs` the strip already draws is the obvious follow-up and is one
+  idea with this patch, not part of it.
+- The loading branch. `SessionDetail` also returns above the strip while the
+  session loads, and that one is transient, so a host that hides its tabs for it
+  would flicker. Only the terminal branch is reported.
 
 ## Context handoff
 
@@ -224,7 +245,7 @@ a strip in.
 
 ## When it merges
 
-Delete seam patch 5 from `vendor/lody/BLITZ-PATCHES.md`, drop the eighteen hunks
-at the next `git subtree pull`, and keep passing the same five props from
+Delete seam patch 5 from `vendor/lody/BLITZ-PATCHES.md`, drop the twenty hunks
+at the next `git subtree pull`, and keep passing the same six props from
 `packages/webapp/src/lody/router.tsx` unchanged — the BlitzOS half is the same
 either way, which is the point of upstreaming rather than patching.

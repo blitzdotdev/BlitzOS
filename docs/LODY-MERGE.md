@@ -166,10 +166,14 @@ grep -n 'hideHeader\|hideFooter' vendor/lody/packages/components/src/components/
 grep -n 'readOnly' vendor/lody/packages/components/src/components/sessions/session-{detail,chat-interface}.tsx
 grep -n 'surfaceTabs' vendor/lody/packages/components/src/components/sessions/session-{detail,tab-bar}.tsx
 grep -n 'parentSession?' vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx
+grep -n 'onSessionTabSelect\|onSessionMissing' vendor/lody/packages/components/src/components/sessions/session-detail.tsx
 ```
 
-The last two are seam patch 5, and they answer different questions. `surfaceTabs`
-is the four-prop API and its content render; `parentSession?` is the one hunk
+The last three are seam patch 5, and they answer different questions.
+`surfaceTabs` is the tab API and its content render; the two `onSession*`
+callbacks are its outward edge — the page telling the host that its selection
+is over (a conversation tab was chosen) or that its whole strip is gone (the
+session does not exist), neither of which the host can observe; `parentSession?` is the one hunk
 typecheck CANNOT catch in the other direction — losing it makes a REQUIRED prop
 required again at a call site (`packages/webapp/src/lody/TerminalTabsStrip.tsx`)
 that then stops compiling, so THAT loss is loud. What is quiet is upstream making

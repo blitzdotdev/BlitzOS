@@ -453,6 +453,32 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     () => null,
   );
 
+  // THE AGENT-AUTH BANNER BELONGS TO SESSION CONTENT, NOT TO THE PANE
+  // (plans/LODY-TERMINAL-TABS.md wave 3, F8).
+  //
+  // It says a CONVERSATION's agent is signed out and it carries that
+  // conversation's sign-in panel. Drawn above the strip while a TERMINAL tab
+  // owns the pane, it is a band about something the member is not looking at,
+  // sitting on top of the tab they chose. A host tab owning the pane is exactly
+  // `activeTabId !== null` — the same address the strip draws its selection
+  // from — so the banner is scoped to the chat surfaces and nothing else.
+  const hostTabOwnsPane =
+    props.surfaceTabs !== undefined && props.surfaceTabs.activeTabId !== null;
+  const agentAuthNotice = (machineId: string): ReactNode => hostTabOwnsPane
+    ? null
+    : (
+      <LodyAgentAuthNotice
+        store={store}
+        sessionId={activeSessionId}
+        // A GRANTEE gets the explanation and no sign-in button. The machine is
+        // somebody else's, and the bridge refuses `/session-control` for a
+        // shared request outright (`blitz-lody-bridge`,
+        // plans/LODY-SHARING.md §2.2) — so the panel could only ever answer
+        // `share_forbidden`.
+        {...(isShared ? {} : { machineId })}
+      />
+    );
+
   const { railHost, rail } = props;
   const railSidebar =
     railHost === null || railHost === undefined || rail === undefined
@@ -502,16 +528,7 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             <LodySurfaceProviders>
               <RuntimeProvider>
                 {railSidebar}
-                <LodyAgentAuthNotice
-                  store={store}
-                  sessionId={activeSessionId}
-                  // A GRANTEE gets the explanation and no sign-in button. The
-                  // machine is somebody else's, and the bridge refuses
-                  // `/session-control` for a shared request outright
-                  // (`blitz-lody-bridge`, plans/LODY-SHARING.md §2.2) — so the
-                  // panel could only ever answer `share_forbidden`.
-                  {...(isShared ? {} : { machineId: snapshot.machineId })}
-                />
+                {agentAuthNotice(snapshot.machineId)}
                 <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>
                   {isShared ? (
                     // A grantee's surface writes no agent configs at all — the

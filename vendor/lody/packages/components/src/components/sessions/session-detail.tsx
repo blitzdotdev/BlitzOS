@@ -698,6 +698,7 @@ const SessionDetail = ({
   onSurfaceTabSelect,
   onSurfaceTabClose,
   onSessionTabSelect,
+  onSessionMissing,
 }: {
   sessionId: SessionId;
   urlTab?: string;
@@ -726,6 +727,16 @@ const SessionDetail = ({
    * chrome can follow the selection rather than only clear its own.
    */
   onSessionTabSelect?: (tabId: string) => void;
+  /**
+   * This page has no session to draw: the id it was given is not in the
+   * workspace, so it renders the not-found card and returns BEFORE the tab
+   * strip.
+   *
+   * A host that contributes tabs loses all of them at that return, including
+   * the one the member is looking at, so it has to be told: the strip is gone
+   * and whatever the host had selected in it needs another home.
+   */
+  onSessionMissing?: (sessionId: string) => void;
 }) => {
   const { t } = useTranslation();
   const router = useRouter();
@@ -814,6 +825,10 @@ const SessionDetail = ({
   );
   const onSessionTabSelectRef = useRef(onSessionTabSelect);
   onSessionTabSelectRef.current = onSessionTabSelect;
+  // Seam patch 5 hunk 20 reads this from an effect whose dependency list is
+  // upstream's; a ref keeps a fresh host closure from re-running that effect.
+  const onSessionMissingRef = useRef(onSessionMissing);
+  onSessionMissingRef.current = onSessionMissing;
   /**
    * THE ONE PLACE THIS PAGE SELECTS A CONVERSATION TAB (seam patch 5 hunk 17).
    *
@@ -4405,6 +4420,11 @@ const SessionDetail = ({
     }
 
     if (sessionPresenceState === 'not-found') {
+      // Seam patch 5 hunk 20. ABOVE the once-per-session analytics gate on
+      // purpose: the host has to hear this every time the page settles on
+      // not-found, because what it does with it is move an address, and an
+      // address can come back.
+      onSessionMissingRef.current?.(sessionId);
       if (!fireDetailNotFoundOnce(sessionId)) {
         return;
       }

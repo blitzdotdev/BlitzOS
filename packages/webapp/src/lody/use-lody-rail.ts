@@ -91,13 +91,18 @@ export interface LodyRailState {
    * leaves the address and its HOST page stays: a session's strip falls back to
    * that session, the landing's to the landing. Inert on every other arm. */
   closeTerminal: () => void;
+  /** The addressed SESSION does not exist, so the strip it hosted is gone. The
+   * terminal keeps its selection and moves to the landing's strip. Inert unless
+   * the address is a session-hosted terminal. */
+  openTerminalOnLanding: () => void;
   /** The other direction: the surface navigated itself — the landing's send
    * creates a session and goes to it — so the address follows. Compares before
    * it acts, which is what keeps it from looping against the effect that drives
    * the surface FROM the address. */
   mirror: (sessionId: string | null) => void;
-  /** Called when a terminal row is clicked: the panes take the view back. */
-  closeChat: () => void;
+  /** Called when a terminal row is clicked: the panes take the view back.
+   * `replace` for a correction the member did not ask for. */
+  closeChat: (options?: { replace?: boolean }) => void;
 }
 
 /** What the active workspace's own box can do, and what to do instead when it
@@ -131,13 +136,19 @@ export function useLodyRail(
   const available = LODY_SESSIONS_ENABLED && capability !== "absent";
 
   const go = useCallback(
-    (path: string, next: ChatAddress) => {
+    (path: string, next: ChatAddress, options?: { replace?: boolean }) => {
       if (activeWorkspaceId === "") return;
       // Already there. A rail row is clickable while it is the open one, so
       // without this every second click on it pushes a history entry that
       // navigates nowhere and costs the member a press of the back button.
       if (window.location.pathname === path) return;
-      window.history.pushState({}, "", path);
+      // A CORRECTION REPLACES. Everything a member does is a push, but an
+      // address the shell itself refuses — a session the daemon does not have,
+      // a terminal this layout cannot draw — must not become a history entry:
+      // the back button would land on it again and be bounced forward again,
+      // which is a trap rather than a navigation.
+      if (options?.replace === true) window.history.replaceState({}, "", path);
+      else window.history.pushState({}, "", path);
       setRoute({ workspaceId: activeWorkspaceId, page: "webApp", chat: next });
     },
     [activeWorkspaceId, setRoute],
@@ -217,10 +228,27 @@ export function useLodyRail(
     [chat, openLanding, openSession],
   );
 
-  const closeChat = useCallback(() => {
-    if (chat === null) return;
-    go(workspacePath(activeWorkspaceId), null);
+  // THE SESSION THE STRIP WAS DRAWN IN DOES NOT EXIST.
+  //
+  // `SessionDetail` renders its not-found card and returns above the strip, so
+  // every host tab goes with it — including the one the member is looking at.
+  // The terminal is still open and its tmux session is still attached, so the
+  // selection moves to the OTHER host: the landing's strip, which needs no
+  // session to be rooted in. Replaces, because the address it leaves is one the
+  // shell refused rather than one the member visited.
+  const openTerminalOnLanding = useCallback(() => {
+    if (!isChatTerminalAddress(chat) || chat.sessionId === undefined) return;
+    const { terminalId } = chat;
+    go(workspaceChatTerminalPath(activeWorkspaceId, terminalId), { terminalId }, { replace: true });
   }, [activeWorkspaceId, chat, go]);
+
+  const closeChat = useCallback(
+    (options?: { replace?: boolean }) => {
+      if (chat === null) return;
+      go(workspacePath(activeWorkspaceId), null, options);
+    },
+    [activeWorkspaceId, chat, go],
+  );
 
   // §0.4, once per workspace. `defaulted` is a ref rather than state because a
   // second pass must not re-run the effect that set it.
@@ -279,6 +307,7 @@ export function useLodyRail(
     openSharedSession,
     openTerminal,
     closeTerminal,
+    openTerminalOnLanding,
     mirror,
     closeChat,
   };

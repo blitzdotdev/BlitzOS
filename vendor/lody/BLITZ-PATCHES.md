@@ -224,7 +224,7 @@ grows its own viewer concept (a role on the session, a capability), drop these
 hunks and pass that instead — the BlitzOS half is one boolean on
 `packages/webapp/src/lody/SessionSurface.tsx`.
 
-### 5. Pluggable surface tabs (2026-08-31)
+### 5. Pluggable surface tabs (2026-08-31; hunks 19-20 added in wave 3)
 
 **One idea, two files.** A host that embeds the session viewer may contribute
 tabs of its own to the ONE tab strip `SessionTabBar` draws, and supply their
@@ -272,6 +272,23 @@ what `packages/webapp/src/lody/TerminalTabsStrip.tsx` mounts: the same component
 | 16 | 667 | beside hunk 9's four props | declares `onSessionTabSelect` |
 | 17 | 756 | `const [activeTabSessionIdRaw, setActiveTabSessionId] = useState<string>(` | keeps the raw setter as `setActiveTabSessionIdState` and adds `setActiveTabSessionId`, a wrapper that announces the tab it selected |
 | 18 | 947, 2585, 2591 | the three `setActiveTabSessionId` writers that are a CORRECTION | take the raw setter instead |
+| 19 | 728 | beside hunk 16's `onSessionTabSelect` | declares `onSessionMissing`, and holds it in a ref beside `onSessionTabSelectRef` |
+| 20 | 4408 | inside upstream's `sessionPresenceState === 'not-found'` effect, above `fireDetailNotFoundOnce` | calls `onSessionMissing?.(sessionId)` |
+
+**Hunks 19–20 are the OTHER thing the host cannot see: the strip is gone.**
+`SessionDetail` returns above the tab strip on two branches — loading and
+not-found — and the not-found one is terminal. Every host tab goes with that
+return, the member's terminal included, and its tmux session is still attached
+on the box. BlitzOS moves the selection to the strip's OTHER host, the chat
+landing, whose strip needs no session to be rooted in
+(`plans/LODY-TERMINAL-TABS.md` §3.4). With no host tab in the address the card
+stays, which is the honest answer to a dead session on its own.
+
+The call sits ABOVE upstream's `fireDetailNotFoundOnce` gate deliberately: that
+gate is a once-per-session-id analytics guard, and what the host does with this
+is move an address, which can come back. It reads the callback from a ref, so a
+fresh host closure does not re-run an upstream effect whose dependency list is
+upstream's.
 
 **Hunks 16–18 are the seam's only OUTWARD edge, and they exist because hunk 13
 has no way back.** An active host tab hides every conversation surface, so the
@@ -311,7 +328,7 @@ early return, next to the other list the strip is built from. Measured, not
 reasoned about — `packages/webapp/test/lody-shared-surface.test.tsx` caught it
 against a real daemon.
 
-The API is five props, one idea. The host owns the list, the selection and both
+The API is six props, one idea. The host owns the list, the selection and both
 verbs; the viewer owns the drawing and the layout, and tells the host when its
 own selection has taken the view back. There is no registry, no atom
 and no context — grepping `registerTab|tabRegistry|registerPanel|panelRegistry`
@@ -332,6 +349,9 @@ onSurfaceTabSelect?: (tabId: string) => void;
 onSurfaceTabClose?: (tabId: string) => void;
 /** This page selected a CONVERSATION tab, so no host tab is selected now. */
 onSessionTabSelect?: (tabId: string) => void;
+/** This page has no session to draw, so it returns above the strip and every
+ *  host tab goes with it. */
+onSessionMissing?: (sessionId: string) => void;
 ```
 
 **`content: ReactNode`, not a portal host.** A ref-callback host element was the
@@ -367,7 +387,11 @@ line that is not one of the anchors above, and it renders the real
 - If the conversation selection stops being one `useState` — an atom, a reducer,
   a URL field — hunks 17 and 18 follow it to whatever the new single writer is.
   What must not happen is a return to notifying per call site.
-- If upstream grows its own host-tab concept, delete all eighteen hunks and pass
+- If the not-found branch moves, or `sessionPresenceState` is replaced, hunk 20
+  follows it to wherever the page decides it has no session to draw. Hunk 19
+  without a call site is the shape of the defect it fixes: the host keeps a
+  selection in a strip that is not on screen.
+- If upstream grows its own host-tab concept, delete all twenty hunks and pass
   that instead — the BlitzOS half is one binding on
   `packages/webapp/src/lody/surface-tabs.ts`.
 
@@ -447,6 +471,27 @@ Declared ahead of time so a merge agent recognises them when they appear.
 
 Recorded here because each is a candidate seam if the workaround stops holding.
 
+- **The command palette and its keyboard shortcuts are not mounted at all, and
+  three of its commands would ignore a host tab if they were.**
+  `session.archiveCurrent` (`$mod+Alt+a`), `session.closeFocusedTab` and the
+  `session.nextTab` / `session.previousTab` cycle all resolve against
+  `SessionDetail`'s own `activeTabSessionId` (`session-detail.tsx:3783`, `:3901`,
+  `:4116`), which is the CONVERSATION selection — a host tab is invisible to
+  every one of them, so with a terminal on screen they would act on the chat
+  behind it. **They cannot be reached in the BlitzOS mount**: the registry's
+  capture-phase keydown listener is attached by `commands.attach(window)` in
+  `components/AppInitializer.tsx`, which only `routes/__root.tsx` mounts, and
+  `CommandPalette` is mounted only by `routes/$workspaceName/_auth.tsx`. This
+  surface mounts neither (`packages/webapp/src/lody/SessionSurface.tsx`, "what
+  we do not mount, and why it is safe"), so no chord reaches a command and no
+  palette reaches `execute()`. Recorded rather than fixed, because a host-side
+  fix would be a fix to something that does not run;
+  `packages/webapp/test/lody-terminal-tab-wave3.test.tsx` pins both halves, so
+  the day either dispatcher is mounted the limitation becomes a failing test.
+  **Candidate upstream PR: resolve the close and cycle targets over the same
+  `viewerTabs` the strip already draws** (`getSessionTabCloseTarget`,
+  `lib/session-tab-close-target.ts:8`) — the same list seam patch 5 fills, which
+  is why it is one idea with that patch rather than a new one.
 - ~~**`LoroSidebar` has no header/footer suppression props.**~~ Phase 4 added
   them at seam patch 2 and drafted the upstream PR
   (`plans/evidence/lody-sidebar-props-pr.md`).

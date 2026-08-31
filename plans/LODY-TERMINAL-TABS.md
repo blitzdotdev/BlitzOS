@@ -253,6 +253,17 @@ merge agent notices the day it happens.
 
 ### 3.1 Seam patch 5 — "pluggable surface tabs"
 
+> **Amendment (as built).** The table below is the DESIGN's eight hunks. The
+> shipped seam is **twenty**, and `vendor/lody/BLITZ-PATCHES.md` is the record:
+> PR #135 added hunks 9-15 (a memo that must sit above the page's early
+> returns, the `activeChatSurfaceId` rule, and the two `isActive` reads it
+> needs) and 16-18 (`onSessionTabSelect`, the announcing setter, and the three
+> corrections that keep the raw one), and wave 3 added 19-20
+> (`onSessionMissing`, so a dead session does not take the strip with it — §7's
+> F7). Still one idea and still strictly additive; the count grew because the
+> design under-counted what "an active host tab hides the conversation
+> surfaces" costs, not because a second idea was added.
+
 **One idea, eight hunks, two files.** A host that embeds the session viewer may
 contribute tabs of its own to the one tab strip and supply their content.
 Strictly additive: with every new prop absent, `SessionDetail` and
@@ -499,6 +510,17 @@ flag-off experience and the correct answer for a machine that cannot run the
 surface.
 
 ### 4.6 What the native strip does when the flag is on
+
+> **Amendment (as built).** This section names `available` as the signal, and
+> it is no longer the signal, twice over. PR #137 replaced it with
+> `lodySurfaceMounts` — `available` is `capability !== 'absent'`, which stays
+> true through `probing`, and a workspace with no running box stays `probing`
+> for good, so the panes were handed to a host that never mounted. Wave 3 then
+> gated the STRIPS on visibility as well (`surfaceHostsTabs`), because
+> `lodySurfaceMounts` answers "the surface exists" and `/workspaces/:id` is
+> `chat === null`, where the surface is mounted and hidden: the panes were
+> giving their strip away to a strip nobody could see. The pane BODIES already
+> followed visibility; the two now follow one answer.
 
 It renders nothing. `WorkPanes` draws one `div.webapp-pane-strip` per visible
 region at `WorkPanes.tsx:147-181`, each a `WebAppHeader` whose tab strip is

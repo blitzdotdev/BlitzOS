@@ -126,6 +126,15 @@ export interface SurfaceTabsBinding {
    * `vendor/lody/BLITZ-PATCHES.md` seam patch 5 hunk 17.
    */
   onDeselect: () => void;
+  /**
+   * The session the strip is drawn in does not exist (seam patch 5 hunk 20).
+   *
+   * `SessionDetail` renders its not-found card and returns ABOVE the strip, so
+   * the whole tab list disappears — the terminal the member was looking at
+   * included. Required like the other verbs, and raised by the session host
+   * alone: the landing has no session to be missing, so it never calls it.
+   */
+  onSessionMissing: () => void;
 }
 
 /**

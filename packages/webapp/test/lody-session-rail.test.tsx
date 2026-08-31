@@ -102,9 +102,18 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       match.test(row.textContent ?? ""),
     );
 
-  /** The surface, with `hidden` as the only thing a case may vary: every other
-   * prop is identical across renders so the runtime is never rebuilt. */
-  let surface: (hidden: boolean) => ReactNode = () => null;
+  /**
+   * The surface, with two things a case may vary: whether it is hidden, and
+   * which terminal the SHELL says the member is looking at. Every other prop is
+   * identical across renders so the runtime is never rebuilt.
+   *
+   * The two travel together because that is the shell's own rule (wave 3,
+   * ADJ1): while the surface is up a terminal is a TAB of it, so
+   * `activeTerminalId` is the one the ADDRESS names and `''` means a
+   * conversation owns the pane; while the panes are up it is the pane's own
+   * focused tab. The default below is a chat address in both positions.
+   */
+  let surface: (hidden: boolean, activeTerminalId?: string) => ReactNode = () => null;
   /** Every session id the row's Share entry reported (phase 6). */
   const sharedSessions: string[] = [];
   /**
@@ -131,7 +140,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     };
     harness = await startLodyHarness();
     await seedSession(harness);
-    surface = (hidden: boolean) => (
+    surface = (hidden: boolean, activeTerminalId = hidden ? "12" : "") => (
       <SessionSurface
         endpoints={{
           ...harness.endpoints,
@@ -148,7 +157,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
             { id: "11", label: "claude · tab 1", agent: "claude" },
             { id: "12", label: "bash", agent: "terminal" },
           ],
-          activeTerminalId: "12",
+          activeTerminalId,
           onSelectTerminal: (tabId) => selectedTerminals.push(tabId),
           terminalsAction: <button type="button" aria-label="New tab">+</button>,
           onShareSession: (sessionId) => sharedSessions.push(sessionId),
@@ -345,8 +354,10 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     expect(rows.map((row) => row.textContent)).toEqual(["claude · tab 1", "bash"]);
     // Same glyphs: `SessionTypeIcon` renders an svg into the same gutter span.
     expect(rows[0]?.querySelector(".shell-g .shell-g__glyph")).not.toBeNull();
-    // The surface is showing, so no terminal row claims to be selected — the
-    // panes are not what the member is looking at.
+    // The surface is showing a CONVERSATION, so no terminal row claims to be
+    // selected. That is `activeTerminalId === ''` now rather than "the surface
+    // is up": a terminal is a tab of this surface, so a row keeps its highlight
+    // exactly when its terminal is the tab on screen (wave 3, ADJ1).
     expect(rows.some((row) => row.className.includes("shell-s--on"))).toBe(false);
     await act(async () => {
       rows[0]?.click();
@@ -356,6 +367,23 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     expect(
       railButtons().some((button) => button.getAttribute("aria-label") === "New tab"),
     ).toBe(true);
+  });
+
+  it("marks the terminal whose TAB owns the surface's pane", async () => {
+    // The other half of ADJ1: the surface is still up, and a terminal tab is
+    // what it is drawing. The old rule dropped the highlight in exactly this
+    // state — the one where the member is looking at that terminal.
+    await act(async () => {
+      mounted.root.render(surface(false, "12"));
+    });
+    await settle();
+    const rows = [...railHost.querySelectorAll<HTMLButtonElement>(".shell-s")];
+    expect(rows[1]?.className).toContain("shell-s--on");
+    expect(rows[0]?.className).not.toContain("shell-s--on");
+    await act(async () => {
+      mounted.root.render(surface(false));
+    });
+    await settle();
   });
 
   it("marks the active terminal when the panes own the view", async () => {

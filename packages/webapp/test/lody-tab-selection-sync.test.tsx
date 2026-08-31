@@ -113,6 +113,7 @@ async function mountWiring(path: string) {
       },
       onClose: () => undefined,
       onDeselect: rail.closeTerminal,
+      onSessionMissing: rail.openTerminalOnLanding,
     };
     return null;
   }

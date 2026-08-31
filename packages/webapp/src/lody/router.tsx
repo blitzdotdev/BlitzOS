@@ -194,7 +194,7 @@ function sessionDetailRouteComponent(readOnly: boolean) {
     const { sessionId } = useParams({ from: "/$workspaceName/_auth/sessions/$sessionId" });
     const search = useSearch({ from: "/$workspaceName/_auth/sessions/$sessionId" });
     const surfaceTabs = useSurfaceTabs();
-    // The five props of seam patch 5. Absent when no shell contributes tabs,
+    // The six props of seam patch 5. Absent when no shell contributes tabs,
     // which is the render every upstream call site does and the one the
     // inertness test pins.
     //
@@ -203,6 +203,11 @@ function sessionDetailRouteComponent(readOnly: boolean) {
     // address change we make; selecting a conversation tab is the page's own
     // state, so without this the address would keep naming a terminal that has
     // just been covered over — and hunk 15 would keep drawing it.
+    //
+    // `onSessionMissing` is the OTHER way the strip can vanish, and the only
+    // one the page cannot recover from: it returns above the strip, so no host
+    // tab is drawn at all. The host moves its selection to the landing's strip
+    // rather than leaving the member on a card with nothing around it.
     const hostTabs = surfaceTabs === null
       ? {}
       : {
@@ -211,6 +216,7 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           onSurfaceTabSelect: surfaceTabs.onSelect,
           onSurfaceTabClose: surfaceTabs.onClose,
           onSessionTabSelect: surfaceTabs.onDeselect,
+          onSessionMissing: surfaceTabs.onSessionMissing,
         };
     return (
       <AppThemeShell>

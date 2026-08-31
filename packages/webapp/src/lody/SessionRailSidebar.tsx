@@ -89,12 +89,19 @@ interface LodySessionRowActions {
 export interface SessionRailSidebarProps {
   /** Every terminal tab the rail used to list, unchanged. */
   terminals: DriveRailSession[];
-  /** The terminal tab that owns the panes, or `''` for "the first one". */
+  /**
+   * The terminal tab the member is looking at, or `''` when none is.
+   *
+   * WHICH ONE THAT IS DEPENDS ON WHO IS DRAWING THE TABS. While the surface is
+   * up the tabs are the session strip's and the selection is the ADDRESS, so
+   * `''` means a conversation owns the pane and no terminal row is current.
+   * While the panes are up it is the pane's own focused tab, and `''` there
+   * still means "the first one", which is what the panes themselves show.
+   */
   activeTerminalId: string;
   /** The chat session the surface is showing, or `null` on the landing. */
   activeSessionId: string | null;
-  /** `true` while the surface is the visible pane. A terminal row that is
-   * selected while the surface is up must not stay highlighted. */
+  /** `true` while the surface is the visible pane. */
   surfaceVisible: boolean;
   onSelectTerminal: (tabId: string) => void;
   onSelectSession: (sessionId: string) => void;
@@ -321,6 +328,15 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
   const [sharedCollapsed, setSharedCollapsed] = useState(false);
 
   const selectedSessionId = props.surfaceVisible ? props.activeSessionId : null;
+  // THE RAIL FOLLOWS THE ADDRESS (plans/LODY-TERMINAL-TABS.md wave 3, ADJ1).
+  //
+  // It used to follow `!surfaceVisible`, which is the pre-terminal-tabs rule:
+  // back then the surface and the terminals were two views and one of them was
+  // up. Now a terminal is a TAB of the surface, so a terminal row lost its
+  // highlight exactly when its terminal came on screen. The signal that a
+  // terminal owns the pane is the same one the strip draws its selection from:
+  // an addressed tab, which the shell passes here as `activeTerminalId`.
+  const terminalsHighlighted = props.surfaceVisible ? props.activeTerminalId !== "" : true;
   const rowActions = useMemo(() => {
     const actions: LodySessionRowActions = {
       selectedSessionId,
@@ -419,7 +435,7 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
           <TerminalRows
             terminals={props.terminals}
             activeTerminalId={props.activeTerminalId}
-            active={!props.surfaceVisible}
+            active={terminalsHighlighted}
             onSelect={props.onSelectTerminal}
           />
         )}
