@@ -226,6 +226,11 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           urlPrNumber={search.pr}
           urlBrowser={search.browser}
           readOnly={readOnly}
+          // Seam patch 6. In a session the agent has not answered yet there is
+          // nothing to fork, so the Side Chat launcher takes the `disabled`
+          // state it already has for an offline machine instead of accepting a
+          // click and answering with an error toast.
+          sideChatRequiresAssistantTurn
           {...hostTabs}
         />
       </AppThemeShell>

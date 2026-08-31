@@ -167,6 +167,7 @@ grep -n 'readOnly' vendor/lody/packages/components/src/components/sessions/sessi
 grep -n 'surfaceTabs' vendor/lody/packages/components/src/components/sessions/session-{detail,tab-bar}.tsx
 grep -n 'parentSession?' vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx
 grep -n 'onSessionTabSelect\|onSessionMissing' vendor/lody/packages/components/src/components/sessions/session-detail.tsx
+grep -n 'sideChatRequiresAssistantTurn\|activeTabAssistantTurnId' vendor/lody/packages/components/src/components/sessions/session-detail.tsx
 ```
 
 The last three are seam patch 5, and they answer different questions.
@@ -179,6 +180,12 @@ required again at a call site (`packages/webapp/src/lody/TerminalTabsStrip.tsx`)
 that then stops compiling, so THAT loss is loud. What is quiet is upstream making
 the strip read `parentSession` somewhere new, and
 `packages/webapp/test/lody-surface-tabs.test.tsx` is what catches that.
+
+The last one is seam patch 6, and it is the quietest of them all: the prop is
+optional and the mirror it feeds is a `useState`, so losing any hunk compiles and
+runs — the Side Chat launcher simply goes back to accepting a click it cannot
+serve. `packages/webapp/test/lody-side-chat-guard.test.tsx` names each part for
+that reason.
 
 `BLITZ-PATCHES.md` carries a **merge conflict drill** for each patch, saying
 what to do when the anchor is reworded and what to do when upstream replaces the

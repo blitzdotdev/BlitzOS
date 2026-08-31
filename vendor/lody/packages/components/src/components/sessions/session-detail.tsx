@@ -699,6 +699,7 @@ const SessionDetail = ({
   onSurfaceTabClose,
   onSessionTabSelect,
   onSessionMissing,
+  sideChatRequiresAssistantTurn = false,
 }: {
   sessionId: SessionId;
   urlTab?: string;
@@ -737,6 +738,19 @@ const SessionDetail = ({
    * and whatever the host had selected in it needs another home.
    */
   onSessionMissing?: (sessionId: string) => void;
+  /**
+   * Offer Side Chat only once there is an assistant turn to fork from.
+   *
+   * The launcher forks the active conversation, and a fork needs a completed
+   * assistant turn: without one `forkActiveConversation` returns after a
+   * `toast.error`, so in a session that has not answered yet the entry looks
+   * enabled, does nothing visible, and reads as broken. With this on it takes
+   * the `disabled` state the launcher already has for an offline machine.
+   *
+   * Off by default, so a host that does not pass it gets exactly today's
+   * behaviour and every upstream call site is unchanged.
+   */
+  sideChatRequiresAssistantTurn?: boolean;
 }) => {
   const { t } = useTranslation();
   const router = useRouter();
@@ -1176,6 +1190,18 @@ const SessionDetail = ({
       draftTabs.some((draft) => draft.id === activeTabSessionIdRaw);
     return stillExists ? activeTabSessionIdRaw : sessionId;
   }, [activeTabSessionIdRaw, visibleChildSessions, draftTabs, sessionId]);
+  /**
+   * The active conversation's fork target, as a value a RENDER can read.
+   *
+   * `chatRefsMap` is a ref, so `getLastAssistantTurnId()` answers only when
+   * somebody asks — which is fine for a click and useless for a disabled state.
+   * `setChatTabRef` mirrors it into state below; this ref is how that callback
+   * knows which tab is the active one without taking a dependency and changing
+   * its identity on every tab switch.
+   */
+  const activeTabSessionIdForForkRef = useRef<string>(activeTabSessionId);
+  activeTabSessionIdForForkRef.current = activeTabSessionId;
+  const [activeTabAssistantTurnId, setActiveTabAssistantTurnId] = useState<string | null>(null);
   const activeSessionTabId = useMemo<SessionId | null>(() => {
     if (activeTabSessionId === sessionId) return sessionId;
     return visibleChildSessions.find((s) => s.id === activeTabSessionId)?.id ?? null;
@@ -1788,6 +1814,17 @@ const SessionDetail = ({
   const setChatTabRef = useCallback(
     (tabId: string, ref: SessionChatInterfaceHandle | DraftSessionChatInterfaceHandle | null) => {
       chatRefsMap.current.set(tabId, ref);
+      // A DETACH IS IGNORED, and that is what keeps this from looping. Every
+      // render of this page hands each surface a fresh ref arrow, so React
+      // calls it with `null` and then with the handle inside one commit; taking
+      // the `null` would queue a state change on every commit for ever.
+      // `useImperativeHandle` re-attaches whenever the handle's own
+      // dependencies change — `lastCompletedAssistantMessageId` among them — so
+      // the attach alone carries every value this needs.
+      if (ref === null || tabId !== activeTabSessionIdForForkRef.current) return;
+      setActiveTabAssistantTurnId(
+        'getLastAssistantTurnId' in ref ? ref.getLastAssistantTurnId() : null
+      );
     },
     []
   );
@@ -3457,14 +3494,21 @@ const SessionDetail = ({
       label: t('sessions.detailTabs.sideSession', 'Side Chat'),
       kind: 'session',
       pending: isCreatingSideSession,
-      disabled: launcherState === 'disabled' || isCreatingSideSession,
+      // The third reason there is nothing to launch, beside an offline machine
+      // and a launch already in flight. Opt-in, so the default is upstream's.
+      disabled:
+        launcherState === 'disabled' ||
+        isCreatingSideSession ||
+        (sideChatRequiresAssistantTurn && activeTabAssistantTurnId === null),
     };
   }, [
     activeDraftTab,
+    activeTabAssistantTurnId,
     activeTabSession,
     activeTabSessionMachineOnlineStatus,
     canForkSession,
     isCreatingSideSession,
+    sideChatRequiresAssistantTurn,
     t,
   ]);
   const sidePanelOptions = useMemo<SessionSidePanelOption[]>(
