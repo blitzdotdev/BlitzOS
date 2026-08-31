@@ -324,6 +324,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }
     }
   }, [api, resolver]);
+  /** The poll as a dialog asks for it: a settled write wants its rows now,
+   * and has no answer of its own to report. */
+  const refreshWorkspacesNow = useCallback(() => {
+    void refreshWorkspaceRecords();
+  }, [refreshWorkspaceRecords]);
 
   const activeWorkspace = useMemo(
     () => store.workspaces.find(({ id, canControl }) => id === activeWorkspaceId && canControl),
@@ -1511,6 +1516,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       createWorkspaceBusy={createWorkspaceBusy}
       createWorkspaceError={createWorkspaceError}
       listMachineTypes={listMachineTypes}
+      refreshWorkspaces={refreshWorkspacesNow}
       cloneFromWorkspaceId={cloneFromWorkspaceId}
       onCancelCreateWorkspace={() => {
         if (createWorkspaceBusy) return;

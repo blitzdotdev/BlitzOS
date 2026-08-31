@@ -32,6 +32,9 @@ export type ShellDialogsProps = {
   createWorkspaceBusy: boolean;
   createWorkspaceError: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  /** Runs the workspace poll now, so a dialog write reaches the rows without
+   * waiting for the next tick. Keep it stable across renders. */
+  refreshWorkspaces: () => void;
   /** The workspace a "new workspace from existing" copies, or null. */
   cloneFromWorkspaceId: string | null;
   onCancelCreateWorkspace: () => void;
@@ -69,6 +72,7 @@ export function ShellDialogs({
   createWorkspaceBusy,
   createWorkspaceError,
   listMachineTypes,
+  refreshWorkspaces,
   cloneFromWorkspaceId,
   onCancelCreateWorkspace,
   onCreateWorkspace,
@@ -122,6 +126,7 @@ export function ShellDialogs({
           client={client}
           workspace={detailsWorkspace}
           listMachineTypes={listMachineTypes}
+          refreshWorkspaces={refreshWorkspaces}
           initialTab={details.tab}
           focusAddMember={details.focusAddMember ?? false}
           onClose={onCloseDetails}
