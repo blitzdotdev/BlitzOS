@@ -26,6 +26,33 @@
  * none of the properties they take is inherited, so declaring on them cannot
  * reach the surface either.
  *
+ * AND `.drive-shell` IS SUCH AN ANCESTOR TOO — the bug this file shipped with
+ * (plans/LODY-RUNTIME-DESIGN.md §17). The paragraph above got the hazard right
+ * and the selector wrong: in the product the surface is
+ * `main.drive-shell > .drive-ws-frame > section.webapp-workspace-view >
+ * div.lody-surface` (`CloudApp.tsx:1582`), and the rail's vendored zone is
+ * `main.drive-shell > .shell-nav > .session-rail > .session-list--vendor`. So
+ * every `:where(.drive-shell, …) :where(button, input, textarea, a, h1…h6, ul,
+ * ol, li, img, table)` rule below was matching LODY's elements and reverting
+ * their `appearance`, `background-color`, `border`, `border-radius`, `padding`,
+ * `color`, `letter-spacing`, `opacity` and `cursor` to the user-agent default —
+ * unlayered, so it beat every Tailwind utility in `@layer lody`. Measured in
+ * Chrome: the composer's textarea painted `rgb(59,59,59)` on a `rgb(133,133,133)`
+ * 1px border at 16px, which is Chrome's default textarea, and every button in
+ * the surface and the rail was a grey UA slab.
+ *
+ * Hence `:where(:not(.lody-surface, .lody-surface *, .session-list--vendor,
+ * .session-list--vendor *))` on each of those rules. It is wrapped in `:where()`
+ * so the exclusion costs no specificity and this file stays the zero-specificity
+ * floor it claims to be. The two class names are Lody's two mounts
+ * (plans/LODY-SESSIONS.md §0.3) and nothing else.
+ *
+ * The native rows that live INSIDE the vendored zone — the Terminals
+ * `.shell-s` buttons `SessionRailSidebar` injects through
+ * `afterSessionListContent` — keep their compensation from the unscoped
+ * `:where(.shell-s, .files-tree-row)` rules, which the exclusion does not
+ * touch.
+ *
  * `packages/webapp/test/lody-tailwind-containment.test.ts` asserts that every
  * property phase 0 measured as leaking is declared here, per probe. An upstream
  * preflight change that widens the leak therefore fails a test rather than
@@ -75,8 +102,9 @@ body {
   padding: revert;
 }
 
-/* Same six, inside our shells. */
-:where(.drive-shell, .drive-shell *, .webapp-shell, .webapp-shell *) {
+/* Same six, inside our shells — but never inside Lody's two mounts, whose own
+   animations and transitions these would revert. */
+:where(.drive-shell, .drive-shell *, .webapp-shell, .webapp-shell *):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   animation-duration: revert;
   animation-iteration-count: revert;
   outline-color: revert;
@@ -104,14 +132,14 @@ body {
 }
 
 :where(.drive-shell, .webapp-shell)
-  :where(button, input, select, textarea, a, h1, h2, h3, h4, h5, h6, ul, ol, li, img, table) {
+  :where(button, input, select, textarea, a, h1, h2, h3, h4, h5, h6, ul, ol, li, img, table):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   -webkit-tap-highlight-color: revert;
   border: revert;
   margin: revert;
   padding: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(button, input, select, textarea) {
+:where(.drive-shell, .webapp-shell) :where(button, input, select, textarea):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   appearance: revert;
   background-color: revert;
   border-radius: revert;
@@ -123,28 +151,28 @@ body {
   opacity: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(a) {
+:where(.drive-shell, .webapp-shell) :where(a):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   text-decoration: revert;
   -webkit-text-decoration: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(h1, h2, h3, h4, h5, h6) {
+:where(.drive-shell, .webapp-shell) :where(h1, h2, h3, h4, h5, h6):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   font-size: revert;
   font-weight: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(ul, ol) {
+:where(.drive-shell, .webapp-shell) :where(ul, ol):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   list-style: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(img) {
+:where(.drive-shell, .webapp-shell) :where(img):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   display: revert;
   height: revert;
   max-width: revert;
   vertical-align: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(table) {
+:where(.drive-shell, .webapp-shell) :where(table):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   border-collapse: revert;
   text-indent: revert;
 }

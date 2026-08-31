@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BlitzOS — Lody surface preview</title>
+  </head>
+  <body>
+    <!--
+      The Lody surface, composed the way the product composes it, styled ONLY by
+      stylesheets the product loads. `npm run dev -w @blitzos/webapp`, then
+      /surface-preview.html.
+
+      Not a Rollup input: `vite build` builds index.html alone, so nothing here
+      reaches the product bundle.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/test/surface-preview/entry.tsx"></script>
+  </body>
+</html>
