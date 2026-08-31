@@ -23,6 +23,8 @@ export type ShellNavProps = {
   /** The rail's vendored zone, when Lody sessions are on. See
    * `SessionRailProps.onVendorHost`. */
   onVendorHost?: (node: HTMLDivElement | null) => void;
+  /** See `SessionRailProps.sessionsNeedNewerMachine`. */
+  sessionsNeedNewerMachine?: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   onOpenWorkspaceSettings: (workspaceId: string) => void;
@@ -57,6 +59,7 @@ export function ShellNav({
   previewLinks,
   drawerOpen,
   onVendorHost,
+  sessionsNeedNewerMachine,
   onSelectWorkspace,
   onRenameWorkspace,
   onOpenWorkspaceSettings,
@@ -101,6 +104,7 @@ export function ShellNav({
             livePorts={livePorts}
             previewLinks={previewLinks}
             {...(onVendorHost === undefined ? {} : { onVendorHost })}
+            {...(sessionsNeedNewerMachine === undefined ? {} : { sessionsNeedNewerMachine })}
             onSelectSession={onSelectSession}
             onSpawnSession={onSpawnSession}
             onOpenPreview={onOpenPreview}

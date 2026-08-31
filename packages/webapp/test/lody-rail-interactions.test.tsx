@@ -28,7 +28,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoxEndpoints } from "../src/resolver.js";
 import type { AppRoute } from "../src/sessions-page-state.js";
 import type { LodyRailBinding } from "../src/lody/SessionSurface.js";
-import type { LodyRailState } from "../src/lody/use-lody-rail.js";
+import type { LodyRailSessions, LodyRailState } from "../src/lody/use-lody-rail.js";
 import { render, settle } from "./dom.js";
 
 afterEach(() => {
@@ -50,6 +50,13 @@ const ENDPOINTS = {
   lodyProjectUrl: "https://box.invalid/webapp/7445/lody/project",
   lodyPlatformUrl: "https://box.invalid/webapp/7445/lody/platform",
 } satisfies BoxEndpoints;
+
+/** The box answered `/lody/platform`, which is every case below: what is under
+ * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`). */
+const SESSIONS_PRESENT = {
+  capability: "present",
+  onLegacyDefaultTabs: () => {},
+} satisfies LodyRailSessions;
 
 interface MountResult {
   /** What the region handed the surface, captured on every render. */
@@ -93,11 +100,19 @@ async function mountRegion(options: { path: string; tabCount: number }): Promise
 
   function Host() {
     const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname));
-    const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, options.tabCount);
+    const rail = useLodyRail(
+      route,
+      setRoute,
+      route.workspaceId ?? "",
+      true,
+      options.tabCount,
+      SESSIONS_PRESENT,
+    );
     seen.rail = rail;
     return (
       <LodySessionsRegion
         endpoints={ENDPOINTS}
+        sessions={SESSIONS_PRESENT.capability}
         viewerName="Me"
         viewerAvatarUrl={null}
         workspaceTitle="Workspace"

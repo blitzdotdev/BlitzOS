@@ -21,7 +21,7 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ListSessionSharesResponse, WorkspaceView } from "@blitzos/schema";
 import type { AppRoute } from "../src/sessions-page-state.js";
-import type { LodyRailState } from "../src/lody/use-lody-rail.js";
+import type { LodyRailSessions, LodyRailState } from "../src/lody/use-lody-rail.js";
 import type { SharedSessionsState } from "../src/lody/use-shared-sessions.js";
 import { render, settle } from "./dom.js";
 
@@ -68,6 +68,13 @@ const RECEIVED: ListSessionSharesResponse = {
 };
 
 /** A `/lody/platform` answer and one `meta` room, standing in for a box. */
+/** The box answered `/lody/platform`, which is every case below: what is under
+ * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`). */
+const SESSIONS_PRESENT = {
+  capability: "present",
+  onLegacyDefaultTabs: () => {},
+} satisfies LodyRailSessions;
+
 function stubOwnerBox(titles: Record<string, string> | null): void {
   vi.stubGlobal(
     "fetch",
@@ -162,7 +169,7 @@ async function mount(options: {
 
   function Host() {
     const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname));
-    const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, 1);
+    const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, 1, SESSIONS_PRESENT);
     const shared = useSharedSessions({ client, workspace, resolver, chat: rail.chat });
     seen.rail = rail;
     seen.shared = shared;
