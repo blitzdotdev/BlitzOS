@@ -86,6 +86,31 @@ export interface SharedSurfaceTarget {
   endpoints: BoxEndpoints;
 }
 
+/**
+ * Will this region put a surface on screen at all?
+ *
+ * IT HAS TWO READERS AND THAT IS THE POINT. The region itself asks it below,
+ * and `CloudApp` asks it before it hands the panes over: with the flag on and a
+ * box that serves the surface, the native tab strips render nothing and every
+ * tab body moves into the strip (plans/LODY-TERMINAL-TABS.md §4.6). Handing
+ * both to a host that is not mounted leaves the workspace with no strip, no tab
+ * body and no surface — a blank screen.
+ *
+ * `available` in `useLodyRail` is NOT this question. It is
+ * `capability !== 'absent'`, which is deliberately true throughout `probing` so
+ * the rail does not flicker back to its legacy list for one round trip — and
+ * `probing` is where a workspace with no running box stays for good
+ * (`box-capability.ts`: the hook returns early on a null platform URL). The
+ * rail can afford the optimism because an empty rail zone is a rail; the panes
+ * cannot, because the optimism costs them their contents.
+ */
+export function lodySurfaceMounts(
+  endpoints: BoxEndpoints | null,
+  sessions: LodySessionsCapability,
+): boolean {
+  return LODY_SESSIONS_ENABLED && endpoints !== null && sessions === "present";
+}
+
 /** The box surfaces the Lody runtime dials, out of one endpoint set. */
 function lodyEndpoints(endpoints: BoxEndpoints) {
   return {
@@ -132,12 +157,12 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   // on a pre-Lody image cannot use a byte of the chunk, and `probing` is one
   // round trip — far shorter than the fetch it gates — so neither `absent` nor
   // `probing` may reach `lazy()`.
-  if (
-    !LODY_SESSIONS_ENABLED
-    || endpoints === null
-    || props.sessions !== "present"
-    || !everRequested
-  ) return null;
+  // The null check is repeated ahead of the predicate only to narrow the type
+  // for the rest of this function; the predicate is still where the condition
+  // is decided, and `CloudApp` asks the same one.
+  if (endpoints === null || !lodySurfaceMounts(endpoints, props.sessions) || !everRequested) {
+    return null;
+  }
 
   const viewer = { name: props.viewerName, avatarUrl: props.viewerAvatarUrl };
   // EXACTLY ONE SURFACE IS MOUNTED, and this is the constraint that decides it:

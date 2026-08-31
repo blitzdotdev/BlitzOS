@@ -46,12 +46,14 @@ Two files.
 |---|---|---|
 | 7 | the `react` import | adds `type ReactNode` |
 | 8 | above the component | declares `SessionSurfaceTab` and one stable empty default |
-| 9 | the inline props type and destructuring | four optional props, all defaulted to today's behaviour |
+| 9 | the inline props type and destructuring | five optional props, all defaulted to today's behaviour |
 | 10 | before `tabBar` | maps the host's tabs to `ViewerTabItem[]`, memoized |
 | 11 | the `SessionTabBar` element | `variant` becomes `'mixed'` only when the host contributed a tab |
 | 12 | the same element | passes the four viewer-tab props through |
 | 13-14 | `desktopChatSurfaces` | an active host tab deselects the conversation surfaces |
 | 15 | the end of `desktopChatSurfaces` | mounts each host tab's content, hidden when inactive |
+| 16 | the inline props type | declares `onSessionTabSelect` |
+| 17-18 | the `activeTabSessionId` state | the setter becomes the one place a conversation-tab selection is announced |
 
 ## PR title
 
@@ -88,7 +90,7 @@ user as two products in one window.
 
 ## Summary
 
-Four optional props on `SessionDetail`, one optional prop and one widened union
+Five optional props on `SessionDetail`, one optional prop and one widened union
 member on `SessionTabBar`. Every default is today's behaviour, and no call site
 in the repository passes any of them.
 
@@ -104,12 +106,34 @@ surfaceTabs?: readonly SessionSurfaceTab[];
 activeSurfaceTabId?: string | null;
 onSurfaceTabSelect?: (tabId: string) => void;
 onSurfaceTabClose?: (tabId: string) => void;
+/** This page selected a CONVERSATION tab, so no host tab is selected now. */
+onSessionTabSelect?: (tabId: string) => void;
 ```
 
 The host owns the list, the selection and both verbs; the page owns the drawing
 and the layout. There is no registry, no atom and no context, because there is
 no extension mechanism in the tree to hook into and this is the smallest thing
 that could be one.
+
+`onSessionTabSelect` is the fifth, and it is what makes the other four
+survivable. An active host tab hides the conversation surfaces, and the page's
+own tab selection is `useState` that nothing outside can read — so a host that
+is never told about a conversation click keeps its tab selected and keeps
+covering the conversation the user asked for.
+
+It is announced from the SETTER, not from the strip's click handler. Ten call
+sites move that state — the strip click, the `+`, a close, a restore, a fork, a
+mention navigation, the next/previous cycle, a promoted draft, the browser
+panel, and the URL sync — and a host that hears only about the click gets the
+same defect one button along: the `+` creates a draft tab that opens underneath
+the host tab and never appears. The three writers that take the raw setter are
+corrections rather than selections (the session-switch reset, which runs during
+render, and the two `?tab=` syncs), and they are the three that pass an updater
+rather than an id.
+
+An effect on the value would not do: it fires on a CHANGE, and the click that
+most needs the call changes nothing — the parent tab is already
+`activeTabSessionId` while a host tab covers it.
 
 `parentSession` becoming optional is the second half, and it is what makes the
 already-declared `variant="viewer"` usable by a host that has no session to root
@@ -132,6 +156,12 @@ a strip in.
   after the session tabs; selecting one calls `onSurfaceTabSelect` with its id
   and hides the conversation surfaces without unmounting them; the tab's own
   content is in the DOM and merely `hidden` while another tab is active.
+- With a host tab active, clicking the parent session tab calls
+  `onSessionTabSelect` with the parent id — including when `activeTabSessionId`
+  was already that id, which is the case a change-detecting notification misses.
+- With a host tab active, the strip's `+` calls `onSessionTabSelect` with the new
+  draft's id, and the next/previous tab shortcut calls it with the tab it moved
+  to. Both go through the same setter as the click.
 - Rendered both with every new prop absent and confirmed the DOM is unchanged
   from `main`.
 - Not tested: mobile. `MobileSessionTabSheet` keeps its own kind enum and the
@@ -194,7 +224,7 @@ a strip in.
 
 ## When it merges
 
-Delete seam patch 5 from `vendor/lody/BLITZ-PATCHES.md`, drop the fifteen hunks
-at the next `git subtree pull`, and keep passing the same four props from
+Delete seam patch 5 from `vendor/lody/BLITZ-PATCHES.md`, drop the eighteen hunks
+at the next `git subtree pull`, and keep passing the same five props from
 `packages/webapp/src/lody/router.tsx` unchanged — the BlitzOS half is the same
 either way, which is the point of upstreaming rather than patching.

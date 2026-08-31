@@ -194,9 +194,15 @@ function sessionDetailRouteComponent(readOnly: boolean) {
     const { sessionId } = useParams({ from: "/$workspaceName/_auth/sessions/$sessionId" });
     const search = useSearch({ from: "/$workspaceName/_auth/sessions/$sessionId" });
     const surfaceTabs = useSurfaceTabs();
-    // The four props of seam patch 5. Absent when no shell contributes tabs,
+    // The five props of seam patch 5. Absent when no shell contributes tabs,
     // which is the render every upstream call site does and the one the
     // inertness test pins.
+    //
+    // `onSessionTabSelect` is the RETURN direction and the only one of the five
+    // that carries information out of the page. Selecting one of our tabs is an
+    // address change we make; selecting a conversation tab is the page's own
+    // state, so without this the address would keep naming a terminal that has
+    // just been covered over — and hunk 15 would keep drawing it.
     const hostTabs = surfaceTabs === null
       ? {}
       : {
@@ -204,6 +210,7 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           activeSurfaceTabId: surfaceTabs.activeTabId,
           onSurfaceTabSelect: surfaceTabs.onSelect,
           onSurfaceTabClose: surfaceTabs.onClose,
+          onSessionTabSelect: surfaceTabs.onDeselect,
         };
     return (
       <AppThemeShell>

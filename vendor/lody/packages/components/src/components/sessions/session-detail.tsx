@@ -697,6 +697,7 @@ const SessionDetail = ({
   activeSurfaceTabId = null,
   onSurfaceTabSelect,
   onSurfaceTabClose,
+  onSessionTabSelect,
 }: {
   sessionId: SessionId;
   urlTab?: string;
@@ -713,6 +714,18 @@ const SessionDetail = ({
   activeSurfaceTabId?: string | null;
   onSurfaceTabSelect?: (tabId: string) => void;
   onSurfaceTabClose?: (tabId: string) => void;
+  /**
+   * This page moved its own tab selection to a CONVERSATION tab.
+   *
+   * The host owns `activeSurfaceTabId` and this page owns the conversation
+   * selection, so a host tab stays selected — and keeps covering the
+   * conversation — until the host is told to drop it. Nothing else can tell it:
+   * the conversation selection is local state and it is not in the URL.
+   *
+   * Fired with the tab id the page selected, so a host that draws its own
+   * chrome can follow the selection rather than only clear its own.
+   */
+  onSessionTabSelect?: (tabId: string) => void;
 }) => {
   const { t } = useTranslation();
   const router = useRouter();
@@ -796,9 +809,35 @@ const SessionDetail = ({
   const [mobileFileViewerTabId, setMobileFileViewerTabId] = useState<string | null>(null);
   const [mobileFileViewerOpen, setMobileFileViewerOpen] = useState(false);
   const mobileFilesBrowserRef = useRef<MobileProjectFileBrowserHandle>(null);
-  const [activeTabSessionIdRaw, setActiveTabSessionId] = useState<string>(
+  const [activeTabSessionIdRaw, setActiveTabSessionIdState] = useState<string>(
     () => initialTabState.activeTabSessionId
   );
+  const onSessionTabSelectRef = useRef(onSessionTabSelect);
+  onSessionTabSelectRef.current = onSessionTabSelect;
+  /**
+   * THE ONE PLACE THIS PAGE SELECTS A CONVERSATION TAB (seam patch 5 hunk 17).
+   *
+   * Ten call sites move `activeTabSessionIdRaw` — the strip click, the `+`, a
+   * close, a restore, a fork, a mention navigation, the next/previous cycle, a
+   * promoted draft, the browser panel, and the URL sync — and a host that
+   * contributed tabs has to hear about every one of them: an active host tab
+   * hides all the conversation surfaces, so a selection the host never learns
+   * about leaves its tab covering the conversation the user just asked for.
+   *
+   * A wrapper rather than a notification at each site, and rather than an
+   * effect on the value: an effect would only fire on a CHANGE, and the click
+   * that most needs the call does not change anything — the parent tab is
+   * already `activeTabSessionId` while a host tab covers it.
+   *
+   * The three writers that do NOT come through here take the raw setter, and
+   * each is a CORRECTION rather than a selection: the session-switch reset
+   * (which runs during render, where a host callback may not), and the two URL
+   * syncs (which re-assert what `?tab=` already says).
+   */
+  const setActiveTabSessionId = useCallback((tabId: string) => {
+    setActiveTabSessionIdState(tabId);
+    onSessionTabSelectRef.current?.(tabId);
+  }, []);
   const [localStateSessionId, setLocalStateSessionId] = useState(sessionId);
   const [commentReferenceKeysBySession, setCommentReferenceKeysBySession] = useState<
     Record<string, string[]>
@@ -987,7 +1026,9 @@ const SessionDetail = ({
     setMobileDiffState(null);
     setMobileFilesBrowserOpen(false);
     setFileProviderRequestedByInteraction(false);
-    setActiveTabSessionId(nextInitialTabState.activeTabSessionId);
+    // The raw setter: this runs during RENDER, where a host callback may not,
+    // and a session switch is the host's own navigation anyway.
+    setActiveTabSessionIdState(nextInitialTabState.activeTabSessionId);
   }
 
   const setDraftTabs = useCallback(
@@ -2625,13 +2666,16 @@ const SessionDetail = ({
       setActiveViewerTabId(null);
     }
     if (urlSyncAction.kind === 'activate-session') {
-      setActiveTabSessionId((prev) =>
+      // The raw setter: `?tab=` is a correction of a selection that already
+      // happened, not a new one, and it fires whenever the parsed value's
+      // identity changes.
+      setActiveTabSessionIdState((prev) =>
         prev === urlSyncAction.sessionId ? prev : urlSyncAction.sessionId
       );
       return;
     }
 
-    setActiveTabSessionId((prev) => (prev === sessionId ? prev : sessionId));
+    setActiveTabSessionIdState((prev) => (prev === sessionId ? prev : sessionId));
   }, [isMobile, parsedUrlTab, sessionId]);
 
   const resolveDiffFilePaths = useCallback(

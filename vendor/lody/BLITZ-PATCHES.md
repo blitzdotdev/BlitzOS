@@ -269,6 +269,37 @@ what `packages/webapp/src/lody/TerminalTabsStrip.tsx` mounts: the same component
 | 13 | 5586 | before `desktopChatSurfaces` | `activeChatSurfaceId`: an active HOST tab deselects every conversation surface, the same rule `hasActiveViewerTab` applies to the strip |
 | 14 | 5587, 5626 | the two `const isActive = … === activeTabSessionId;` | read `activeChatSurfaceId` instead |
 | 15 | 5624 | the end of `desktopChatSurfaces`'s children | maps `surfaceTabs` to `<div className={cn('absolute inset-0', !isActive && 'hidden')}>{tab.content}</div>`, the same shape the drafts get |
+| 16 | 667 | beside hunk 9's four props | declares `onSessionTabSelect` |
+| 17 | 756 | `const [activeTabSessionIdRaw, setActiveTabSessionId] = useState<string>(` | keeps the raw setter as `setActiveTabSessionIdState` and adds `setActiveTabSessionId`, a wrapper that announces the tab it selected |
+| 18 | 947, 2585, 2591 | the three `setActiveTabSessionId` writers that are a CORRECTION | take the raw setter instead |
+
+**Hunks 16–18 are the seam's only OUTWARD edge, and they exist because hunk 13
+has no way back.** An active host tab hides every conversation surface, so the
+host's selection has to end when the page selects a conversation tab — and that
+selection is `useState` (`activeTabSessionIdRaw`), per parent session, not in the
+URL and not in any atom. Without a notification the host tab stays selected,
+hunk 15 keeps drawing it, and clicking a session tab in the strip does nothing a
+member can see.
+
+**Why the SETTER and not `handleSessionTabSelect`.** Ten call sites move that
+state, and the first version of this patch notified from the strip's own handler
+alone. That left the other nine inert — the strip's `+` created a draft tab that
+opened underneath the host tab and never appeared, which is the same defect one
+button along. A wrapper is one mechanism for all of them, and it is one place to
+add the next one.
+
+**Why a wrapper and not an effect on the value.** An effect fires on a CHANGE,
+and the click that most needs the call changes nothing: the parent tab is
+already `activeTabSessionId` while a host tab covers it, so the one transition
+the field report was about is exactly the one a change check swallows.
+
+Hunk 18's three exclusions are `setActiveTabSessionId((prev) => …)` corrections
+rather than selections: the session-switch reset (which runs during RENDER,
+where a host callback may not be called at all) and the two `?tab=` URL syncs,
+which re-assert a selection that already happened and re-fire whenever the
+parsed value's identity changes. Their signature difference — an updater, not an
+id — is what makes the exclusion structural rather than a judgement call: the
+wrapper takes a `string`.
 
 **Hunk 10's position is load-bearing, and it is not where the design put it.**
 `SessionDetail` returns early below `:3400` (the loading and missing-session
@@ -280,8 +311,9 @@ early return, next to the other list the strip is built from. Measured, not
 reasoned about — `packages/webapp/test/lody-shared-surface.test.tsx` caught it
 against a real daemon.
 
-The API is four props, one idea. The host owns the list, the selection and both
-verbs; the viewer owns the drawing and the layout. There is no registry, no atom
+The API is five props, one idea. The host owns the list, the selection and both
+verbs; the viewer owns the drawing and the layout, and tells the host when its
+own selection has taken the view back. There is no registry, no atom
 and no context — grepping `registerTab|tabRegistry|registerPanel|panelRegistry`
 across `packages/components/src` returns nothing, so there is no extension
 mechanism to hook into and this is the smallest thing that could be one.
@@ -298,6 +330,8 @@ surfaceTabs?: readonly SessionSurfaceTab[];
 activeSurfaceTabId?: string | null;
 onSurfaceTabSelect?: (tabId: string) => void;
 onSurfaceTabClose?: (tabId: string) => void;
+/** This page selected a CONVERSATION tab, so no host tab is selected now. */
+onSessionTabSelect?: (tabId: string) => void;
 ```
 
 **`content: ReactNode`, not a portal host.** A ref-callback host element was the
@@ -328,8 +362,12 @@ line that is not one of the anchors above, and it renders the real
   it too, and `TerminalTabsStrip` needs whatever replaces the variant.
 - If `desktopChatSurfaces` is restructured, re-apply hunks 13–15 by giving the
   new structure the same rule: a host tab, when active, hides the conversation
-  surfaces and shows its own.
-- If upstream grows its own host-tab concept, delete all fifteen hunks and pass
+  surfaces and shows its own. Hunk 17 goes with them: the rule and its way back
+  are one idea, and keeping 13 without 17 is the defect this patch fixed.
+- If the conversation selection stops being one `useState` — an atom, a reducer,
+  a URL field — hunks 17 and 18 follow it to whatever the new single writer is.
+  What must not happen is a return to notifying per call site.
+- If upstream grows its own host-tab concept, delete all eighteen hunks and pass
   that instead — the BlitzOS half is one binding on
   `packages/webapp/src/lody/surface-tabs.ts`.
 

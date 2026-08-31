@@ -82,6 +82,15 @@ import "./lody-surface.css";
 import "./lody-surface-shell.css";
 import "./blitz-skin.css";
 
+/** A value that differs from the last one, for `resetDraftKey`. The clock alone
+ * is not enough: two presses inside one millisecond would produce the same key
+ * and the second reset would be dropped as a repeat. */
+let draftKeySequence = 0;
+function nextDraftKey(): string {
+  draftKeySequence += 1;
+  return `${Date.now()}-${draftKeySequence}`;
+}
+
 /** Everything the rail's Terminals section needs, and nothing else. */
 export interface LodyRailBinding {
   terminals: DriveRailSession[];
@@ -122,8 +131,17 @@ export interface LodyRailBinding {
 export interface LodySessionSurfaceApi {
   /** Show the session detail page for `sessionId`. */
   openSession: (sessionId: string) => void;
-  /** Show the chat landing — the create surface, with no session selected. */
-  openLanding: () => void;
+  /**
+   * Show the chat landing — the create surface, with no session selected.
+   *
+   * `resetDraft` is what "New session" means when the landing is ALREADY the
+   * address: the shell's own navigation is a no-op there (`useLodyRail.go`
+   * refuses to push the path it is on), and the button read as dead. It is
+   * upstream's own mechanism — a fresh `?resetDraftKey` clears the prompt, the
+   * attachments and the draft session id (`chat-landing.tsx:1331`) — so the
+   * member gets an empty composer instead of the one they left.
+   */
+  openLanding: (options?: { resetDraft?: boolean }) => void;
   /** The session the surface is currently showing, or `null` on the landing. */
   activeSessionId: () => string | null;
   /** Every `window.ipc` channel the vendored renderer asked for that the bridge
@@ -392,10 +410,20 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     },
     [router, slug],
   );
-  const openLanding = useCallback(() => {
-    if (router === null || slug === null) return;
-    void router.navigate({ to: "/$workspaceName/chat", params: { workspaceName: slug } });
-  }, [router, slug]);
+  const openLanding = useCallback(
+    (options?: { resetDraft?: boolean }) => {
+      if (router === null || slug === null) return;
+      const chat = { to: "/$workspaceName/chat", params: { workspaceName: slug } };
+      if (options?.resetDraft !== true) {
+        void router.navigate(chat);
+        return;
+      }
+      // Their own key, and it has to be NEW every press: the landing compares
+      // it against the last one it applied and does nothing when it repeats.
+      void router.navigate({ ...chat, search: { resetDraftKey: nextDraftKey() } });
+    },
+    [router, slug],
+  );
 
   const onApiReadyRef = useRef(onApiReady);
   onApiReadyRef.current = onApiReady;
