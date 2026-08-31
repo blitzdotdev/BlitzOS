@@ -55,6 +55,14 @@ selector) must fully work in GitHub Worktree mode on a box.
    *(Phase 6 slice 0 shipped the seed: `webapp/src/lody/workdir-default.ts`
    writes their GLOBAL preference key once, when it is absent. Their per-project
    key still wins, so unticking the pill for a repo persists.)*
+   *(2026-08-31: the same file now also decides where a session with NO repo
+   works. Upstream leaves it in `<dataDir>/chats/<sessionId>`, which made the
+   agent report an empty workspace and made every RELATIVE file chip open on
+   "File not found" — the viewer joins a relative path to the session's workdir
+   and nothing else. `session/create` carries no workdir field, so the fix
+   registers `/workspace` through `local-project/add` and gives a projectless
+   session that `ProjectRef` with no `useWorktree` and no `githubRepoFullName`:
+   it stays a Chat, cuts no worktree, and works in `/workspace`.)*
    *(Phase 5, shipped. Two things the wording did not anticipate: the worktree
    pill is only FORCED in their `github` context, so a `local-shared` session
    runs in the clone itself until the member ticks it — a product decision, not a

@@ -414,6 +414,77 @@ describe("the gate holds the chat surface until the bootstrap settles", () => {
     }
   });
 
+  it("hands the surface a runtime that defaults a projectless session to /workspace", async () => {
+    // The product path does NOT build its runtime through `createLodyRuntime`:
+    // their `RuntimeProvider` builds it and writes `runtimeAtom`
+    // (`providers/runtime-provider.tsx:311`). So the gate is where the writer
+    // is decorated, and this is the assertion that the composer's send — which
+    // reads that atom — gets the decorated one. Without it a chat with no repo
+    // runs in the daemon's chats directory and its relative file chips open on
+    // nothing (`src/lody/workdir-default.ts`).
+    const store = createStore();
+    const starts: JsonValue[] = [];
+    const original = stubRuntime({
+      repo: {
+        openFlockDoc: async () => ({
+          flock: { scan: () => [] } as never,
+          syncOnce: async () => undefined,
+        }),
+      },
+      writer: {
+        startSession: async (_sessionId: string, meta: JsonValue) => {
+          starts.push(meta);
+        },
+        upsertDocMeta: async () => undefined,
+        flockRowPut: async () => undefined,
+        flockRowPutIfAbsent: async (_docId: string, _key: readonly string[], value: JsonValue) => ({
+          inserted: true,
+          value,
+        }),
+      },
+      requestMachineAcpCapabilitiesRefresh: async () => ({ success: true }),
+    } as unknown as Partial<LodyWorkspaceRuntime>);
+    store.set(runtimeAtom, original);
+    const project = {
+      localProjectId: "local-workspace",
+      name: "workspace",
+      rootPath: "/workspace",
+      workspaceIds: [WORKSPACE_ID],
+    };
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ ok: true, type: "local-project/add", result: project }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const mounted = await render(
+      <JotaiProvider store={store}>
+        <LodyAgentConfigGate
+          store={store}
+          machineId={MACHINE_ID}
+          endpoints={{ ...endpoints, fetchImpl }}
+        >
+          <div>chat surface</div>
+        </LodyAgentConfigGate>
+      </JotaiProvider>,
+    );
+    try {
+      await settle();
+      const mounted_runtime = store.get<LodyWorkspaceRuntime | null>(runtimeAtom);
+      expect(mounted_runtime).not.toBe(original);
+      await mounted_runtime?.writer.startSession(
+        "s-1",
+        { id: "s-1" },
+        {},
+        { sessionId: "s-1", userTurnId: "t-1", userId: "u", timestamp: "t", inputConfig: {} },
+      );
+      expect(starts).toEqual([
+        { id: "s-1", project: { kind: "local", localProjectId: "local-workspace" } },
+      ]);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
   it("opens anyway when the bootstrap throws", async () => {
     const store = createStore();
     store.set(
