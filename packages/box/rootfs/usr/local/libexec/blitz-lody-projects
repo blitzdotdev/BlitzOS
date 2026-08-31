@@ -55,7 +55,11 @@ const namespace = process.env.LODY_PLATFORM === "cloud" ? "lody" : "lody-oss";
 const controlSocket = path.join(dataDir, "run", `${namespace}-control.sock`);
 const catalogPath = path.join(dataDir, "workspace-catalog.json");
 const workspaceRoot = process.env.BLITZ_WORKSPACE_ROOT || "/workspace";
-const POLL_INTERVAL_MS = 30_000;
+/** How long the registrar waits between passes. Overridable so the conformance
+ * test can drive the LOOP — the rescan is the half that picks up a repo cloned
+ * on day three, and a test that had to wait 30 seconds for it would not be
+ * written. The service sets no override, so a box polls every 30 s. */
+const POLL_INTERVAL_MS = Number.parseInt(process.env.BLITZ_LODY_PROJECTS_INTERVAL_MS || "", 10) || 30_000;
 /** One pass and exit, for the conformance test and for a manual re-run. */
 const ONCE = process.env.BLITZ_LODY_PROJECTS_ONCE === "1";
 
