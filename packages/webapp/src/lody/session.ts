@@ -223,7 +223,7 @@ export interface ContinueLodySessionInput {
  * It exists because a session's SECOND turn is a different code path on the
  * daemon: the first turn creates the ACP session, and every turn after it either
  * resumes that one or, when there is none to resume, replays the chat history
- * into a fresh one. `plans/LODY-RUNTIME-DESIGN.md` §14.2 is what needed to drive
+ * into a fresh one. `plans/LODY-RUNTIME-DESIGN.md` §15.2 is what needed to drive
  * that from a test, and nothing else in this package can.
  */
 export async function continueLodySession(

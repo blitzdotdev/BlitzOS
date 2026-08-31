@@ -1,6 +1,6 @@
 /**
  * What a session whose agent is signed out needs: the state, and the repair
- * (plans/LODY-RUNTIME-DESIGN.md §12.3 and §14.2).
+ * (plans/LODY-RUNTIME-DESIGN.md §12.3 and §15.2).
  *
  * `sessionNeedsAgentSignIn` is what the banner in `agent-auth-notice.tsx`
  * renders on, and it is also the first of the repair's three conditions, so it

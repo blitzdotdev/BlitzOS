@@ -1,6 +1,6 @@
 /**
  * WHAT THE RAIL'S CLICKS DO WHEN THE PANES OWN THE VIEW
- * (plans/LODY-RUNTIME-DESIGN.md §14, the third canary dogfood's reports 1-3).
+ * (plans/LODY-RUNTIME-DESIGN.md §15, the third canary dogfood's reports 1-3).
  *
  * All three reports are one defect. The rail's vendored zone is drawn whether
  * or not the chat surface is on screen — it is the workspace's session list —

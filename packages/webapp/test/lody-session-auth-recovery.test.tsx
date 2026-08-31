@@ -1,6 +1,6 @@
 /**
  * THE PHANTOM ACP SESSION, WITHOUT A DAEMON
- * (plans/LODY-RUNTIME-DESIGN.md §14.2, the third canary dogfood's report 4).
+ * (plans/LODY-RUNTIME-DESIGN.md §15.2, the third canary dogfood's report 4).
  *
  * `packages/webapp/test/lody-post-signin-turn.test.ts` proves the whole story
  * against a real `lody@0.88.1` and a real signed-out CLI, and it skips without

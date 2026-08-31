@@ -5,37 +5,43 @@
  * Unlayered, like every stylesheet under `packages/webapp/src`, so it outranks
  * the vendored sheet inside `@layer lody`.
  *
- * THE COLLISION. Both trees define `--font-mono`, `--hover`, `--muted`,
- * `--terminal-background` and `--terminal-selection`. Ours sit unlayered on
- * `:root`; theirs sit layered on `:root` and `.dark`, so ours win on the html
- * element and INHERIT into their components. Four of the five then resolve to
- * nothing, because Lody reads `--muted` and `--hover` as bare HSL TRIPLETS
- * (`hsl(var(--muted))`) and ours hold finished `color-mix()` colors.
- * `--font-mono` is the fifth and is compatible: both are font stacks, ours is
- * Fira Code, and letting it reskin their code blocks is free.
+ * THE COLLISION, AND THE FLIP. Both trees define `--font-mono`, `--hover`,
+ * `--muted`, `--terminal-background` and `--terminal-selection`. Ours sit
+ * unlayered on `:root`; theirs sit layered on `:root` and `.dark`, so ours win
+ * on the html element and INHERIT into their components. Two of the five were
+ * then broken by TYPE rather than by value: Lody reads `--muted` and `--hover`
+ * as bare HSL TRIPLETS (`hsl(var(--muted))`) and ours hold finished
+ * `color-mix()` colors.
  *
- * WHY THEIR VALUES AND NOT OURS. The design doc's §5.2 says to derive triplets
- * from our palette. That is a RESKIN, and §0's bias rule puts reskins in the
- * theme layer — their VS Code theme engine compiles a theme to `--vscode-*`
- * properties at runtime, which is where a "Blitz" theme belongs. Hand-computing
- * `color-mix(in oklab, …)` back into `H S% L%` literals would fork our palette
- * into a second, silently drifting copy. So the surface gets Lody's own values
- * back, and the theme is one change in one place later.
+ * Phase 3 resolved all four value-carrying names with LODY's values, and said
+ * why: deriving triplets by hand would fork our palette into a second, silently
+ * drifting copy, and a reskin belongs in the theme layer. The reskin has now
+ * been built (`src/lody/blitz-theme.ts`), so the resolution flips to OURS, and
+ * the type mismatch is converted rather than aliased:
  *
- * WHY THERE ARE TWO SELECTORS. A custom property declared on an ELEMENT beats
- * one inherited from an ancestor, whatever the specificity, so `.lody-surface`
- * fixes everything the surface renders. It does not fix what Radix PORTALS:
- * dropdowns, selects, popovers, tooltips, dialogs and the command palette mount
- * as direct children of `document.body`, outside the surface, where they
- * inherit ours again. `bg-muted` and `bg-hover` are the two utilities that
- * carry — menu hover and selected-row backgrounds — so without the second rule
- * every picker in the composer loses its highlight.
+ * | Token | Resolution now |
+ * |---|---|
+ * | `--muted` | Blitz. The theme engine's `hexColorToHslChannel` turns our `--sunken` into an `H S% L%` triplet. Written by the GENERATED sheet, not here. |
+ * | `--hover` | Blitz, same conversion, from our `--hover`. |
+ * | `--terminal-background` | Ours, unchanged. Their `:root` value is `hsl(var(--background))`, and `--background` inside the surface is now our `--paper` — the same colour, so the override is deleted rather than restated. |
+ * | `--terminal-selection` | Ours, unchanged, for the same reason: theirs derives from `--selection`, which is now our `--selected`. |
+ * | `--font-mono` | Ours (Fira Code), still by being unlayered. Never was broken. |
  *
- * The second selector reads "a body child that is not ours". Our app is `#root`
- * and our one body-level portal is the Files context menu, so the exclusion list
- * is complete and small. `packages/webapp/test/lody-token-collisions.test.ts`
- * pins it against the classes our own portals actually render, so a new BlitzOS
- * portal fails a test instead of silently inheriting a Lody theme.
+ * Two of the five therefore have no rule left in this file at all, and the
+ * other two moved into `blitzThemeStylesheet()` where the palette they are
+ * derived from lives. What stays here is the surface's BOX.
+ *
+ * WHERE THE VARIABLES LAND. A custom property declared on an ELEMENT beats one
+ * inherited from an ancestor, whatever the specificity, so `.lody-surface` fixes
+ * everything the surface renders. It does not fix what Radix PORTALS: dropdowns,
+ * selects, popovers, tooltips, dialogs and the command palette mount as direct
+ * children of `document.body`, outside the surface, where they inherit ours
+ * again. So the generated sheet carries a third selector reading "a body child
+ * that is not ours" — our app is `#root` and our one body-level portal is the
+ * Files context menu, so the exclusion list is complete and small.
+ * `packages/webapp/test/lody-token-collisions.test.ts` pins it against the
+ * classes our own portals actually render, so a new BlitzOS portal fails a test
+ * instead of silently inheriting a Lody theme.
  */
 
 /* Absolute inside `section.webapp-workspace-view`, which is already
@@ -126,30 +132,10 @@
   font-family: var(--font-mono, monospace);
 }
 
-/* Their light values, verbatim from
-   vendor/lody/packages/components/src/tailwind/index.css:797, :801, :894, :898.
-   The terminal pair is derived on their side too, so one declaration covers
-   both modes. */
-.lody-surface,
-.session-list--vendor,
-body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
-  --muted: 220 16% 96%;
-  --hover: 220 14% 95%;
-  --terminal-background: hsl(var(--background));
-  --terminal-selection: hsl(var(--selection) / 0.5);
-}
-
-/* Their dark values (index.css:977, :981). `next-themes` writes the class on
-   the html element, which is why the portal rule can key off it too. */
-:root.dark .lody-surface,
-:root.dark .session-list--vendor,
-:root.dark body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
-  --muted: 220 38% 14%;
-  --hover: 219 42% 18%;
-}
-
-/* `.session-list--vendor` is named above because phase 4 gives Lody a SECOND
-   mount (plans/LODY-SESSIONS.md §0.3): the rail's list region is a
+/* `.session-list--vendor` is the SECOND Lody mount phase 4 added
+   (plans/LODY-SESSIONS.md §0.3): the rail's list region is a
    `React.createPortal` target inside `SessionSurface`'s provider stack, so it
    is Lody DOM living under `#root` rather than under `.lody-surface`. Its box
-   is the rail's and lives in `strip-rail.css`; only the tokens are here. */
+   is the rail's and lives in `strip-rail.css`; its tokens come from the
+   generated theme sheet, which names it beside `.lody-surface`; and the rows
+   inside it are converged on the rail's own row in `blitz-skin.css`. */

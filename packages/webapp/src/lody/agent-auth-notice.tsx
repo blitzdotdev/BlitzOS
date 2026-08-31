@@ -102,7 +102,7 @@ export function LodyAgentAuthNotice(props: LodyAgentAuthNoticeProps) {
       // exactly the state the banner is watching for, and it has to happen
       // BEFORE the member's next message rather than when they click sign-in —
       // signing in through a terminal tab is the other product route and
-      // touches nothing of ours (§14.2).
+      // touches nothing of ours (§15.2).
       void repairPhantomAcpSession(runtime, sessionId).catch(() => {
         // Same two reasons as above. A phantom id that survives costs the
         // member one retry, which is the behaviour without this repair.

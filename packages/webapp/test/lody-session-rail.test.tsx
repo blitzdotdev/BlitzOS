@@ -109,7 +109,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
   const sharedSessions: string[] = [];
   /**
    * What the rail asked the SHELL to open, newest last
-   * (plans/LODY-RUNTIME-DESIGN.md §14).
+   * (plans/LODY-RUNTIME-DESIGN.md §15).
    *
    * A rail click is an address change, not a surface navigation, so the binding
    * carries `CloudApp`'s own navigators and this list is what a vendored row

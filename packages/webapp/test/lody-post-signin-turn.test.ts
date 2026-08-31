@@ -1,6 +1,6 @@
 /**
  * THE FIRST TURN AFTER AN AGENT SIGN-IN
- * (plans/LODY-RUNTIME-DESIGN.md §14.2, the third canary dogfood's report 4).
+ * (plans/LODY-RUNTIME-DESIGN.md §15.2, the third canary dogfood's report 4).
  *
  * The report, with a screenshot: on a fresh box the first prompt comes back
  * "Authentication required"; the member signs in through Lody's own panel; the

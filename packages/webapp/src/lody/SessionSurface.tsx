@@ -49,7 +49,7 @@ import { createPortal } from "react-dom";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { I18nextProvider } from "react-i18next";
 import { RouterProvider } from "@tanstack/react-router";
-import { ThemeProvider } from "@lody/components/theme-provider";
+import { ThemeProvider, useTheme as useLodyTheme } from "@lody/components/theme-provider";
 import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
 import { userAtom } from "@lody/components/atoms";
@@ -77,9 +77,11 @@ import type { SharedSessionRow } from "./shared-sessions.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
 import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
-import { appliedTheme } from "../theme.js";
+import { resolvedTheme, subscribeTheme } from "../theme.js";
+import { applyBlitzSurfaceTheme, installBlitzLodyTheme } from "./blitz-theme.js";
 import "./lody-surface.css";
 import "./lody-surface-shell.css";
+import "./blitz-skin.css";
 
 /** next-themes persists under its own key. Ours is namespaced so the surface's
  * light/dark choice can never be confused with `blitz-theme`, which is the
@@ -99,19 +101,50 @@ const LODY_THEME_STORAGE_KEY = "blitz-lody-theme";
  *
  * `defaultTheme` alone is not enough, because next-themes prefers its stored
  * value on every later boot. Writing the key first makes the stored value ours,
- * every mount. `'system'` is deliberately never handed over: our own default,
- * with no `data-theme` attribute, is DARK (`tokens.css` sets
- * `color-scheme: dark` on `:root` unconditionally), so mapping it to `system`
- * would let the OS disagree with the shell.
+ * every mount. `'system'` is deliberately never handed over: `resolvedTheme()`
+ * has already resolved it against `prefers-color-scheme`, so the surface adopts
+ * the palette `tokens.css` is actually painting rather than a preference name.
+ *
+ * It also installs the Blitz theme, because both halves have the same deadline:
+ * `LodyThemeProvider` reads the bundled registry in a LAYOUT effect on its first
+ * render, and `getBundledVSCodeThemeByIdSync` caches whatever answered first.
+ * Registering after that would leave the surface on Vesper for the session.
  */
 function adoptShellTheme(): "dark" | "light" {
-  const choice = appliedTheme() === "light" ? "light" : "dark";
+  const choice = resolvedTheme();
+  installBlitzLodyTheme(choice);
   try {
     window.localStorage.setItem(LODY_THEME_STORAGE_KEY, choice);
   } catch {
     // Sandboxed storage: `defaultTheme` still applies for this mount.
   }
   return choice;
+}
+
+/**
+ * Keeps the surface on the shell's theme for as long as it is mounted.
+ *
+ * `adoptShellTheme` settles the FIRST paint; this settles every one after it.
+ * Two things have to move together on a flip, and they are owned by different
+ * trees: `setTheme` is next-themes', and re-running it is what makes
+ * `LodyThemeProvider` apply the other Blitz theme's variables to `<html>`;
+ * `applyBlitzSurfaceTheme` is ours, and it rewrites the generated sheet the
+ * surface, the rail and the Radix portals read.
+ *
+ * Rendered as a child of `ThemeProvider` rather than beside it, because
+ * `useTheme()` needs the context that provider creates.
+ */
+function ShellThemeBridge(props: { children: ReactNode }) {
+  const { setTheme } = useLodyTheme();
+  useEffect(
+    () =>
+      subscribeTheme((theme) => {
+        applyBlitzSurfaceTheme(theme, document.documentElement);
+        setTheme(theme);
+      }),
+    [setTheme],
+  );
+  return <>{props.children}</>;
 }
 
 /** Everything the rail's Terminals section needs, and nothing else. */
@@ -337,7 +370,9 @@ function LodySurfaceProviders(props: { children: ReactNode }) {
   return (
     <I18nextProvider i18n={i18n}>
       <ThemeProvider defaultTheme={theme} storageKey={LODY_THEME_STORAGE_KEY}>
-        <TooltipProvider>{props.children}</TooltipProvider>
+        <ShellThemeBridge>
+          <TooltipProvider>{props.children}</TooltipProvider>
+        </ShellThemeBridge>
       </ThemeProvider>
     </I18nextProvider>
   );
