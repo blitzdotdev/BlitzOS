@@ -104,6 +104,28 @@ export interface SurfaceTabsBinding {
   activeTabId: string | null;
   onSelect: (tabId: string) => void;
   onClose: (tabId: string) => void;
+  /**
+   * The strip moved to a tab that is NOT one of ours, so our selection is over.
+   *
+   * The two hosts are asymmetric and this is the whole of the asymmetry. On the
+   * landing there is nothing else in the strip, so a host tab is deselected only
+   * by selecting another one. Inside `SessionDetail` the strip also carries the
+   * conversation tabs, and selecting one of those is state we cannot see: the
+   * vendored page keeps it in `useState` and does not put it in the URL. Without
+   * this callback `activeTabId` stays set, hunk 15 keeps our content mounted and
+   * visible, and the conversation the member just clicked never appears.
+   *
+   * WHICH TRANSITIONS REACH IT. Seam patch 5's `onSessionTabSelect` fires from
+   * `handleSessionTabSelect`, which is every SELECT the strip can make — a tab
+   * click, the archived-tab restore, the Cmd+Alt+arrow cycle, a fork landing in
+   * a tab, and an in-session navigation. The transitions that move the
+   * conversation selection WITHOUT going through it are the strip's `+`
+   * (`handleNewTab`), a tab close (`handleTabClose`, `closeDraftTab`) and a
+   * draft's first send. Each is one more `onSessionTabSelect?.(id)` line in the
+   * vendored page beside the `setActiveTabSessionId` it already calls; see
+   * `vendor/lody/BLITZ-PATCHES.md` seam patch 5 hunk 17.
+   */
+  onDeselect: () => void;
 }
 
 /**

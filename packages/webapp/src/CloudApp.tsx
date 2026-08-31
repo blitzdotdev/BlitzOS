@@ -44,7 +44,7 @@ import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
-import { LodySessionsRegion } from './lody/LodySessionsRegion';
+import { LodySessionsRegion, lodySurfaceMounts } from './lody/LodySessionsRegion';
 import { SurfaceTabContent } from './lody/SurfaceTabContent';
 import {
   surfaceTabId,
@@ -1009,6 +1009,18 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (lodyRail.sessionId === null) lodyApi.openLanding();
     else lodyApi.openSession(lodyRail.sessionId);
   }, [lodyApi, lodyRail.sessionId, lodyRail.visible]);
+  // "+ NEW SESSION" IS TWO THINGS, and the address is only one of them.
+  //
+  // Moving the address to the landing does nothing when the landing is already
+  // the address — `useLodyRail.go` refuses to push the path it is on, which is
+  // what keeps a rail row from stacking history entries — so from `/chat` the
+  // button was a complete no-op. What a member means by it is a FRESH draft, and
+  // the surface has upstream's own mechanism for that (`resetDraftKey`).
+  const openLandingRail = lodyRail.openLanding;
+  const openFreshLanding = useCallback(() => {
+    openLandingRail();
+    lodyApi?.openLanding({ resetDraft: true });
+  }, [lodyApi, openLandingRail]);
   const ttydLabel = (session: WorkspaceTab) => session.type === 'file'
     ? session.filePath
     : session.type === 'panel'
@@ -1130,7 +1142,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // mobile draws `MobileSessionTabSheet`, whose kind enum seam patch 5 does not
   // widen — and the host content rides in `desktopChatSurfaces`. So a mobile
   // workspace that hid its native strip would have no tab control at all.
-  const surfaceTabsEnabled = lodyRail.available && !mobileWebApp;
+  //
+  // AND ONLY WHILE THE HOST IS REALLY THERE. `lodySurfaceMounts` is the region's
+  // own mount condition, asked here rather than restated: the panes give up
+  // their tab strips (§4.6) and every tab body to the strip, so a render where
+  // the strip does not exist is a workspace with nothing in it. §4.6 named
+  // `available` for this and `available` is `capability !== 'absent'`, which
+  // stays true while the probe is unsettled — for good on a workspace whose box
+  // is not running. That is the blank the address change walked into.
+  const surfaceTabsEnabled = lodyRail.available
+    && lodySurfaceMounts(activeWorkspaceRunning ? activeIngressEntry : null, lodySessions)
+    && !mobileWebApp;
   const openTerminalTab = lodyRail.openTerminal;
   const selectWorkspaceTab = useCallback((id: string) => {
     if (surfaceTabsEnabled) openTerminalTab(id);
@@ -1562,6 +1584,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           const workspaceTabId = workspaceTabIdFromSurfaceTabId(tabId);
           if (workspaceTabId !== null) closeTtydSession(workspaceTabId);
         },
+        // The strip left our tab for a conversation one. Nothing about the
+        // workspace tab changes — it stays open, its tmux session stays
+        // attached — only the ADDRESS gives the selection back to its host
+        // page, which is what makes the conversation visible again.
+        onDeselect: lodyRail.closeTerminal,
       }
     : undefined;
 
@@ -1788,7 +1815,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               activeTerminalId={railActiveSessionId ?? ''}
               onSelectTerminal={selectTtydSession}
               onOpenSession={lodyRail.openSession}
-              onOpenLanding={lodyRail.openLanding}
+              onOpenLanding={openFreshLanding}
               terminalsAction={(
                 <NewTabControl
                   variant="icon"

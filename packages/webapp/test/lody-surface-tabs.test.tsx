@@ -39,13 +39,20 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { I18nextProvider } from "react-i18next";
+import { Provider as JotaiProvider, createStore } from "jotai";
+import { RouterProvider } from "@tanstack/react-router";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { createLocalPlatformProvider, createStaticStore } from "@lody/platform";
+import { PlatformContext } from "@lody/platform/react";
+import { AuthenticatedConvexContext } from "@lody/components/hooks/use-authenticated-convex";
+import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
 import { SessionTabBar } from "@lody/components/components/sessions/session-tab-bar";
 import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { initLodyI18n } from "../src/lody/i18n.js";
 import { TerminalTabsHost, TerminalTabsStrip } from "../src/lody/TerminalTabsStrip.js";
 import {
   SURFACE_TAB_ID_PREFIX,
+  SurfaceTabsContext,
   surfaceTabId,
   toSessionSurfaceTabs,
   workspaceTabIdFromSurfaceTabId,
@@ -144,6 +151,15 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // hunk 14: an active host tab deselects the conversation surfaces
       [5587, "        const isActive = tabSession.id === activeTabSessionId;"],
       [5621, "        const isActive = draft.id === activeTabSessionId;"],
+      // hunk 17: the state setter becomes a chokepoint that announces the
+      // conversation tab it selected, so the `useState` keeps the raw setter
+      // under a new name
+      [756, "  const [activeTabSessionIdRaw, setActiveTabSessionId] = useState<string>("],
+      // hunk 18: the three writers that are a CORRECTION rather than a
+      // selection keep the raw setter
+      [947, "    setActiveTabSessionId(nextInitialTabState.activeTabSessionId);"],
+      [2585, "      setActiveTabSessionId((prev) =>"],
+      [2591, "    setActiveTabSessionId((prev) => (prev === sessionId ? prev : sessionId));"],
     ]);
   });
 
@@ -159,16 +175,69 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     expect(readme, "the baselines name the commit they were taken from").toContain(pin ?? "");
   });
 
-  it("declares the same four props on both sides of the seam", () => {
+  it("declares the same five props on both sides of the seam", () => {
     const detail = readFileSync(join(vendorDir, "session-detail.tsx"), "utf8");
     for (const prop of [
       "surfaceTabs?: readonly SessionSurfaceTab[];",
       "activeSurfaceTabId?: string | null;",
       "onSurfaceTabSelect?: (tabId: string) => void;",
       "onSurfaceTabClose?: (tabId: string) => void;",
+      "onSessionTabSelect?: (tabId: string) => void;",
     ]) {
       expect(detail, `seam patch 5 declares ${prop}`).toContain(prop);
     }
+    // Hunks 17-18, pinned as a CALL and not only as a declaration. A declared
+    // prop that nothing invokes is exactly the shape of the defect it fixes:
+    // the host keeps its tab selected, hunk 15 keeps drawing it, and a click on
+    // a session tab does nothing a member can see.
+    expect(detail, "the announcing setter exists").toContain(
+      "const setActiveTabSessionId = useCallback((tabId: string) => {",
+    );
+    expect(detail, "and it announces").toContain("onSessionTabSelectRef.current?.(tabId);");
+  });
+
+  /**
+   * THE CHOKEPOINT IS ONLY A CHOKEPOINT WHILE NOTHING WALKS AROUND IT.
+   *
+   * Ten call sites move the conversation selection and the first version of the
+   * fix notified from one of them, which left the strip's `+` opening a draft
+   * tab underneath the terminal — the same defect one button along. What the
+   * seam relies on now is that the raw setter has exactly three callers, all
+   * declared, so a merge that adds an eleventh writer either goes through the
+   * wrapper or fails here.
+   */
+  it("routes every conversation-tab SELECTION through the announcing setter", () => {
+    const detail = readFileSync(join(vendorDir, "session-detail.tsx"), "utf8");
+    const rawWrites = [...detail.matchAll(/^\s*setActiveTabSessionIdState\(/gmu)];
+    expect(
+      rawWrites.length,
+      "the raw setter is called only inside the wrapper and by hunk 18's three corrections",
+    ).toBe(4);
+
+    // The writers that were inert with the click-only notification, named so a
+    // merge that reroutes one of them says which.
+    const announcing = new Set(
+      [...detail.matchAll(/^\s*(?:void )?setActiveTabSessionId\((.+?)\);?$/gmu)].map(
+        (match) => match[1],
+      ),
+    );
+    for (const [argument, what] of [
+      ["tabId", "the strip's own tab click, and everything routed through it"],
+      ["draft.id", "the strip's + — a new draft tab"],
+      ["childSessionId", "a draft promoted to a real child session"],
+      ["sessionId", "a close falling back to the parent"],
+      ["tabSessionId", "the browser panel opening a tab"],
+    ] as const) {
+      expect(announcing, `${what} announces`).toContain(argument);
+    }
+    // The next/previous cycle and the archived-tab restore reach the same
+    // setter through `handleSessionTabSelect` rather than directly.
+    expect(detail, "the tab cycle goes through the announcing handler").toContain(
+      "void handleSessionTabSelect(nextTabId);",
+    );
+    expect(detail, "the archived-tab restore goes through it too").toContain(
+      "handleSessionTabSelect(id as SessionId);",
+    );
     // Our side re-states the tab shape, because every `@lody/components/*`
     // specifier is `any` at the typecheck seam. The two must not drift.
     const ours = readFileSync(
@@ -192,9 +261,16 @@ function Providers(props: { children: React.ReactNode }) {
   );
 }
 
-beforeAll(() => {
+/** The route tree names `SessionDetail`, which pulls Monaco, which decides at
+ * MODULE LOAD whether it can register its clipboard commands and throws under
+ * jsdom without `document.queryCommandSupported`. A static import here would be
+ * hoisted above `installLodyDomStubs()` and take the whole file down. */
+let createLodySessionRouter: typeof import("../src/lody/router")["createLodySessionRouter"];
+
+beforeAll(async () => {
   installLodyDomStubs();
-});
+  ({ createLodySessionRouter } = await import("../src/lody/router.js"));
+}, 120_000);
 
 /** The prop set `session-detail.tsx` passes today, and nothing else. */
 const PRODUCTION_PROPS = {
@@ -239,6 +315,7 @@ function binding(overrides: Partial<SurfaceTabsBinding> = {}): SurfaceTabsBindin
     activeTabId: null,
     onSelect: () => undefined,
     onClose: () => undefined,
+    onDeselect: () => undefined,
     ...overrides,
   };
 }
@@ -326,6 +403,105 @@ describe("the landing host: the same strip, with no session to root it in", () =
     expect(landing?.className).not.toContain("hidden");
     await view.unmount();
   });
+});
+
+/**
+ * The chat landing, through the REAL route tree rather than through
+ * `TerminalTabsHost` alone.
+ *
+ * The field report was "New session lands on a blank /chat", and the first
+ * suspicion was this composition: a landing host that needs a tab array it does
+ * not have during the navigation, or a strip that returns `null` and takes the
+ * body with it. It does neither, and that is worth a test rather than a
+ * paragraph — `ChatRoute` is the ONE mount point where our own markup stands
+ * between the router and the vendored page, so a future change to it can blank
+ * the landing without touching anything else.
+ */
+const LANDING_SLUG = "fixture";
+const LANDING_WORKSPACE_ID = "lw_blitz_fixture";
+
+const landingPlatform = createLocalPlatformProvider({
+  session: createStaticStore({
+    status: "authenticated",
+    user: { id: "local:blitz-fixture", name: "Fixture", image: null },
+  }),
+  workspaces: createStaticStore({
+    status: "ready",
+    workspaces: [
+      { id: LANDING_WORKSPACE_ID, name: "Fixture", slug: LANDING_SLUG, role: "owner" },
+    ],
+    activeWorkspaceId: LANDING_WORKSPACE_ID,
+  }),
+});
+
+/** Their Storybook preview's settled signed-out Convex value, which is what
+ * `src/lody/platform.tsx` supplies in production too. */
+const SIGNED_OUT_CONVEX = {
+  authSessionId: null,
+  isAuthenticated: false,
+  isLoading: false,
+  isRecovering: false,
+  confirmedUnauthenticated: true,
+  claimAutomaticCommand: () => false,
+  requestAuthRecovery: () => {},
+};
+
+async function mountChatRoute(surfaceTabs: SurfaceTabsBinding | null) {
+  const router = createLodySessionRouter(LANDING_SLUG, { workspaceId: LANDING_WORKSPACE_ID });
+  await act(async () => {
+    await router.navigate({
+      to: "/$workspaceName/chat",
+      params: { workspaceName: LANDING_SLUG },
+    });
+  });
+  const view = await render(
+    <JotaiProvider store={createStore()}>
+      <PlatformContext.Provider value={landingPlatform}>
+        <AuthenticatedConvexContext.Provider value={SIGNED_OUT_CONVEX}>
+          <Providers>
+            <RuntimeProvider>
+              <SurfaceTabsContext.Provider value={surfaceTabs}>
+                <RouterProvider router={router} />
+              </SurfaceTabsContext.Provider>
+            </RuntimeProvider>
+          </Providers>
+        </AuthenticatedConvexContext.Provider>
+      </PlatformContext.Provider>
+    </JotaiProvider>,
+  );
+  await settle();
+  return view;
+}
+
+describe("the chat landing route, mounted for real", () => {
+  it("draws the landing with a host binding, and with none", async () => {
+    for (const value of [null, binding()]) {
+      const view = await mountChatRoute(value);
+      // The composer's own words, so this is the landing and not merely a
+      // non-empty div: "renders BLANK — no landing, no draft chat UI".
+      expect(view.container.textContent ?? "").toContain("Let's ship something");
+      await view.unmount();
+    }
+  }, 120_000);
+
+  it("draws the landing beside the strip, not instead of it", async () => {
+    const view = await mountChatRoute(binding());
+    expect(view.container.querySelector("#viewer-tab-blitz-tab\\:7")).not.toBeNull();
+    expect(view.container.textContent ?? "").toContain("Let's ship something");
+    await view.unmount();
+  }, 120_000);
+
+  it("draws the selected terminal, with the landing mounted and hidden", async () => {
+    const view = await mountChatRoute(binding({ activeTabId: surfaceTabId("7") }));
+    const seven = view.container.querySelector("[data-surface-tab-id='blitz-tab:7']");
+    const landing = view.container.querySelector("[data-surface-tab-id='landing']");
+    expect(seven?.className).not.toContain("hidden");
+    expect(landing?.className).toContain("hidden");
+    // The landing holds the member's unsent draft, so it is hidden and never
+    // unmounted — the same rule the terminals get.
+    expect(landing?.textContent ?? "").toContain("Let's ship something");
+    await view.unmount();
+  }, 120_000);
 });
 
 describe("the id namespace", () => {

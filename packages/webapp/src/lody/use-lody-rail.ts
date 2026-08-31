@@ -87,6 +87,10 @@ export interface LodyRailState {
    * is already in: a session's strip stays on that session, the landing's stays
    * on the landing. */
   openTerminal: (terminalId: string) => void;
+  /** The strip moved to a tab that is not a workspace tab, so the terminal arm
+   * leaves the address and its HOST page stays: a session's strip falls back to
+   * that session, the landing's to the landing. Inert on every other arm. */
+  closeTerminal: () => void;
   /** The other direction: the surface navigated itself — the landing's send
    * creates a session and goes to it — so the address follows. Compares before
    * it acts, which is what keeps it from looping against the effect that drives
@@ -177,6 +181,18 @@ export function useLodyRail(
     [activeWorkspaceId, chat, go],
   );
 
+  // The EXACT inverse of `openTerminal`, and the reason it is one function
+  // rather than a branch at each call site: the terminal arm comes off the
+  // address and the host page it named stays. A strip that has moved to a
+  // conversation tab must leave the session it is drawn in — going to the
+  // landing instead would take the member off the session they just clicked.
+  const closeTerminal = useCallback(() => {
+    if (!isChatTerminalAddress(chat)) return;
+    const sessionId = chat.sessionId;
+    if (sessionId === undefined) openLanding();
+    else openSession(sessionId);
+  }, [chat, openLanding, openSession]);
+
   const mirror = useCallback(
     (sessionId: string | null) => {
       // `chat === null` means the panes own the view; a background navigation
@@ -262,6 +278,7 @@ export function useLodyRail(
     openSession,
     openSharedSession,
     openTerminal,
+    closeTerminal,
     mirror,
     closeChat,
   };
