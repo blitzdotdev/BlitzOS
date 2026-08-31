@@ -1987,3 +1987,99 @@ surface's: `lody-session-rail.test.tsx` records what the rail asked the shell
 for, and `lody-post-signin-turn.test.ts` is new and drives the whole sign-in
 sequence, with its dispatch behind `BLITZ_LODY_LIVE_TURN=1` as every paid
 assertion here is.
+
+---
+
+## 16. Why the reskin shipped green and looked unchanged (2026-08-31)
+
+§14 merged with three green harnesses and reached canary with the surface still
+in Vesper. The interesting half of this section is not the fix; it is that all
+three harnesses could be green and the product still stock.
+
+### 16.1 The gap every harness shared
+
+| Harness | What it ran | Where it stopped |
+|---|---|---|
+| `lody-blitz-theme.test.ts` | `createThemeCssVariables(blitzTheme)` | a pure function's return value |
+| `lody-fixture-render.test.tsx` | vendored components, source graph | the skin's selectors, never the theme's application |
+| the static review page | `blitzThemeStylesheet()` output, inlined by hand | it WROTE the CSS it then displayed |
+
+None of them mounted `ThemeProvider`. The one place the html-level application
+ran was `lody-session-surface.test.tsx`, which needs a `lody` daemon and skips
+where there is none — which is CI. And every one of them ran the SOURCE graph:
+between "the code is right" and "the member sees it" sat a whole Vite build
+nobody had executed.
+
+So the verification measured the two ends and not the middle. Four tests now
+cover the middle, and each is placed where it can be honest:
+
+- `lody-theme-application.test.tsx` — their real `ThemeProvider`, mounted, in
+  source. Asserts the palette on `<html>`, the generated sheet, a stale stored
+  preference, and a live flip in both directions.
+- `lody-theme-race.test.tsx` — the same mount with the registry poisoned first.
+- `lody-theme-production.test.ts` — builds `test/prod-probe/` with the product's
+  own plugin pipeline and runs the built artefact.
+- `lody-session-surface.test.tsx` — one assertion on the real surface against a
+  real daemon.
+
+### 16.2 The design defect: the reskin rested on winning a race
+
+`LodyThemeProvider` looks its theme up by id in `bundledThemesById`, a
+module-level cache that `resolveBundledThemeDescriptorSync` READS BEFORE IT
+WRITES and never replaces (`bundled-vscode-themes.ts:516`). §14.4 registered
+Blitz under their two fixed ids and noted the ordering constraint as a comment.
+A comment is not a mechanism. One earlier resolve of `vesper` — from anywhere,
+for any reason — and the registration is a no-op, `getBundledVSCodeThemeByIdSync`
+answers with Vesper, and the surface is stock. Silently: their cache says
+nothing, and `resolveBundledVSCodeThemesFromExtensions` swallows a malformed
+theme into a `console.warn` and carries on with the stock one.
+
+That is exactly the reported symptom, and `lody-theme-race.test.tsx` reproduces
+it in three lines. With the fix reverted it reads Vesper's `#101010` where Blitz
+is `#16181D`.
+
+### 16.3 The fix: the html write is ours now
+
+`ShellThemeBridge` re-applies the Blitz palette to the html element in a
+**passive** effect keyed on THEIR resolved theme. React runs every layout effect
+in a commit before any passive one, `LodyThemeProvider`'s application included,
+so ours is the one that stands — whatever the registry answered, on the first
+paint and on every flip.
+
+The registry seed stays: it is what gives their xterm palette and their diff
+viewer's Shiki theme our colours, and neither reads these variables. But it is
+no longer load-bearing for the reskin, and `installBlitzVSCodeThemes` now
+`console.error`s when it does not take, naming what the registry actually holds.
+
+`src/lody/shell-theme.tsx` exists so that all of this can be MOUNTED in a test
+for the price of `next-themes` instead of the price of Monaco, three and shiki.
+`SessionSurface` renders `BlitzThemedLodyTree`; the tests mount the same
+component, not a lookalike assembled beside it.
+
+### 16.4 What was measured, and what was not
+
+Reproduced here at every level available: the source graph, the production
+build, a returning member's stored theme (`light`, `system`, `vesper`,
+nonsense), a stale VS Code theme selection, and the real `SessionSurface`
+against a real `lody` daemon. **All of them apply Blitz correctly**, before and
+after the fix. The only mechanism that reproduces the canary symptom is the lost
+race of §16.2.
+
+So the fix is a genuine removal of a silent failure mode, and it may or may not
+be the failure the field saw. Two hypotheses remain that cannot be tested from
+this tree, and both are deployment-side rather than code-side:
+
+1. **A stale asset reference.** The deployment contains a `SessionSurface` chunk
+   holding `Blitz Dark`, but the entry chunk the browser loads may still name an
+   older `SessionSurface` hash. Check which chunk the entry actually imports,
+   not merely that some chunk in the bucket has the string.
+2. **A second webapp.** If the workspace UI a member reaches is served by the
+   box image rather than the control plane, the bundle it serves is whatever was
+   baked, and no control-plane deploy moves it.
+
+A browser would settle both in a minute. This box cannot run one: playwright's
+chromium is installed but `libglib-2.0.so.0` is missing and there is no `sudo`.
+That is why `test/prod-probe/` runs the built bundle under Node with a
+hand-built jsdom instead, and why its docblock states plainly that it mounts no
+React.
+

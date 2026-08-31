@@ -49,7 +49,6 @@ import { createPortal } from "react-dom";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { I18nextProvider } from "react-i18next";
 import { RouterProvider } from "@tanstack/react-router";
-import { ThemeProvider, useTheme as useLodyTheme } from "@lody/components/theme-provider";
 import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
 import { userAtom } from "@lody/components/atoms";
@@ -77,75 +76,10 @@ import type { SharedSessionRow } from "./shared-sessions.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
 import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
-import { resolvedTheme, subscribeTheme } from "../theme.js";
-import { applyBlitzSurfaceTheme, installBlitzLodyTheme } from "./blitz-theme.js";
+import { BlitzThemedLodyTree, adoptShellTheme } from "./shell-theme.js";
 import "./lody-surface.css";
 import "./lody-surface-shell.css";
 import "./blitz-skin.css";
-
-/** next-themes persists under its own key. Ours is namespaced so the surface's
- * light/dark choice can never be confused with `blitz-theme`, which is the
- * shell's and is stored as a `data-theme` attribute rather than a class. */
-const LODY_THEME_STORAGE_KEY = "blitz-lody-theme";
-
-/**
- * Forces their theme engine onto the shell's current choice, and returns it.
- *
- * This is not cosmetic. `LodyThemeProvider` (`theme-provider.tsx:149`) writes
- * `document.documentElement.style.colorScheme` on every resolved theme — an
- * INLINE style on the html element, which beats our `:root { color-scheme }`
- * from any stylesheet. So a surface that resolved `light` while the shell is
- * dark would repaint our scrollbars and form controls, everywhere, not just
- * inside the surface. The phase-0 containment test cannot see this: it is a
- * runtime DOM write, not a CSS rule.
- *
- * `defaultTheme` alone is not enough, because next-themes prefers its stored
- * value on every later boot. Writing the key first makes the stored value ours,
- * every mount. `'system'` is deliberately never handed over: `resolvedTheme()`
- * has already resolved it against `prefers-color-scheme`, so the surface adopts
- * the palette `tokens.css` is actually painting rather than a preference name.
- *
- * It also installs the Blitz theme, because both halves have the same deadline:
- * `LodyThemeProvider` reads the bundled registry in a LAYOUT effect on its first
- * render, and `getBundledVSCodeThemeByIdSync` caches whatever answered first.
- * Registering after that would leave the surface on Vesper for the session.
- */
-function adoptShellTheme(): "dark" | "light" {
-  const choice = resolvedTheme();
-  installBlitzLodyTheme(choice);
-  try {
-    window.localStorage.setItem(LODY_THEME_STORAGE_KEY, choice);
-  } catch {
-    // Sandboxed storage: `defaultTheme` still applies for this mount.
-  }
-  return choice;
-}
-
-/**
- * Keeps the surface on the shell's theme for as long as it is mounted.
- *
- * `adoptShellTheme` settles the FIRST paint; this settles every one after it.
- * Two things have to move together on a flip, and they are owned by different
- * trees: `setTheme` is next-themes', and re-running it is what makes
- * `LodyThemeProvider` apply the other Blitz theme's variables to `<html>`;
- * `applyBlitzSurfaceTheme` is ours, and it rewrites the generated sheet the
- * surface, the rail and the Radix portals read.
- *
- * Rendered as a child of `ThemeProvider` rather than beside it, because
- * `useTheme()` needs the context that provider creates.
- */
-function ShellThemeBridge(props: { children: ReactNode }) {
-  const { setTheme } = useLodyTheme();
-  useEffect(
-    () =>
-      subscribeTheme((theme) => {
-        applyBlitzSurfaceTheme(theme, document.documentElement);
-        setTheme(theme);
-      }),
-    [setTheme],
-  );
-  return <>{props.children}</>;
-}
 
 /** Everything the rail's Terminals section needs, and nothing else. */
 export interface LodyRailBinding {
@@ -360,8 +294,15 @@ function seedCurrentUser(
   });
 }
 
-/** The stack below the platform providers, in the order design doc §1.4 fixes. */
-function LodySurfaceProviders(props: { children: ReactNode }) {
+/**
+ * The stack below the platform providers, in the order design doc §1.4 fixes.
+ *
+ * Exported for `packages/webapp/test/prod-probe`, which mounts THIS — not a
+ * hand-rolled equivalent — out of the production bundle. §14.10: the reskin was
+ * shipped once with three green harnesses that all skipped this component, so
+ * the probe has to hold the real one or it is measuring a lookalike.
+ */
+export function LodySurfaceProviders(props: { children: ReactNode }) {
   const i18n = useMemo(() => initLodyI18n(), []);
   const theme = useMemo(() => adoptShellTheme(), []);
   // Beside the theme adoption for the same reason: both write a key their own
@@ -369,11 +310,9 @@ function LodySurfaceProviders(props: { children: ReactNode }) {
   useMemo(() => seedWorktreeWorkdirDefault(), []);
   return (
     <I18nextProvider i18n={i18n}>
-      <ThemeProvider defaultTheme={theme} storageKey={LODY_THEME_STORAGE_KEY}>
-        <ShellThemeBridge>
-          <TooltipProvider>{props.children}</TooltipProvider>
-        </ShellThemeBridge>
-      </ThemeProvider>
+      <BlitzThemedLodyTree theme={theme}>
+        <TooltipProvider>{props.children}</TooltipProvider>
+      </BlitzThemedLodyTree>
     </I18nextProvider>
   );
 }
