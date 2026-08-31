@@ -99,7 +99,6 @@
   gap: 8px;
 }
 
-.lody-surface__auth-notice-button,
 .lody-surface__auth-notice-dismiss {
   padding: 4px 10px;
   border: 1px solid var(--rule);
@@ -110,9 +109,21 @@
   cursor: pointer;
 }
 
-.lody-surface__auth-notice-button {
-  border-color: var(--accent);
-  color: var(--accent);
+/* Lody's own `AcpAuthenticationPanel`, hosted in the band. It styles itself with
+   their Tailwind utilities inside the `lody` cascade layer, so this wrapper only
+   places it — never restyles it, or the panel would stop matching the identical
+   one the failed transcript entry renders. */
+.lody-surface__auth-notice-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.lody-surface__auth-notice-hint {
+  color: var(--soft-ink);
+}
+
+.lody-surface__auth-notice-hint code {
+  font-family: var(--font-mono, monospace);
 }
 
 /* Their light values, verbatim from

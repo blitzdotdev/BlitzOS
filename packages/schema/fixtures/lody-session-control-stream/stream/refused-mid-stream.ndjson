@@ -1,0 +1,2 @@
+{"kind":"response","response":{"type":"machine/acp-authentication-progress","machineId":"c41de1f7-beab-4509-84ee-d6703f540857","requestId":"req-authenticate-2","agentType":"claude","status":"starting"}}
+{"kind":"error","error":"workspace_runtime_unavailable","status":500}

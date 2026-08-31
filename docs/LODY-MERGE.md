@@ -115,8 +115,8 @@ npm view lody@<candidate> dist.shasum
 Then, in ONE change:
 
 1. bump `lody@<version>` in `packages/box/Dockerfile`;
-2. re-audit `packages/box/patches/lody-local-platform.mjs` — see §5, this is not
-   optional and it is guarded twice;
+2. re-audit BOTH patches in `packages/box/patches/` — see §5, neither is
+   optional and each is guarded twice;
 3. record both numbers in `vendor/lody/UPSTREAM.md`.
 
 If no npm release matches the subtree, **stay on the current npm pin and say so
@@ -190,10 +190,19 @@ can have merged; the sidebar props PR is drafted and in the same state. If a
 scheduled agent finds one of these merged upstream, that is news — say so
 prominently in the pull request body.
 
-## 5. Re-audit the platform patch
+## 5. Re-audit the npm-artifact patches
 
-`packages/box/patches/lody-local-platform.mjs` is applied to the **published npm
-artifact**, not to this tree. It restores the `LODY_PLATFORM` env read that
+Two scripts in `packages/box/patches/` are applied to the **published npm
+artifact**, in the Dockerfile's order. The order is load-bearing:
+`lody-local-platform.mjs` guards on a sha256 of the file AS PUBLISHED, so nothing
+may rewrite it first. Both are idempotent — re-running either on an
+already-patched bundle reports it and exits 0, which is what lets the daemon test
+harness copy a real box's bundle and re-apply them to the copy.
+
+### 5a. The platform patch
+
+`packages/box/patches/lody-local-platform.mjs` is applied to the published npm
+artifact, not to this tree. It restores the `LODY_PLATFORM` env read that
 `lody`'s cloud build inlines away, and **without it a box cannot start the
 daemon at all**. It is a standing obligation at every version bump.
 
@@ -225,6 +234,28 @@ LODY_PLATFORM=local node /tmp/package/dist/index.js start           # expect "St
 
 Then update `EXPECTED_INPUT_SHA256`, `EXPECTED_VERSION` and the Dockerfile pin
 **together**, in the same commit.
+
+### 5b. The ACP sign-in queue patch
+
+`packages/box/patches/lody-acp-auth-queue.mjs` gives `machine/acp-authenticate`
+its own chain in `MessageProcessor.extractQueueKey`. Without it every `machine/*`
+message shares one serial chain, so the `submit-code` carrying a member's pasted
+sign-in code queues behind the `claude auth login` that is blocking on stdin
+waiting for it — and so does `cancel`. An interactive agent sign-in can then only
+time out, after 285 s. See `plans/LODY-RUNTIME-DESIGN.md` §13.3.
+
+Its guards are the installed package version and its own anchor at exactly one
+occurrence, NOT a file sha256 — a file hash can only pin the first patch in a
+chain. Re-auditing means:
+
+```sh
+grep -A 14 'extractQueueKey(message)' /tmp/package/dist/index.js
+node packages/box/patches/lody-acp-auth-queue.mjs /tmp/package/dist/index.js
+```
+
+**If the new version already routes unnamed control messages off one shared
+chain, DELETE this patch rather than updating it** — and say so prominently in
+the pull request body, because it means the upstream defect is fixed.
 
 ## 6. Dependencies and the patch-file audit
 

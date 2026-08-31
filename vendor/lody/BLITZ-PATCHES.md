@@ -232,6 +232,24 @@ obligation at every version bump**.
 | Patch | Target | Anchor | Reason |
 |---|---|---|---|
 | `packages/box/patches/lody-local-platform.mjs` | `lody/dist/index.js` | 4× `resolvePlatformKind("cloud")` | `lody@0.88.1` on npm is the CLOUD build: its Vite config inlines the platform as a literal, so the local composition root is unreachable and the daemon blocks on a device-authorization login. The patch restores the `LODY_PLATFORM` env read. Without it a box cannot start the daemon at all. |
+| `packages/box/patches/lody-acp-auth-queue.mjs` | `lody/dist/index.js` | the `extractQueueKey` switch tail in `MessageProcessor` | Every `machine/*` message falls to `extractQueueKey`'s `default: return null`, and `ConcurrentQueue` maps `null` onto ONE serial chain (`__default__`). `machine/acp-authenticate` with `action: 'start'` runs `claude auth login --claudeai`, which blocks on stdin until the member pastes the code back — so the `submit-code` carrying that code queues behind the login waiting for it, and so does `cancel`. The patch gives a `start` its own per-agent chain. Without it an interactive agent sign-in can never be completed, only timed out after 285 s. |
+
+Applied in that order. **The order is not cosmetic:** `lody-local-platform`
+guards on a sha256 of `dist/index.js` AS PUBLISHED, so nothing may rewrite the
+file before it runs. `lody-acp-auth-queue` therefore guards on the installed
+package's version plus its own anchor at exactly one occurrence — a file hash can
+only ever pin the first patch in a chain. Both are idempotent: re-running either
+on an already-patched bundle reports it and exits 0, which is what lets
+`packages/webapp/test/lody-daemon-harness.ts` copy a real box's bundle and
+re-apply the image build's patches to the copy.
+
+The queue patch is strictly NARROWING. The only message that changes chains is
+the `machine/acp-authenticate` start that was blocking the others; nothing gains
+a peer it did not already have. Grouping starts per agent type is a rule the
+daemon already enforces one layer in, from `runningByAgentType`
+(`apps/cli/src/agent/acp-authentication.ts`), so this moves it out rather than
+inventing it. **Open upstream as "keyless control messages should not serialize
+behind a long-running interactive login", and drop this patch when it merges.**
 
 **Per-bump obligation.** Bumping the `lody` pin in `packages/box/Dockerfile`
 requires re-auditing this patch in the same change. It is guarded twice, so
@@ -241,6 +259,12 @@ neglect fails the image build loudly rather than shipping a broken box:
    Any new version fails here first.
 2. `EXPECTED_OCCURRENCES` pins the anchor count at 4. A refactor that moves or
    splits the call sites fails here.
+
+`lody-acp-auth-queue.mjs` has the same obligation and its own two guards: the
+version read from the installed `package.json`, and its anchor at exactly one
+occurrence. Re-auditing it means confirming that `extractQueueKey` still sends
+unnamed types to one shared chain — if a bump fixes that upstream, DELETE the
+patch instead of updating it.
 
 Re-auditing means: confirm the anchor still selects the platform, confirm the
 count, run `LODY_PLATFORM=local lody start` and see "Starting in local platform

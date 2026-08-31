@@ -39,8 +39,13 @@ RUN npm install --global --omit=dev \
       ws@8.21.0 \
     && npm cache clean --force
 COPY packages/box/patches/lody-local-platform.mjs /tmp/lody-local-platform.mjs
+COPY packages/box/patches/lody-acp-auth-queue.mjs /tmp/lody-acp-auth-queue.mjs
+# Order matters only for the first: its guard is a sha256 of the bundle AS
+# PUBLISHED, so nothing may rewrite the file before it runs. The second guards on
+# the package version and its own anchor instead, for that reason.
 RUN node /tmp/lody-local-platform.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
-    && rm /tmp/lody-local-platform.mjs
+    && node /tmp/lody-acp-auth-queue.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
+    && rm /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime-base
 

@@ -29,11 +29,19 @@
 // the Dockerfile without re-auditing this patch fails HERE, loudly, at build
 // time — not silently at run time on a member's box.
 //
+// IT IS IDEMPOTENT. An already-patched bundle at the pinned version is reported
+// and accepted, because a box RUNS this artifact and the daemon test harness
+// re-applies the image build's patches to a copy of it. That branch needs all
+// four rewritten call sites, none of the originals, and the pinned version — a
+// state nothing but this script produces — so the guard above still catches a
+// version bump.
+//
 // Recorded in vendor/lody/BLITZ-PATCHES.md. Usage:
 //   node lody-local-platform.mjs <path to lody/dist/index.js>
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 /** sha256 of `dist/index.js` inside the published `lody@0.88.1` tarball. */
 const EXPECTED_INPUT_SHA256 = "9989ffd086a690c4d74555b0ef5e7ecd4830f25506b2fa0cda0808bfe57ca8e9";
@@ -48,8 +56,44 @@ if (target === undefined) {
   process.exit(2);
 }
 
+/** The version beside the bundle. `dist/index.js` -> the package root. */
+function installedVersion() {
+  try {
+    return JSON.parse(readFileSync(join(dirname(dirname(target)), "package.json"), "utf8")).version;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether this exact patch has already been applied to this exact version. */
+function alreadyPatchedAtPinnedVersion(text) {
+  return (
+    installedVersion() === EXPECTED_VERSION &&
+    text.split(REPLACE).length - 1 === EXPECTED_OCCURRENCES &&
+    !text.includes(FIND)
+  );
+}
+
 const source = readFileSync(target, "utf8");
 const actualSha = createHash("sha256").update(source, "utf8").digest("hex");
+
+// ALREADY PATCHED IS A SUCCESS, and it is the normal case outside the image
+// build: a box RUNS this artifact, and `webapp/test/lody-daemon-harness.ts`
+// copies the box's own `/opt/blitz/npm` bundle and re-applies the image build's
+// patches to the copy. Refusing there made every daemon-backed suite fail on a
+// current box with "the pinned lody version moved", which names the wrong cause.
+//
+// The teeth are unchanged. This branch is only taken when the file carries
+// EXACTLY the four rewritten call sites and none of the original ones, at the
+// pinned version — a state nothing but this script produces. A new lody version
+// matches neither the sha above nor this, and still fails below.
+if (actualSha !== EXPECTED_INPUT_SHA256 && alreadyPatchedAtPinnedVersion(source)) {
+  console.log(
+    `lody-local-platform: ${target} already carries all ${EXPECTED_OCCURRENCES} call sites (lody@${EXPECTED_VERSION}).`,
+  );
+  process.exit(0);
+}
+
 if (actualSha !== EXPECTED_INPUT_SHA256) {
   console.error(
     `lody-local-platform: refusing to patch ${target}.\n` +

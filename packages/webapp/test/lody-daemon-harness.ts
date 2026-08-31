@@ -6,8 +6,8 @@
  * lived in the difference between the two (`plans/evidence/lody-phase1.md` §0).
  * This module stands up the same three processes a box runs, in the same order:
  *
- * 1. the patched daemon — `packages/box/patches/lody-local-platform.mjs` applied
- *    to a COPY of the installed npm bundle, exactly as the image build does;
+ * 1. the patched daemon — every script in `packages/box/patches/` applied to a
+ *    COPY of the installed npm bundle, in the image build's own order;
  * 2. `packages/box/rootfs/usr/local/libexec/blitz-lody-bridge`, unmodified;
  * 3. a TCP front door that maps `/lody/*` onto the bridge's unix socket, which
  *    is what `packages/box/gateway/main.go` does. The Go gateway itself cannot
@@ -22,6 +22,7 @@
  * is 118. So the data dir is a short `os.tmpdir()` path, not the scratchpad.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -63,7 +64,13 @@ export function repoRoot(): string {
 
 /** Where the box image installs the daemon, and where this box has it too. */
 export const LODY_BUNDLE = "/opt/blitz/npm/lib/node_modules/lody";
-const PATCH_SCRIPT = join(repoRoot(), "packages/box/patches/lody-local-platform.mjs");
+/** Every patch the image build applies to the published bundle, IN THE ORDER the
+ * Dockerfile applies them. `lody-local-platform` guards on a sha256 of the file
+ * as published, so it has to run before anything else rewrites it. */
+const PATCH_SCRIPTS = [
+  join(repoRoot(), "packages/box/patches/lody-local-platform.mjs"),
+  join(repoRoot(), "packages/box/patches/lody-acp-auth-queue.mjs"),
+];
 const BRIDGE_SCRIPT = join(repoRoot(), "packages/box/rootfs/usr/local/libexec/blitz-lody-bridge");
 const REPO_NODE_MODULES = join(repoRoot(), "node_modules");
 
@@ -111,6 +118,43 @@ export interface LodyShareClaim {
   scope: "sessions" | "all";
   read: string[];
   write: string[];
+}
+
+/**
+ * The launch markers that tell `lody start` it is being SUPERVISED, so it does
+ * not take the single-instance host lease on port 17789.
+ *
+ * Not a trick: this is Lody's own Supervisor<->Worker contract
+ * (`packages/shared/src/node/local-cli-supervisor.ts`), the same four variables
+ * `lody daemon start` sets for the worker it forks, and this harness is exactly
+ * such a supervisor — it spawns the process, owns its lifetime and kills it.
+ *
+ * WHY IT IS REQUIRED. The lease is one TCP port for the whole `lody-oss`
+ * installation profile, with no override, and a BOX RUNS ITS OWN DAEMON on it
+ * (`s6-rc.d/lody-daemon`). Every daemon-backed suite here runs on a box. Before
+ * the image shipped `lody-local-platform.mjs`, the box's daemon could not reach
+ * local mode and never took the lease, so an unsupervised harness worked by
+ * accident; on a current image it exits with "Cannot start: foreground process
+ * N already owns the local agent runtime" and the harness reports a 60 s
+ * provisioning timeout that names the wrong cause.
+ *
+ * Everything else stays isolated by `LODY_DATA_DIR`: sockets, catalog and
+ * SQLite all live under the harness's own temp dir, so the box's daemon and
+ * this one never share state. The lease was the only contended resource.
+ *
+ * The token is 32+ characters because their schema requires it. It authenticates
+ * a `lody/supervisor-shutdown` message over the IPC channel below, which this
+ * harness never sends — it kills the process directly — so the value only has to
+ * be well-formed and unguessable, not remembered.
+ */
+function supervisorLaunchEnv(): Record<string, string> {
+  return {
+    LODY_DAEMON_SUPERVISED: "1",
+    LODY_SUPERVISOR_CONTRACT: "1",
+    LODY_SUPERVISOR_INSTANCE_ID: randomUUID(),
+    LODY_SUPERVISOR_PID: String(process.pid),
+    LODY_SUPERVISOR_TOKEN: randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", ""),
+  };
 }
 
 function waitFor(what: string, check: () => boolean, timeoutMs: number): Promise<void> {
@@ -381,14 +425,16 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   // copy too, and mutating the box's `lody` from a test would leave it patched.
   const bundle = join(root, "lody");
   cpSync(LODY_BUNDLE, bundle, { recursive: true });
-  const patch = spawn(process.execPath, [PATCH_SCRIPT, join(bundle, "dist", "index.js")], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const patchResult = await new Promise<number>((resolve) => patch.once("exit", (code) => resolve(code ?? 1)));
-  if (patchResult !== 0) {
-    rmSync(root, { recursive: true, force: true });
-    releaseLock();
-    throw new Error("lody-local-platform patch refused the installed bundle");
+  for (const script of PATCH_SCRIPTS) {
+    const patch = spawn(process.execPath, [script, join(bundle, "dist", "index.js")], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const patchResult = await new Promise<number>((resolve) => patch.once("exit", (code) => resolve(code ?? 1)));
+    if (patchResult !== 0) {
+      rmSync(root, { recursive: true, force: true });
+      releaseLock();
+      throw new Error(`${script} refused the installed bundle`);
+    }
   }
 
   let daemonLog = "";
@@ -399,8 +445,15 @@ export async function startLodyHarness(): Promise<LodyHarness> {
       LODY_PLATFORM: "local",
       LODY_DATA_DIR: dataDir,
       LODY_MCP_HTTP_DISABLED: "1",
+      ...supervisorLaunchEnv(),
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    // The fourth entry is the supervisor's half of the contract above: a worker
+    // launched with the markers but no IPC channel decides it is an orphan
+    // ("Supervisor IPC channel disconnected; stopping orphaned worker") and
+    // exits before it provisions anything. It also buys the property this
+    // module's header wants and could not have: a vitest worker killed by the
+    // OOM reaper drops the channel, and the daemon stops itself.
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   daemon.stdout?.on("data", (chunk) => (daemonLog += String(chunk)));
   daemon.stderr?.on("data", (chunk) => (daemonLog += String(chunk)));
