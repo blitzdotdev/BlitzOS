@@ -139,6 +139,59 @@ describe("identity phase 2", () => {
     await expect(appRequest(app, "/workspaces", { headers: { Cookie: outsiderCookie } }).then((response) => response.json())).resolves.toEqual({ workspaces: [] });
   });
 
+  // A hard navigation to the chat surface — refresh, deep link, bookmark,
+  // open-in-new-tab — used to answer the JSON 404 from installControlPlaneRoutes,
+  // because /workspaces is worker-first and core routed none of these
+  // addresses. The SPA never loaded. The five arms are the ones
+  // packages/webapp/src/sessions-page-state.ts parses.
+  it("serves the app shell for a hard navigation to any chat address, and nothing else", async () => {
+    const { app } = harness();
+    const ownerCookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, ownerCookie);
+    const html = { Cookie: ownerCookie, Accept: "text/html,application/xhtml+xml" };
+    const arms = [
+      "/chat",
+      "/chat/session-1",
+      "/chat/shared/membership-1/session-1",
+      "/chat/terminal/2",
+      "/chat/session-1/terminal/2",
+    ];
+    for (const arm of arms) {
+      const navigation = await appRequest(app, `/workspaces/${workspace.id}${arm}`, { headers: html });
+      expect(navigation.status, arm).toBe(200);
+      expect(navigation.headers.get("content-type"), arm).toContain("text/html");
+      expect(await navigation.text(), arm).toContain("webapp shell");
+    }
+
+    // The shell is the same bytes for everyone, so it is served before the
+    // principal is resolved — exactly as GET /workspaces/:id serves it.
+    const anonymous = await appRequest(app, `/workspaces/${workspace.id}/chat`, {
+      headers: { Accept: "text/html" },
+    });
+    expect(anonymous.status).toBe(200);
+    expect(await anonymous.text()).toContain("webapp shell");
+
+    // A fetch caller asks for JSON and keeps the answer it had.
+    for (const arm of arms) {
+      const fetched = await appRequest(app, `/workspaces/${workspace.id}${arm}`, {
+        headers: { Cookie: ownerCookie, Accept: "application/json" },
+      });
+      expect(fetched.status, arm).toBe(404);
+      await expect(fetched.json(), arm).resolves.toEqual({ error: "not found", retryAction: null });
+    }
+
+    // And the fallback claims the `chat` segment alone: a real API route under
+    // the same workspace prefix still answers itself, HTML accept or not.
+    const repos = await appRequest(app, `/workspaces/${workspace.id}/repos`, {
+      headers: { Cookie: ownerCookie },
+    });
+    expect(repos.status).toBe(200);
+    await expect(repos.json()).resolves.toEqual({ repos: [] });
+    const reposNavigation = await appRequest(app, `/workspaces/${workspace.id}/repos`, { headers: html });
+    expect(reposNavigation.status).toBe(200);
+    await expect(reposNavigation.json()).resolves.toEqual({ repos: [] });
+  });
+
   it("grants viewers and editors, authorizes the proxy, forbids destroy, and drains best-effort", async () => {
     const providers = new ProxyProviders();
     const app = appWithProviders(providers, providers);
