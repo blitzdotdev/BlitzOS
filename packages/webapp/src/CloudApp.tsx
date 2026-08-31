@@ -1639,6 +1639,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               terminals={railSessions}
               activeTerminalId={railActiveSessionId ?? ''}
               onSelectTerminal={selectTtydSession}
+              onOpenSession={lodyRail.openSession}
+              onOpenLanding={lodyRail.openLanding}
               terminalsAction={(
                 <NewTabControl
                   variant="icon"

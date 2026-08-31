@@ -373,6 +373,27 @@ Recorded here because each is a candidate seam if the workaround stops holding.
 - ~~**The local attachment fast path is gated on `__LODY_ELECTRON__`.**~~ Phase 6
   applied the hunk at seam patch 3 and drafted the upstream PR
   (`plans/evidence/lody-attachment-seam-pr.md`).
+- **`acpSessionId` is persisted before the ACP session has carried a turn**
+  (canary dogfood 3). `createSessionInnerWithAgent` writes it as soon as the
+  adapter answers `session/new` (`apps/cli/src/session/session-manager.ts:1455`),
+  and the claude adapter accepts `session/new` while the CLI is signed out — it
+  refuses only at prompt time. So a turn that fails `acp_auth_required` leaves an
+  id for an ACP session that holds no conversation. The member signs in, sends
+  the next message, and the daemon RESUMES it: `loadSession` answers `Resource
+  not found`, the daemon falls into its replay fallback
+  (`session-execution-service.ts:3499`), and THAT turn comes back
+  `agent_no_output`. Measured against a real `lody@0.88.1` in
+  `packages/webapp/test/lody-post-signin-turn.test.ts`; the daemon's own log
+  reads `[ACP_RESUME_FAILED] loadSession: Resource not found` and then
+  `completed without any agent output`. `packages/webapp/src/lody/session-auth-recovery.ts`
+  drops the phantom id from the session's doc meta —
+  an authored write on a dual-authored document, so no vendor hunk — under three
+  conditions, so an id that names a real conversation is never touched.
+  **Candidate upstream PR: persist `acpSessionId` only once the ACP session has
+  carried a turn, or clear it when a resume reports the session is gone.** The
+  silent turn behind the fallback is a second, separate upstream defect and is
+  not fixed here; the leading explanation is the adapter resolving a dead SDK
+  stream as `end_turn` with no notification (`dist/claude-acp.js:63062`).
 - **`acp-extension-dsh` is an empty submodule.** Aliased to a local stub; see
   `UPSTREAM.md`.
 - **`packages/components/vite-renderer-bundle-aliases.ts` cannot be imported.**

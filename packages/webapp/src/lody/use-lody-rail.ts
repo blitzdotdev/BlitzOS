@@ -17,6 +17,14 @@
  *    other navigation in `CloudApp` is. Nothing about chat sessions is written
  *    to `webapp_state`: the daemon's session list is the source of truth for
  *    which sessions exist, and the URL is where the active selection lives.
+ *
+ *    EVERY RAIL INTERACTION COMES THROUGH HERE, and that is not a style
+ *    preference. `openSession` and `openLanding` are handed to the vendored
+ *    sidebar (`SessionSurface` → `LodyRailBinding`), because the surface's own
+ *    router cannot take the view back from the panes: with `chat === null` the
+ *    surface is hidden, `mirror` is deliberately inert, and a navigation inside
+ *    a hidden surface is invisible. Routing a rail click through the surface
+ *    was the third canary dogfood's first three reports, all one defect.
  * 3. The FRESH-WORKSPACE DEFAULT (§0.4). With the flag on, a workspace whose
  *    persisted document holds no tabs opens the chat landing instead of the
  *    panes. `defaultWorkspaceTabs()` is what makes a fresh workspace hold none
@@ -76,6 +84,10 @@ export function useLodyRail(
   const go = useCallback(
     (path: string, next: ChatAddress) => {
       if (activeWorkspaceId === "") return;
+      // Already there. A rail row is clickable while it is the open one, so
+      // without this every second click on it pushes a history entry that
+      // navigates nowhere and costs the member a press of the back button.
+      if (window.location.pathname === path) return;
       window.history.pushState({}, "", path);
       setRoute({ workspaceId: activeWorkspaceId, page: "webApp", chat: next });
     },

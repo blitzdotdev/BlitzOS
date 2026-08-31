@@ -42,6 +42,11 @@ export interface LodySessionsRegionProps {
   terminals: DriveRailSession[];
   activeTerminalId: string;
   onSelectTerminal: (tabId: string) => void;
+  /** What a session row and "+ New session" do: move the shell's ADDRESS, which
+   * is the only thing that can take the view back from the panes. See
+   * `LodyRailBinding` in `SessionSurface.tsx`. */
+  onOpenSession?: (sessionId: string) => void;
+  onOpenLanding?: () => void;
   /** The `+ New tab` control for the Terminals section header. */
   terminalsAction?: ReactNode;
   /** Right-click Share on a session row (plans/LODY-SHARING.md §8). */
@@ -87,6 +92,8 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     onSelectTerminal: props.onSelectTerminal,
     activeSharedSessionId: sharedOpen === null ? null : sharedOpen.sessionId,
   };
+  if (props.onOpenSession !== undefined) rail.onOpenSession = props.onOpenSession;
+  if (props.onOpenLanding !== undefined) rail.onOpenLanding = props.onOpenLanding;
   if (props.terminalsAction !== undefined) rail.terminalsAction = props.terminalsAction;
   if (props.onShareSession !== undefined) rail.onShareSession = props.onShareSession;
   if (props.sharedSessions !== undefined) rail.sharedSessions = props.sharedSessions;

@@ -152,6 +152,24 @@ export interface LodyRailBinding {
   terminals: DriveRailSession[];
   activeTerminalId: string;
   onSelectTerminal: (tabId: string) => void;
+  /**
+   * THE SHELL'S OWN NAVIGATORS, and the reason they exist rather than the
+   * surface routing itself.
+   *
+   * A rail click is an ADDRESS change, not a surface navigation. The surface is
+   * hidden whenever the panes own the view (`ChatAddress` is `null`), and a
+   * navigation inside a hidden surface changes nothing a member can see: the
+   * mirror back to the address deliberately does nothing while the panes own it
+   * (`use-lody-rail.ts`), so the surface would move and the shell would not.
+   * That is the whole of the third canary dogfood's first three reports — a
+   * session row, "New session", and "New session" with a terminal tab open all
+   * did nothing at all.
+   *
+   * Absent, the portal falls back to the surface's own router, which is what a
+   * headless mount with no shell around it wants.
+   */
+  onOpenSession?: (sessionId: string) => void;
+  onOpenLanding?: () => void;
   /** The `+ New tab` control, rendered in the Terminals section header. */
   terminalsAction?: ReactNode;
   /** Right-click Share on a session row. Absent leaves the row's menu exactly
@@ -467,8 +485,8 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             activeSessionId={activeSessionId}
             surfaceVisible={props.hidden !== true}
             onSelectTerminal={rail.onSelectTerminal}
-            onSelectSession={openSession}
-            onOpenLanding={openLanding}
+            onSelectSession={rail.onOpenSession ?? openSession}
+            onOpenLanding={rail.onOpenLanding ?? openLanding}
             {...(rail.terminalsAction === undefined
               ? {}
               : { terminalsAction: rail.terminalsAction })}

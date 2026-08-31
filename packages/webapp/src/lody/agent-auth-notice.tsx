@@ -36,59 +36,18 @@
  * so latency is the only thing being traded, and only in seconds.
  */
 import { useEffect, useState } from "react";
-import { isJsonArray, isJsonObject, isJsonString, type JsonValue } from "@blitzos/schema";
 import { runtimeAtom } from "@lody/components/atoms/runtime";
 import { AcpAuthenticationPanel } from "@lody/components/components/settings/acp-authentication-panel";
 import { BLITZ_CLAUDE_CONFIG_ID, BLITZ_CLAUDE_EXECUTABLE } from "./agent-configs.js";
+import {
+  repairPhantomAcpSession,
+  sessionNeedsAgentSignIn,
+} from "./session-auth-recovery.js";
 import type { LodyAtomStore, LodyWorkspaceRuntime } from "./runtime.js";
 import type { LodySessionDocState } from "./wire-types.js";
 
-/** Lody's own reason code for "the agent CLI is not signed in"
- * (`packages/shared/src/ai.ts:1105`, ACP error -32000). */
-const ACP_AUTH_REQUIRED = "acp_auth_required";
-
 /** Slow on purpose; see the module comment. */
 export const AUTH_NOTICE_POLL_MS = 2_000;
-
-/**
- * Whether this session's history ends in an unresolved auth failure.
- *
- * The LAST `chat_failed` notice decides, not any of them: a member who signs in
- * and re-sends leaves the old notice in the transcript forever, and a banner
- * keyed on "has ever failed" would never go away. A later notice with a
- * different reason therefore clears this one, and so does a later assistant
- * turn — which is why the scan runs backwards and stops at the first history
- * entry that carries any system notice or assistant content.
- */
-export function sessionNeedsAgentSignIn(state: LodySessionDocState): boolean {
-  const history = state.history;
-  if (history === undefined || !isJsonArray(history)) return false;
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const entry = history[index];
-    if (entry === undefined || !isJsonObject(entry)) continue;
-    const role = entry.role;
-    if (role !== undefined && isJsonString(role) && role === "assistant") return false;
-    const reason = chatFailedReason(entry.items);
-    if (reason === null) continue;
-    return reason === ACP_AUTH_REQUIRED;
-  }
-  return false;
-}
-
-/** The `reason` of the first `chat_failed` notice in one history entry's items,
- * or `null` when the entry carries none. */
-function chatFailedReason(items: JsonValue | undefined): string | null {
-  if (items === undefined || !isJsonArray(items)) return null;
-  for (const item of items) {
-    if (!isJsonObject(item)) continue;
-    if (item.type !== "system_notice" || item.name !== "chat_failed") continue;
-    const meta = item.meta;
-    if (meta === undefined || !isJsonObject(meta)) return "";
-    const reason = meta.reason;
-    return reason !== undefined && isJsonString(reason) ? reason : "";
-  }
-  return null;
-}
 
 export interface LodyAgentAuthNoticeProps {
   store: LodyAtomStore;
@@ -139,6 +98,15 @@ export function LodyAgentAuthNotice(props: LodyAgentAuthNoticeProps) {
           // between the read and its answer. The next tick asks again.
         },
       );
+      // The same poll, and deliberately not a second one: this repair fires on
+      // exactly the state the banner is watching for, and it has to happen
+      // BEFORE the member's next message rather than when they click sign-in —
+      // signing in through a terminal tab is the other product route and
+      // touches nothing of ours (§15.2).
+      void repairPhantomAcpSession(runtime, sessionId).catch(() => {
+        // Same two reasons as above. A phantom id that survives costs the
+        // member one retry, which is the behaviour without this repair.
+      });
     };
     poll();
     const timer = window.setInterval(poll, AUTH_NOTICE_POLL_MS);

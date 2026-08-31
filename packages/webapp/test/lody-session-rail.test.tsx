@@ -107,6 +107,16 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
   let surface: (hidden: boolean) => ReactNode = () => null;
   /** Every session id the row's Share entry reported (phase 6). */
   const sharedSessions: string[] = [];
+  /**
+   * What the rail asked the SHELL to open, newest last
+   * (plans/LODY-RUNTIME-DESIGN.md §15).
+   *
+   * A rail click is an address change, not a surface navigation, so the binding
+   * carries `CloudApp`'s own navigators and this list is what a vendored row
+   * reaches. The shell then drives the surface back through the imperative API,
+   * which is what each case does by hand below.
+   */
+  const railNavigations: (string | null)[] = [];
 
   beforeAll(async () => {
     installLodyDomStubs();
@@ -142,6 +152,8 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
           onSelectTerminal: (tabId) => selectedTerminals.push(tabId),
           terminalsAction: <button type="button" aria-label="New tab">+</button>,
           onShareSession: (sessionId) => sharedSessions.push(sessionId),
+          onOpenSession: (sessionId) => railNavigations.push(sessionId),
+          onOpenLanding: () => railNavigations.push(null),
         }}
         onApiReady={(next) => {
           api = next;
@@ -189,25 +201,45 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     }
   });
 
-  it("offers + New session, and it opens the landing", async () => {
+  it("offers + New session, and it asks the shell for the landing", async () => {
     const newSession = await until("the New session entry", () =>
       railButton(/New session/u),
     );
+    railNavigations.length = 0;
     await act(async () => {
       newSession.click();
     });
     await settle();
+    // THE SHELL IS ASKED, and the surface has not moved on its own. That is the
+    // third dogfood's reports 2 and 3: the surface is hidden whenever the panes
+    // own the view, so a rail click that only moved the surface's router moved
+    // a page nobody could see.
+    expect(railNavigations).toEqual([null]);
+
+    // And the shell then drives the surface, which is `CloudApp`'s
+    // address-follows effect in one line.
+    await act(async () => {
+      api?.openLanding();
+    });
+    await settle();
     expect(activeSessionId).toBeNull();
     expect(api?.activeSessionId()).toBeNull();
-    // And from a session it comes back to the landing, which is the whole of
-    // "a new chat session can be started from the rail" minus the paid turn.
+
+    // From a session it comes back to the landing, which is the whole of "a new
+    // chat session can be started from the rail" minus the paid turn.
     await act(async () => {
       api?.openSession("11111111-1111-4111-8111-111111111111");
     });
     await settle();
     expect(activeSessionId).toBe("11111111-1111-4111-8111-111111111111");
+    railNavigations.length = 0;
     await act(async () => {
       railButton(/New session/u)?.click();
+    });
+    await settle();
+    expect(railNavigations).toEqual([null]);
+    await act(async () => {
+      api?.openLanding();
     });
     await settle();
     expect(activeSessionId).toBeNull();
@@ -236,13 +268,26 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     const row = railSessionRow(new RegExp(SEEDED_TITLE, "u"));
     expect(row, `rail: ${railText()}`).toBeDefined();
     expect(row?.getAttribute("role")).toBe("button");
+    railNavigations.length = 0;
+    // A SINGLE click, which is what the member reported as doing nothing. The
+    // row's own handler is `onClick` (`session-list.tsx:929`), so the vendored
+    // half was never the problem; where it went was.
     await act(async () => {
       (row as HTMLElement).click();
     });
-    await until("the rail click to open the session", () =>
-      activeSessionId === null ? undefined : true,
+    await settle();
+    const opened = await until("the rail click to reach the shell", () =>
+      railNavigations.at(-1) ?? undefined,
     );
-    expect(activeSessionId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(opened).toMatch(/^[0-9a-f-]{36}$/u);
+
+    // The shell honours it, and the surface arrives at the same session.
+    await act(async () => {
+      api?.openSession(opened);
+    });
+    await until("the surface to open the session", () =>
+      activeSessionId === opened ? true : undefined,
+    );
   }, 90_000);
 
   /**
@@ -338,6 +383,13 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
         railButton(/New session/u)?.click();
       });
       await settle();
+      // The rail asks; the shell honours. Both halves, because the paid case is
+      // the only one that drives the real composer afterwards.
+      expect(railNavigations.at(-1)).toBeNull();
+      await act(async () => {
+        api?.openLanding();
+      });
+      await settle();
       const composer = await until("the landing composer", () => {
         const textarea = mounted.container.querySelector<HTMLTextAreaElement>("textarea");
         return textarea ?? undefined;
@@ -377,16 +429,25 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
         throw new Error(`${String(cause)}\n--- rail ---\n${railText()}`);
       });
       expect(row).toBeDefined();
-      // And a click on it routes: the rail drives the surface, not the reverse.
+      // And a click on it routes: the rail drives the ADDRESS, and the address
+      // drives the surface.
       await act(async () => {
         api?.openLanding();
       });
       await settle();
       expect(activeSessionId).toBeNull();
+      railNavigations.length = 0;
       await act(async () => {
         row.click();
       });
-      await until("the rail click to open the session", () =>
+      await settle();
+      expect(await until("the rail click to reach the shell", () =>
+        railNavigations.at(-1) ?? undefined,
+      )).toBe(sessionId);
+      await act(async () => {
+        api?.openSession(sessionId);
+      });
+      await until("the surface to open the session", () =>
         activeSessionId === sessionId ? true : undefined,
       );
     },

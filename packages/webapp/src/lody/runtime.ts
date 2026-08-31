@@ -89,7 +89,25 @@ export interface LodyWorkspaceWriter {
     entry: JsonObject,
     dispatch: LodyDispatchArgs,
   ): Promise<void>;
-  upsertDocMeta(roomId: string, patch: JsonObject): Promise<void>;
+  /** The same accept unit for a session that already exists: one more user turn
+   * and the dispatch pointer that goes with it (`workspace-writer.ts:55`). It is
+   * what the composer's second message is, and what a headless caller needs to
+   * put two turns on one session. */
+  appendSessionTurn(
+    sessionId: string,
+    entry: JsonObject,
+    dispatch: LodyDispatchArgs,
+  ): Promise<void>;
+  /**
+   * The session or machine room's doc meta.
+   *
+   * The patch is `JsonValue | undefined` and not `JsonObject` because
+   * `undefined` is loro-repo's own DELETE: `metadataManager.upsert` removes the
+   * key from the CRDT when a patch value is `undefined`, and stores `null` when
+   * it is null. Clearing a field and setting it to null are different states to
+   * every reader of `SessionMeta`, so the seam has to be able to say which one.
+   */
+  upsertDocMeta(roomId: string, patch: Record<string, JsonValue | undefined>): Promise<void>;
   flockRowPut(flockDocId: string, key: readonly string[], value: JsonValue): Promise<void>;
   /** Inserts a Flock row only when its key is absent, in ONE transaction.
    * `workspace-writer.ts:38`. The transaction is the whole point: a check
@@ -122,9 +140,22 @@ export interface LodyFlockDocHandle {
   syncOnce(): Promise<void>;
 }
 
+/**
+ * What `repo.getDocMeta` answers (`loro-repo`'s `RepoDocSnapshot`): the room's
+ * meta fields and whether the document is deleted. For a session room the meta
+ * IS Lody's `SessionMeta` — `acpSessionId`, `status`, `latestUserMsgId` and the
+ * rest — which is why it is worth naming on this side.
+ */
+export interface LodyDocMetaSnapshot {
+  readonly meta: JsonObject;
+  readonly deleted: boolean;
+}
+
 /** The slice of the runtime's `LoroRepo` this package calls. */
 export interface LodyLoroRepo {
   openFlockDoc(flockDocId: string): Promise<LodyFlockDocHandle>;
+  /** One room's doc meta, or `undefined` for a room the repo has never seen. */
+  getDocMeta(roomId: string): Promise<LodyDocMetaSnapshot | undefined>;
 }
 
 /** The mirrored session document store `withSessionStore` hands to its callback. */
