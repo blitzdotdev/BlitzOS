@@ -65,7 +65,22 @@ const assistantTurn: SessionHistoryParsed = {
     },
     {
       type: "text",
-      text: "The rail now renders **Chats** and **GitHub Worktrees** sections; terminals stay in their own section.",
+      // The fenced block is deliberate: it is the only item in this corpus that
+      // renders a code slab, and the slab is what `--code-background`,
+      // `--code-border` and the `--syntax-*` ramp are spent on. Without it the
+      // theme review page shows every colour of the reskin except those.
+      text: [
+        "The rail now renders **Chats** and **GitHub Worktrees** sections; terminals stay in their own section.",
+        "",
+        "```css",
+        ".shell-s {",
+        "  height: 31px;",
+        "  padding: 0 9px;",
+        "  border-radius: var(--r-item);",
+        "  color: var(--soft-ink);",
+        "}",
+        "```",
+      ].join("\n"),
     },
   ],
 };

@@ -30,5 +30,8 @@
 
 .lody-fixture-composer {
   flex: 0 0 auto;
-  padding: 12px 16px 16px;
+  /* No horizontal padding: `FixtureComposer` wraps the composer in a
+     `ConversationColumn`, exactly as `SessionChatInputArea` does, and that
+     column carries the gutter. Padding here would inset it twice. */
+  padding: 12px 0 16px;
 }

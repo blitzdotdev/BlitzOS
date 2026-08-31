@@ -1683,3 +1683,167 @@ The suite could not have been compared against `main` on a current box, because
 there it does not start at all (§13.6). If this flake predates the port, the
 retry is still the right shape; if it is the stand-in shim, the retry is where
 it belongs — production's upgrade hop is Go, and `gateway/main_test.go` owns it.
+
+---
+
+## 14. The Blitz reskin (2026-08-31)
+
+§5.2 closed with a promise: "the rest of the Blitz reskin is not CSS overrides:
+their theme engine compiles a VS Code theme to `--vscode-*` custom properties at
+runtime, so ship a 'Blitz' theme through it and leave their component classes
+alone." This is that theme. Six things it settled.
+
+### 14.1 The engine is the alias table, not the `--vscode-*` names
+
+The `--vscode-*` half is a straight copy of the theme's colour ids and reaches
+almost nothing the surface paints. What the surface reads is the ~70 SEMANTIC
+properties `LODY_ALIAS_RULES` derives
+(`components/src/lib/vscode-theme/vscode-theme-css.ts:75`): `--background`,
+`--sidebar-hover`, `--primary`, `--code-background`, `--syntax-*`, `--tab-*`.
+Each rule names an ordered list of VS Code colour ids, so a theme that sets the
+FIRST id of each rule maps exactly, with no fallback cascade to reason about.
+`packages/webapp/src/lody/blitz-theme.ts` is that mapping, one line per property
+with the BlitzOS token named beside it.
+
+`createThemeCssVariables` emits each alias through `hexColorToHslChannel`. That
+is the type conversion §5.2 asked for and could not see: `--muted` and `--hover`
+come out as `H S% L%` triplets carrying OUR colours, which is what
+`hsl(var(--muted))` needs and what a `color-mix()` could never be.
+
+### 14.2 The five collisions, flipped
+
+| Token | Phase 3 | Now |
+|---|---|---|
+| `--muted` | Lody's `220 16% 96%` / `220 38% 14%`, hand-written | Blitz `--sunken`, converted to a triplet by the engine |
+| `--hover` | Lody's `220 14% 95%` / `219 42% 18%`, hand-written | Blitz `--hover`, same conversion |
+| `--terminal-background` | restated as `hsl(var(--background))` | OURS, and the rule is DELETED: `--background` inside the surface is now `--paper`, so the override restated the colour already there |
+| `--terminal-selection` | restated as `hsl(var(--selection) / 0.5)` | OURS, deleted for the same reason |
+| `--font-mono` | ours, by being unlayered | unchanged |
+
+Two of the five therefore have no rule left anywhere, and the other two moved
+out of `lody-surface-shell.css` into the generated sheet, beside the palette
+they are derived from.
+
+### 14.3 A sixth collision phase 3 could not have measured
+
+`LodyThemeProvider` applies the compiled variables to `document.documentElement`
+as an INLINE style (`theme-provider.tsx:169`). Phase 0's containment test reads
+CSS SOURCE, so it never saw this — the same blind spot §4's `adoptShellTheme`
+note describes for `color-scheme`.
+
+The consequence was live and product-wide: with the surface mounted, `--muted`
+and `--hover` on `<html>` were Lody's HSL triplets, and an inline declaration
+outranks our `:root` rule in `tokens.css`. Roughly 150 `var(--muted)` and
+`var(--hover)` sites across the NATIVE webapp — the Finder, the settings
+surfaces, the rail, the tab strip — were resolving to an invalid colour and
+falling back to `unset`. The generated sheet reclaims both names on `:root` with
+`!important`, which is the one author declaration that beats an inline style,
+and it writes them as `color-mix()` built from the ratio table rather than as a
+hex snapshot, so they keep tracking `--ink` and `--paper`.
+
+`lody-blitz-theme.test.ts` RECOMPUTES that intersection — the names in
+`createThemeCssVariables` output that `tokens.css` also declares — so a
+seventh collision fails a test instead of silently breaking a native surface.
+
+### 14.4 Where the theme is installed, and why in two places
+
+`installBlitzVSCodeThemes` registers both themes in the vendored bundle registry
+under the two ids their FIXED selection names (`lody-light`, `vesper`). There is
+no theme picker — `theme-provider.tsx:42` pins the selection — so those ids
+simply mean "the light one" and "the dark one". Registering under them is what
+makes `LodyThemeProvider` apply Blitz, and it carries everything downstream of
+`useActiveVSCodeTheme` with it: the xterm palette
+(`createVSCodeTerminalTheme` → our ANSI ramp) and the Shiki theme the diff
+viewer registers. It must run before the first `getBundledVSCodeThemeByIdSync`,
+because that cache never replaces an entry — so it happens in the same render
+slot as `adoptShellTheme`, for the same reason.
+
+`applyBlitzSurfaceTheme` writes the same compiled variables into a stylesheet of
+our own, scoped to `.lody-surface`, `.session-list--vendor` and the Radix portal
+selector. A declaration on the element beats one inherited from `<html>`, so
+this is what makes the surface independent of whatever the provider did, and it
+is the only thing that reaches a portal mounted outside `#root`.
+
+### 14.5 The gold line was `--primary`
+
+The warm hairline at the pane's top edge is Vesper's `#FFC799`. Vesper points
+`focusBorder`, `button.background`, `textLink.foreground` and `tab.activeBorder`
+at it, which makes `--primary`, `--ring`, `--highlight` and `--tab-active-accent`
+all gold — and the vendored sheet spends those on `* { outline-ring/50 }`
+(`tailwind/index.css:1096`), on `:focus-visible { inset 0 0 0 1px --primary/0.5 }`
+(`:1156`), and on `[data-qs-active] { inset 0 0 0 2px --primary/0.75 }` (`:581`),
+which is the chat landing's keyboard-nav ring and whose top segment is the line.
+All four now resolve to `--accent`. No overlay rule was needed; it is four
+colour ids in the theme.
+
+### 14.6 What the theme cannot reach
+
+Three things, and `packages/webapp/src/lody/blitz-skin.css` is exactly those:
+
+- **Non-colour tokens.** Their `--radius-sm/md/lg` scale and their `--font-sans`
+  / `--font-terminal` names are ordinary properties, not theme output.
+- **Geometry.** A row's height, gutter and type size are Tailwind utilities on
+  their markup. The rail is one column with vendored Chats rows above native
+  Terminals rows, so those numbers have to be `.shell-s`'s.
+- **One colour a component hard-coded.** The selected row is
+  `bg-sidebar-foreground/10` (`session-list.tsx:919`) — an alpha of the TEXT
+  colour, deliberately not `--sidebar-selection`, so no token can move it. The
+  skin repaints it with `--selected`. The working spinner and unread dot are
+  `text-primary` / `bg-primary` (`sidebar-row-shared.tsx:139`, `:143`); in the
+  rail those mean "running", which is `--live` in BlitzOS.
+
+Every class string the skin selects is grepped out of the vendored source by
+`lody-blitz-theme.test.ts`, and every rule the skin aims at the rail is asserted
+to MATCH SOMETHING in a real render by `lody-fixture-render.test.tsx` — a grep alone
+cannot tell a live selector from one behind a branch we never take.
+
+Known and left: the composer's warning strip and the session info bar use raw
+Tailwind `amber-*` and `emerald-*` literals
+(`chat-composer.tsx:633`, `session-chat-input-area.tsx:2253`,
+`session-info-bar.tsx:296`), which no token reaches. They are rare states, and
+`--status-warm-yellow` exists for the day they are worth an overlay rule.
+
+### 14.7 The live switch, and the light theme
+
+`adoptShellTheme` used to map `system` to dark, which was wrong on a light
+laptop: `tokens.css` has a full light palette behind
+`@media (prefers-color-scheme: light)`, so the shell was light while the surface
+stayed dark. `resolvedTheme()` in `src/theme.ts` resolves the preference the way
+the page actually paints, and `subscribeTheme()` watches BOTH sources of change —
+the `data-theme` attribute the topbar toggle writes, and the media query, which
+moves with no DOM change at all. `ShellThemeBridge` inside `SessionSurface`
+rewrites the generated sheet and calls their `setTheme` on every flip.
+
+### 14.8 Reviewing it
+
+`packages/webapp/test/theme-review.tsx` mounts the three vendored leaves inside
+the rail's native chrome. Two ways to see it: `theme-review.html` under
+`vite dev` (not a Rollup input, so the product bundle never sees it), and
+the last block of `lody-fixture-render.test.tsx`, which renders the same page in
+jsdom and writes a self-contained HTML file with every stylesheet inlined —
+including the vendored sheet as Vite actually compiles it. It lives in that file
+rather than its own because Vitest caps workers on MEMORY (`vite.config.ts`,
+`lodyAwareWorkerCount`) and a worker holding the vendored renderer costs about a
+gigabyte: on a four-core box a fourth such suite starved the daemon-backed ones
+until their `beforeAll` hooks timed out. Three things now share that one graph —
+the prop contract, the skin's selectors, and the page.
+
+`FixtureSidebar` mounts `LoroSidebar` with the props `SessionRailSidebar` passes,
+`hideHeader` and `hideFooter` included, and injects the real `.shell-s` Terminals
+rows through `afterSessionListContent`. A harness that mounts the sidebar its own
+way reviews a component the product does not render — which is exactly what the
+first round of review found.
+
+### 14.9 What the reskin does NOT touch, stated as a test
+
+`lody-blitz-theme.test.ts` builds a document of native probes — `.shell-rhead`
+with its sub-slot and its three `.shell-ib` buttons, `.shell-s`, `.shell-newbar`,
+`.session-rail`, `.shell-strip`, `.files-tree-row`, `.cfg-section`, bare
+`button` / `input` / `a` — and asserts that NO selector in `blitz-skin.css` or in
+the generated theme sheet matches any of them. It is the phase-0 containment
+method pointed the other way: that test measures what the vendored sheet reaches
+of ours, this one measures what ours reaches of theirs, and both use jsdom's
+`Element.matches` rather than a cascade jsdom cannot run.
+
+The one deliberate exception is the `:root` reclaim of §14.3, and a second test
+pins that it declares exactly `--hover` and `--muted` and nothing else.
