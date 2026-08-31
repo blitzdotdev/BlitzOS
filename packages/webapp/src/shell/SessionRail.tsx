@@ -173,6 +173,7 @@ export function SessionRail({
               className={`shell-s${active ? ' shell-s--on' : ''}`}
               type="button"
               key={session.id}
+              data-rail-session-id={session.id}
               aria-current={active ? 'page' : undefined}
               onClick={() => onSelectSession(session.id)}
             >

@@ -53,6 +53,54 @@
   white-space: nowrap;
 }
 
+.webapp-tab-close-confirm {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 260px;
+  padding: 9px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  background: var(--paper);
+  box-shadow: var(--lift);
+  color: var(--ink);
+  font-weight: 400;
+  white-space: normal;
+}
+
+.webapp-tab-close-confirm p {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.webapp-tab-close-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.webapp-tab-close-confirm__actions button {
+  padding: 3px 9px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.webapp-tab-close-confirm__actions button:hover {
+  background: var(--hover);
+}
+
+.webapp-tab-close-confirm__end {
+  border-color: var(--danger, var(--ansi-red)) !important;
+  color: var(--danger, var(--ansi-red)) !important;
+}
+
 .webapp-tab-cell:hover {
   color: var(--muted);
 }

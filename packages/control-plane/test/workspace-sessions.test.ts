@@ -32,12 +32,16 @@ function workspaceDoc(
   } as const;
 }
 
-async function setOrgShareRole(
+async function addWorkspaceMember(
   workspaceId: string,
-  role: "editor" | "viewer",
+  membershipId: string,
+  role: "admin" | "member" | "viewer",
 ): Promise<void> {
-  await env.DB.prepare("UPDATE workspaces SET org_share_role = ?1 WHERE id = ?2")
-    .bind(role, workspaceId).run();
+  await env.DB.prepare(
+    `INSERT INTO workspace_members
+     (workspace_id, membership_id, role, added_by_membership_id, added_at)
+     VALUES (?1, ?2, ?3, 'personal', ?4)`,
+  ).bind(workspaceId, membershipId, role, Date.now()).run();
 }
 
 describe("workspace sessions and member views", () => {
@@ -48,7 +52,7 @@ describe("workspace sessions and member views", () => {
     const owner = await operatorSession(app);
     const mate = await sameOrgSession("mate");
     const workspace = await createWorkspace(app, owner);
-    await setOrgShareRole(workspace.id, "editor");
+    await addWorkspaceMember(workspace.id, mate.membershipId, "member");
 
     const created = await appRequest(app, `/workspaces/${workspace.id}/sessions`, {
       method: "POST",
@@ -118,7 +122,7 @@ describe("workspace sessions and member views", () => {
     const owner = await operatorSession(app);
     const viewer = await sameOrgSession("viewer");
     const workspace = await createWorkspace(app, owner);
-    await setOrgShareRole(workspace.id, "viewer");
+    await addWorkspaceMember(workspace.id, viewer.membershipId, "viewer");
     const created = await appRequest(app, `/workspaces/${workspace.id}/sessions`, {
       method: "POST",
       headers: { Cookie: owner, "Content-Type": "application/json" },
@@ -149,7 +153,7 @@ describe("workspace sessions and member views", () => {
     const owner = await operatorSession(app);
     const mate = await sameOrgSession("legacy-mate");
     const workspace = await createWorkspace(app, owner);
-    await setOrgShareRole(workspace.id, "editor");
+    await addWorkspaceMember(workspace.id, mate.membershipId, "member");
     const legacy = {
       version: 1,
       title: "Legacy shared",
@@ -237,14 +241,14 @@ describe("workspace sessions and member views", () => {
     const created = await appRequest(app, `/workspaces/${firstWorkspace.id}/sessions`, {
       method: "POST",
       headers: { Cookie: owner, "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "chat" }),
+      body: JSON.stringify({ kind: "terminal" }),
     });
     const { session } = await created.json<WorkspaceSessionResponse>();
 
     expect((await appRequest(app, `/workspaces/${secondWorkspace.id}/view`, {
       method: "PUT",
       headers: { Cookie: owner, "Content-Type": "application/json" },
-      body: JSON.stringify({ revision: 0, doc: workspaceDoc("Crossed", session.id, "chat") }),
+      body: JSON.stringify({ revision: 0, doc: workspaceDoc("Crossed", session.id, "terminal") }),
     })).status).toBe(400);
 
     const path = `/workspaces/${firstWorkspace.id}/sessions/${session.id}`;
@@ -253,14 +257,12 @@ describe("workspace sessions and member views", () => {
       headers: { Cookie: owner, "Content-Type": "application/json" },
       body: JSON.stringify({
         revision: 1,
-        title: "Shared chat",
-        chatSessionId: "actor-session",
-        chatProvider: "claude",
+        title: "Shared terminal",
       }),
     });
     expect(updated.status).toBe(200);
     await expect(updated.json()).resolves.toMatchObject({
-      session: { revision: 2, title: "Shared chat", chatSessionId: "actor-session" },
+      session: { revision: 2, title: "Shared terminal" },
     });
     expect((await appRequest(app, path, {
       method: "PATCH",

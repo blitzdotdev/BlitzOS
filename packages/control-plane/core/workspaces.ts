@@ -643,6 +643,9 @@ export async function performWorkspaceCreate(
 /** Removes a workspace that never got a machine, with its children. */
 async function deleteWorkspaceRow(db: Db, id: string): Promise<void> {
   await transaction(db, [
+    { q: "DELETE FROM presence_connections WHERE workspace_id = ?1", v: [id] },
+    { q: "DELETE FROM workspace_member_views WHERE workspace_id = ?1", v: [id] },
+    { q: "DELETE FROM workspace_sessions WHERE workspace_id = ?1", v: [id] },
     { q: "DELETE FROM workspace_credentials WHERE workspace_id = ?1", v: [id] },
     { q: "DELETE FROM workspace_members WHERE workspace_id = ?1", v: [id] },
     { q: "DELETE FROM workspace_repos WHERE workspace_id = ?1", v: [id] },

@@ -196,6 +196,7 @@ function workPanesProps(tabStrips: boolean): WorkPanesProps {
     // SAFETY: no rendered session means no surface asks the client for
     // anything; stating a whole `ControlPlaneClient` would say nothing here.
     client: {} as ControlPlaneClient,
+    sharedSessions: [],
     panesRef: { current: null },
     visibleRegions: ["main"],
     renderedSessions: [],
@@ -230,6 +231,7 @@ function workPanesProps(tabStrips: boolean): WorkPanesProps {
     onOpenDrawer: () => undefined,
     onSelectSession: () => undefined,
     onCloseSession: () => undefined,
+    endsSharedSession: true,
     onRenameSession: () => undefined,
     onSpawnSession: () => undefined,
     onTabDragStart: () => undefined,

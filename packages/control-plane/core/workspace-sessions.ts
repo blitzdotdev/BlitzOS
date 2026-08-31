@@ -210,7 +210,6 @@ function sessionKindForTab(tab: WebAppTabV1): WorkspaceSessionKind | null {
     case "kimi":
     case "prime":
     case "terminal":
-    case "chat":
       return tab.type;
     default:
       return null;
@@ -280,8 +279,8 @@ function syntheticLegacySessions(
       title: null,
       // The V1 tab was already attached to tmux `<kind>-<tab id>`.
       terminalKey: String(tab.id),
-      chatSessionId: tab.chatSessionId ?? null,
-      chatProvider: tab.chatProvider ?? null,
+      chatSessionId: null,
+      chatProvider: null,
       revision: 1,
       createdAt: 0,
       updatedAt: 0,
@@ -317,7 +316,7 @@ async function legacyFallbackSessions(
 }
 
 function requireLiveWorkspace(access: WebAppWorkspaceAccess): void {
-  if (access.workspace.phase === "destroyed") throw new HttpError(404, "workspace not found");
+  if (access.workspace.deleted_at !== null) throw new HttpError(404, "workspace not found");
 }
 
 function requireSessionEditor(access: WebAppWorkspaceAccess): void {
@@ -350,8 +349,8 @@ function legacySessionQueries(
     if (kind === null || tab.sessionId === undefined) return [];
     const metadata: SessionMetadata = {
       terminalKey: String(tab.id),
-      chatSessionId: tab.chatSessionId ?? null,
-      chatProvider: tab.chatProvider ?? null,
+      chatSessionId: null,
+      chatProvider: null,
     };
     return [{
       q: `INSERT INTO workspace_sessions

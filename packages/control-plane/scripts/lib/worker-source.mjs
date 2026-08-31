@@ -27,7 +27,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/runtime.ts",
   "core/db.ts",
   "core/blobs.ts",
-  "core/wire.ts", "core/wire-machines.ts", "core/wire-sharing.ts",
+  "core/wire.ts", "core/wire-machines.ts", "core/wire-presence.ts", "core/wire-sharing.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-config.ts",

@@ -13,7 +13,11 @@ import {
   type WorkspaceTabs,
   type WorkspaceWebAppStateV1,
 } from './storage.js';
-import { sharedSessionTab, type WorkspaceMemberViewResponse } from './workspace-sessions.js';
+import {
+  isTtydWorkspaceSession,
+  sharedSessionTab,
+  type WorkspaceMemberViewResponse,
+} from './workspace-sessions.js';
 
 /** The shared-session registry is polled on the presence cadence: a visible
  * tab every 5s, a hidden one every 30s, and an outage backs off instead of
@@ -54,7 +58,7 @@ interface WorkspacePersistenceMetadata {
 
 function initialWorkspaceView(sessions: readonly WorkspaceSessionView[]): WorkspaceWebAppStateV1 {
   const state = defaultWorkspaceWebAppState();
-  const first = sessions[0];
+  const first = sessions.find(isTtydWorkspaceSession);
   if (first !== undefined) {
     return {
       ...state,
@@ -89,17 +93,7 @@ function hydratedWorkspaceView(
     // reference here keeps the personal view valid and prevents it from
     // repeatedly failing revision-checked saves after another editor archives
     // the shared session.
-    if (session === undefined || session.kind !== tab.type) return [];
-    if (tab.type !== 'chat') return [tab];
-    return [{
-      ...tab,
-      ...(session.chatSessionId === null
-        ? { chatSessionId: undefined }
-        : { chatSessionId: session.chatSessionId }),
-      ...(session.chatProvider === null
-        ? { chatProvider: undefined }
-        : { chatProvider: session.chatProvider }),
-    }];
+    return session === undefined || session.kind !== tab.type ? [] : [tab];
   });
   return {
     ...doc,

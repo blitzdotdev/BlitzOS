@@ -32,6 +32,9 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
     <WorkspaceStrip
       workspaces={[workspace()]}
       viewer={viewer}
+      presenceSnapshot={null}
+      presenceStale={false}
+      presenceWorkspaceId={null}
       activeWorkspaceId="workspace-one"
       onSelectWorkspace={() => undefined}
       onRenameWorkspace={() => undefined}
@@ -42,6 +45,7 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
       onCreateOrg={() => undefined}
       onOpenDrive={() => undefined}
       onOpenSettings={() => undefined}
+      onOpenPresenceActivity={() => undefined}
       onCloseDrawer={() => undefined}
       {...overrides}
     />

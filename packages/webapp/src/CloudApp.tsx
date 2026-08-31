@@ -99,8 +99,13 @@ import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
 import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
+import { endWorkspaceTerminalSession, isEndableSessionKind } from './terminal-session';
 import { useOrgPresence } from './use-org-presence';
-import { openSharedSessionTab, terminalKeyFor } from './workspace-sessions';
+import {
+  isTtydWorkspaceSession,
+  openSharedSessionTab,
+  terminalKeyFor,
+} from './workspace-sessions';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
 import { FilesSidebar } from './FilesSidebar';
 import { fullDavPath, isPathAtOrBelow } from './files';
@@ -176,6 +181,11 @@ type FileCloseConfirmation = {
   label: string;
 };
 
+type SharedSessionCloseConfirmation = {
+  id: string;
+  collaboratorNames: string[];
+};
+
 const PANEL_LABELS = {
   files: 'Files',
   previews: 'teenyapps',
@@ -190,7 +200,9 @@ export type CloudAppProps = {
 export default function CloudApp({ client, resolver }: CloudAppProps) {
   const mobileWebApp = useMobileWebApp();
   const [store, dispatch] = useReducer(workspaceReducer, initialWorkspaceStore);
-  const [route, setRoute] = useState(() => parseAppRoute(window.location.pathname));
+  const [route, setRoute] = useState(() => (
+    parseAppRoute(window.location.pathname, window.location.search)
+  ));
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(() => route.workspaceId ?? '');
   const [storageNamespace, setStorageNamespace] = useState<StorageNamespace | null>(null);
   const [identityOnly, setIdentityOnly] = useState<IdentityRecord | null>(null);
@@ -220,6 +232,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
   const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
   const [fileCloseConfirmation, setFileCloseConfirmation] = useState<FileCloseConfirmation | null>(null);
+  const [sharedSessionCloseConfirmation, setSharedSessionCloseConfirmation] = useState<
+    SharedSessionCloseConfirmation | null
+  >(null);
   const [filesRefreshVersion, setFilesRefreshVersion] = useState(0);
   const [workspaceAttachments, setWorkspaceAttachments] = useState<{
     workspaceId: string;
@@ -659,7 +674,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
   useEffect(() => {
     const handlePopState = () => {
-      const restored = parseAppRoute(window.location.pathname);
+      const restored = parseAppRoute(window.location.pathname, window.location.search);
       setRoute(restored);
       if (
         restored.workspaceId
@@ -708,7 +723,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
   const navigateTo = useCallback((path: string) => {
     window.history.pushState({}, '', path);
-    setRoute(parseAppRoute(path));
+    const target = new URL(path, window.location.origin);
+    setRoute(parseAppRoute(target.pathname, target.search));
   }, []);
 
   const navigateToSettings = useCallback((section: SettingsSection) => {
@@ -1174,7 +1190,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     (session) => String(session.id) === ttydActiveId,
   ) ?? null;
   const sharedRailSessions = useMemo<DriveRailSession[]>(() => (
-    activeSharedSessions?.map((session) => ({
+    activeSharedSessions?.filter(isTtydWorkspaceSession).map((session) => ({
       id: session.id,
       label: session.title?.trim() || SESSION_KIND_LABELS[session.kind],
       agent: session.kind,
@@ -1288,7 +1304,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   /** Opens a collaborator's shared session in this member's personal view. */
   const openSharedSession = useCallback((sharedSessionId: string): boolean => {
     const session = activeSharedSessions?.find((entry) => entry.id === sharedSessionId);
-    if (session === undefined || activeWorkspaceTabs === null) return false;
+    if (
+      session === undefined
+      || !isTtydWorkspaceSession(session)
+      || activeWorkspaceTabs === null
+    ) return false;
     const opened = openSharedSessionTab(activeWorkspaceTabs, session, 'main');
     updateWorkspaceTabs(() => opened.tabs);
     setFocusedRegion(opened.region);
@@ -1428,6 +1448,51 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (!Number.isSafeInteger(numericId)) return;
     updateWorkspaceTabs((tabs) => renameTab(tabs, numericId, title));
   };
+  /** Ends a shared session for everyone: archive the registry row, stop the
+   * box process, then drop the tab locally. Other members lose it on their
+   * next registry poll. Editors only; a viewer's close stays a local hide. */
+  const endSharedSession = async (
+    localId: string,
+    sharedSessionId: string,
+    filesBase: string | null,
+  ): Promise<void> => {
+    const workspaceId = activeWorkspaceId;
+    const shared = workspaceSessions.workspaceId === workspaceId
+      ? workspaceSessions.value.find((entry) => entry.id === sharedSessionId)
+      : undefined;
+    if (shared === undefined) {
+      closeTtydSessionNow(localId);
+      return;
+    }
+    closeTtydSessionNow(localId);
+    setWorkspaceSessions((current) => current.workspaceId !== workspaceId
+      ? current
+      : { ...current, value: current.value.filter((entry) => entry.id !== sharedSessionId) });
+    try {
+      try {
+        await api.archiveWorkspaceSession(workspaceId, sharedSessionId, shared.revision);
+      } catch (cause) {
+        if (cause instanceof ApiError && cause.status === 404) {
+          // Someone else archived it first; nothing remains to mutate.
+        } else if (cause instanceof ApiError && cause.status === 409) {
+          const { sessions } = await api.listWorkspaceSessions(workspaceId);
+          const winner = sessions.find((entry) => entry.id === sharedSessionId);
+          if (winner !== undefined) {
+            await api.archiveWorkspaceSession(workspaceId, sharedSessionId, winner.revision);
+          }
+        } else {
+          throw cause;
+        }
+      }
+    } catch (cause) {
+      handlePersistenceError(cause instanceof Error ? cause : new Error('could not end session'));
+    }
+    // Stopping the box process is best-effort. A box too old for the route
+    // leaves the process to its ordinary reaper, while the shared row is gone.
+    if (filesBase !== null && isEndableSessionKind(shared.kind)) {
+      void endWorkspaceTerminalSession(filesBase, shared.kind, shared.terminalKey);
+    }
+  };
   const closeTtydSession = (id: string) => {
     const tab = ttydSessions.find((session) => String(session.id) === id);
     if (tab?.type === 'file' && dirtyFileIds.has(id)) {
@@ -1437,7 +1502,27 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       });
       return;
     }
+    const sharedSessionId = tab !== undefined && 'sessionId' in tab ? tab.sessionId : undefined;
+    if (canEditWorkspaceLayout && tab !== undefined && sharedSessionId !== undefined) {
+      void endSharedSession(id, sharedSessionId, activeFilesBase);
+      return;
+    }
     closeTtydSessionNow(id);
+  };
+  const requestSurfaceTabClose = (id: string) => {
+    const tab = ttydTabs.find((entry) => entry.id === id);
+    const collaborators = tab?.presence ?? [];
+    // The native strip owns this warning when it is mounted. Lody's surface
+    // strip bypasses WebAppHeader, so preserve the same end-for-everyone guard
+    // here when the rebased terminal-tab host owns the close button.
+    if (canEditWorkspaceLayout && collaborators.length > 0) {
+      setSharedSessionCloseConfirmation({
+        id,
+        collaboratorNames: collaborators.map(({ name }) => name),
+      });
+      return;
+    }
+    closeTtydSession(id);
   };
   const updateFileDirty = (id: string, dirty: boolean) => {
     setDirtyFileIds((current) => {
@@ -1733,7 +1818,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         },
         onClose: (tabId) => {
           const workspaceTabId = workspaceTabIdFromSurfaceTabId(tabId);
-          if (workspaceTabId !== null) closeTtydSession(workspaceTabId);
+          if (workspaceTabId !== null) requestSurfaceTabClose(workspaceTabId);
         },
         // The strip left our tab for a conversation one. Nothing about the
         // workspace tab changes — it stays open, its tmux session stays
@@ -2031,6 +2116,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               }}
               onSelectSession={selectTtydSession}
               onCloseSession={closeTtydSession}
+              endsSharedSession={canEditWorkspaceLayout}
               onRenameSession={renameTtydSession}
               onSpawnSession={spawnTtydSession}
               onTabDragStart={beginTabDrag}
@@ -2333,6 +2419,21 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           onConfirm={() => {
             closeTtydSessionNow(fileCloseConfirmation.id);
             setFileCloseConfirmation(null);
+          }}
+        />
+      )}
+      {sharedSessionCloseConfirmation && (
+        <ConfirmationDialog
+          title="End session for everyone?"
+          description={sharedSessionCloseConfirmation.collaboratorNames.length === 1
+            ? `${sharedSessionCloseConfirmation.collaboratorNames[0] ?? 'Someone'} is in this session. End it for everyone?`
+            : `${sharedSessionCloseConfirmation.collaboratorNames.length} others are in this session. End it for everyone?`}
+          confirmLabel="End session"
+          cancelLabel="Cancel"
+          onCancel={() => setSharedSessionCloseConfirmation(null)}
+          onConfirm={() => {
+            closeTtydSession(sharedSessionCloseConfirmation.id);
+            setSharedSessionCloseConfirmation(null);
           }}
         />
       )}

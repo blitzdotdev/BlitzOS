@@ -22,6 +22,18 @@ import { appendTab, withRegionActiveId } from './workspace-panes';
 
 type OptionalJsonValue = JsonValue | undefined;
 
+export type TtydWorkspaceSessionView = Omit<WorkspaceSessionView, 'kind'> & {
+  kind: Exclude<WorkspaceSessionKind, 'chat'>;
+};
+
+/** Native chat moved to Lody and no longer has a workspace tab. Keep decoding
+ * old `chat` registry rows, but never present one as a ttyd session. */
+export function isTtydWorkspaceSession(
+  session: WorkspaceSessionView,
+): session is TtydWorkspaceSessionView {
+  return session.kind !== 'chat';
+}
+
 export type WorkspaceMemberViewResponse = {
   doc: WorkspaceWebAppStateV1 | null;
   revision: number;
@@ -155,18 +167,9 @@ export function decodeWorkspaceMemberViewResponse(json: string): WorkspaceMember
   };
 }
 
-/** The tab a shared session opens as. Chat tabs carry the actor session the
- * shared record already pinned, so a second member joins the same chat. */
-export function sharedSessionTab(session: WorkspaceSessionView, id: number): WorkspaceTab {
-  if (session.kind !== 'chat') return { id, type: session.kind, sessionId: session.id };
-  const tab: Extract<WorkspaceTab, { type: 'chat' }> = {
-    id,
-    type: 'chat',
-    sessionId: session.id,
-  };
-  if (session.chatSessionId !== null) tab.chatSessionId = session.chatSessionId;
-  if (session.chatProvider !== null) tab.chatProvider = session.chatProvider;
-  return tab;
+/** The ttyd tab a shared terminal/agent session opens as. */
+export function sharedSessionTab(session: TtydWorkspaceSessionView, id: number): WorkspaceTab {
+  return { id, type: session.kind, sessionId: session.id };
 }
 
 /** The key handed to `blitz-term <kind> <key>`, which names the tmux session
@@ -199,7 +202,7 @@ export type OpenedSharedSession = {
  * presence land on a collaborator's session without disturbing anyone. */
 export function openSharedSessionTab(
   tabs: WorkspaceTabs,
-  session: WorkspaceSessionView,
+  session: TtydWorkspaceSessionView,
   region: WorkspaceRegion = 'main',
 ): OpenedSharedSession {
   const existing = tabs.tabs.find((tab) => (

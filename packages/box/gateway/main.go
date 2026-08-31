@@ -18,6 +18,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -147,6 +148,7 @@ type gateway struct {
 	connectionsFocusPath   string
 	agentCredentialPath    string
 	discover               func() ([]portInfo, error)
+	endTmuxSession         func(target string) (bool, error)
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
 	authRequired           bool
@@ -301,6 +303,7 @@ func main() {
 		connectionsFocusPath:   connectionsFocusPath,
 		agentCredentialPath:    agentCredentialPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
+		endTmuxSession:         killTmuxSession,
 		transport:              http.DefaultTransport,
 	}
 	server := &http.Server{
@@ -405,6 +408,17 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	if request.URL.Path == "/terminal/ws" {
 		removeWebAppTokenHeader(request.Header)
 		g.serveTerminal(response, request)
+		return
+	}
+	if request.URL.Path == "/terminal/session/end" {
+		// Ending a shared session stops a running agent for everyone, so it is
+		// a write: viewers, who only ever attach read-only, cannot.
+		if identity.Role == "viewer" {
+			deny(response, request, http.StatusForbidden, "viewers cannot end a workspace session", roleDetail(identity))
+			return
+		}
+		removeWebAppTokenHeader(request.Header)
+		g.serveEndTerminalSession(response, request)
 		return
 	}
 	if _, isLody := lodyPaths[request.URL.Path]; isLody {
@@ -759,6 +773,83 @@ type previewFocus struct {
 // uid, so the CLI's checks are convenience, not a boundary: this reader repeats
 // every one of them. Unknown extra fields are tolerated for forward
 // compatibility, matching parsePreviewLinks.
+// terminalSessionPrefixes maps a shared-session kind to the tmux session-name
+// prefix blitz-term gives it (rootfs/usr/local/libexec/blitz-term). The kill
+// target must match the name the launcher chose, so the two mappings are one
+// contract, pinned by the terminal-session fixtures.
+var terminalSessionPrefixes = map[string]string{
+	"terminal": "term",
+	"claude":   "claude",
+	"codex":    "codex",
+}
+
+// terminalKeyPattern mirrors blitz-term's session-key rule: the browser hands
+// the same key it attached with, so anything the launcher would reject cannot
+// name a live session here either.
+var terminalKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+type endTerminalSessionRequest struct {
+	Kind string `json:"kind"`
+	Key  string `json:"key"`
+}
+
+// killTmuxSession ends one tmux session by exact name, reporting whether it
+// existed. tmux runs as the same user (blitz) that ttyd launches blitz-term
+// under, so it shares the one tmux server and no socket path is needed.
+func killTmuxSession(target string) (bool, error) {
+	if err := exec.Command("tmux", "has-session", "-t", target).Run(); err != nil {
+		// A missing session is the ordinary "already gone" case, not a failure.
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := exec.Command("tmux", "kill-session", "-t", target).Run(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (g *gateway) serveEndTerminalSession(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	if request.Method == http.MethodOptions {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", "POST, OPTIONS")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var payload endTerminalSessionRequest
+	decoder := json.NewDecoder(io.LimitReader(request.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil || requireJSONEOF(decoder) != nil {
+		http.Error(response, "invalid request", http.StatusBadRequest)
+		return
+	}
+	prefix, ok := terminalSessionPrefixes[payload.Kind]
+	if !ok || !terminalKeyPattern.MatchString(payload.Key) {
+		http.Error(response, "invalid session", http.StatusBadRequest)
+		return
+	}
+	// The `=` prefix makes tmux match the name exactly, never as a substring,
+	// so one key can never end another session that shares its stem.
+	ended, err := g.endTmuxSession("=" + prefix + "-" + payload.Key)
+	if err != nil {
+		log.Printf("end terminal session failed: %v", err)
+		http.Error(response, "could not end session", http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(response).Encode(struct {
+		Ended bool `json:"ended"`
+	}{Ended: ended}); err != nil {
+		log.Printf("end terminal session response failed: %v", err)
+	}
+}
+
 func parsePreviewFocus(data []byte) *previewFocus {
 	var fields struct {
 		Version     *int    `json:"version"`

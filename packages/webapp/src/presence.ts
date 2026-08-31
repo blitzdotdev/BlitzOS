@@ -181,7 +181,6 @@ function tabSurface(tab: WorkspaceTab) {
     case 'kimi':
     case 'prime':
     case 'terminal':
-    case 'chat':
       return tab.sessionId === undefined
         ? null
         : { kind: 'session' as const, sessionId: tab.sessionId };

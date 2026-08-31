@@ -1,9 +1,10 @@
-import type { WorkspaceSessionView, WorkspaceView } from "@blitzos/schema";
+import type { PresenceSnapshotResponse, WorkspaceSessionView, WorkspaceView } from "@blitzos/schema";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CloudApp from "../src/CloudApp.js";
 import { ApiRequestError, type ControlPlaneClient } from "../src/api.js";
 import { standaloneResolver } from "../src/resolver.js";
+import { decodeWorkspaceMemberViewResponse } from "../src/workspace-sessions.js";
 import {
   defaultWorkspaceFiles,
   defaultWorkspaceWebAppState,
@@ -251,12 +252,16 @@ function client(): ControlPlaneClient {
     })),
     getGlobalWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
     putGlobalWebAppState: vi.fn(async (doc) => ({ doc, updatedAt: 1 })),
-    getWorkspaceWebAppState: vi.fn(async (workspaceId) => ({
-      doc: serverWorkspaceStates.get(workspaceId) ?? null,
-      revision: serverWorkspaceStates.has(workspaceId) ? 1 : 0,
-      migratedFromV1: false,
-      sessions: serverWorkspaceSessions.get(workspaceId) ?? [],
-    })),
+    // Seeded docs take the production read path: the real client decodes
+    // (and normalizes) every response before the shell sees it.
+    getWorkspaceWebAppState: vi.fn(async (workspaceId) => decodeWorkspaceMemberViewResponse(
+      JSON.stringify({
+        doc: serverWorkspaceStates.get(workspaceId) ?? null,
+        revision: serverWorkspaceStates.has(workspaceId) ? 1 : 0,
+        migratedFromV1: false,
+        sessions: serverWorkspaceSessions.get(workspaceId) ?? [],
+      }),
+    )),
     putWorkspaceWebAppState: vi.fn(async (workspaceId, doc, revision) => {
       serverWorkspaceStates.set(workspaceId, doc);
       return {
@@ -276,6 +281,7 @@ function client(): ControlPlaneClient {
         workspaceId,
         kind: input.kind,
         title: input.title ?? null,
+        terminalKey: `session-${current.length + 1}`,
         chatSessionId: null,
         chatProvider: null,
         revision: 1,
@@ -307,7 +313,12 @@ function client(): ControlPlaneClient {
     archiveWorkspaceSession: vi.fn(async () => undefined),
     putPresenceConnection: vi.fn(async () => undefined),
     deletePresenceConnection: vi.fn(async () => undefined),
-    getPresence: vi.fn(async () => ({ serverTime: 1, expiresAfterMs: 35_000, members: [] })),
+    getPresence: vi.fn(async () => ({
+      serverTime: 1,
+      expiresAfterMs: 35_000,
+      truncated: false,
+      members: [],
+    })),
     poll: vi.fn(async () => ({ workspaces: [creating] })),
     create: vi.fn(async () => ({ workspace: creating })),
     destroy: vi.fn(async () => ({ workspace: creating })),
@@ -345,6 +356,25 @@ function runningClient(): ControlPlaneClient {
     ...client(),
     me: vi.fn(async () => tenantMe),
     poll: vi.fn(async () => ({ workspaces: [running] })),
+  };
+}
+
+function sharedSession(
+  id: string,
+  kind: WorkspaceSessionView["kind"],
+  terminalKey = id,
+): WorkspaceSessionView {
+  return {
+    id,
+    workspaceId: "workspace-running",
+    kind,
+    title: null,
+    terminalKey,
+    chatSessionId: null,
+    chatProvider: null,
+    revision: 1,
+    createdAt: 1,
+    updatedAt: 1,
   };
 }
 
@@ -451,7 +481,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={{ ...runningClient(), poll }}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver({ files: 7445 })}
       />,
     );
     await settle();
@@ -777,7 +807,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver({ files: 7445 })}
       />,
     );
     await settle();
@@ -816,7 +846,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver({ files: 7445 })}
       />,
     );
     await settle();
@@ -852,6 +882,97 @@ describe("webapp shell smoke", () => {
     expect(view.container.querySelector<HTMLElement>(
       '[data-testid="terminal-session"][data-session-key="session-2"]',
     )?.dataset.active).toBe('true');
+    await view.unmount();
+  });
+
+  it("ends a shared session for everyone, warning first when someone else is in it", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    serverWorkspaceSessions.set("workspace-running", [sharedSession("session-one", "claude")]);
+    saveTabs("workspace-running", [{ id: 1, type: "claude", sessionId: "session-one" }], 1);
+    const presenceSnapshot: PresenceSnapshotResponse = {
+      serverTime: 10,
+      expiresAfterMs: 35_000,
+      truncated: false,
+      members: [{
+        membershipId: "membership-two",
+        userId: "user-two",
+        name: "Ada",
+        avatarUrl: null,
+        state: "active",
+        activities: [{
+          location: "workspace",
+          workspaceId: "workspace-running",
+          workspaceName: "workspace-running",
+          surfaces: [{
+            kind: "session",
+            sessionId: "session-one",
+            sessionKind: "claude",
+            title: "Pairing",
+          }],
+          focusedSurface: 0,
+          focused: true,
+          visible: true,
+          lastSeenAt: 10,
+        }],
+      }],
+    };
+    const wire: ControlPlaneClient = {
+      ...runningClient(),
+      getPresence: vi.fn(async () => presenceSnapshot),
+    };
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
+      Response.json({ ended: true })
+    ));
+    vi.stubGlobal("fetch", fetcher);
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(".webapp-tab-close")?.click());
+    const confirm = view.container.querySelector<HTMLElement>(".webapp-tab-close-confirm");
+    expect(confirm?.textContent).toContain("Ada");
+    expect(wire.archiveWorkspaceSession).not.toHaveBeenCalled();
+
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(
+      ".webapp-tab-close-confirm__actions button",
+    )].find((button) => button.textContent === "End session")?.click());
+    await settle();
+    expect(wire.archiveWorkspaceSession)
+      .toHaveBeenCalledWith("workspace-running", "session-one", 1);
+    const endCall = fetcher.mock.calls.find(([url]) => String(url).endsWith("/terminal/session/end"));
+    expect(endCall).toBeDefined();
+    expect(JSON.parse(String(endCall?.[1]?.body)))
+      .toEqual({ kind: "claude", key: "session-one" });
+    expect(view.container.querySelector(
+      '[data-testid="terminal-session"][data-session-key="session-one"]',
+    )).toBeNull();
+    await view.unmount();
+  });
+
+  it("ends a solo shared session immediately, with no warning", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    serverWorkspaceSessions.set("workspace-running", [sharedSession("session-solo", "codex")]);
+    saveTabs("workspace-running", [{ id: 1, type: "codex", sessionId: "session-solo" }], 1);
+    const wire = runningClient();
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(".webapp-tab-close")?.click());
+    expect(view.container.querySelector(".webapp-tab-close-confirm")).toBeNull();
+    await settle();
+    expect(wire.archiveWorkspaceSession)
+      .toHaveBeenCalledWith("workspace-running", "session-solo", 1);
     await view.unmount();
   });
 
@@ -904,7 +1025,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver({ files: 7445 })}
       />,
     );
     await settle();
@@ -927,7 +1048,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver({ files: 7445 })}
       />,
     );
     await settle();
@@ -970,7 +1091,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver({ files: 7445 })}
       />,
     );
     await settle();
@@ -999,7 +1120,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver({ files: 7445 })}
       />,
     );
     await settle();
@@ -1022,7 +1143,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver({ files: 7445 })}
       />,
     );
     await settle();
@@ -1249,9 +1370,14 @@ describe("webapp shell smoke", () => {
 
   it("keeps file tabs out of the workspace session rail", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
+    // The rail lists the workspace's shared sessions; file tabs are personal.
+    serverWorkspaceSessions.set("workspace-running", [
+      sharedSession("session-1", "claude"),
+      sharedSession("session-2", "terminal"),
+    ]);
     saveTabs("workspace-running", [
-      { id: 1, type: "claude" },
-      { id: 2, type: "terminal" },
+      { id: 1, type: "claude", sessionId: "session-1" },
+      { id: 2, type: "terminal", sessionId: "session-2" },
       { id: 3, type: "file", filePath: "getting-started.md" },
     ], 3);
     const view = await render(
@@ -1271,8 +1397,9 @@ describe("webapp shell smoke", () => {
 
   it("keeps the visible agent session highlighted when a side-pane file has focus", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
+    serverWorkspaceSessions.set("workspace-running", [sharedSession("session-1", "claude")]);
     saveTabs("workspace-running", [
-      { id: 1, type: "claude" },
+      { id: 1, type: "claude", sessionId: "session-1" },
       { id: 2, type: "file", filePath: "test1.md", region: "side" },
     ], 1, 2);
     const view = await render(
@@ -1321,15 +1448,20 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("closes the active session tab and removes its workspace-rail record", async () => {
+  it("closes the active session tab, ending it and removing its shared rail record", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
+    serverWorkspaceSessions.set("workspace-running", [
+      sharedSession("session-t", "terminal"),
+      sharedSession("session-c", "claude"),
+    ]);
     saveTabs("workspace-running", [
-      { id: 1, type: "terminal" },
-      { id: 2, type: "claude" },
+      { id: 1, type: "terminal", sessionId: "session-t" },
+      { id: 2, type: "claude", sessionId: "session-c" },
     ], 1);
+    const wire = runningClient();
     const view = await render(
       <CloudApp
-        client={runningClient()}
+        client={wire}
         resolver={standaloneResolver({ files: 7445 })}
       />,
     );
@@ -1337,7 +1469,7 @@ describe("webapp shell smoke", () => {
     await settle();
 
     const first = view.container.querySelector<HTMLElement>(
-      '[data-testid="terminal-session"][data-session-key="1"]',
+      '[data-testid="terminal-session"][data-session-key="session-t"]',
     )!;
     const firstMountId = first.dataset.mountId;
     await act(async () => view.container.querySelector<HTMLButtonElement>(
@@ -1348,7 +1480,7 @@ describe("webapp shell smoke", () => {
     )?.click());
 
     expect(view.container.querySelector(
-      '[data-testid="terminal-session"][data-session-key="1"]',
+      '[data-testid="terminal-session"][data-session-key="session-t"]',
     )).toBe(first);
     expect(first.dataset.mountId).toBe(firstMountId);
     expect(webAppHarness.mounts).toHaveBeenCalledTimes(2);
@@ -1360,12 +1492,14 @@ describe("webapp shell smoke", () => {
     expect(webAppHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
     expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
     expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
+    expect(wire.archiveWorkspaceSession)
+      .toHaveBeenCalledWith("workspace-running", "session-t", 1);
     expect(railSessionLabels(view.container)).toEqual(["Claude"]);
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
     });
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
-      .toEqual([{ id: 2, type: "claude" }]);
+      .toEqual([{ id: 2, type: "claude", sessionId: "session-c" }]);
 
     await view.unmount();
   });

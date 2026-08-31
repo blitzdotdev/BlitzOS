@@ -180,14 +180,24 @@ describe('shared session deep links', () => {
     expect(parseAppRoute('/workspaces/ws-1', '?session=abc-DEF_9')).toEqual({
       workspaceId: 'ws-1',
       page: 'webApp',
+      chat: null,
       sessionId: 'abc-DEF_9',
     });
     expect(parseAppRoute('/workspaces/ws-1', '?session=a/b')).toEqual({
       workspaceId: 'ws-1',
       page: 'webApp',
+      chat: null,
     });
-    expect(parseAppRoute('/workspaces/ws-1', '')).toEqual({ workspaceId: 'ws-1', page: 'webApp' });
-    expect(parseAppRoute('/workspaces/ws-1')).toEqual({ workspaceId: 'ws-1', page: 'webApp' });
+    expect(parseAppRoute('/workspaces/ws-1', '')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: null,
+    });
+    expect(parseAppRoute('/workspaces/ws-1')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: null,
+    });
     expect(workspacePath('ws 1', 'session-2')).toBe('/workspaces/ws%201?session=session-2');
     expect(workspacePath('ws-1')).toBe('/workspaces/ws-1');
   });

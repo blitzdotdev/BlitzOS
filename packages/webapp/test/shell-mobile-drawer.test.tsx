@@ -41,6 +41,9 @@ function nav(overrides: Partial<Parameters<typeof ShellNav>[0]> = {}) {
     <ShellNav
       workspaces={[workspace]}
       viewer={null}
+      presenceSnapshot={null}
+      presenceStale={false}
+      presenceWorkspaceId={null}
       activeWorkspaceId={workspace.id}
       activeWorkspace={workspace}
       showRail
@@ -65,6 +68,7 @@ function nav(overrides: Partial<Parameters<typeof ShellNav>[0]> = {}) {
       onOpenWorkspaceMembers={() => undefined}
       onOpenWorkspaceDetails={() => undefined}
       onOpenWorkspaceMachine={() => undefined}
+      onOpenPresenceActivity={() => undefined}
       onCloseDrawer={() => undefined}
       {...overrides}
     />

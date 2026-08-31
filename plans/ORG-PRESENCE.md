@@ -448,9 +448,9 @@ targets either support it or degrade to the tested polling contract.
 
 Expected control-plane changes:
 
-- `packages/control-plane/migrations/0036_workspace_sessions.sql` and
-  `0037_presence_connections.sql` (renumbered past main's `0035` at the
-  2026-08-26 rebase)
+- `packages/control-plane/migrations/0046_workspace_sessions.sql` and
+  `0047_presence_connections.sql` (renumbered past main's `0045` migrations at
+  the 2026-08-31 rebase)
 - `packages/control-plane/core/presence.ts`
 - `packages/control-plane/core/workspace-sessions.ts`
 - `packages/control-plane/core/webapp-state.ts` during V1-to-V2 compatibility
@@ -465,7 +465,8 @@ Expected shared/browser changes:
 - `packages/webapp/src/api.ts`
 - a focused `use-org-presence.ts` lifecycle hook
 - workspace persistence/storage V2
-- `CloudApp`, `DriveRail`, `WebAppHeader`, and tab components
+- `CloudApp`, `shell/WorkspaceStrip`, `shell/SessionRail`, `WebAppHeader`, and
+  tab components
 - browser component, persistence, and two-member integration tests
 
 Expected enforcement changes in Phase 4 only:
@@ -559,3 +560,34 @@ Verified 2026-08-25 with two accounts in one workspace.
 When Phase 4 is picked up, its own bar applies on top: members understand the
 actual safety level of files, chats, and terminals, and every
 conflict-prevention claim is backed by server-side behavior and tests.
+
+## Implementation record (updated 2026-08-31)
+
+Main's member-machines rework replaced workspace grants and organization-wide
+sharing with stored `workspace_members` roles, removed the old DriveRail shell,
+and took migration numbers through `0045`. The presence branch now follows
+those current ownership boundaries:
+
+- Presence authorization uses `accessFor`/`legacyRole`, based on the observer's
+  live `workspace_members` row, ownership, or organization-admin access.
+  `workspace_grants` and `org_share_role` are no longer consulted, and workspace
+  liveness is `deleted_at IS NULL`.
+- The presence migrations are `0046_workspace_sessions.sql` and
+  `0047_presence_connections.sql`.
+- Organization presence mounts beside the org mark in `shell/WorkspaceStrip`;
+  workspace tiles and `shell/SessionRail` rows show the scoped face stacks,
+  while `shell/WorkPanes` attaches terminal surfaces by `terminalKey`.
+- Workspace teardown removes the member-view, session-registry, and presence
+  rows together.
+
+Closing a managed tab also has an explicit shared-session lifecycle. Editors
+archive the shared registry row and best-effort stop its tmux process through
+`POST /terminal/session/end`; the close control warns first when presence shows
+another member in that session. Viewers still close only their local tab. This
+is lifecycle safety, not the deferred Phase 4 terminal-driver lease: two editors
+can still type in the same live terminal until that separate enforcement work
+is implemented.
+
+The endpoint contract is pinned by `fixtures/terminal-session-end/` with Go and
+browser conformance tests. Live-box tmux termination and the two-account close
+flow still need a deployment walkthrough.

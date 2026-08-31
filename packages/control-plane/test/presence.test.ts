@@ -41,6 +41,18 @@ async function getPresence(
   return response.json<PresenceSnapshotResponse>();
 }
 
+async function addWorkspaceMember(
+  workspaceId: string,
+  membershipId: string,
+  role: "admin" | "member" | "viewer",
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO workspace_members
+     (workspace_id, membership_id, role, added_by_membership_id, added_at)
+     VALUES (?1, ?2, ?3, 'personal', ?4)`,
+  ).bind(workspaceId, membershipId, role, Date.now()).run();
+}
+
 function organizationPresence(
   visible: boolean,
   focused = false,
@@ -56,8 +68,7 @@ describe("organization presence", () => {
     const owner = await operatorSession(app);
     const mate = await sameOrgSession("mate");
     const workspace = await createWorkspace(app, owner);
-    await env.DB.prepare("UPDATE workspaces SET org_share_role = 'editor' WHERE id = ?1")
-      .bind(workspace.id).run();
+    await addWorkspaceMember(workspace.id, mate.membershipId, "member");
     const created = await appRequest(app, `/workspaces/${workspace.id}/sessions`, {
       method: "POST",
       headers: { Cookie: owner, "Content-Type": "application/json" },
@@ -165,11 +176,7 @@ describe("organization presence", () => {
     expect(serialized).not.toContain("Secret pairing");
     expect((await getPresence(app, outsider)).members).toEqual([]);
 
-    await env.DB.prepare(
-      `INSERT INTO workspace_grants
-       (id, workspace_id, membership_id, role, granted_by_membership_id, created_at)
-       VALUES ('mate-grant', ?1, ?2, 'viewer', 'personal', ?3)`,
-    ).bind(workspace.id, mate.membershipId, Date.now()).run();
+    await addWorkspaceMember(workspace.id, mate.membershipId, "viewer");
     const authorized = await getPresence(app, mate.cookie);
     expect(authorized.members.find(({ membershipId }) => membershipId === "personal")?.activities)
       .toEqual(expect.arrayContaining([
@@ -194,8 +201,8 @@ describe("organization presence", () => {
       visible: true,
       focused: false,
     })).status).toBe(403);
-    await env.DB.prepare("UPDATE workspaces SET org_share_role = 'viewer' WHERE id IN (?1, ?2)")
-      .bind(firstWorkspace.id, secondWorkspace.id).run();
+    await addWorkspaceMember(firstWorkspace.id, mate.membershipId, "viewer");
+    await addWorkspaceMember(secondWorkspace.id, mate.membershipId, "viewer");
     const created = await appRequest(app, `/workspaces/${firstWorkspace.id}/sessions`, {
       method: "POST",
       headers: { Cookie: owner, "Content-Type": "application/json" },
@@ -323,21 +330,19 @@ describe("organization presence", () => {
       .find(({ membershipId }) => membershipId === "personal")?.activities.map(({ location }) => location);
 
     // Owner sees their own workspace; an org admin sees every workspace in the
-    // org; a plain member with neither grant nor org share sees only that the
+    // org; a plain member with no workspace membership sees only that the
     // owner is somewhere else.
     expect(await ownerActivity(owner)).toEqual(["workspace"]);
     expect(await ownerActivity(admin.cookie)).toEqual(["workspace"]);
     expect(await ownerActivity(member.cookie)).toEqual(["other-workspace"]);
 
-    // A grant reveals it; revoking the grant mid-connection redacts it again
-    // on the very next snapshot, without waiting for a heartbeat.
-    await env.DB.prepare(
-      `INSERT INTO workspace_grants
-       (id, workspace_id, membership_id, role, granted_by_membership_id, created_at)
-       VALUES ('member-grant', ?1, ?2, 'viewer', 'personal', ?3)`,
-    ).bind(workspace.id, member.membershipId, Date.now()).run();
+    // Adding the member reveals it; removing them mid-connection redacts it
+    // again on the very next snapshot, without waiting for a heartbeat.
+    await addWorkspaceMember(workspace.id, member.membershipId, "viewer");
     expect(await ownerActivity(member.cookie)).toEqual(["workspace"]);
-    await env.DB.prepare("DELETE FROM workspace_grants WHERE id = 'member-grant'").run();
+    await env.DB.prepare(
+      "DELETE FROM workspace_members WHERE workspace_id = ?1 AND membership_id = ?2",
+    ).bind(workspace.id, member.membershipId).run();
     expect(await ownerActivity(member.cookie)).toEqual(["other-workspace"]);
   });
 

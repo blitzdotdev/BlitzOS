@@ -37,6 +37,92 @@ func signedTicket(t *testing.T, secret string, claims webAppTicketClaims) string
 	return input + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+func TestServeEndTerminalSessionFixtures(t *testing.T) {
+	fixturesDirectory := filepath.Join("..", "..", "schema", "fixtures", "terminal-session-end")
+	entries, err := os.ReadDir(fixturesDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureCount := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		fixtureCount++
+		t.Run(entry.Name(), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(fixturesDirectory, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fixture struct {
+				Request json.RawMessage `json:"request"`
+				Status  int             `json:"status"`
+				Target  string          `json:"target"`
+			}
+			if err := json.Unmarshal(data, &fixture); err != nil {
+				t.Fatal(err)
+			}
+			var killed string
+			handler := &gateway{endTmuxSession: func(target string) (bool, error) {
+				killed = target
+				return true, nil
+			}}
+			request := httptest.NewRequest(http.MethodPost, "http://box/terminal/session/end", bytes.NewReader(fixture.Request))
+			response := httptest.NewRecorder()
+			handler.serveEndTerminalSession(response, request)
+			if response.Code != fixture.Status {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, fixture.Status, response.Body.String())
+			}
+			if fixture.Status == http.StatusOK {
+				if killed != fixture.Target {
+					t.Fatalf("kill target = %q, want %q", killed, fixture.Target)
+				}
+				var body struct {
+					Ended bool `json:"ended"`
+				}
+				if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+					t.Fatal(err)
+				}
+				if !body.Ended {
+					t.Fatalf("ended = false, want true")
+				}
+			} else if killed != "" {
+				t.Fatalf("rejected request killed %q", killed)
+			}
+		})
+	}
+	if fixtureCount != 10 {
+		t.Fatalf("terminal-session-end fixture count = %d, want 10", fixtureCount)
+	}
+}
+
+func TestServeEndTerminalSessionReportsAbsentSession(t *testing.T) {
+	handler := &gateway{endTmuxSession: func(string) (bool, error) { return false, nil }}
+	request := httptest.NewRequest(http.MethodPost, "http://box/terminal/session/end",
+		strings.NewReader(`{"kind":"claude","key":"gone"}`))
+	response := httptest.NewRecorder()
+	handler.serveEndTerminalSession(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if body := strings.TrimSpace(response.Body.String()); body != `{"ended":false}` {
+		t.Fatalf("body = %q, want {\"ended\":false}", body)
+	}
+}
+
+func TestEndTerminalSessionRejectsNonPost(t *testing.T) {
+	handler := &gateway{endTmuxSession: func(string) (bool, error) { return true, nil }}
+	get := httptest.NewRequest(http.MethodGet, "http://box/terminal/session/end", nil)
+	getResponse := httptest.NewRecorder()
+	handler.serveEndTerminalSession(getResponse, get)
+	if getResponse.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want 405", getResponse.Code)
+	}
+	if allow := getResponse.Header().Get("Allow"); allow != "POST, OPTIONS" {
+		t.Fatalf("Allow = %q", allow)
+	}
+}
+
 func writeGatewayIdentity(t *testing.T, secret, workspaceID string) (string, string) {
 	t.Helper()
 	directory := t.TempDir()

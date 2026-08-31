@@ -48,6 +48,7 @@ const expected = [
   "core/blobs.ts",
   "core/wire.ts",
   "core/wire-machines.ts",
+  "core/wire-presence.ts",
   "core/wire-sharing.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
@@ -162,7 +163,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(114);
+    expect(first.files).toHaveLength(115);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

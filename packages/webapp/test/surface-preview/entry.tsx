@@ -50,6 +50,7 @@ import "../../src/loading-skeleton.css";
 import "../../src/create-workspace-dialog.css";
 import "../../src/settings.css";
 import "../../src/invite-redeem.css";
+import "../../src/presence-ui.css";
 
 import { BoxGlyph, ShareGlyph } from "../../src/files/DriveIcons";
 import { chooseTheme, resolvedTheme } from "../../src/theme";

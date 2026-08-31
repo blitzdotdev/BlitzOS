@@ -12,7 +12,7 @@ import {
 } from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
-import { webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
+import { accessFor, legacyRole, webAppWorkspaceForRequest } from "./workspace-access.js";
 import type {
   PresenceActivityView,
   PresenceMemberState,
@@ -53,8 +53,7 @@ interface PresenceConnectionRow {
   workspace_name: string | null;
   workspace_org_id: string | null;
   workspace_owner_membership_id: string | null;
-  workspace_org_share_role: "editor" | "viewer" | null;
-  observer_grant_role: "editor" | "viewer" | null;
+  observer_member_role: "admin" | "member" | "viewer" | null;
   view_json: string;
   focused: number;
   visible: number;
@@ -246,19 +245,18 @@ function memberState(rowsForMember: readonly PresenceConnectionRow[]): PresenceM
 }
 
 /** The observer sees exact activity only where the ordinary workspace access
- * rule grants them any role. One rule, shared with every webApp route, so
- * presence can never disclose a workspace its owner could not open. */
+ * rule grants them any role: a stored workspace membership, ownership, or an
+ * org admin's implicit reach. One rule, shared with every webApp route, so
+ * presence can never disclose a workspace the observer could not open. */
 function canSeeWorkspace(
   principal: Principal,
   row: PresenceConnectionRow,
 ): boolean {
-  return row.workspace_id !== null && workspaceRole(principal, {
+  return row.workspace_id !== null && legacyRole(accessFor(principal, {
     id: row.workspace_id,
     org_id: row.workspace_org_id,
     owner_membership_id: row.workspace_owner_membership_id,
-    grant_role: row.observer_grant_role,
-    org_share_role: row.workspace_org_share_role,
-  }) !== null;
+  }, row.observer_member_role)) !== null;
 }
 
 function sessionSurface(
@@ -343,17 +341,16 @@ async function snapshot(
                u.avatar_url, pc.workspace_id, w.name AS workspace_name,
                w.org_id AS workspace_org_id,
                w.owner_membership_id AS workspace_owner_membership_id,
-               w.org_share_role AS workspace_org_share_role,
-               observer_grant.role AS observer_grant_role,
+               observer_member.role AS observer_member_role,
                pc.view_json, pc.focused, pc.visible, pc.last_seen_at
         FROM presence_connections pc
         JOIN memberships m ON m.id = pc.membership_id AND m.status = 'active'
         JOIN users u ON u.id = m.user_id
         LEFT JOIN workspaces w
-          ON w.id = pc.workspace_id AND w.org_id = m.org_id AND w.phase != 'destroyed'
-        LEFT JOIN workspace_grants observer_grant
-          ON observer_grant.workspace_id = pc.workspace_id
-         AND observer_grant.membership_id = ?2
+          ON w.id = pc.workspace_id AND w.org_id = m.org_id AND w.deleted_at IS NULL
+        LEFT JOIN workspace_members observer_member
+          ON observer_member.workspace_id = pc.workspace_id
+         AND observer_member.membership_id = ?2
         WHERE m.org_id = ?1 AND pc.last_seen_at >= ?3
           AND (pc.workspace_id IS NULL OR w.id IS NOT NULL)
         ORDER BY pc.focused DESC, pc.visible DESC, pc.last_seen_at DESC
@@ -443,7 +440,7 @@ export function addPresenceRoutes(
         context,
         input.workspaceId,
       );
-      if (access.workspace.phase === "destroyed") throw new HttpError(404, "workspace not found");
+      if (access.workspace.deleted_at !== null) throw new HttpError(404, "workspace not found");
       await validateSessions(db, input.workspaceId, input.surfaces);
     }
     const now = Date.now();

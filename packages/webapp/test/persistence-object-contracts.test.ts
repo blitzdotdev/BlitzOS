@@ -21,7 +21,7 @@ describe("UI protocol and persistence object contracts", () => {
           version: 1,
           tabs: [
             { id: 7, type: "claude", sessionId: "shared-terminal" },
-            { id: 8, type: "chat", sessionId: "shared-chat" },
+            { id: 8, type: "codex", sessionId: "shared-codex" },
           ],
           activeId: 7,
           nextId: 9,
@@ -45,7 +45,7 @@ describe("UI protocol and persistence object contracts", () => {
     }));
     expect(response.doc?.tabs.tabs).toEqual([
       { id: 7, type: "claude", sessionId: "shared-terminal" },
-      { id: 8, type: "chat", sessionId: "shared-chat" },
+      { id: 8, type: "codex", sessionId: "shared-codex" },
     ]);
     expect(() => decodeWorkspaceMemberViewResponse(JSON.stringify({
       ...response,

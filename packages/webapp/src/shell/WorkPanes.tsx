@@ -72,6 +72,9 @@ export type WorkPanesProps = {
   onOpenDrawer: () => void;
   onSelectSession: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
+  /** True when closing a managed session ends it for everyone (editors); the
+   * strip then warns before closing a session other members are viewing. */
+  endsSharedSession: boolean;
   onRenameSession: (sessionId: string, title: string | undefined) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
   onTabDragStart: (sessionId: string, event: ReactDragEvent<HTMLElement>) => void;
@@ -131,6 +134,7 @@ export function WorkPanes({
   onOpenDrawer,
   onSelectSession,
   onCloseSession,
+  endsSharedSession,
   onRenameSession,
   onSpawnSession,
   onTabDragStart,
@@ -175,6 +179,7 @@ export function WorkPanes({
             onOpenDrawer={onOpenDrawer}
             onSelect={onSelectSession}
             onClose={onCloseSession}
+            endsSharedSession={endsSharedSession}
             onRename={canEditWorkspaceLayout ? onRenameSession : undefined}
             onSpawn={onSpawnSession}
             onTabDragStart={splitEnabled ? onTabDragStart : undefined}

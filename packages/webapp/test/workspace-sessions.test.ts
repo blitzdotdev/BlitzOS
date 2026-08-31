@@ -1,13 +1,15 @@
-import type { WorkspaceSessionView } from '@blitzos/schema';
 import { describe, expect, it } from 'vitest';
 import type { WorkspaceTab, WorkspaceTabs } from '../src/storage';
 import {
   decodeWorkspaceSessionResponse,
   openSharedSessionTab,
   terminalKeyFor,
+  type TtydWorkspaceSessionView,
 } from '../src/workspace-sessions';
 
-function session(overrides: Partial<WorkspaceSessionView> = {}): WorkspaceSessionView {
+function session(
+  overrides: Partial<TtydWorkspaceSessionView> = {},
+): TtydWorkspaceSessionView {
   return {
     id: 'session-a',
     workspaceId: 'workspace',
@@ -55,22 +57,18 @@ describe('opening a shared session in the personal view', () => {
     expect(opened.tabs.activeId).toBe(1);
   });
 
-  it('appends a tab that references the session, carrying pinned chat metadata', () => {
-    const chat = session({
+  it('appends a tab that references the shared ttyd session', () => {
+    const shared = session({
       id: 'session-c',
-      kind: 'chat',
-      chatSessionId: 'actor-42',
-      chatProvider: 'codex',
+      kind: 'codex',
     });
-    const opened = openSharedSessionTab(tabs, chat);
+    const opened = openSharedSessionTab(tabs, shared);
     expect(opened).toMatchObject({ tabId: 4, region: 'main', created: true });
     // Main-pane tabs are inserted ahead of the side pane, not at the very end.
     expect(opened.tabs.tabs.find((tab) => tab.id === 4)).toEqual({
       id: 4,
-      type: 'chat',
+      type: 'codex',
       sessionId: 'session-c',
-      chatSessionId: 'actor-42',
-      chatProvider: 'codex',
     });
     expect(opened.tabs.activeId).toBe(4);
     expect(opened.tabs.nextId).toBe(5);

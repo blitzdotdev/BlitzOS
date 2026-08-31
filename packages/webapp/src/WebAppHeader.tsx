@@ -50,6 +50,9 @@ type WebAppHeaderProps = {
   onOpenDrawer?: () => void;
   onSelect: (sessionId: string) => void;
   onClose: (sessionId: string) => void;
+  /** True when closing a managed session ends it for everyone (editors); the
+   * strip then warns before closing a session other members are viewing. */
+  endsSharedSession?: boolean;
   onRename?: (sessionId: string, title: string | undefined) => void;
   onSpawn: (type: SpawnSessionType) => void;
   livePorts?: LivePort[];
@@ -80,6 +83,7 @@ export function WebAppHeader({
   onOpenDrawer = () => undefined,
   onSelect,
   onClose,
+  endsSharedSession = false,
   onRename,
   onSpawn,
   livePorts = [],
@@ -101,6 +105,7 @@ export function WebAppHeader({
     top: number;
   } | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
+  const [confirmingClose, setConfirmingClose] = useState<string | null>(null);
   const newTabControl = useRef<HTMLDivElement>(null);
   const newSessionButton = useRef<HTMLButtonElement>(null);
   const tabstrip = useRef<HTMLDivElement>(null);
@@ -166,6 +171,15 @@ export function WebAppHeader({
     onMenuOpenChange(false);
     onSpawn(agent);
     newSessionButton.current?.focus();
+  };
+  const requestClose = (tab: WebAppTabModel): void => {
+    // End-for-everyone with someone else in the session earns a warning; a
+    // solo session, a file, or a viewer's local-only close does not.
+    if (endsSharedSession && isManagedSessionTab(tab) && (tab.presence?.length ?? 0) > 0) {
+      setConfirmingClose(tab.id);
+      return;
+    }
+    onClose(tab.id);
   };
   const selectedContextTab = contextMenu
     ? tabs.find((tab) => tab.id === contextMenu.tabId) ?? null
@@ -291,8 +305,24 @@ export function WebAppHeader({
                         ? 'Closing…'
                         : `Close ${tab.label}`}
                       disabled={tab.pending}
-                      onClick={() => onClose(tab.id)}
+                      onClick={() => requestClose(tab)}
                     >×</button>
+                  )}
+                  {confirmingClose === tab.id && (
+                    <div className="webapp-tab-close-confirm" role="alertdialog" aria-label="End session for everyone?">
+                      <p>{tab.presence && tab.presence.length === 1
+                        ? `${tab.presence[0]?.name ?? 'Someone'} is in this session.`
+                        : `${tab.presence?.length ?? 0} others are in this session.`}
+                        {' '}End it for everyone?</p>
+                      <div className="webapp-tab-close-confirm__actions">
+                        <button type="button" onClick={() => setConfirmingClose(null)}>Cancel</button>
+                        <button
+                          type="button"
+                          className="webapp-tab-close-confirm__end"
+                          onClick={() => { setConfirmingClose(null); onClose(tab.id); }}
+                        >End session</button>
+                      </div>
+                    </div>
                   )}
                 </div>
                 </Fragment>
