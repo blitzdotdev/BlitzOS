@@ -122,6 +122,14 @@ install -d -m 0755 /etc/ssh/sshd_config.d
 cat >/etc/ssh/sshd_config.d/00-blitz.conf <<'SSHD_CONFIG'
 Port 2222
 SSHD_CONFIG
+# The config test below refuses with "Missing privilege separation directory:
+# /run/sshd" when that directory is absent, and whether it is absent is a race:
+# /run is a tmpfs and /run/sshd is made by ssh.service's startup, not at boot.
+# Ubuntu 24.04 socket-activates sshd, so on a builder nobody has dialed 22 and
+# ssh.service may never have run. The identical script baked 426576280 green on
+# 2026-08-31 and then killed 426673356 here on 2026-09-01. Creating it is
+# idempotent, so the bake stops depending on which way the race fell.
+install -d -m 0755 /run/sshd
 /usr/sbin/sshd -t
 systemctl disable ssh.socket 2>/dev/null || true
 systemctl mask ssh.socket
