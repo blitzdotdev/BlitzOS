@@ -80,7 +80,8 @@ git diff --stat <upstream-sha> $(git rev-parse HEAD:vendor/lody) -- . \
   ':!UPSTREAM.md' ':!BLITZ-PATCHES.md'
 ```
 
-Expected after seam patch 8: exactly FOURTEEN files — the three above with six
+Expected after seam patch 8: exactly FOURTEEN files (seam patch 9 raises it to
+FIFTEEN and seam patch 10 to TWENTY; see their own entries) — the three above with six
 added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2,
 `lib/electron-session-file-sender.ts` from seam patch 3,
 `components/sessions/session-chat-interface.tsx` +
@@ -741,6 +742,173 @@ half at the source, because `SessionChatInputArea` needs a runtime and a daemon.
 - If the image degrade-to-file fallback is removed upstream, hunks 3 and 4 go
   with it; the file hunks stand alone.
 
+### 9. `SessionList` rows lost the worktree glyph (WT-TERM-2, 2026-09-01)
+
+**One idea, four hunks in one file, all additive.** `SessionRowWorktreeIndicator`
+(`sidebar-row-shared.tsx:269`) exists, is exported, and is rendered by exactly
+two callers: `loro-app-sidebar.tsx:719`, which draws upstream's own Local
+Projects rows, and `sidebar-updated-session-list.tsx:922`. `SessionList` — the
+component that draws the Chats and GitHub Worktrees rows, and the ONLY session
+row a BlitzOS rail has — never renders it, although its rows already carry
+`isWorktree` (`session-list-rows.ts:339` sets it from the session meta). So on a
+box the glyph can never appear: the QA sweep found 0 `[aria-label="Worktree"]`
+nodes on every load, hovered and unhovered, over three worktree-backed sessions.
+
+The data is upstream's, the placement is upstream's, and the omission reads as an
+oversight rather than a decision: upstream's own comment on the indicator says
+"only LOCAL-project rows pass a truthy `isWorktree`", which is exactly what a
+BlitzOS session is. Open upstream as "the worktree glyph is missing from
+`SessionList` rows". **Drop this patch when it merges.**
+
+#### The hunks
+
+Line numbers are the vendored tree's BEFORE this patch.
+
+`packages/components/src/components/session-list.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 85 | `SessionRowLeadingSlot,` in the `@/components/sidebar-row-shared` import list | adds `SessionRowWorktreeIndicator,` |
+| 2 | 813 | `const showMergeablePill = isMergeable && !isSelected;` | adds `const showWorktreeIcon = session.isWorktree === true;` beside it — the same name and the same expression as `loro-app-sidebar.tsx:596` |
+| 3 | 1004 | `) : hasPr \|\| hasChanges \|\| showMergeablePill \|\| isMobile ? (` | gains `\|\| showWorktreeIcon`, so a worktree session with no PR and no diff still renders the metric cluster |
+| 4 | 1025 | `{hasPr ? (` inside that cluster | renders `<SessionRowWorktreeIndicator isWorktree={showWorktreeIcon} />` immediately before the PR icon |
+
+**Placement is copied, not chosen.** `loro-app-sidebar.tsx:717-721` puts the
+glyph to the LEFT of the PR icon and to the RIGHT of the line diff, so a
+worktree row reads `[diff][worktree][PR]`; hunk 4 lands it in the same position
+inside `SessionList`'s cluster. The component itself renders `null` for a falsy
+`isWorktree`, so hunk 4 alone changes nothing for a non-worktree row and hunk 3
+is what makes the cluster reachable for the rows that were previously empty.
+
+**The chat branch is deliberately NOT patched.** A `group.kind === 'chat'` row
+takes the time-only branch above (`:997`) and keeps it. A BlitzOS worktree
+session belongs under its repository heading, not under Chats, and the seam that
+puts it there is `packages/webapp/src/lody/workdir-default.ts` §2b — patching
+both would paper over that grouping bug instead of showing it.
+
+`packages/webapp/test/lody-rail-groups.test.tsx` drives the real vendored
+`SessionList`, through the real `SessionRailSidebar`, over a worktree row and a
+plain row — and pins this section by name, so deleting the hunks without
+retiring the declaration fails.
+
+#### Merge conflict drill
+
+- If upstream adds the glyph itself, drop all four hunks and keep upstream's.
+- If the end slot's rest cluster is restructured, re-apply by the one rule: a
+  row whose `isWorktree` is true renders `SessionRowWorktreeIndicator`, next to
+  the PR icon.
+### 10. The side panel's file surfaces (panels-a sweep, 2026-09-01)
+
+**Four defects, eleven hunks in six files, and three of the four are bugs in
+upstream's own desktop branch.** The panels-a QA lane drove the side panel on a
+real box and confirmed four rows. Each one is a control that renders, or fails
+to render, on DESKTOP only — the mobile branch already models every one of them
+correctly, which is why the fixes are small and upstreamable as they stand.
+
+| Row | Severity | What a member meets today |
+|---|---|---|
+| BUG-1 | major | `Ctrl+P` (quick open file) does nothing on desktop. `{fileQuickOpenDialog}` is mounted only inside the `if (isMobile)` return, so the desktop tree has no dialog to open. The keydown handler runs and reports `defaultPrevented: true`, which is why it read as a dead chord rather than a missing mount. |
+| BUG-2 | major | Once the file index fails once, "Files unavailable" is terminal. The acquisition effect keys on `{cache, flockDocId, loadLocalSnapshot, prepareTarget}`, and a reconnect changes none of them, so nothing ever retries. Closing and reopening the panel restores the whole tree at once, which is the proof that only the effect is stuck. The panel offers no retry either: the `Try again` action exists on the `local-error` branch and on no other. |
+| SP28 | minor | The desktop file viewer has no "Copy file path". `MobileFileViewerDrawer` has carried one since it landed (`sessions.fileViewer.copyPath`, already in `locales/en.json`), and `ui/diff-viewer/diff-file-header-actions.tsx` draws the same button with the same key. |
+| SP26 | minor | `Go to Definition` / `Find References` answer "Host language service does not support this file" on every identifier, because a BlitzOS box runs no language service. The two Monaco actions are registered unconditionally, so the entries are in the editor's context menu and on F12 / Shift+F12 whatever the host can answer. |
+
+**Which hunks are inert, and which are a fix.** BUG-1, BUG-2 and SP28 change
+upstream behaviour on purpose — they are the fix, and each is one upstream PR.
+SP26 is the only BlitzOS opinion here, so it rides the seam-patch-7 shape: one
+optional prop per level, defaulting to today's behaviour, and no upstream call
+site passes any of them. Our side is one field in
+`packages/webapp/src/lody/v1-scope.ts` (`languageService`).
+
+#### The hunks
+
+Line numbers for `session-detail.tsx` are the `f3474894` baseline's own
+(`packages/webapp/test/upstream-baseline/`); every other file is numbered at the
+vendored tree BEFORE this patch. **Every hunk in the pinned file is purely
+ADDITIVE** — this patch removes no upstream line, so it declares no new anchor
+in `lody-surface-tabs.test.tsx`.
+
+`packages/components/src/components/sessions/session-detail.tsx` (pinned)
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 5761 | `{archiveConfirmDialog}` in the DESKTOP return | mounts `{fileQuickOpenDialog}` beside it — BUG-1. It portals out, so tree position does not matter; the comment above that block already says so for the two dialogs already there. |
+| 2 | 5340 | `viewStateKey={\`session-files:${activeSession.id}\`}` on `<FileTreeView>` | passes `onProviderRetry` — BUG-2 |
+| 3 | 666 | `onMobileBack,` in the destructuring | defaults `hideLanguageServiceActions` to `false` |
+| 4 | 672 | `onMobileBack?: () => void;` in the inline props type | declares `hideLanguageServiceActions?: boolean` |
+| 5 | 4524 | `preferNativeMarkdownSelection={isMobile}` on `<SessionFileContentView>` | passes `lspAvailable={!hideLanguageServiceActions}` — SP26, and `renderViewerTabContent` is shared by both branches, so one line covers desktop and mobile |
+
+`packages/components/src/hooks/use-code-collab-session-file-provider.ts` — BUG-2's
+mechanism
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 6 | 188 | `readonly prepareTarget?: () => Promise<FileIndexTargetPlane>;` in `useCodeCollabFileIndexLoadState`'s argument type | adds `readonly reloadNonce?: number;`, joined into the existing `requestKey` memo so bumping it re-runs the acquisition effect exactly as a changed cache or doc id would |
+| 7 | 497 | the closing `useMemo` that builds the hook's result | wraps it so the result also carries `reload`, and re-arms automatically on an offline → online transition of the owning machine (`useMachineOnlineStatus`, upstream's own presence hook) |
+
+Hunk 7 re-arms on a TRANSITION, never on a status. A "retry while the status is
+error" effect loops forever against a machine that is online and answering
+errors; an offline → online edge can fire at most once per outage, and the
+`Try again` button covers every other cause.
+
+`packages/components/src/components/sessions/components/file-tree-view.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 8 | 67 | `viewStateKey?: string;` in `FileTreeViewProps` | declares `onProviderRetry?: () => void` |
+| 9 | 511 | the `renderBranch === 'unavailable'` `FileTreeStatePanel` | gives it the same `action` the `local-error` branch already draws — the same `RefreshCw` + `sessions.codeSession.files.retry` — when the caller passes a retry |
+
+`packages/components/src/components/sessions/session-file-content-view.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 10 | 1412 | the `showSearchButton` `<button>` in the viewer toolbar | adds the "Copy file path" button before it, and adds its `handleCopyFilePath` callback plus `showCopyPathButton` to `showViewerTopBar` — SP28 |
+| 11 | 989 | `const isLspEnabled =` | declares `lspAvailable?: boolean` (default `true`), answers it in `isLspEnabled`, and passes `lspActions={lspAvailable}` to `<SessionMonacoTextViewer>` — SP26 |
+
+`packages/components/src/components/sessions/session-monaco-text-viewer.tsx` and
+`packages/components/src/lib/session-monaco-editor-controller.ts` — SP26's last
+two levels: `lspActions?: boolean` (default `true`) on the viewer, joined to the
+mount-time `initialPropsRef` snapshot, and `lspActions` on
+`SessionMonacoEditorControllerOptions`, which gates the two `addAction` calls.
+Gating the ACTIONS rather than the callbacks is the point: an action whose
+callback is `undefined` still sits in the context menu and does nothing at all,
+which is worse than the message it replaces.
+
+Verify this divergence by diffing OUR subtree against the upstream commit it was
+imported from, exactly as seam patch 1 describes. **Expected after seam patch 10:
+TWENTY files** — the fourteen seam patch 8 left, plus `components/session-list.tsx`
+from seam patch 9, plus this patch's five new
+ones (`hooks/use-code-collab-session-file-provider.ts`,
+`components/sessions/components/file-tree-view.tsx`,
+`components/sessions/session-file-content-view.tsx`,
+`components/sessions/session-monaco-text-viewer.tsx`,
+`lib/session-monaco-editor-controller.ts`), which also adds hunks to
+`components/sessions/session-detail.tsx`.
+
+#### What this patch does NOT do, and why
+
+- **BUG-3, the collapsed strip's off-screen controls, needed no hunk.** With the
+  side panel collapsed the panel is 0 wide, so `SessionSidePanelTabBar`'s two
+  `shrink-0` controls overflow to the RIGHT of the window — measured at cx=1911
+  and cx=1943 in a 1920 viewport. One declaration in
+  `packages/webapp/src/lody/blitz-skin.css` sends that overflow the other way,
+  and it cannot move anything while the strip has room, because the scroll area
+  beside those controls is `flex-1` and leaves no free space to distribute.
+- **Nothing is deleted.** SP26 is HIDDEN for v1: a box that grows a language
+  service flips one field.
+
+#### Merge conflict drill
+
+- Hunks 1, 2, 8, 9 and 10 are additions at a named JSX site. If upstream moves
+  the site, re-apply at wherever it went; if upstream mounts the quick-open
+  dialog on desktop itself, or grows its own provider retry or copy-path button,
+  **drop that hunk and keep upstream's.**
+- Hunks 6 and 7 depend only on `requestKey` still being the effect's identity.
+  If upstream replaces the effect with its own invalidation (a query client, a
+  resource key), drop them and drive that instead.
+- If upstream gates the LSP actions on a capability of its own, drop hunks
+  3, 4, 5, 11 and the two viewer/controller hunks with them, and answer the new
+  gate from `v1-scope.ts`.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.
@@ -888,6 +1056,20 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   it (`i18n/index.tsx:121`) and `packages/webapp/src/lody/i18n.ts` now does too.
   Not a divergence, a required initialization option; recorded because getting
   it wrong is silent.
+- **Two strings in `locales/en.json` are wrong on a box** (panels-b sweep).
+  `packages/webapp/src/lody/i18n.ts` merges `BLITZ_LODY_EN_OVERRIDES` over their
+  bundle, so neither is a vendor edit. `sessions.fileSave.conflictDetail`
+  interpolates `{{conflict}}` and no call site passes one — the save-conflict
+  banner printed the raw placeholder (SP23-I18N), and the replacement is
+  upstream's own inline default for that key. `sessions.fileViewer.save.withShortcut`
+  advertises "Save (⌘S / Ctrl+S)", and this surface mounts no dispatcher for
+  `$mod+s` (`v1-scope.ts`, `keyboardShortcuts`), so the Save button promised a
+  chord nothing answers (SP21-KEY, user ruling: drop the advert, do NOT mount
+  the command layer). `packages/webapp/test/lody-panel-fixes.test.tsx` asserts
+  the VENDORED string still carries each defect, so an upstream fix fails a test
+  and the override is deleted rather than shadowing a corrected string.
+  **Candidate upstream PR for the first one: pass the conflict the runtime
+  already has** (`SaveTextConflictError.conflict`) into that `t()` call.
 - **The archive path cannot resolve a local project's root path** (phase 5).
   `resolveWorktreeCleanupTarget` (`apps/cli/src/lib/message-handler.ts:4334`)
   merges `machineMeta.localProjects` with `getMachineFlockLocalProjects(

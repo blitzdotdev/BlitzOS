@@ -65,6 +65,11 @@ interface FileTreeViewProps {
   // unmount (the side panel swaps the Files tab out for a file/diff viewer).
   // Callers that stay mounted can omit it and keep component-local state.
   viewStateKey?: string;
+  // Re-arms the file provider behind this tree. Rendered as "Try again" on the
+  // provider-unavailable panel, which otherwise offers no way out: the
+  // provider's acquisition is effect-driven and its inputs do not move when the
+  // machine comes back, so the failure outlives the outage that caused it.
+  onProviderRetry?: () => void;
 }
 
 type ControlledFileTreeViewProps = Omit<FileTreeViewProps, 'session' | 'autoCodeCollab'>;
@@ -445,6 +450,7 @@ function ControlledFileTreeView({
   fileProviderMessage,
   changedFilePaths,
   viewStateKey,
+  onProviderRetry,
 }: ControlledFileTreeViewProps) {
   const { t } = useTranslation();
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
@@ -516,6 +522,16 @@ function ControlledFileTreeView({
         description={
           message ?? t('sessions.codeSession.files.unavailable', 'Files are unavailable.')
         }
+        {...(onProviderRetry === undefined
+          ? {}
+          : {
+              action: (
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={onProviderRetry}>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  {t('sessions.codeSession.files.retry', 'Try again')}
+                </Button>
+              ),
+            })}
       />
     );
   }

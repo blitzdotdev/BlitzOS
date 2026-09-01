@@ -697,6 +697,7 @@ const SessionDetail = ({
   hideCloudMenuItems = false,
   hideNotificationPrompt = false,
   hideAgentRoles = false,
+  hideLanguageServiceActions = false,
   keyboardShortcutsAvailable = true,
   surfaceTabs = EMPTY_SURFACE_TABS,
   activeSurfaceTabId = null,
@@ -723,6 +724,16 @@ const SessionDetail = ({
   /** Passed to every chat surface this page mounts; see
    * `SessionChatInterfaceProps.hideAgentRoles`. */
   hideAgentRoles?: boolean;
+  /**
+   * Whether the host serves a language service at all.
+   *
+   * Go to Definition and Find References are Machine RPC round trips. A host
+   * whose machine answers "unsupported" for every file draws two editor
+   * entries whose only outcome is that message, so it can take them off the
+   * menu instead. Passed to every file viewer this page mounts; see
+   * `SessionFileContentViewProps.lspAvailable`.
+   */
+  hideLanguageServiceActions?: boolean;
   /**
    * Whether the host answers keyboard commands at all.
    *
@@ -4718,6 +4729,7 @@ const SessionDetail = ({
         saveRequestSeq={viewerTabSaveStates[tab.id]?.saveRequestSeq ?? 0}
         copyMarkdownRequestSeq={viewerTabSaveStates[tab.id]?.copyMarkdownRequestSeq ?? 0}
         preferNativeMarkdownSelection={isMobile}
+        lspAvailable={!hideLanguageServiceActions}
         fileProvider={activeSessionFileProvider}
         fileProviderPending={activeSessionFileProviderPending}
         fileProviderMessage={activeSessionFileProviderMessage}
@@ -5535,6 +5547,9 @@ const SessionDetail = ({
         // Opening a file selects its viewer tab, which unmounts this tree. Key
         // its expanded folders per session so returning to Files restores them.
         viewStateKey={`session-files:${activeSession.id}`}
+        // "Files unavailable" is otherwise terminal: the provider re-arms on an
+        // offline -> online edge, and this is the way out of every other cause.
+        onProviderRetry={activeSessionCodeCollabFiles.reload}
       />
     ) : activeSidebarTab === 'pr' && latestPr && repoFullName && latestPrNumber ? (
       <PrTabContainer
@@ -5984,6 +5999,10 @@ const SessionDetail = ({
           copies) so the `session.renameCurrent` / `session.archiveCurrent` keyboard
           shortcuts have a mounted target on desktop. They portal out, so tree position
           doesn't matter. */}
+      {/* Quick open file (Ctrl/Cmd+P) is one of them: without this mount the
+          desktop handler ran, preventDefault'd the chord, and had no dialog to
+          open. */}
+      {fileQuickOpenDialog}
       {archiveConfirmDialog}
       {dirtyForkDialog}
       {worktreeForkObservers}

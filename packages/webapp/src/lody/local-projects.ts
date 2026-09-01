@@ -275,15 +275,14 @@ export async function publishBoxReposAsWorkspaceRepos(
 
   const repositories: { fullName: string }[] = [];
   for (const project of projects) {
-    const state = await sendProjectControl(endpoints, {
-      type: "local-project/git-state",
+    const lookup = await readLocalProjectRepoFullName(
+      endpoints,
       machineId,
-      workspaceId: runtime.workspaceId,
-      localProjectId: project.localProjectId,
-    });
-    if (!state.ok) continue;
-    const fullName = repoFullNameOf(state.result);
-    if (fullName !== null) repositories.push({ fullName });
+      runtime.workspaceId,
+      project.localProjectId,
+    );
+    if (!lookup.answered || lookup.repoFullName === null) continue;
+    repositories.push({ fullName: lookup.repoFullName });
   }
   if (repositories.length === 0) return [];
 
@@ -308,6 +307,43 @@ function localProjectRows(result: JsonValue): { localProjectId: string }[] {
     }
   }
   return rows;
+}
+
+/**
+ * What the daemon said about ONE local project's GitHub remote.
+ *
+ * THREE STATES, NOT TWO, and the third is the one a caller must not collapse. A
+ * daemon that refused the call has said nothing — the clone may well have a
+ * remote — while a daemon that answered `{ git: false }` or a clone with no
+ * GitHub origin has answered "no name", and that answer will not change on the
+ * next try. `workdir-default.ts` memoizes on exactly this distinction.
+ */
+export type LocalProjectRepoLookup =
+  | { answered: true; repoFullName: string | null }
+  | { answered: false };
+
+/**
+ * `owner/repo` for one registered clone, straight from the daemon.
+ *
+ * The daemon derives it from the clone's own remote, so this is the only
+ * authority a box has for the name — and, unlike the landing's own resolution,
+ * it is not filtered through a cloud-connected repository list that a box can
+ * never fill (see `publishBoxReposAsWorkspaceRepos` below).
+ */
+export async function readLocalProjectRepoFullName(
+  endpoints: LodyHttpPlaneEndpoints,
+  machineId: string,
+  workspaceId: string,
+  localProjectId: string,
+): Promise<LocalProjectRepoLookup> {
+  const state = await sendProjectControl(endpoints, {
+    type: "local-project/git-state",
+    machineId,
+    workspaceId,
+    localProjectId,
+  });
+  if (!state.ok) return { answered: false };
+  return { answered: true, repoFullName: repoFullNameOf(state.result) };
 }
 
 /** `githubRepoFullName` off a `local-project/git-state` result, or `null` for a
