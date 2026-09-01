@@ -108,8 +108,9 @@ export function seedWorktreeWorkdirDefault(
  * on `repoFullName`), still not a worktree (`session-manager.ts:1837` needs
  * `useWorktree === true`), and still skips the branch preparation that would
  * refuse a non-git directory (`session-execution-service.ts:4358` runs only
- * `if (branch)`). A session that already HAS a project — every worktree
- * session — is passed through untouched.
+ * `if (branch)`). A session that is repo-backed in ANY of the three ways
+ * `isPlainChatMeta` names — every worktree session — is passed through
+ * untouched.
  */
 
 /** `/workspace` on the box, which is also the root dufs serves. */
@@ -243,18 +244,26 @@ export function applyDefaultSessionProject(
 /**
  * `meta` with a `project`, or `meta` unchanged.
  *
- * Unchanged in two cases, and both matter: a session that already picked a
- * project (every worktree session) must keep it, and a daemon that refused the
- * registration must leave the session exactly as upstream would have written
- * it — a chat in the chats directory is a worse session, but a session with a
- * `localProjectId` the daemon cannot resolve is a FAILED one
+ * Unchanged in two cases, and both matter: a session that is not a plain chat
+ * must keep the directory it named, and a daemon that refused the registration
+ * must leave the session exactly as upstream would have written it — a chat in
+ * the chats directory is a worse session, but a session with a `localProjectId`
+ * the daemon cannot resolve is a FAILED one
  * (`session-execution-service.ts:3320`).
+ *
+ * THE SAME THREE FIELDS §3 READS, and for the same reason. A `project` is what
+ * every BlitzOS worktree session carries, so it alone was enough for the create
+ * path — but `buildSessionCreateResult` writes `repoFullName` and `isWorktree`
+ * from their own payload inputs (`use-session-actions.ts:159`, `:166`), so a
+ * repo-backed session with no `ProjectRef` yet is a shape this seam can see.
+ * Giving that one `/workspace` would point its agent at the workspace root
+ * instead of letting the daemon cut it a worktree. One predicate, read twice.
  */
 async function withDefaultProject(
   meta: JsonObject,
   resolveProject: () => Promise<LodyProjectRef | null>,
 ): Promise<JsonObject> {
-  if (meta.project !== undefined) return meta;
+  if (!isPlainChatMeta(meta)) return meta;
   const project = await resolveProject();
   if (project === null) return meta;
   return { ...meta, project: { ...project } };
@@ -300,8 +309,9 @@ export type SessionProjectBackfillOutcome =
   | "registration-refused";
 
 /**
- * Whether this session's meta is a plain chat's — the only kind §2 would have
- * given the default project to.
+ * Whether this session's meta is a plain chat's — the only kind either §2 or §3
+ * gives the default project to. Declared here, beside the §3 that needs it
+ * spelled out; §2 reads the same function.
  *
  * Three fields, because the create path writes each of them from a different
  * input and none implies the others (`use-session-actions.ts:159` for

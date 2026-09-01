@@ -236,10 +236,10 @@ prominently in the pull request body.
 
 ## 5. Re-audit the npm-artifact patches
 
-Two scripts in `packages/box/patches/` are applied to the **published npm
+Three scripts in `packages/box/patches/` are applied to the **published npm
 artifact**, in the Dockerfile's order. The order is load-bearing:
 `lody-local-platform.mjs` guards on a sha256 of the file AS PUBLISHED, so nothing
-may rewrite it first. Both are idempotent — re-running either on an
+may rewrite it first. All three are idempotent — re-running any of them on an
 already-patched bundle reports it and exits 0, which is what lets the daemon test
 harness copy a real box's bundle and re-apply them to the copy.
 
@@ -300,6 +300,30 @@ node packages/box/patches/lody-acp-auth-queue.mjs /tmp/package/dist/index.js
 **If the new version already routes unnamed control messages off one shared
 chain, DELETE this patch rather than updating it** — and say so prominently in
 the pull request body, because it means the upstream defect is fixed.
+
+### 5c. The Code Collab worktree-root patch
+
+`packages/box/patches/lody-code-collab-worktree-root.mjs` makes
+`resolveCodeCollabWorkspaceRoot` answer with a worktree session's WORKTREE. Its
+local-project branch answers with the project's root path and reads neither
+`project.useWorktree` nor `meta.isWorktree`, so as soon as no live `Session`
+object is left, All Changes, the Files tab and every file chip of a BlitzOS
+worktree session read the `/workspace/<repo>` clone. The clone is clean by
+design, so the panel shows an empty SUCCESS — "No changes yet." — and never an
+error. Reported from the first real worktree dogfood on canary.
+
+Its guards are the installed package version and its own anchor at exactly one
+occurrence. Re-auditing means:
+
+```sh
+grep -A 16 'if (project?.kind === "local") {' /tmp/package/dist/index.js  # the resolver's branch
+node packages/box/patches/lody-code-collab-worktree-root.mjs /tmp/package/dist/index.js
+npx vitest run test/lody-worktree-session.test.ts   # in packages/webapp, on a box with the bundle
+```
+
+**If the new version resolves a local-project worktree session to its worktree,
+DELETE this patch rather than updating it.** Their own
+`lib/terminal-workdir-resolver.ts:97` already does, so the two may converge.
 
 ## 6. Dependencies and the patch-file audit
 

@@ -184,6 +184,26 @@ describe("the default project a plain session is given", () => {
     expect(calls).toEqual([]);
   });
 
+  it("leaves a repo-backed session alone even before it has a ProjectRef", async () => {
+    // `buildSessionCreateResult` writes `repoFullName` and `isWorktree` from
+    // their own payload inputs (`use-session-actions.ts:159`, `:166`), so this
+    // shape is one the create path can produce. Giving it `/workspace` would
+    // point the agent at the workspace root instead of letting the daemon cut it
+    // a worktree — the same rule §3's backfill reads, from the same predicate.
+    const { fetchImpl, calls } = projectControlStub(addAccepted);
+    const { writer, metas } = recordingWriter();
+    const decorated = withDefaultSessionProject(
+      writer,
+      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+    );
+    const repoBacked = { id: "s-1", repoFullName: "blitzdotdev/BlitzOS", isWorktree: true };
+
+    await decorated.startSession("s-1", { ...repoBacked }, {}, DISPATCH);
+
+    expect(metas).toEqual([repoBacked]);
+    expect(calls).toEqual([]);
+  });
+
   it("writes the session unchanged when the daemon refuses the registration", async () => {
     const { fetchImpl } = projectControlStub((call) => ({
       ok: false,
