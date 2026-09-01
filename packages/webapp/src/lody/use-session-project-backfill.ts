@@ -32,8 +32,8 @@ import { runtimeAtom } from "@lody/components/atoms/runtime";
 import { sessionMetaAtomFamily } from "@lody/components/atoms/doc-meta";
 import { getSessionRoomId } from "@lody/shared";
 import {
-  createDefaultSessionProjectResolver,
   createSessionProjectBackfiller,
+  createSessionProjectDefaults,
 } from "./workdir-default.js";
 import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
 
@@ -61,7 +61,7 @@ export function useDefaultSessionProjectBackfill(input: SessionProjectBackfillIn
       machineId === null
         ? null
         : createSessionProjectBackfiller(
-            createDefaultSessionProjectResolver(endpointsRef.current, machineId, filesRoot),
+            createSessionProjectDefaults(endpointsRef.current, machineId, filesRoot),
           ),
     [machineId, projectUrl, filesRoot],
   );

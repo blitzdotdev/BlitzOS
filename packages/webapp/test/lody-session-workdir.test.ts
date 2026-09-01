@@ -46,6 +46,7 @@ import {
   backfillDefaultSessionProject,
   createDefaultSessionProjectResolver,
   createSessionProjectBackfiller,
+  createSessionProjectDefaults,
   withDefaultSessionProject,
 } from "../src/lody/workdir-default.js";
 import {
@@ -54,6 +55,10 @@ import {
 } from "../src/lody/use-session-project-backfill.js";
 import { render, settle } from "./dom.js";
 import { lodyDaemonAvailable, startLodyHarness, type LodyHarness } from "./lody-daemon-harness.js";
+
+/** The daemon's own workspace id. Only §2b's repo lookup carries it, and it
+ * carries it into `local-project/git-state`. */
+const WORKSPACE_ID = "lw_1";
 
 const PLANE_ENDPOINTS = {
   rpcUrl: "https://box.invalid/lody/rpc",
@@ -64,7 +69,11 @@ const PLANE_ENDPOINTS = {
 
 interface ProjectControlCall {
   type: string;
-  rootPath: string;
+  /** `local-project/add` carries it, `local-project/git-state` does not. */
+  rootPath?: string;
+  /** The other way round. */
+  workspaceId?: string;
+  localProjectId?: string;
 }
 
 /** A `/project` door that answers `local-project/add` the way the daemon does:
@@ -83,17 +92,74 @@ function projectControlStub(answer: (call: ProjectControlCall) => JsonValue) {
 }
 
 function addAccepted(call: ProjectControlCall): JsonValue {
+  const rootPath = call.rootPath ?? "";
   return {
     ok: true,
     type: call.type,
     result: {
-      localProjectId: `local-${call.rootPath.replaceAll("/", "-")}`,
+      localProjectId: `local-${rootPath.replaceAll("/", "-")}`,
       name: "workspace",
-      rootPath: call.rootPath,
+      rootPath,
       workspaceIds: ["w1"],
     },
   };
 }
+
+/** The clone the §2b cases are about, and the name the daemon derives from its
+ * own remote (`local-project/git-state`). */
+const CLONE_PROJECT_ID = "local-repo";
+const CLONE_REPO_FULL_NAME = "blitzdotdev/BlitzOS";
+
+/**
+ * A `local-project/git-state` answer.
+ *
+ * `{ git: false }` for a directory with no repository in it, and otherwise the
+ * shape of the real daemon capture the corpus holds
+ * (`fixtures/lody-project-registration/response/git-state-github-remote.json`)
+ * — `LocalProjectGitStateSchema` is `.strict()`, so a short answer is rejected
+ * by `sendProjectControl` before this seam ever reads it.
+ */
+function gitStateAnswer(call: ProjectControlCall, githubRepoFullName: string | null): JsonValue {
+  return {
+    ok: true,
+    type: call.type,
+    result:
+      githubRepoFullName === null
+        ? { git: false }
+        : {
+            git: true,
+            branches: ["main"],
+            currentBranch: "main",
+            defaultBranch: "main",
+            githubRepoFullName,
+            workingTree: {
+              clean: true,
+              staged: false,
+              unstaged: false,
+              untracked: false,
+              conflicted: false,
+            },
+          },
+  };
+}
+
+function controlRefused(call: ProjectControlCall): JsonValue {
+  return {
+    ok: false,
+    type: call.type,
+    error: "workspace_not_found",
+    message: "No active workspace runtime is available",
+  };
+}
+
+/** A session created against the clone, exactly as the landing writes it when
+ * the workspace's connected-repo list has not arrived yet (`chat-landing.tsx:506`
+ * drops the name, so `useWorktree` is set and `githubRepoFullName` is not). */
+const CLONE_SESSION_META: JsonObject = {
+  id: "s-1",
+  project: { kind: "local", localProjectId: CLONE_PROJECT_ID, branch: "main", useWorktree: true },
+  isWorktree: true,
+};
 
 /** A writer that records the meta it was handed and does nothing else. The five
  * members of the seam it does not implement are never reached: the decorator
@@ -126,7 +192,8 @@ describe("the default project a plain session is given", () => {
     const { writer, metas } = recordingWriter();
     const decorated = withDefaultSessionProject(
       writer,
-      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      WORKSPACE_ID,
     );
 
     await decorated.startSession("s-1", { id: "s-1", cliType: "builtin" }, {}, DISPATCH);
@@ -151,7 +218,8 @@ describe("the default project a plain session is given", () => {
     const { writer } = recordingWriter();
     const decorated = withDefaultSessionProject(
       writer,
-      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      WORKSPACE_ID,
     );
 
     await Promise.all([
@@ -168,7 +236,8 @@ describe("the default project a plain session is given", () => {
     const { writer, metas } = recordingWriter();
     const decorated = withDefaultSessionProject(
       writer,
-      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      WORKSPACE_ID,
     );
     const worktree = {
       kind: "local",
@@ -194,7 +263,8 @@ describe("the default project a plain session is given", () => {
     const { writer, metas } = recordingWriter();
     const decorated = withDefaultSessionProject(
       writer,
-      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      WORKSPACE_ID,
     );
     const repoBacked = { id: "s-1", repoFullName: "blitzdotdev/BlitzOS", isWorktree: true };
 
@@ -212,8 +282,8 @@ describe("the default project a plain session is given", () => {
       message: "No active workspace runtime is available",
     }));
     const { writer, metas } = recordingWriter();
-    const resolve = createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1");
-    const decorated = withDefaultSessionProject(writer, resolve);
+    const defaults = createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1");
+    const decorated = withDefaultSessionProject(writer, defaults, WORKSPACE_ID);
 
     await decorated.startSession("s-1", { id: "s-1" }, {}, DISPATCH);
 
@@ -221,7 +291,7 @@ describe("the default project a plain session is given", () => {
     // (`session-execution-service.ts:3320`), so a refusal has to degrade to
     // upstream's own behavior rather than to a guess.
     expect(metas).toEqual([{ id: "s-1" }]);
-    expect(await resolve()).toBeNull();
+    expect(await defaults.project()).toBeNull();
   });
 
   it("retries a refusal rather than caching it for the tab's lifetime", async () => {
@@ -236,6 +306,126 @@ describe("the default project a plain session is given", () => {
     expect(await resolve()).toBeNull();
     expect(await resolve()).toEqual({ kind: "local", localProjectId: "local--workspace" });
     expect(await resolve()).toEqual({ kind: "local", localProjectId: "local--workspace" });
+    expect(calls).toHaveLength(2);
+  });
+});
+
+/**
+ * RAIL-1 AND WT-TERM-1, which are one defect: a session created against a
+ * `/workspace` clone files under "Chats" instead of under its repository
+ * heading, and `[data-repo-full-name]` is null on its row.
+ *
+ * The rail groups on `resolveProjectGitHubRepo(session.project)`, which for a
+ * `local` ref reads `project.githubRepoFullName` — and the landing writes that
+ * field ONLY when the daemon's name also appears in the workspace's
+ * cloud-connected repository list (`chat-landing.tsx:506`). A box fills that
+ * list from itself, late, after the surface has already opened. Everything
+ * created inside that window loses the name for good.
+ *
+ * So the name is taken from the daemon instead, at the write.
+ * `workdir-default.ts` §2b carries the chain.
+ */
+describe("the clone's own remote, on a repo-backed session", () => {
+  it("completes the ProjectRef from the daemon's git-state", async () => {
+    const { fetchImpl, calls } = projectControlStub((call) =>
+      gitStateAnswer(call, CLONE_REPO_FULL_NAME),
+    );
+    const { writer, metas } = recordingWriter();
+    const decorated = withDefaultSessionProject(
+      writer,
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      WORKSPACE_ID,
+    );
+
+    await decorated.startSession("s-1", { ...CLONE_SESSION_META }, {}, DISPATCH);
+
+    expect(calls).toEqual([
+      {
+        type: "local-project/git-state",
+        machineId: "m-1",
+        workspaceId: WORKSPACE_ID,
+        localProjectId: CLONE_PROJECT_ID,
+      },
+    ]);
+    // The ref is MERGED, never replaced: `branch` and `useWorktree` are what
+    // decide the agent's directory, and `/workspace` is not where it runs.
+    expect(metas).toEqual([
+      {
+        ...CLONE_SESSION_META,
+        project: {
+          kind: "local",
+          localProjectId: CLONE_PROJECT_ID,
+          branch: "main",
+          useWorktree: true,
+          githubRepoFullName: CLONE_REPO_FULL_NAME,
+        },
+      },
+    ]);
+  });
+
+  it("asks nothing when the landing already named the repository", async () => {
+    const { fetchImpl, calls } = projectControlStub((call) => gitStateAnswer(call, "other/repo"));
+    const { writer, metas } = recordingWriter();
+    const decorated = withDefaultSessionProject(
+      writer,
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      WORKSPACE_ID,
+    );
+    const named = {
+      kind: "local",
+      localProjectId: CLONE_PROJECT_ID,
+      githubRepoFullName: CLONE_REPO_FULL_NAME,
+    };
+
+    await decorated.startSession("s-1", { project: named }, {}, DISPATCH);
+
+    expect(metas).toEqual([{ project: named }]);
+    expect(calls).toEqual([]);
+  });
+
+  it("writes the session unchanged when the clone has no GitHub remote", async () => {
+    // The honest degradation, and the same one `local-projects.ts` §3 states: a
+    // clone with no remote has no heading to file under, so it stays a Chat.
+    const { fetchImpl } = projectControlStub((call) => gitStateAnswer(call, null));
+    const { writer, metas } = recordingWriter();
+    const decorated = withDefaultSessionProject(
+      writer,
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      WORKSPACE_ID,
+    );
+
+    await decorated.startSession("s-1", { ...CLONE_SESSION_META }, {}, DISPATCH);
+
+    expect(metas).toEqual([CLONE_SESSION_META]);
+  });
+
+  it("writes the session unchanged when the daemon refuses git-state", async () => {
+    const { fetchImpl } = projectControlStub(controlRefused);
+    const { writer, metas } = recordingWriter();
+    const decorated = withDefaultSessionProject(
+      writer,
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      WORKSPACE_ID,
+    );
+
+    await decorated.startSession("s-1", { ...CLONE_SESSION_META }, {}, DISPATCH);
+
+    expect(metas).toEqual([CLONE_SESSION_META]);
+  });
+
+  it("remembers an answer and retries a refusal", async () => {
+    let refuse = true;
+    const { fetchImpl, calls } = projectControlStub((call) => {
+      if (!refuse) return gitStateAnswer(call, CLONE_REPO_FULL_NAME);
+      refuse = false;
+      return controlRefused(call);
+    });
+    const { repoFullName } = createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1");
+
+    expect(await repoFullName(WORKSPACE_ID, CLONE_PROJECT_ID)).toEqual({ answered: false });
+    const answered = { answered: true, repoFullName: CLONE_REPO_FULL_NAME };
+    expect(await repoFullName(WORKSPACE_ID, CLONE_PROJECT_ID)).toEqual(answered);
+    expect(await repoFullName(WORKSPACE_ID, CLONE_PROJECT_ID)).toEqual(answered);
     expect(calls).toHaveLength(2);
   });
 });
@@ -267,6 +457,7 @@ function backfillRuntime(meta: JsonObject | undefined) {
   const reads: string[] = [];
   const writes: { roomId: string; patch: Record<string, JsonValue | undefined> }[] = [];
   const stub = {
+    workspaceId: WORKSPACE_ID,
     ensureDocStream: async () => {},
     repo: {
       getDocMeta: async (roomId: string) => {
@@ -280,8 +471,8 @@ function backfillRuntime(meta: JsonObject | undefined) {
       },
     },
   };
-  // SAFETY: `backfillDefaultSessionProject` reaches exactly `ensureDocStream`,
-  // `repo.getDocMeta` and `writer.upsertDocMeta`. Every other member of
+  // SAFETY: `backfillDefaultSessionProject` reaches exactly `workspaceId`,
+  // `ensureDocStream`, `repo.getDocMeta` and `writer.upsertDocMeta`. Every other member of
   // `LodyWorkspaceRuntime` is unreachable from it, so a call that grew one would
   // fail here rather than pass against a stub that answered anything.
   return { runtime: stub as unknown as LodyWorkspaceRuntime, state, reads, writes };
@@ -297,7 +488,7 @@ describe("the default project a session created before the fix is given", () => 
     const outcome = await backfillDefaultSessionProject(
       runtime,
       "s-1",
-      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
     );
 
     expect(outcome).toBe("attached");
@@ -327,10 +518,10 @@ describe("the default project a session created before the fix is given", () => 
     const outcome = await backfillDefaultSessionProject(
       runtime,
       "s-1",
-      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
     );
 
-    expect(outcome).toBe("not-a-plain-chat");
+    expect(outcome).toBe("nothing-to-attach");
     expect(writes).toEqual([]);
     expect(calls).toEqual([]);
   });
@@ -348,17 +539,17 @@ describe("the default project a session created before the fix is given", () => 
     const outcome = await backfillDefaultSessionProject(
       runtime,
       "s-1",
-      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
     );
 
-    expect(outcome).toBe("not-a-plain-chat");
+    expect(outcome).toBe("nothing-to-attach");
     expect(writes).toEqual([]);
   });
 
   it("waits for a document that has not synced, and attaches when it arrives", async () => {
     const { fetchImpl, calls } = projectControlStub(addAccepted);
     const backfill = createSessionProjectBackfiller(
-      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
     );
     // A room the repo has opened but not filled. An empty meta reads exactly
     // like a plain chat's, so a worktree session caught here would be given
@@ -374,10 +565,81 @@ describe("the default project a session created before the fix is given", () => 
     expect(writes).toHaveLength(1);
   });
 
+  it("gives an existing clone session the repository heading it lost", async () => {
+    const { fetchImpl, calls } = projectControlStub((call) =>
+      gitStateAnswer(call, CLONE_REPO_FULL_NAME),
+    );
+    const { runtime, writes } = backfillRuntime({ ...LEGACY_META, ...CLONE_SESSION_META });
+
+    const outcome = await backfillDefaultSessionProject(
+      runtime,
+      "s-1",
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+    );
+
+    expect(outcome).toBe("repo-attached");
+    expect(calls).toEqual([
+      {
+        type: "local-project/git-state",
+        machineId: "m-1",
+        workspaceId: WORKSPACE_ID,
+        localProjectId: CLONE_PROJECT_ID,
+      },
+    ]);
+    // One key, and the ref it merges into is the session's own: nothing here
+    // may move a live worktree session out of its worktree.
+    expect(writes).toEqual([
+      {
+        roomId: getSessionRoomId("s-1"),
+        patch: {
+          project: {
+            kind: "local",
+            localProjectId: CLONE_PROJECT_ID,
+            branch: "main",
+            useWorktree: true,
+            githubRepoFullName: CLONE_REPO_FULL_NAME,
+          },
+        },
+      },
+    ]);
+  });
+
+  it("retries a refused git-state on the next open, and attaches then", async () => {
+    let refuse = true;
+    const { fetchImpl } = projectControlStub((call) => {
+      if (!refuse) return gitStateAnswer(call, CLONE_REPO_FULL_NAME);
+      refuse = false;
+      return controlRefused(call);
+    });
+    const backfill = createSessionProjectBackfiller(
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+    );
+    const { runtime, writes } = backfillRuntime({ ...LEGACY_META, ...CLONE_SESSION_META });
+
+    expect(await backfill(runtime, "s-1")).toBe("repo-unavailable");
+    expect(writes).toEqual([]);
+
+    expect(await backfill(runtime, "s-1")).toBe("repo-attached");
+    expect(writes).toHaveLength(1);
+  });
+
+  it("stops asking about a clone the daemon says has no GitHub remote", async () => {
+    const { fetchImpl, calls } = projectControlStub((call) => gitStateAnswer(call, null));
+    const backfill = createSessionProjectBackfiller(
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+    );
+    const { runtime, writes } = backfillRuntime({ ...LEGACY_META, ...CLONE_SESSION_META });
+
+    expect(await backfill(runtime, "s-1")).toBe("nothing-to-attach");
+    expect(await backfill(runtime, "s-1")).toBe("nothing-to-attach");
+    expect(writes).toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
   it("reads once and writes once when one session is opened twice at once", async () => {
     const { fetchImpl, calls } = projectControlStub(addAccepted);
     const backfill = createSessionProjectBackfiller(
-      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+      createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
     );
     const { runtime, reads, writes } = backfillRuntime(LEGACY_META);
 
@@ -686,7 +948,7 @@ describe.skipIf(!lodyDaemonAvailable())("a plain session against a real daemon",
 
     // What opening it now does.
     const backfill = createSessionProjectBackfiller(
-      createDefaultSessionProjectResolver(endpoints(), snapshot.machineId, harness.endpoints.filesRoot),
+      createSessionProjectDefaults(endpoints(), snapshot.machineId, harness.endpoints.filesRoot),
     );
     expect(await backfill(handle.runtime, "plainwd00004")).toBe("attached");
 

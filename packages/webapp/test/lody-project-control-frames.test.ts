@@ -20,7 +20,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { LocalProjectControlRequestSchema } from "@lody/shared/message-schemas";
 import { createLodyLocalBridge } from "../src/lody/local-bridge.js";
-import { registerWorkspaceRepositories } from "../src/lody/local-projects.js";
+import {
+  readLocalProjectRepoFullName,
+  registerWorkspaceRepositories,
+} from "../src/lody/local-projects.js";
 import { sendProjectControl } from "../src/lody/rpc-client.js";
 import { repoRoot } from "./lody-daemon-harness.js";
 
@@ -185,6 +188,28 @@ describe("local-project control frames", () => {
     expect(state.branches).toContain("main");
     expect(state.currentBranch).toBe("main");
     bridge.dispose();
+  });
+
+  it("reads the clone's repository name off that same captured answer", async () => {
+    // `readLocalProjectRepoFullName` is what completes a session's `ProjectRef`
+    // at the write (`workdir-default.ts` §2b, RAIL-1/WT-TERM-1). It reads the
+    // field out of the daemon's answer, so it is pinned against the real
+    // capture rather than against a hand-built body.
+    const { fetchImpl, sent } = stubFetch(fixture("response/git-state-github-remote.json"));
+    const lookup = await readLocalProjectRepoFullName(
+      endpoints(fetchImpl),
+      MACHINE_ID,
+      "lw_4232972aaa2f498ba29fe7e52cb0d928",
+      "local-project-5c929c9ed93542aaa69bc27e",
+    );
+
+    expect(lookup).toEqual({ answered: true, repoFullName: "blitzdotdev/wt-probe" });
+    expect(sent[0]).toEqual({
+      type: "local-project/git-state",
+      machineId: MACHINE_ID,
+      workspaceId: "lw_4232972aaa2f498ba29fe7e52cb0d928",
+      localProjectId: "local-project-5c929c9ed93542aaa69bc27e",
+    });
   });
 
   it("sweeps the workspace root and registers every repository the daemon hinted", async () => {

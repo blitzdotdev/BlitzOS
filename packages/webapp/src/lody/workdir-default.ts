@@ -29,6 +29,7 @@
 import { FILES_DAV_ROOT } from "../resolver.js";
 import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from "@blitzos/schema";
 import { getSessionRoomId } from "@lody/shared";
+import { readLocalProjectRepoFullName, type LocalProjectRepoLookup } from "./local-projects.js";
 import { sendProjectControl, type LodyHttpPlaneEndpoints } from "./rpc-client.js";
 import type { LodyWorkspaceRuntime, LodyWorkspaceWriter } from "./runtime.js";
 import type { LodyProjectRef } from "./session.js";
@@ -173,6 +174,110 @@ export function createDefaultSessionProjectResolver(
 }
 
 /**
+ * 2b. A REPO-BACKED SESSION CARRIES THE CLONE'S OWN REMOTE (RAIL-1, WT-TERM-1).
+ *
+ * THE BUG, reproduced 2/2 on canary. A session created against a `/workspace`
+ * clone files under "Chats" instead of under its repository heading, and its
+ * row's `repoFullName` is null. The rail groups on
+ * `resolveProjectGitHubRepo(session.project)` (`session-list-rows.ts:283`),
+ * which for a `local` ref reads `project.githubRepoFullName` — and the landing
+ * only ever writes that field when the daemon's name ALSO appears in the
+ * workspace's cloud-connected repository list:
+ *
+ *     return workspaceRepositories?.some((repo) => repo.fullName === repoFullName)
+ *       ? repoFullName
+ *       : null;                              // chat-landing.tsx:506
+ *
+ * `local-projects.ts` §3 fills that list from the box, but it fills it LATE:
+ * `LodyAgentConfigGate` opens the surface as soon as the agent configs are
+ * seeded and only then browses, registers, mirrors and finally publishes. A
+ * member who picks a project and sends inside that window is read against an
+ * empty list, the field is dropped, and the session is a Chat for good — no
+ * later pass rewrites a session that already exists.
+ *
+ * THE FIX IS TO STOP ASKING THE CLOUD. On a box the daemon is the only
+ * authority on a clone's remote, and it answers `local-project/git-state` with
+ * the name directly. So a `local` ref that names a project but carries no
+ * `githubRepoFullName` is completed here, at the write, from that answer.
+ * Nothing is invented: a clone with no GitHub remote answers no name and its
+ * sessions stay in Chats, which is the same honest degradation §3 states.
+ *
+ * WHY NOT JUST PUBLISH EARLIER. Moving the publish ahead of the gate would
+ * narrow the window and not close it — the list is still a cache read by a
+ * component that may render before it lands, and a box that registers a repo
+ * later still creates Chat sessions against it. This says the true thing at the
+ * one moment the value is being persisted.
+ */
+
+/** The clone's `owner/repo` for one registered local project. */
+export type LocalProjectRepoResolver = (
+  workspaceId: string,
+  localProjectId: string,
+) => Promise<LocalProjectRepoLookup>;
+
+/**
+ * The two answers a session write needs from the daemon, resolved once each.
+ *
+ * They travel together because every caller needs both and neither is useful
+ * alone: a session is either a plain chat, which needs the `/workspace`
+ * project, or it names a clone, which needs that clone's remote.
+ */
+export interface SessionProjectDefaults {
+  /** The `/workspace` local project a plain chat runs in. */
+  project: () => Promise<LodyProjectRef | null>;
+  /** The GitHub remote of a clone the member picked. */
+  repoFullName: LocalProjectRepoResolver;
+}
+
+/**
+ * Resolves one project's repo name, and remembers only an ANSWER.
+ *
+ * Same rule as `createDefaultSessionProjectResolver` one level up, for the same
+ * reason: a daemon that could not answer will answer later, and caching the
+ * silence would leave every session of the tab's lifetime ungrouped. A daemon
+ * that answered "no GitHub remote" IS an answer and is remembered — that clone
+ * will not grow one while the tab is open.
+ */
+export function createLocalProjectRepoResolver(
+  endpoints: LodyHttpPlaneEndpoints,
+  machineId: string,
+): LocalProjectRepoResolver {
+  const answered = new Map<string, LocalProjectRepoLookup>();
+  const inFlight = new Map<string, Promise<LocalProjectRepoLookup>>();
+  return async (workspaceId, localProjectId) => {
+    const known = answered.get(localProjectId);
+    if (known !== undefined) return known;
+    const running = inFlight.get(localProjectId);
+    if (running !== undefined) return await running;
+    const attempt = readLocalProjectRepoFullName(
+      endpoints,
+      machineId,
+      workspaceId,
+      localProjectId,
+    ).finally(() => {
+      inFlight.delete(localProjectId);
+    });
+    inFlight.set(localProjectId, attempt);
+    const lookup = await attempt;
+    if (lookup.answered) answered.set(localProjectId, lookup);
+    return lookup;
+  };
+}
+
+/** Both resolvers for one box, built together so a caller states the endpoints
+ * once. */
+export function createSessionProjectDefaults(
+  endpoints: LodyHttpPlaneEndpoints,
+  machineId: string,
+  rootPath?: string,
+): SessionProjectDefaults {
+  return {
+    project: createDefaultSessionProjectResolver(endpoints, machineId, rootPath),
+    repoFullName: createLocalProjectRepoResolver(endpoints, machineId),
+  };
+}
+
+/**
  * The writer that gives a projectless session its default project.
  *
  * `startSession` is the one write that creates a session on the product path —
@@ -196,12 +301,18 @@ export function createDefaultSessionProjectResolver(
  */
 export function withDefaultSessionProject(
   writer: LodyWorkspaceWriter,
-  resolveProject: () => Promise<LodyProjectRef | null>,
+  defaults: SessionProjectDefaults,
+  workspaceId: string,
 ): LodyWorkspaceWriter {
   return {
     ...writer,
     startSession: async (sessionId, meta, entry, dispatch) => {
-      await writer.startSession(sessionId, await withDefaultProject(meta, resolveProject), entry, dispatch);
+      await writer.startSession(
+        sessionId,
+        await withCompletedProject(meta, defaults, workspaceId),
+        entry,
+        dispatch,
+      );
     },
   };
 }
@@ -227,7 +338,7 @@ const decoratedRuntimes = new WeakSet<LodyWorkspaceRuntime>();
  */
 export function applyDefaultSessionProject(
   runtime: LodyWorkspaceRuntime,
-  resolveProject: () => Promise<LodyProjectRef | null>,
+  defaults: SessionProjectDefaults,
 ): LodyWorkspaceRuntime {
   if (decoratedRuntimes.has(runtime)) return runtime;
   // `createWorkspaceRuntime` returns a plain object of closures
@@ -235,7 +346,7 @@ export function applyDefaultSessionProject(
   // has — `mutatePreviewVisualComments` and the rest of the writer included.
   const next: LodyWorkspaceRuntime = {
     ...runtime,
-    writer: withDefaultSessionProject(runtime.writer, resolveProject),
+    writer: withDefaultSessionProject(runtime.writer, defaults, runtime.workspaceId),
   };
   decoratedRuntimes.add(next);
   return next;
@@ -259,14 +370,47 @@ export function applyDefaultSessionProject(
  * Giving that one `/workspace` would point its agent at the workspace root
  * instead of letting the daemon cut it a worktree. One predicate, read twice.
  */
-async function withDefaultProject(
+async function withCompletedProject(
   meta: JsonObject,
-  resolveProject: () => Promise<LodyProjectRef | null>,
+  defaults: SessionProjectDefaults,
+  workspaceId: string,
 ): Promise<JsonObject> {
-  if (!isPlainChatMeta(meta)) return meta;
-  const project = await resolveProject();
-  if (project === null) return meta;
-  return { ...meta, project: { ...project } };
+  if (isPlainChatMeta(meta)) {
+    const project = await defaults.project();
+    if (project === null) return meta;
+    return { ...meta, project: { ...project } };
+  }
+  // §2b: the member picked a clone, so the one field that is missing is the
+  // clone's own name. The two branches are disjoint by construction —
+  // `isPlainChatMeta` is false exactly when a `project` is already there.
+  const incomplete = localProjectMissingRepoName(meta);
+  if (incomplete === null) return meta;
+  const lookup = await defaults.repoFullName(workspaceId, incomplete.localProjectId);
+  if (!lookup.answered || lookup.repoFullName === null) return meta;
+  return { ...meta, project: { ...incomplete.project, githubRepoFullName: lookup.repoFullName } };
+}
+
+/**
+ * A `local` `ProjectRef` that names a project and no repository, or `null`.
+ *
+ * `null` for every other shape, and each of them is deliberate: a ref that
+ * already carries a name is what §2b would write, a `github` ref carries its
+ * repository in `repoFullName` and is not this composition's anyway, and a meta
+ * with no `project` at all is §2's plain chat.
+ */
+function localProjectMissingRepoName(
+  meta: JsonObject,
+): { project: JsonObject; localProjectId: string } | null {
+  const project = meta.project;
+  if (project === undefined || !isJsonObject(project)) return null;
+  if (project.kind !== "local") return null;
+  const localProjectId = project.localProjectId;
+  if (localProjectId === undefined || !isJsonString(localProjectId) || localProjectId === "") {
+    return null;
+  }
+  const existing = project.githubRepoFullName;
+  if (existing !== undefined && isJsonString(existing) && existing.trim() !== "") return null;
+  return { project, localProjectId };
 }
 
 /**
@@ -300,13 +444,21 @@ async function withDefaultProject(
  * nobody is mid-turn in they are fixed immediately.
  */
 
-/** What one backfill attempt decided. The last two are RETRYABLE: the document
- * may still arrive, and the daemon may still provision its workspace. */
+/**
+ * What one backfill attempt decided.
+ *
+ * Three are FINAL — the two attachments and the meta that needed neither — and
+ * three are RETRYABLE: the document may still arrive, the daemon may still
+ * provision its implicit workspace, and a daemon that refused
+ * `local-project/git-state` may still answer it.
+ */
 export type SessionProjectBackfillOutcome =
   | "attached"
-  | "not-a-plain-chat"
+  | "repo-attached"
+  | "nothing-to-attach"
   | "meta-unavailable"
-  | "registration-refused";
+  | "registration-refused"
+  | "repo-unavailable";
 
 /**
  * Whether this session's meta is a plain chat's — the only kind either §2 or §3
@@ -342,7 +494,7 @@ function isPlainChatMeta(meta: JsonObject): boolean {
 export async function backfillDefaultSessionProject(
   runtime: LodyWorkspaceRuntime,
   sessionId: string,
-  resolveProject: () => Promise<LodyProjectRef | null>,
+  defaults: SessionProjectDefaults,
 ): Promise<SessionProjectBackfillOutcome> {
   const roomId = getSessionRoomId(sessionId);
   // The same call `startLodySession` makes before it writes: the patch below
@@ -353,13 +505,44 @@ export async function backfillDefaultSessionProject(
   if (snapshot === undefined || snapshot.deleted || snapshot.meta.createdAt === undefined) {
     return "meta-unavailable";
   }
-  if (!isPlainChatMeta(snapshot.meta)) return "not-a-plain-chat";
-  const project = await resolveProject();
+  if (!isPlainChatMeta(snapshot.meta)) {
+    return await backfillProjectRepoName(runtime, roomId, snapshot.meta, defaults);
+  }
+  const project = await defaults.project();
   // Unchanged on a refusal, for §2's reason: a `localProjectId` the daemon
   // cannot resolve FAILS the session's next turn.
   if (project === null) return "registration-refused";
   await runtime.writer.upsertDocMeta(roomId, { project: { ...project } });
   return "attached";
+}
+
+/**
+ * §2b for a session that already exists: the repository heading it lost.
+ *
+ * Every session created before §2b shipped against a clone carries a `local`
+ * `ProjectRef` with no `githubRepoFullName`, so it reads as a Chat in the rail
+ * and the daemon skips its diff stats. The name is one `local-project/git-state`
+ * away and the whole `ProjectRef` is rewritten with it — a MERGE of the existing
+ * ref, never a replacement, because `branch` and `useWorktree` on it are what
+ * decide the agent's directory.
+ */
+async function backfillProjectRepoName(
+  runtime: LodyWorkspaceRuntime,
+  roomId: string,
+  meta: JsonObject,
+  defaults: SessionProjectDefaults,
+): Promise<SessionProjectBackfillOutcome> {
+  const incomplete = localProjectMissingRepoName(meta);
+  if (incomplete === null) return "nothing-to-attach";
+  const lookup = await defaults.repoFullName(runtime.workspaceId, incomplete.localProjectId);
+  if (!lookup.answered) return "repo-unavailable";
+  // The daemon answered, and the clone has no GitHub remote. That is a settled
+  // fact about the clone, so the session stays a Chat and nothing asks again.
+  if (lookup.repoFullName === null) return "nothing-to-attach";
+  await runtime.writer.upsertDocMeta(roomId, {
+    project: { ...incomplete.project, githubRepoFullName: lookup.repoFullName },
+  });
+  return "repo-attached";
 }
 
 export type SessionProjectBackfill = (
@@ -383,7 +566,7 @@ export type SessionProjectBackfill = (
  * for the lifetime of the tab.
  */
 export function createSessionProjectBackfiller(
-  resolveProject: () => Promise<LodyProjectRef | null>,
+  defaults: SessionProjectDefaults,
 ): SessionProjectBackfill {
   const settled = new Map<string, SessionProjectBackfillOutcome>();
   const inFlight = new Map<string, Promise<SessionProjectBackfillOutcome>>();
@@ -392,14 +575,14 @@ export function createSessionProjectBackfiller(
     if (decided !== undefined) return decided;
     const running = inFlight.get(sessionId);
     if (running !== undefined) return await running;
-    const attempt = backfillDefaultSessionProject(runtime, sessionId, resolveProject).finally(
-      () => {
-        inFlight.delete(sessionId);
-      },
-    );
+    const attempt = backfillDefaultSessionProject(runtime, sessionId, defaults).finally(() => {
+      inFlight.delete(sessionId);
+    });
     inFlight.set(sessionId, attempt);
     const outcome = await attempt;
-    if (outcome === "attached" || outcome === "not-a-plain-chat") settled.set(sessionId, outcome);
+    if (outcome === "attached" || outcome === "repo-attached" || outcome === "nothing-to-attach") {
+      settled.set(sessionId, outcome);
+    }
     return outcome;
   };
 }
