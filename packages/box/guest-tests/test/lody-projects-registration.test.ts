@@ -68,6 +68,13 @@ describe("blitz-lody-projects registration", () => {
   ): Recorded[] {
     const seen: Recorded[] = [];
     const server: Server = createHttpServer((incoming, response) => {
+      // A registrar killed mid-pass takes its socket with it, and the reply
+      // below then writes to a closed pipe. EPIPE on a request nobody is
+      // waiting for is not a test failure — but unhandled it is an uncaught
+      // exception, which fails the whole FILE and, because vitest attributes
+      // one to whichever file is running, some other file too.
+      incoming.on("error", () => undefined);
+      response.on("error", () => undefined);
       let body = "";
       incoming.on("data", (chunk) => (body += String(chunk)));
       incoming.on("end", () => {
@@ -225,7 +232,7 @@ describe("blitz-lody-projects registration", () => {
     dataDir: string,
     workspaceRoot: string,
     intervalMs: number,
-  ): { kill: () => void; awaitLine: (needle: string) => Promise<void> } {
+  ): { kill: () => Promise<void>; awaitLine: (needle: string) => Promise<void> } {
     const child = spawn(process.execPath, [REGISTRAR], {
       env: {
         ...process.env,
@@ -237,6 +244,7 @@ describe("blitz-lody-projects registration", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     cleanup.push(() => child.kill("SIGKILL"));
+
     let output = "";
     const waiters: { needle: string; resolve: () => void }[] = [];
     const onChunk = (chunk: unknown): void => {
@@ -249,7 +257,13 @@ describe("blitz-lody-projects registration", () => {
     child.stdout?.on("data", onChunk);
     child.stderr?.on("data", onChunk);
     return {
-      kill: () => child.kill("SIGKILL"),
+      // SIGTERM, which the registrar handles with `process.exit(0)`, and awaited
+      // so the pass in flight is over before the test's stand-in server closes.
+      kill: () =>
+        new Promise((resolve) => {
+          child.once("exit", () => resolve());
+          child.kill("SIGTERM");
+        }),
       awaitLine: (needle) =>
         new Promise((resolve) => {
           if (output.includes(needle)) resolve();
@@ -277,7 +291,7 @@ describe("blitz-lody-projects registration", () => {
     writeFileSync(join(workspaceRoot, "later", ".git"), "gitdir: /elsewhere\n");
     await watch.awaitLine(`registered ${join(workspaceRoot, "later")}`);
 
-    watch.kill();
+    await watch.kill();
   }, 20_000);
 
   it("does nothing at all before the daemon has written its catalog", async () => {
