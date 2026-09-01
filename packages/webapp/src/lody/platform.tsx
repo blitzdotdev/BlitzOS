@@ -15,8 +15,9 @@
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConvexProvider, type ConvexReactClient } from "convex/react";
-import { createLocalPlatformProvider, createStore } from "@lody/platform";
+import { createCapabilitySet, createLocalPlatformProvider, createStore } from "@lody/platform";
 import { PlatformContext } from "@lody/platform/react";
+import { lodyExtraCapabilities } from "./v1-scope.js";
 import { AuthenticatedConvexContext } from "@lody/components/hooks/use-authenticated-convex";
 import { AuthProvider } from "@lody/components/providers/convex-provider";
 import { createInertConvexClient } from "./inert-convex.js";
@@ -130,19 +131,20 @@ export interface BlitzPlatformInput {
  * Builds the provider object. Exported separately from the component so a test
  * can assemble it without React.
  *
- * `capabilities` is the EMPTY local set, supplied by
- * `createLocalPlatformProvider`. §7.2 of `plans/LODY-SESSIONS.md` asked for
- * `remoteMachines` as well; that is wrong and is not taken. The box IS the local
- * machine, and that capability means "dispatch to a machine other than the local
- * one", which has no transport here — claiming it with `cloudApi: null` is an
- * invalid assembly by their own contract
- * (`vendor/lody/packages/platform/src/provider.ts:98`).
+ * `capabilities` is the EMPTY local set supplied by
+ * `createLocalPlatformProvider`, plus whatever `lodyExtraCapabilities()` grants
+ * — nothing, in v1. §7.2 of `plans/LODY-SESSIONS.md` asked for `remoteMachines`;
+ * that is wrong and is not taken. The box IS the local machine, and that
+ * capability means "dispatch to a machine other than the local one", which has
+ * no transport here — claiming it with `cloudApi: null` is an invalid assembly
+ * by their own contract (`vendor/lody/packages/platform/src/provider.ts:98`).
+ * The same caveat governs `githubIntegration`; `v1-scope.ts` states it.
  */
 export function createBlitzPlatformProvider(input: BlitzPlatformInput) {
   const { snapshot, viewer, workspaceTitle } = input;
   // Both stores settle in the same tick, as upstream requires: renderer writes
   // and CLI access checks must use one identity, never a half-settled pair.
-  return createLocalPlatformProvider({
+  const local = createLocalPlatformProvider({
     session: createStore({
       status: "authenticated",
       user: { id: snapshot.userId, name: viewer.name, image: viewer.avatarUrl },
@@ -160,6 +162,9 @@ export function createBlitzPlatformProvider(input: BlitzPlatformInput) {
       activeWorkspaceId: snapshot.workspace.workspaceId,
     }),
   });
+  const extra = lodyExtraCapabilities();
+  if (extra.length === 0) return local;
+  return { ...local, capabilities: createCapabilitySet([...local.capabilities.list(), ...extra]) };
 }
 
 export interface BlitzPlatformProvidersProps extends BlitzPlatformInput {

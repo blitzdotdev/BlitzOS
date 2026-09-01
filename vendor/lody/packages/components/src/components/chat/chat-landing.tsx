@@ -380,6 +380,24 @@ interface ChatLandingProps {
    * chat route only; mobile keeps its base-context model.
    */
   onSelectionUrlSync?: (search: ChatLandingSearch) => void;
+  /**
+   * Draw no product hint band above the composer.
+   *
+   * The band has two states and a host may serve neither. `no-machine` resolves
+   * `download-client` outside Electron, so it tells a member on a hosted surface
+   * to install the desktop app, beside a Report-a-bug button that uploads to
+   * Lody and a link to Lody's Discord. `no-agent-config` offers "Go to Settings",
+   * which on a host that mounts no settings surface only flips an atom.
+   *
+   * Off by default, so every upstream call site keeps both states.
+   */
+  hideProductHints?: boolean;
+  /**
+   * Drop the run-config menu's Agent Role row; see
+   * `SessionChatInputAreaProps.hideAgentRoles`, which is the same prop on the
+   * session composer.
+   */
+  hideAgentRoles?: boolean;
   resetDraftKey?: string;
   resetDraftOnKeyChange?: boolean;
 }
@@ -557,6 +575,8 @@ function WorkspaceChatLanding({
   preSelectedProject,
   preSelectedRepo,
   onSelectionUrlSync,
+  hideProductHints = false,
+  hideAgentRoles = false,
   resetDraftKey,
   resetDraftOnKeyChange = true,
 }: ChatLandingProps) {
@@ -3771,14 +3791,18 @@ function WorkspaceChatLanding({
           onRecentRunConfigSelect={handleRecentRunConfigSelect}
           modeOptions={modeOptions}
           selectedModeId={selectedModeId}
-          agentRoles={{
-            items: composerAgentRoleItems,
-            selectedRoleId: activeAgentRole?.id ?? null,
-            onSelect: handleAgentRoleSelect,
-            onCreate: handleAgentRoleCreate,
-            onEdit: handleAgentRoleEdit,
-            machine: scopedMachineId ? (machines.get(scopedMachineId) ?? null) : null,
-          }}
+          agentRoles={
+            hideAgentRoles
+              ? undefined
+              : {
+                  items: composerAgentRoleItems,
+                  selectedRoleId: activeAgentRole?.id ?? null,
+                  onSelect: handleAgentRoleSelect,
+                  onCreate: handleAgentRoleCreate,
+                  onEdit: handleAgentRoleEdit,
+                  machine: scopedMachineId ? (machines.get(scopedMachineId) ?? null) : null,
+                }
+          }
         />
         {/* Permission is part of what a Role pins, so behind one it stops being
             a separate control and is stated in the Role's own face instead. It
@@ -4077,12 +4101,16 @@ function WorkspaceChatLanding({
               cliType: selectedConfig?.cliType,
               agentType: selectedConfig?.agentType,
             }}
-            agentRoles={{
-              items: composerAgentRoleItems,
-              selectedRoleId: activeAgentRole?.id ?? null,
-              onSelect: handleAgentRoleSelect,
-              onCreate: handleAgentRoleCreate,
-            }}
+            agentRoles={
+              hideAgentRoles
+                ? undefined
+                : {
+                    items: composerAgentRoleItems,
+                    selectedRoleId: activeAgentRole?.id ?? null,
+                    onSelect: handleAgentRoleSelect,
+                    onCreate: handleAgentRoleCreate,
+                  }
+            }
           />
         </div>
         <SessionUsagePopover
@@ -4161,10 +4189,14 @@ function WorkspaceChatLanding({
     const repo = freshRepositories?.find((r) => r.fullName === selectedRepo);
     return repo ? !repo.private : undefined;
   }, [freshRepositories, selectedRepo]);
+  // The `@issue` and `@pr` mention categories key off this name and resolve
+  // against the GitHub App; without the capability there is no App to ask.
+  const githubIntegrationAvailable = useAppCapability('githubIntegration');
   const selectedLocalProjectGithubRepoFullName = useMemo(() => {
+    if (!githubIntegrationAvailable) return undefined;
     if (contextType !== 'local') return undefined;
     return resolveLocalProjectGithubRepoFullName(activeLocalGitState, repositories) ?? undefined;
-  }, [activeLocalGitState, contextType, repositories]);
+  }, [activeLocalGitState, contextType, githubIntegrationAvailable, repositories]);
 
   const preparationMachineId = useMemo(() => {
     if (!selectedAgent) return null;
@@ -4270,9 +4302,14 @@ function WorkspaceChatLanding({
         githubRepoFullName: selectedLocalProjectGithubRepoFullName,
       };
     }
-    return { kind: 'github' as const, repoFullName: selectedRepo, isPublic: isSelectedRepoPublic };
+    return {
+      kind: 'github' as const,
+      repoFullName: githubIntegrationAvailable ? selectedRepo : undefined,
+      isPublic: isSelectedRepoPublic,
+    };
   }, [
     contextType,
+    githubIntegrationAvailable,
     isSelectedRepoPublic,
     selectedLocalProject,
     selectedLocalProjectGithubRepoFullName,
@@ -6538,7 +6575,7 @@ function WorkspaceChatLanding({
         }}
         submitLabel={t('chat.send')}
         submittingLabel={t('chat.submitting')}
-        hintType={hintType}
+        hintType={hideProductHints ? null : hintType}
         noMachineVariant={isElectron ? 'daemon-starting' : 'download-client'}
         hintDownloadClientMessage={t('chat.cliHint.downloadClient')}
         hintDownloadClientLabel={t('chat.cliHint.downloadClientButton')}

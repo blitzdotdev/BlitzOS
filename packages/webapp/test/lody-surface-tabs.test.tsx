@@ -138,7 +138,7 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     ]);
   });
 
-  it("removes nothing from session-detail.tsx but seam patches 4, 5 and 6's anchors", () => {
+  it("removes nothing from session-detail.tsx but seam patches 4, 5, 6 and 7's anchors", () => {
     expectSeam("session-detail.tsx", [
       // Seam patch 4's hunks are additive and remove nothing, which is why they
       // are absent from this list and still covered by the subsequence check.
@@ -166,6 +166,16 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // disabled. Its other three hunks add lines and remove none, so they are
       // covered by the subsequence check rather than named here.
       [3358, "      disabled: launcherState === 'disabled' || isCreatingSideSession,"],
+      // Seam patch 7 hunk 12: the page's GitHub state answers the
+      // `githubIntegration` capability, so the two lines of the memo it was
+      // built by are rewritten. Its other three hunks in this file add lines
+      // and remove none.
+      [1564, "    () => getSessionGitHubState(activeTabSession, workspaceOwnerSession),"],
+      [1565, "    [activeTabSession, workspaceOwnerSession]"],
+      // Seam patch 7 hunk 15: `session.focusInput` takes `useCommand`'s second
+      // argument, so its closing line gains one. This is the ONE `});` in the
+      // file the seam declares, which is why the anchor is a line number.
+      [3719, "  });"],
     ]);
   });
 

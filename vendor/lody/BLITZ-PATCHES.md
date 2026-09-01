@@ -80,13 +80,17 @@ git diff --stat <upstream-sha> $(git rev-parse HEAD:vendor/lody) -- . \
   ':!UPSTREAM.md' ':!BLITZ-PATCHES.md'
 ```
 
-Expected after seam patch 5: exactly EIGHT files — the three above with six
+Expected after seam patch 7: exactly THIRTEEN files — the three above with six
 added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2,
 `lib/electron-session-file-sender.ts` from seam patch 3,
 `components/sessions/session-chat-interface.tsx` +
-`components/sessions/session-detail.tsx` from seam patch 4, and
+`components/sessions/session-detail.tsx` from seam patch 4,
 `components/sessions/session-tab-bar.tsx` from seam patch 5, which also adds
-hunks to `session-detail.tsx`.
+hunks to `session-detail.tsx`, and seam patch 7's five new ones:
+`lib/session-github-state.ts`, `components/chat/chat-landing.tsx`,
+`components/chat/unified-project-selector.tsx`,
+`components/sessions/session-chat-input-area.tsx` and
+`components/sessions/session-conversation-diff-panel.tsx`.
 
 ### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
 
@@ -474,6 +478,173 @@ merges.**
   to whatever replaces it — and the detach rule goes with it, or the page loops.
 - If upstream disables the launcher itself, DROP all four hunks and the
   `sideChatRequiresAssistantTurn` line in `packages/webapp/src/lody/router.tsx`.
+
+### 7. Host suppression of surfaces BlitzOS does not serve (v1 scope cuts, 2026-09-01)
+
+**One idea, 40 hunks in seven files, and every one of them is inert by default.**
+The 463-row support matrix (`plans/LODY-SESSIONS.md`, the scope decision) found
+four groups of controls that RENDER in a BlitzOS browser and cannot work there.
+Each one is a control a member can click, and the failure is never at the button:
+it is a toast that lies, a settings screen that never opens, a PR call with no
+GitHub App behind it, or a keyboard chord no dispatcher answers. This patch lets
+the host say so BEFORE the click.
+
+The four groups, and what each is:
+
+| Group | Rows | What renders today |
+|---|---|---|
+| GitHub and pull requests | R16, C17-C19, C65, C72, IC67, IC72, IC96-IC101, SP43, SP44, SP57-SP61, WT15 | A local clone carries a GitHub remote, so `repoFullName` is non-empty, so the info bar's six actions, the PR panel tab, the PR badge, the `@issue`/`@pr` mention categories, the `#123` hydrator and the diff-comment draft all light up against an App that is not there. |
+| Cloud header rows | IC83, IC84, IC88 | "Change owner" (a workspace with one member), "Share with team" (the host serves sharing itself) and "Copy URL" (a deep link built from the daemon slug inside a memory router — it toasts success either way). |
+| The notification prompt | IC60 | Enable asks the browser for a permission nothing consumes, because OneSignal is not mounted. |
+| The hint band | S7, S8, S9, S10 | Outside Electron `noMachineVariant` always resolves `download-client`, so a hosted surface tells the member to install the Lody DESKTOP app, beside Report-a-bug (uploads to Lody), Discord, and a Go-to-Settings button that only flips an atom. |
+
+**TWO MECHANISMS, AND THE CHOICE IS NOT A PREFERENCE.**
+
+1. **GitHub reuses upstream's own gate.** `PLATFORM_CAPABILITIES` already names
+   `githubIntegration` — "GitHub App integration (repo registry, brokered
+   tokens, PR status)" — and `LOCAL_PLATFORM_CAPABILITIES` is empty, so the
+   answer is already `false` in every local build, upstream's included. Seven
+   places just never asked. `auto-archive-pr-watcher.tsx:22`,
+   `general-setting.tsx:110` and `integrations-setting.tsx:270` are the same
+   check, already written. **This half is a bug fix, not a BlitzOS opinion: open
+   it upstream as-is and drop nothing when it merges — there is no prop to drop.**
+2. **The other three are new optional props**, because upstream has no gate for
+   them and inventing a capability for each would be a bigger claim than the
+   suppression. Every one defaults to today's behaviour and no upstream call
+   site passes any of them.
+
+Our side is one constant, `packages/webapp/src/lody/v1-scope.ts`, read by
+`packages/webapp/src/lody/router.tsx` (the props) and
+`packages/webapp/src/lody/platform.tsx` (the capability). A v1 revisit flips one
+field there.
+
+#### The hunks
+
+Line numbers are the vendored tree's BEFORE this patch. For `session-detail.tsx`
+they are the `f3474894` baseline's own numbers (that file is pinned by
+`packages/webapp/test/upstream-baseline/`); for `session-chat-interface.tsx`
+seam patch 4 shifted everything below its line 1910 by five.
+
+`packages/components/src/lib/session-github-state.ts` — the single point every
+GitHub surface reads through
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 78 | `export const getSessionGitHubState = (` | adds a third parameter, `gitHubIntegrationAvailable = true`, and the doc comment that says when to pass it |
+| 2 | 81, 82 | `const repoFullName = (resolveProjectGitHubRepo(...))` and `const latestPr = getLatestPullRequest(sourceSession);` | both answer the flag: `''` and `null` with it off |
+
+Hunk 2 is why the rest is small. `canShowGitHubActions` is `!!repoFullName`,
+`hasExistingPr` is `!!repoFullName && !!latestPr`, and every consumer named in
+the matrix — the info bar (`session-info-action-state.ts:43`), the PR tab
+(`session-detail.tsx:3475`, `:5508`), the PR badge
+(`session-chat-interface.tsx:5135`), the diff panel's `commentsEnabled` and
+`prLinked` (`session-conversation-diff-panel.tsx:662`, `:665`) — is downstream
+of those two values.
+
+`packages/components/src/components/sessions/session-chat-interface.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 3 | 152 | the `@/lib/app-location` import | imports `useAppCapability` |
+| 4 | 1005 | `compact = false,` in `SessionHeaderMenu`'s destructuring | defaults `hideCloudMenuItems` to `false` |
+| 5 | 1032 | `compact?: boolean;` in its inline props type | declares `hideCloudMenuItems?: boolean` |
+| 6 | 1343 | `{owner && !isArchived ? (` | adds `&& !hideCloudMenuItems` — IC83 |
+| 7 | 1388 | `{sharing && sharing.visibility !== 'team' ? (` | the same term — IC84 |
+| 8 | 1473 | the `Copy URL` `<DropdownMenuItem>` | wraps it in `{hideCloudMenuItems ? null : ( … )}` — IC88 |
+| 9 | 1740 | `readOnly?: boolean;` in `SessionChatInterfaceProps` | declares `hideCloudMenuItems`, `hideNotificationPrompt`, `hideAgentRoles` |
+| 10 | 1910 | `readOnly = false,` in the destructuring | defaults all three to `false` |
+| 11 | 2146 | above the `getSessionGitHubState` memo | reads the `githubIntegration` capability |
+| 12 | 2156, 2157 | the memo's body and dependency list | passes it as the third argument |
+| 13 | 5581 | `onOpenReviewSettings={…}` on `<SessionHeaderMenu>` | passes `hideCloudMenuItems` |
+| 14 | 5774 | `<NotificationPermissionPrompt … />` | wraps it in `{hideNotificationPrompt ? null : ( … )}` — IC60 |
+| 15 | 5879 | `session={session}` on `<SessionChatInputArea>` | passes `hideAgentRoles` |
+
+`packages/components/src/components/sessions/session-detail.tsx` (pinned)
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 16 | 214 | the `@/lib/session-github-state` import block | imports `useAppCapability` |
+| 17 | 695 | `readOnly = false,` in the destructuring | defaults the four new props |
+| 18 | 711 | `readOnly?: boolean;` in the inline props type | declares `hideCloudMenuItems`, `hideNotificationPrompt`, `hideAgentRoles`, `keyboardShortcutsAvailable` |
+| 19 | 1563 | above the `getSessionGitHubState` memo | reads the `githubIntegration` capability |
+| 20 | 1564, 1565 | the memo's body and dependency list | passes it as the third argument |
+| 21 | 3719 | the `});` that closes the `session.focusInput` registration | passes `keyboardShortcutsAvailable` as `useCommand`'s second argument — C100 |
+| 22 | 5723 | `readOnly,` in the shared chat-surface props builder | forwards the three `hide*` props to every chat surface the page mounts |
+
+Hunks 20 and 21 are the only three lines this patch removes from the baseline,
+and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
+
+`packages/components/src/components/sessions/session-chat-input-area.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 23 | 17 | the `@/lib/agent-role-form` import | imports `useAppCapability` |
+| 24 | 372 | `session: SessionMeta;` in `SessionChatInputAreaProps` | declares `hideAgentRoles?: boolean` |
+| 25 | 460 | `session,` in the destructuring | defaults it to `false` |
+| 26 | 1926 | `const repoFullName = useMemo(() => resolveSessionRepoFullName(session), [session]);` | answers the capability, so `@issue`/`@pr` and the `#123` hydrator go dark — C17, C18, C19 |
+| 27 | 2168 | `agentRoles={agentRolesProp}` on the mobile run-config sheet | `undefined` when hidden |
+| 28 | 2201 | `agentRoles={agentRolesProp}` on `<DesktopRunConfigMenu>` | `undefined` when hidden — C86-C89, and with no Role selectable C91 cannot fire |
+
+`packages/components/src/components/chat/chat-landing.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 29 | 382 | `onSelectionUrlSync?: …` in `ChatLandingProps` | declares `hideProductHints` and `hideAgentRoles` |
+| 30 | 559 | `onSelectionUrlSync,` in the destructuring | defaults both to `false` |
+| 31 | 3774 | `agentRoles={{ … }}` on the desktop run-config menu | `undefined` when hidden |
+| 32 | 4080 | `agentRoles={{ … }}` on the mobile one | the same |
+| 33 | 4163 | above `selectedLocalProjectGithubRepoFullName` | reads the `githubIntegration` capability and returns `undefined` without it |
+| 34 | 4273 | `return { kind: 'github' …, repoFullName: selectedRepo, … }` in `mentionSource` | drops the repo name without the capability |
+| 35 | 6541 | `hintType={hintType}` | `null` when `hideProductHints` — S7, S8, S9, S10 in one line |
+
+`packages/components/src/components/chat/unified-project-selector.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 36 | 20 | the `@/lib/github-avatar` import | imports `useAppCapability` |
+| 37 | 398 | `const { t } = useTranslation();` in `UnifiedProjectSelectorView` | reads the capability |
+| 38 | 635 | the `repos.connectMore` `<DropdownMenuItem>` | renders it only with the capability — C65 |
+
+`packages/components/src/components/sessions/session-conversation-diff-panel.tsx`
+— the same two-line shape as hunks 11-12, and what takes SP43 and SP44 with it:
+`commentsEnabled` and `prLinked` are both `Boolean(latestPrNumber && repoFullName)`.
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 39 | 47 | the `@/lib/github-token` import | imports `useAppCapability` |
+| 40 | 430, 432, 433 | the `getSessionGitHubState` memo | reads the capability and passes it as the third argument |
+
+#### What this patch does NOT do, and why
+
+- **C55-C57, the MCP picker, needed no hunk.** `attachment-add-menu.tsx:75`
+  already reads `hasMcp = mcpServers.length > 0`, and nothing writes the MCP
+  catalog rows, so the `+` menu offers attachments alone. Pinned rather than
+  patched.
+- **X1-X5, the command palette and the dispatcher, needed no hunk.** Neither
+  `CommandPalette` nor `commands.attach(window)` is mounted, which
+  `packages/webapp/test/lody-terminal-tab-wave3.test.tsx:815-827` already pins
+  from both sides. C100 is the one visible consequence, and hunk 21 is it.
+- **The other 15 `useCommand` registrations in `session-detail.tsx` keep their
+  bindings.** None of them draws anything — X4 says no command is reachable —
+  and gating all sixteen would be fifteen anchors in a pinned file for no
+  member-visible change. If one of them ever grows a rendered affordance the way
+  `session.focusInput` did, it takes the same second argument.
+- **Nothing is deleted.** Two of the four groups are HIDDEN in v1, not
+  abandoned, and a deletion could not carry that distinction.
+
+#### Merge conflict drill
+
+- The capability half re-applies mechanically: whatever computes `repoFullName`
+  or offers a GitHub entry gains `useAppCapability('githubIntegration')`. If
+  upstream adds its own check, **drop that hunk and keep the rest.**
+- If upstream grows a settings surface gate, a notification gate or a
+  host-hints prop, drop the matching prop and pass upstream's instead — the
+  BlitzOS half is one field in `packages/webapp/src/lody/v1-scope.ts`.
+- If `useCommand`'s second argument goes away, hunk 21 becomes a conditional
+  registration around the same call.
+- The four groups and their row ids are restated in `v1-scope.ts`, so a merge
+  that drops a hunk fails `packages/webapp/test/lody-v1-scope.test.tsx` with the
+  surface it let back in.
 
 ## Patches to the published npm artifact (NOT to this tree)
 
