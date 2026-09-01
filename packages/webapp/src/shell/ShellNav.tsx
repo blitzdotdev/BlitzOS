@@ -25,8 +25,6 @@ export type ShellNavProps = {
   onOpenWorkspaceSettings: (workspaceId: string) => void;
   onInviteToWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onSwitchOrg: (orgId: string) => void;
-  onCreateOrg: () => void;
   onOpenDrive: () => void;
   onOpenSettings: () => void;
   onSelectSession: (sessionId: string) => void;
@@ -58,8 +56,6 @@ export function ShellNav({
   onOpenWorkspaceSettings,
   onInviteToWorkspace,
   onCreateWorkspace,
-  onSwitchOrg,
-  onCreateOrg,
   onOpenDrive,
   onOpenSettings,
   onSelectSession,
@@ -83,8 +79,6 @@ export function ShellNav({
           onOpenWorkspaceSettings={onOpenWorkspaceSettings}
           onInviteToWorkspace={onInviteToWorkspace}
           onCreateWorkspace={onCreateWorkspace}
-          onSwitchOrg={onSwitchOrg}
-          onCreateOrg={onCreateOrg}
           onOpenDrive={onOpenDrive}
           onOpenSettings={onOpenSettings}
           onCloseDrawer={onCloseDrawer}

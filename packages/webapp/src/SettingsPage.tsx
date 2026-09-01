@@ -9,30 +9,86 @@ import { MembersPanel } from './settings/MembersPanel';
 import { InvitesPanel } from './settings/InvitesPanel';
 import { UsagePanel } from './settings/UsagePanel';
 import { ComputeCredentialsPanel } from './settings/ComputeCredentialsPanel';
+import { PanelHeader } from './settings/primitives';
 
 function initial(identity: TenantMe['identity']): string {
   return (identity.name || identity.email || 'B').trim().charAt(0).toUpperCase() || 'B';
 }
 
-function PanelHeader({ title, detail, action }: { title: string; detail: string; action?: React.ReactNode }) {
+/** Every organization this account belongs to, as a settings list: the
+ * current one wears the badge, the others carry a Switch action that rebinds
+ * the session and reloads. This replaced the strip's org mark, which read as
+ * a workspace tile (owner annotation 2026-09-01). */
+function OrganizationsSection({
+  viewer,
+  onSwitchOrg,
+  onCreateOrg,
+}: {
+  viewer: TenantMe;
+  onSwitchOrg: (orgId: string) => void;
+  onCreateOrg: () => void;
+}) {
+  const [switching, setSwitching] = useState<string | null>(null);
+  const organizations = viewer.organizations.map(({ org }) => org);
   return (
-    <header className="settings-panel-header">
-      <div>
-        <p>Account surface</p>
-        <h1>{title}</h1>
-        <span>{detail}</span>
+    <section className="settings-credential-section" aria-label="Organizations">
+      <div className="settings-section-heading">
+        <div>
+          <p>Account</p>
+          <h2>Organizations</h2>
+        </div>
+        <button className="webapp-action" type="button" onClick={onCreateOrg}>
+          Create organization
+        </button>
       </div>
-      {action}
-    </header>
+      <div className="settings-credential-list">
+        {organizations.map((org) => {
+          const current = org.id === viewer.org.id;
+          const label = org.name || org.slug;
+          return (
+            <article className="settings-credential-row" key={org.id}>
+              <div>
+                <div className="settings-credential-row__title">
+                  <h3>{label}</h3>
+                  {current && (
+                    <span className="workspace-state-badge workspace-state-badge--active">
+                      current
+                    </span>
+                  )}
+                </div>
+                {current && <p>Workspaces, Drive and connections act in this organization.</p>}
+              </div>
+              {!current && (
+                <div className="settings-row-actions">
+                  <button
+                    className="webapp-action"
+                    type="button"
+                    disabled={switching !== null}
+                    onClick={() => {
+                      setSwitching(org.id);
+                      onSwitchOrg(org.id);
+                    }}
+                  >{switching === org.id ? 'Switching…' : 'Switch'}</button>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
 function ProfilePanel({
   viewer,
   onSignOut,
+  onSwitchOrg,
+  onCreateOrg,
 }: {
   viewer: TenantMe;
   onSignOut: () => Promise<void>;
+  onSwitchOrg: (orgId: string) => void;
+  onCreateOrg: () => void;
 }) {
   const displayName = viewer.identity.name || viewer.identity.email;
   const [signingOut, setSigningOut] = useState(false);
@@ -50,6 +106,7 @@ function ProfilePanel({
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Profile">
       <PanelHeader
+        eyebrow="Account surface"
         title="Profile"
         detail="Identity from the BlitzOS control plane."
         action={(
@@ -77,10 +134,14 @@ function ProfilePanel({
       <dl className="settings-definition-list">
         <div><dt>Display name</dt><dd>{displayName}</dd></div>
         <div><dt>Identity</dt><dd>{viewer.identity.email}</dd></div>
-        <div><dt>Workspace scope</dt><dd>{viewer.org.name || viewer.org.slug}</dd></div>
         <div><dt>Role</dt><dd>{viewer.membership.role}</dd></div>
       </dl>
       <AppearanceControl />
+      <OrganizationsSection
+        viewer={viewer}
+        onSwitchOrg={onSwitchOrg}
+        onCreateOrg={onCreateOrg}
+      />
     </section>
   );
 }
@@ -95,7 +156,10 @@ function AppearanceControl() {
   ];
   return (
     <div className="settings-appearance">
-      <span className="settings-appearance-label">Appearance</span>
+      <span className="settings-appearance-copy">
+        <span className="settings-appearance-label">Appearance</span>
+        <span className="settings-appearance-note">Applies to this device only.</span>
+      </span>
       <div className="settings-appearance-options" role="radiogroup" aria-label="Theme">
         {choices.map((choice) => (
           <button
@@ -110,7 +174,6 @@ function AppearanceControl() {
           >{choice.label}</button>
         ))}
       </div>
-      <span className="settings-appearance-note">Applies to this device only.</span>
     </div>
   );
 }
@@ -147,6 +210,8 @@ export function SettingsPage({
   onOpenWorkspace,
   onSignOut,
   onLeftOrg,
+  onSwitchOrg,
+  onCreateOrg,
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
@@ -157,6 +222,8 @@ export function SettingsPage({
   onOpenWorkspace: (workspaceId: string) => void;
   onSignOut: () => Promise<void>;
   onLeftOrg: () => void;
+  onSwitchOrg: (orgId: string) => void;
+  onCreateOrg: () => void;
 }) {
   const sections: Array<{ id: SettingsSection; label: string }> = [
     { id: 'profile', label: 'Profile' },
@@ -201,7 +268,14 @@ export function SettingsPage({
         >Ask us on Discord</a>
       </aside>
       <div className="settings-content">
-        {section === 'profile' && <ProfilePanel viewer={viewer} onSignOut={onSignOut} />}
+        {section === 'profile' && (
+          <ProfilePanel
+            viewer={viewer}
+            onSignOut={onSignOut}
+            onSwitchOrg={onSwitchOrg}
+            onCreateOrg={onCreateOrg}
+          />
+        )}
         {section === 'members' && (
           <MembersPanel
             client={client}

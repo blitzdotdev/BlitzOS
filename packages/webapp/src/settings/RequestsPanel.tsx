@@ -2,6 +2,7 @@ import type { CredentialRequestView } from '@blitzos/schema';
 import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient, CredentialRequestState } from '../api';
 import { caughtErrorMessage } from '../error-message';
+import { PanelHeader } from './primitives';
 
 export type StatefulCredentialRequest = CredentialRequestView & {
   state: CredentialRequestState;
@@ -68,14 +69,12 @@ export function RequestsPanel({
 
   return (
     <section className="settings-panel settings-requests" role="tabpanel" aria-label="Requests">
-      <header className="settings-panel-header">
-        <div>
-          <p>Connect inbox</p>
-          <h1>Requests</h1>
-          <span>Connections agents asked for and did not find, across every workspace.</span>
-        </div>
-        <span className="settings-count-badge">{pendingCount} pending</span>
-      </header>
+      <PanelHeader
+        eyebrow="Connect inbox"
+        title="Requests"
+        detail="Connections agents asked for and did not find, across every workspace."
+        action={<span className="settings-count-badge">{pendingCount} pending</span>}
+      />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       {loading ? (
         <p className="settings-credential-state">Loading access requests…</p>

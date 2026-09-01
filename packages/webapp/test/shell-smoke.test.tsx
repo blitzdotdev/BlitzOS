@@ -111,10 +111,12 @@ function railSession(container: HTMLElement, label: string): HTMLButtonElement |
   return railSessions(container).find((row) => row.textContent === label);
 }
 
-function createOrgItem(container: HTMLElement): HTMLButtonElement | undefined {
+/* Org switching and creation live on Settings → Profile now that the strip
+ * lost its org mark (owner annotation 2026-09-01). */
+function createOrgButton(container: HTMLElement): HTMLButtonElement | undefined {
   return [...container.querySelectorAll<HTMLButtonElement>(
-    '[role="menu"][aria-label="Organizations"] [role="menuitem"]',
-  )].find((item) => item.textContent?.includes("Create organization"));
+    'section[aria-label="Organizations"] button',
+  )].find((item) => item.textContent === "Create organization");
 }
 
 /** The mobile navigation toggle reports the drawer state, so no test needs to
@@ -209,6 +211,9 @@ const tenantMe = {
   organizations: [{
     membership: { id: "membership-one", role: "admin" as const, status: "active" as const },
     org: { id: "org-one", slug: "example", name: "Example", vmLimit: 10 },
+  }, {
+    membership: { id: "membership-side", role: "member" as const, status: "active" as const },
+    org: { id: "org-two", slug: "side", name: "Side", vmLimit: 10 },
   }],
 };
 
@@ -417,7 +422,10 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("renders the real organization and workspace after /me", async () => {
+  it("renders the real workspace after /me", async () => {
+    // The org name no longer prints in the shell chrome — since the strip
+    // lost its org mark, it lives on Settings → Profile, which the
+    // profile-panel test below pins.
     const view = await render(
       <CloudApp
         client={runningClient()}
@@ -428,7 +436,6 @@ describe("webapp shell smoke", () => {
     await settle();
 
     expect(view.container.querySelector('button[aria-label="workspace-running-name"]')).not.toBeNull();
-    expect(view.container.textContent).toContain("Example");
     await view.unmount();
   });
 
@@ -538,7 +545,7 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("opens the Create organization dialog from inside a workspace", async () => {
+  it("keeps the strip to workspace tiles: no org control outside settings", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     const view = await render(
       <CloudApp
@@ -549,18 +556,45 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    await click(view.container.querySelector<HTMLButtonElement>('button[aria-label="Organization: Example"]'));
-    await click(createOrgItem(view.container));
-    expect(document.querySelector('[aria-label="Create organization"]')).not.toBeNull();
+    expect(view.container.querySelector('button[aria-label="Organization: Example"]')).toBeNull();
+    expect(view.container.querySelector('[role="menu"][aria-label="Organizations"]')).toBeNull();
     await view.unmount();
   });
 
-  it("creates a second organization from the rail organization menu", async () => {
+  it("switches organization from the profile panel and reloads into it", async () => {
+    const switchOrg = vi.fn(async () => undefined);
+    const reload = stubReload();
+    window.history.replaceState({}, "", "/settings");
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), switchOrg }}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const rows = view.container.querySelectorAll('section[aria-label="Organizations"] article');
+    expect([...rows].map((row) => row.querySelector("h3")?.textContent)).toEqual(["Example", "Side"]);
+    expect(rows[0]?.textContent).toContain("current");
+
+    const switchButton = [...rows[1]!.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Switch");
+    await click(switchButton);
+    await settle();
+
+    expect(switchOrg).toHaveBeenCalledWith("org-two");
+    expect(reload).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
+  it("creates a second organization from the profile panel", async () => {
     const createOrg = vi.fn(async () => ({
       org: { id: "org-two", slug: "side", name: "Side", vmLimit: 10 },
       membership: { id: "membership-two", role: "admin" as const, status: "active" as const },
     }));
     const reload = stubReload();
+    window.history.replaceState({}, "", "/settings");
     const view = await render(
       <CloudApp
         client={{ ...runningClient(), createOrg }}
@@ -570,9 +604,8 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    await click(view.container.querySelector<HTMLButtonElement>('button[aria-label="Organization: Example"]'));
-    const create = createOrgItem(view.container);
-    expect(create?.textContent).toContain("Create organization");
+    const create = createOrgButton(view.container);
+    expect(create).not.toBeUndefined();
     await click(create);
 
     const dialog = document.querySelector<HTMLElement>('[aria-label="Create organization"]');

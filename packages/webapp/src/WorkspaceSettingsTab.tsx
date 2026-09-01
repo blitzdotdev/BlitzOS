@@ -7,6 +7,7 @@ import type {
 import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
 import { machineTypeLabel } from './MachineCatalogGrid';
 import { machineTypeOptions } from './MachineTypeSelect';
+import { SettingsSwitch } from './settings/primitives';
 import { WebAppSelectMenu } from './WebAppSelectMenu';
 import type { CloudWorkspaceModel } from './workspace-store';
 
@@ -95,7 +96,7 @@ function ReposEditor({
             </span>
             {canManage && (
               <button
-                className="webapp-action"
+                className="webapp-action webapp-action--danger"
                 type="button"
                 aria-label={`Remove ${entry.repo}`}
                 onClick={() => onRemove(entry.repo)}
@@ -202,31 +203,30 @@ export function WorkspaceSettingsTab({
             />
             <small>Applies to new machines; each member's type is their own.</small>
           </div>
-          <label className="blueprint-field workspace-settings-toggle">
-            <input
-              type="checkbox"
-              aria-label="Provision a machine when a member is added"
-              checked={draft.autoProvision}
-              onChange={(event) => {
-                const autoProvision = event.currentTarget.checked;
-                setDraft((current) => ({ ...current, autoProvision }));
-              }}
-            />
-            Provision a machine when a member is added
-          </label>
+          {/* Part of the draft, not a self-saving switch: the whole form
+            * travels in one PATCH, so the row flips the draft and Save says
+            * when it lands. */}
+          <SettingsSwitch
+            label="Provision a machine when a member is added"
+            checked={draft.autoProvision}
+            onChange={(autoProvision) =>
+              setDraft((current) => ({ ...current, autoProvision }))}
+          />
           <AgentRulesPicker
             client={client}
             value={draft.agentRuleId}
             onChange={(agentRuleId) => setDraft((current) => ({ ...current, agentRuleId }))}
           />
-          <button
-            className="webapp-action webapp-action--primary"
-            type="button"
-            disabled={changes === null}
-            onClick={() => { if (changes !== null) onSave(changes); }}
-          >
-            Save settings
-          </button>
+          <div className="workspace-settings-actions">
+            <button
+              className="webapp-action webapp-action--primary"
+              type="button"
+              disabled={changes === null}
+              onClick={() => { if (changes !== null) onSave(changes); }}
+            >
+              Save settings
+            </button>
+          </div>
         </div>
       ) : (
         <dl className="workspace-details-list">
@@ -244,6 +244,7 @@ export function WorkspaceSettingsTab({
           </div>
         </dl>
       )}
+      <h2>About</h2>
       <dl className="workspace-details-list">
         <div><dt>Your role</dt><dd>{workspace.myRole ?? 'Organization admin'}</dd></div>
         <div><dt>Connections</dt><dd>{workspace.connections.length}</dd></div>

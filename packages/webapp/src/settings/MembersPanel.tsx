@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient, MemberView } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { DriveAvatar } from '../files/DriveAvatar';
+import { PanelHeader } from './primitives';
 
 export function MembersPanel({
   client,
@@ -39,7 +40,7 @@ export function MembersPanel({
 
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Members">
-      <header className="settings-panel-header"><div><p>Organization</p><h1>Members</h1><span>People who can work in this organization.</span></div></header>
+      <PanelHeader eyebrow="Organization" title="Members" detail="People who can work in this organization." />
       {admin && (
         <form className="settings-form" onSubmit={(event) => {
           event.preventDefault();
@@ -92,6 +93,7 @@ export function MembersPanel({
           </div>
         ))}
       </div>
+      <div className="settings-section-heading settings-danger-heading"><div><h2>Danger zone</h2></div></div>
       <div className="settings-danger">
         <div className="settings-danger-copy">
           <strong>Leave {orgName}</strong>

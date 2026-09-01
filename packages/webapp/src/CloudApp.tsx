@@ -1180,9 +1180,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         : moveTab(tabs, id, target.region, target.beforeId)));
     },
   });
-  const statusWorkspace = activeWorkspace
-    ? `workspace ${activeWorkspace.lifecycleStatus}`
-    : 'workspace pending';
   const hasControllableWorkspace = store.workspaces.some(({ canControl }) => canControl);
   const webAppBooting = route.page === 'webApp' && (
     !loaded || (hasControllableWorkspace && !activeWorkspace)
@@ -1385,10 +1382,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         setDetails({ workspaceId, tab: 'members', focusAddMember: true });
       }}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
-      onSwitchOrg={(orgId) => {
-        void client.switchOrg(orgId).then(() => window.location.reload());
-      }}
-      onCreateOrg={() => setShowCreateOrg(true)}
       onOpenDrive={() => navigateTo(drivePath())}
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
@@ -1488,6 +1481,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         onLeaveSettings={returnToWebApp}
         onSignOut={signOut}
         onLeftOrg={() => window.location.reload()}
+        onSwitchOrg={(orgId) => {
+          void client.switchOrg(orgId).then(() => window.location.reload());
+        }}
+        onCreateOrg={() => setShowCreateOrg(true)}
         activeWorkspaceTitle={activeWorkspace?.title}
       />
     );
@@ -1650,40 +1647,36 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             )}
           </section>
 
-          {(!mobileWebApp || activeWorkspace) && (
+          {/* The statusline is mobile chrome: the touch terminal's paste /
+            * enter / keyboard controls and the drawer toggle, which mobile has
+            * no rail strip to carry. Desktop dropped the bar (owner annotation
+            * 2026-09-01: wasted space — the rail strip already owns the drawer
+            * toggle and the pending badge, and the strip names the workspace).
+            * The one desktop remnant is the transient sign-in pair, because
+            * the terminal OAuth hop has no other affordance. */}
+          {(mobileWebApp
+            ? Boolean(activeWorkspace)
+            : Boolean(activeSessionUrl && ttydActiveTerminalType && terminalSignInUrl)) && (
             <footer
               className="webapp-statusline"
-              aria-label={mobileWebApp ? 'Workspace actions' : 'Workspace status'}
+              aria-label={mobileWebApp ? 'Workspace actions' : 'Terminal sign-in'}
             >
-              {!mobileWebApp && (
+              {!mobileWebApp && terminalSignInUrl && (
                 <>
-                  <span className="webapp-statusline__box">{statusWorkspace}</span>
-                  <span
-                    className="webapp-statusline__path"
-                    title={activeWorkspace?.title ?? 'workspace pending'}
-                    role="status"
-                    aria-live="polite"
+                  <button
+                    className="webapp-statusline__sign-in"
+                    type="button"
+                    onClick={() => window.open(terminalSignInUrl, '_blank', 'noopener')}
                   >
-                    {activeWorkspace?.title ?? 'workspace pending'}
-                  </span>
-                  {activeSessionUrl && ttydActiveTerminalType && terminalSignInUrl && (
-                    <>
-                      <button
-                        className="webapp-statusline__sign-in"
-                        type="button"
-                        onClick={() => window.open(terminalSignInUrl, '_blank', 'noopener')}
-                      >
-                        Open sign-in link
-                      </button>
-                      <button
-                        className="webapp-statusline__paste-code"
-                        type="button"
-                        onClick={() => setShowPasteCodeModal(true)}
-                      >
-                        Paste code
-                      </button>
-                    </>
-                  )}
+                    Open sign-in link
+                  </button>
+                  <button
+                    className="webapp-statusline__paste-code"
+                    type="button"
+                    onClick={() => setShowPasteCodeModal(true)}
+                  >
+                    Paste code
+                  </button>
                 </>
               )}
               {mobileWebApp && (
@@ -1761,15 +1754,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   )}
                 </>
               )}
-              {activeWorkspace && (
+              {mobileWebApp && activeWorkspace && (
                 <button
                   className="webapp-statusline__files"
                   type="button"
                   aria-label={filesOpen ? 'Close workspace drawer' : 'Open workspace drawer'}
-                  aria-controls={mobileWebApp ? 'webapp-workspace-drawer' : undefined}
-                  aria-expanded={mobileWebApp ? filesDrawerOpen : undefined}
+                  aria-controls="webapp-workspace-drawer"
+                  aria-expanded={filesDrawerOpen}
                   aria-pressed={filesOpen}
-                  title={`${filesOpen ? 'Hide' : 'Show'} workspace drawer (Cmd/Ctrl+B)`}
+                  title={`${filesOpen ? 'Hide' : 'Show'} workspace drawer`}
                   onClick={toggleFiles}
                 >
                   <FileIcon aria-hidden="true" />

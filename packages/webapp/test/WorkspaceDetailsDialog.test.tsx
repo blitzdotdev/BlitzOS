@@ -306,8 +306,10 @@ describe('WorkspaceDetailsDialog', () => {
         ?.set?.call(name, 'renamed-workspace');
       name.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    // The auto-provision row is a SettingsSwitch: its accessible name comes
+    // from the wrapping label, so the query pins the role.
     const toggle = view.container.querySelector<HTMLInputElement>(
-      '[aria-label="Provision a machine when a member is added"]',
+      '#workspace-details-settings-panel input[role="switch"]',
     );
     await act(async () => toggle?.click());
 

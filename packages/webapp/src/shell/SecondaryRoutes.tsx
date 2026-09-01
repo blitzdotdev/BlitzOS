@@ -41,6 +41,10 @@ export type SecondaryRoutesProps = {
   onLeaveSettings: () => void;
   onSignOut: () => Promise<void>;
   onLeftOrg: () => void;
+  /** Org switching lives on Settings → Profile since the strip lost its org
+   * mark; the switch rebinds the session, so the caller reloads. */
+  onSwitchOrg: (orgId: string) => void;
+  onCreateOrg: () => void;
   activeWorkspaceTitle: string | undefined;
 };
 
@@ -80,6 +84,8 @@ export function SecondaryRoutes({
   onLeaveSettings,
   onSignOut,
   onLeftOrg,
+  onSwitchOrg,
+  onCreateOrg,
   activeWorkspaceTitle,
 }: SecondaryRoutesProps) {
   const notice = error === null
@@ -98,6 +104,8 @@ export function SecondaryRoutes({
             onOpenWorkspace={onOpenWorkspace}
             onSignOut={onSignOut}
             onLeftOrg={onLeftOrg}
+            onSwitchOrg={onSwitchOrg}
+            onCreateOrg={onCreateOrg}
           />
         ) : (
           <div className="settings-page-state settings-page-state--loading" role="status">
@@ -106,6 +114,9 @@ export function SecondaryRoutes({
         )}
         {notice}
         {updateNotice}
+        {/* The create-org dialog opens from Profile now, so the shared dialog
+          * layer must exist on this branch too, not only beside the rail. */}
+        {dialogs}
       </main>
     );
   }

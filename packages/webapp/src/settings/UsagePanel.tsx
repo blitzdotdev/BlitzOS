@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { OrgUsageCaptureResponse } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../api';
 import { folderPagePath } from '../sessions-page-state';
+import { PanelHeader, SettingsSwitch } from './primitives';
 
 /** Admin switch for org-wide agent-usage capture. While it is on, every
  * workspace mirrors its agents' native transcripts into an admin-only Drive
@@ -36,29 +37,26 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
 
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Usage">
-      <header className="settings-panel-header"><div><p>Organization</p><h1>Agent usage capture</h1><span>Collect every workspace&rsquo;s agent transcripts for evals.</span></div></header>
+      <PanelHeader
+        eyebrow="Organization"
+        title="Agent usage capture"
+        detail={<>Collect every workspace&rsquo;s agent transcripts for evals.</>}
+      />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       {state === null ? (
         !error && <div className="drive-empty" role="status">Loading…</div>
       ) : (
         <>
-          <label className="tplf-share">
-            <input
-              type="checkbox"
-              role="switch"
-              aria-label="Agent usage capture"
-              checked={state.enabled}
-              disabled={busy}
-              onChange={(event) => toggle(event.currentTarget.checked)}
-            />
-            <span>
-              Capture agent usage across the organization. Workspaces mirror
-              their agents&rsquo; native transcripts into an admin-only Drive
-              folder, grouped per workspace. Members&rsquo; workspaces never see
-              the folder.
-            </span>
-          </label>
-          <p className="settings-appearance-note" role="status">
+          <SettingsSwitch
+            label="Capture agent usage"
+            description={<>Workspaces mirror their agents&rsquo; native transcripts
+              into an admin-only Drive folder, grouped per workspace.
+              Members&rsquo; workspaces never see the folder.</>}
+            checked={state.enabled}
+            disabled={busy}
+            onChange={toggle}
+          />
+          <p className="settings-note" role="status">
             {state.enabled
               ? 'Capture is on. New workspace activity syncs into the usage folder.'
               : state.folderId === null
@@ -66,7 +64,7 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
                 : 'Capture is off. The usage folder and everything already collected are kept.'}
           </p>
           {state.folderId !== null && (
-            <p className="settings-appearance-note">
+            <p className="settings-note">
               <a href={folderPagePath(state.folderId)}>Open the usage folder in Drive</a>
               {' — share it explicitly to grant access; it has no org-wide role.'}
             </p>

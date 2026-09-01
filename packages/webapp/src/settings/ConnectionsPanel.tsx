@@ -4,6 +4,7 @@ import type { ControlPlaneClient } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
 import { OrgConnectionsSection } from './OrgConnectionsSection';
+import { PanelHeader } from './primitives';
 
 function healthLabel(health: ProviderHealthView | undefined): string | null {
   if (health === undefined || health.checkedAt === null) return null;
@@ -67,13 +68,11 @@ export function ConnectionsPanel({
 
   return (
     <section className="settings-panel settings-connections" role="tabpanel" aria-label="Connections">
-      <header className="settings-panel-header">
-        <div>
-          <p>Your identities</p>
-          <h1>Connections</h1>
-          <span>Agents in workspaces you own act as you on these providers.</span>
-        </div>
-      </header>
+      <PanelHeader
+        eyebrow="Your identities"
+        title="Connections"
+        detail="Agents in workspaces you own act as you on these providers."
+      />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
       {/* Account scope: a grant authorizes, it does not connect. Connecting

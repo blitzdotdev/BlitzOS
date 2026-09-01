@@ -1,3 +1,9 @@
+/* Settings surface, on the surface ladder: header and nav rail on surface-1,
+ * the content pane a step lighter on surface-2, cards raised a step lighter
+ * again on surface-0 (owner ruling 2026-09-01). Hovers, separators and tinted
+ * fills come off the one neutral at four alphas (--mod-*). Only the toast
+ * floats; nothing here gets a shadow. */
+
 .settings-shell {
   width: 100%;
   height: 100dvh;
@@ -7,7 +13,7 @@
   grid-template-rows: var(--headerH) minmax(0, 1fr);
   overflow: hidden;
   color: var(--ink);
-  background: var(--paper);
+  background: var(--surface-1);
   font: 13.5px/1.6 var(--font-ui);
 }
 
@@ -20,7 +26,7 @@
   height: var(--headerH);
   align-items: stretch;
   border-bottom: 1px solid var(--rule);
-  background: var(--paper);
+  background: var(--surface-1);
 }
 
 .settings-header button {
@@ -40,7 +46,7 @@
 .settings-header button:hover,
 .settings-header button:focus-visible {
   color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  background: var(--mod-8);
   outline: 0;
 }
 
@@ -66,15 +72,26 @@
   display: none;
 }
 
+/* Nav rail one rung below the pane: 220px on surface-1, 36px items, 8px
+ * padding (settings-design-kit layout table). */
 .settings-page {
   display: grid;
   grid-column: 1;
   grid-row: 2;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: 210px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   color: var(--ink);
-  background: var(--paper);
+  background: var(--surface-2);
+}
+
+.settings-page-state {
+  display: grid;
+  gap: 3px;
+  padding: 13px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  color: var(--muted);
 }
 
 .settings-page-state--loading {
@@ -84,8 +101,9 @@
 
 .settings-side {
   min-width: 0;
-  padding: 10px 8px;
+  padding: 8px;
   border-right: 1px solid var(--rule);
+  background: var(--surface-1);
 }
 
 .settings-side > span {
@@ -116,14 +134,15 @@
 }
 
 .settings-nav-button:hover,
-.settings-nav-button:focus-visible,
-.settings-nav-button--active {
+.settings-nav-button:focus-visible {
   color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  background: var(--mod-8);
   outline: 0;
 }
 
 .settings-nav-button--active {
+  color: var(--ink);
+  background: var(--mod-12);
   font-weight: 650;
 }
 
@@ -143,6 +162,11 @@
   outline: 0;
 }
 
+/* Mobile section strip; the rail replaces it from 900px up. */
+.settings-segments {
+  display: none;
+}
+
 .settings-content {
   min-width: 0;
   min-height: 0;
@@ -152,8 +176,9 @@
   scrollbar-width: thin;
 }
 
+/* Content column caps at 696px (settings-design-kit layout table). */
 .settings-panel {
-  width: min(760px, calc(100% - 48px));
+  width: min(696px, calc(100% - 48px));
   min-height: 100%;
   margin: 0 auto;
   padding: 30px 0 56px;
@@ -165,7 +190,7 @@
   align-items: end;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--rule);
 }
@@ -205,15 +230,36 @@
   border-radius: 7px;
 }
 
+.settings-panel-header > .settings-count-badge {
+  display: inline-flex;
+  margin: 0;
+  padding: 4px 7px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font: 700 9px/1.2 var(--font-ui);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+/* Quiet helper line under a control (kit: description under the row). */
+.settings-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* ---------------------------------------------------------------- profile */
+
 .settings-identity {
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr);
   align-items: center;
   gap: 13px;
-  margin-bottom: 12px;
-  padding: 14px;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
+  margin-bottom: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--mod-12);
+  border-radius: var(--r-card);
+  background: var(--surface-0);
 }
 
 .settings-identity-avatar {
@@ -254,8 +300,9 @@
 .settings-definition-list {
   margin: 0;
   overflow: hidden;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
+  border: 1px solid var(--mod-12);
+  border-radius: var(--r-card);
+  background: var(--surface-0);
 }
 
 .settings-definition-list > div {
@@ -263,8 +310,8 @@
   min-width: 0;
   grid-template-columns: minmax(130px, .65fr) minmax(0, 1.35fr);
   gap: 16px;
-  padding: 11px 13px;
-  border-top: 1px solid var(--rule);
+  padding: 11px 16px;
+  border-top: 1px solid var(--mod-8);
 }
 
 .settings-definition-list > div:first-child {
@@ -287,126 +334,168 @@
   white-space: nowrap;
 }
 
-.settings-custody-state,
-.settings-page-state {
+/* Theme is three options, so it stays a radio strip (kit: 3–5 get radios);
+ * the active pill is a fill and a border, never a shadow. */
+.settings-appearance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 24px;
+  padding: 13px 16px;
+  border: 1px solid var(--mod-12);
+  border-radius: var(--r-card);
+  background: var(--surface-0);
+}
+
+.settings-appearance-copy {
   display: grid;
+  min-width: 0;
   gap: 3px;
-  padding: 13px 14px;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
+}
+
+.settings-appearance-label {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+/* The strip is a groove: it recesses to the pane color so the active pill,
+ * on card color, reads raised in both palettes. */
+.settings-appearance-options {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-control);
+  background: var(--surface-2);
+}
+
+.settings-appearance-option {
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: 7px;
   color: var(--muted);
+  background: transparent;
+  font: 600 11.5px var(--font-ui);
+  cursor: pointer;
 }
 
-.settings-custody-state .webapp-action {
-  width: max-content;
-  margin-top: 8px;
+.settings-appearance-option:hover,
+.settings-appearance-option:focus-visible {
+  color: var(--ink);
+  outline: 0;
+}
+
+.settings-appearance-option--active {
+  border-color: var(--mod-20);
+  color: var(--ink);
+  background: var(--surface-0);
+}
+
+.settings-appearance-note {
   color: var(--muted);
-  text-decoration: none;
+  font-size: 11px;
 }
 
-@media (max-width: 899px) {
-  .settings-shell {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* ------------------------------------------------------------- switch row
+ * The one switch shape (settings/primitives.tsx). A switch writes on change
+ * and rolls back on failure; it never sits next to a Save button. */
 
-  .settings-header,
-  .settings-page {
-    grid-column: 1;
-  }
-
-  .settings-back {
-    min-height: 44px;
-  }
-
-  .settings-page {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .settings-section-select .webapp-select-trigger {
-    min-height: 40px;
-    padding: 0 11px;
-    border: 1px solid var(--rule);
-    color: var(--ink);
-    background: color-mix(in oklab, var(--ink) 4%, var(--paper));
-    font: 12.5px/1.5 var(--font-ui);
-  }
-
-  .settings-section-select .webapp-select-chevron {
-    transform: rotate(180deg);
-  }
-
-  .settings-side {
-    display: none;
-  }
-
-  .settings-content {
-    grid-row: 2;
-  }
-
-  .settings-panel {
-    width: calc(100% - 28px);
-    padding-top: 26px;
-  }}
-
-@media (max-width: 520px) {
-  .settings-header button {
-    min-width: 50px;
-    min-height: 44px;
-    padding: 0 13px;
-  }
-
-  .settings-header .settings-back span {
-    display: none;
-  }
-
-  .settings-header > strong {
-    padding: 0 14px;
-  }
-
-  .settings-panel {
-    width: calc(100% - 24px);
-    padding: 20px 0 42px;
-  }
-
-  .settings-panel-header {
-    align-items: start;
-    margin-bottom: 18px;
-  }
-
-  .settings-panel-header h1 {
-    font-size: 21px;
-  }
-
-  .settings-panel-header span {
-    max-width: 250px;
-  }
-
-  .settings-definition-list > div {
-    grid-template-columns: minmax(100px, .8fr) minmax(0, 1.2fr);
-    gap: 10px;
-  }}
-
-/* ================= blitz additions: identity + drive surfaces ============ */
-
-.settings-segments {
-  display: none;
+.settings-switch-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 16px;
+  border: 1px solid var(--mod-12);
+  border-radius: var(--r-card);
+  background: var(--surface-0);
+  cursor: pointer;
 }
 
-.settings-panel-header > .settings-count-badge {
-  display: inline-flex;
-  margin: 0;
-  padding: 4px 7px;
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  font: 700 9px/1.2 var(--font-ui);
-  letter-spacing: .08em;
-  text-transform: uppercase;
+.settings-switch-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
 }
 
-.settings-credential-section + .settings-credential-section {
-  margin-top: 32px;
+.settings-switch-copy strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settings-switch-copy span {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.settings-switch-row input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.settings-switch-track {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  background: var(--mod-16);
+  transition: background 120ms ease;
+}
+
+.settings-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: transform 120ms ease;
+}
+
+.settings-switch-row input:checked ~ .settings-switch-track {
+  background: var(--accent);
+}
+
+.settings-switch-row input:checked ~ .settings-switch-track::after {
+  transform: translateX(16px);
+  background: var(--paper);
+}
+
+.settings-switch-row input:focus-visible ~ .settings-switch-track {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-switch-row:has(input:disabled) {
+  cursor: default;
+}
+
+.settings-switch-row input:disabled ~ .settings-switch-track {
+  opacity: .5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-switch-track,
+  .settings-switch-track::after {
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------- credential sections
+ * Section rhythm (kit): 16px between sections, 8px inside a group. */
+
+.settings-credential-section + .settings-credential-section,
+.settings-appearance + .settings-credential-section {
+  margin-top: 24px;
 }
 
 .settings-section-heading {
@@ -415,7 +504,7 @@
   align-items: end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .settings-section-heading p,
@@ -442,22 +531,27 @@
 }
 
 .settings-credential-state {
-  margin: 0;
-  padding: 15px 14px;
-  border: 1px solid var(--rule);
+  margin: 0 0 8px;
+  padding: 15px 16px;
+  border: 1px solid var(--mod-12);
   border-radius: var(--r-card);
   color: var(--faint);
   font: 11px/1.5 var(--font-ui);
 }
 
+.settings-credential-state:last-child {
+  margin-bottom: 0;
+}
+
 .settings-credential-list {
   overflow: hidden;
-  border: 1px solid var(--rule);
+  border: 1px solid var(--mod-12);
   border-radius: var(--r-card);
+  background: var(--surface-0);
 }
 
 .settings-compute-card + .settings-compute-card {
-  border-top: 1px solid var(--rule);
+  border-top: 1px solid var(--mod-8);
 }
 
 .settings-compute-card .settings-credential-row {
@@ -471,7 +565,7 @@
 }
 
 .settings-compute-form {
-  padding: 0 14px 14px 62px;
+  padding: 0 16px 16px 64px;
 }
 
 .settings-credential-row {
@@ -480,8 +574,8 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 18px;
-  padding: 12px 14px;
-  border-top: 1px solid var(--rule);
+  padding: 12px 16px;
+  border-top: 1px solid var(--mod-8);
 }
 
 .settings-credential-row:first-child {
@@ -539,8 +633,18 @@
   font: 10.5px/1 var(--font-ui);
 }
 
+/* Critical style (kit): irreversible actions read red, everywhere the class
+ * appears — settings, dialogs, the drawer. */
 .webapp-action--danger {
-  color: var(--accent);
+  border-color: color-mix(in oklab, var(--ansi-red) 40%, var(--rule));
+  color: var(--ansi-red);
+}
+
+.webapp-action--danger:hover:not(:disabled),
+.webapp-action--danger:focus-visible:not(:disabled) {
+  border-color: var(--ansi-red);
+  color: var(--ansi-red);
+  background: color-mix(in oklab, var(--ansi-red) 12%, transparent);
 }
 
 .settings-request-row time {
@@ -550,6 +654,274 @@
 .files-library-toolbar .webapp-action input {
   display: none;
 }
+
+/* ------------------------------------------------------ members + invites */
+
+.settings-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--mod-12);
+  border-radius: var(--r-card);
+  background: var(--surface-0);
+}
+
+.settings-field {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 220px;
+  gap: 5px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-field--compact {
+  flex: 0 1 140px;
+}
+
+.settings-field input,
+.settings-field select {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--mod-16);
+  border-radius: var(--r-item);
+  color: var(--ink);
+  background: var(--paper);
+  font: 12.5px/1 var(--font-ui);
+  outline: 0;
+}
+
+.settings-field input:focus,
+.settings-field select:focus {
+  border-color: var(--accent);
+}
+
+.settings-form .webapp-action {
+  height: 32px;
+}
+
+/* The seat counter, above the invite form. It answers "how many can I add"
+ * before a person finds out by being refused. Only rendered where a billing
+ * service is attached; without one there is no cap to draw. */
+.settings-seats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  padding: 9px 16px;
+  border: 1px solid var(--mod-12);
+  border-radius: var(--r-card);
+  background: var(--surface-0);
+  font-size: 11.5px;
+}
+
+.settings-seats-bar {
+  overflow: hidden;
+  flex: 1;
+  min-width: 90px;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--mod-12);
+}
+
+.settings-seats-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* Already past the limit, which happens when a plan is downgraded under the
+ * people already seated. Nobody is removed; the bar says so. */
+.settings-seats-fill--over {
+  background: var(--ansi-red);
+}
+
+.settings-seats b {
+  font-weight: 600;
+}
+
+.settings-seats .webapp-action {
+  padding: 2px 10px;
+  font-size: 11px;
+}
+
+/* The seat refusal, which is the one error that carries a way out. It borrows
+ * the one-time-link block's accent frame because both are things to act on,
+ * not things to read. */
+.settings-paywall {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 13px 16px;
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, var(--rule));
+  border-radius: var(--r-card);
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface-0));
+}
+
+.settings-paywall strong {
+  font-size: 12.5px;
+}
+
+.settings-paywall p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.settings-paywall-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-paywall-price {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.settings-onetime {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, var(--rule));
+  border-radius: var(--r-card);
+  background: color-mix(in oklab, var(--accent) 8%, var(--surface-0));
+  font-size: 12px;
+}
+
+.settings-onetime-row {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-onetime-row input {
+  min-width: 0;
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--mod-16);
+  border-radius: var(--r-item);
+  color: var(--ink);
+  background: var(--paper);
+  font: 12px/1 var(--font-ui);
+}
+
+.settings-people {
+  display: grid;
+  margin-top: 24px;
+  overflow: hidden;
+  border: 1px solid var(--mod-12);
+  border-radius: var(--r-card);
+  background: var(--surface-0);
+}
+
+.settings-person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+}
+
+.settings-person + .settings-person {
+  border-top: 1px solid var(--mod-8);
+}
+
+.settings-person--disabled .settings-person-copy {
+  opacity: 0.55;
+}
+
+.settings-person-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.settings-person-copy strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-person-copy span {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-person-role {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-person-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-person-actions select {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--mod-16);
+  border-radius: var(--r-item);
+  color: var(--ink);
+  background: var(--paper);
+  font: 12px/1 var(--font-ui);
+}
+
+/* Danger zone (kit): its own headed section at the bottom, red frame,
+ * critical button. */
+.settings-danger-heading {
+  margin-top: 24px;
+}
+
+.settings-danger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in oklab, var(--ansi-red) 35%, var(--rule));
+  border-radius: var(--r-card);
+  background: var(--surface-0);
+}
+
+.settings-danger-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.settings-danger-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-danger-copy span {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.settings-danger .webapp-action[disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ------------------------------------------------------------- responsive */
 
 @media (max-width: 899px) {
   .settings-shell {
@@ -578,6 +950,7 @@
     overflow-x: auto;
     padding: 7px 12px;
     border-bottom: 1px solid var(--rule);
+    background: var(--surface-1);
     scrollbar-width: none;
   }
 
@@ -593,8 +966,7 @@
 
   .settings-segments .settings-nav-button--active {
     color: var(--ink);
-    background: var(--hover);
-    box-shadow: 0 0 0 1px var(--rule) inset;
+    background: var(--mod-12);
   }
 
   .settings-side {
@@ -648,7 +1020,7 @@
 
   .settings-panel-header {
     align-items: start;
-    margin-bottom: 18px;
+    margin-bottom: 16px;
   }
 
   .settings-panel-header h1 {
@@ -664,6 +1036,10 @@
     gap: 10px;
   }
 
+  .settings-appearance {
+    flex-wrap: wrap;
+  }
+
   .settings-credential-row {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -677,7 +1053,7 @@
   }
 
   .settings-compute-form {
-    padding-left: 14px;
+    padding-left: 16px;
   }
 
   .settings-row-actions {
@@ -686,310 +1062,6 @@
   }
 }
 
-/* ================= blitz additions: appearance ============ */
-
-.settings-appearance {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--rule);
-}
-
-.settings-appearance-label {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.settings-appearance-options {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: var(--r-control);
-  background: var(--sunken);
-}
-
-.settings-appearance-option {
-  padding: 5px 14px;
-  border: 0;
-  border-radius: 7px;
-  color: var(--muted);
-  background: transparent;
-  font: 600 11.5px var(--font-ui);
-  cursor: pointer;
-}
-
-.settings-appearance-option:hover {
-  color: var(--ink);
-}
-
-.settings-appearance-option--active {
-  color: var(--ink);
-  background: var(--paper);
-  box-shadow: 0 1px 3px color-mix(in oklab, #000 20%, transparent);
-}
-
-.settings-appearance-note {
-  color: var(--faint);
-  font-size: 11px;
-}
-
-/* ================= blitz additions: members + invites ============ */
-
-.settings-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
-  margin-top: 18px;
-  padding: 14px;
-  border-radius: var(--r-control);
-  background: var(--sunken);
-}
-
-.settings-field {
-  display: grid;
-  min-width: 0;
-  flex: 1 1 220px;
-  gap: 5px;
-  color: var(--faint);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.settings-field--compact {
-  flex: 0 1 140px;
-}
-
-.settings-field input,
-.settings-field select {
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-item);
-  color: var(--ink);
-  background: var(--paper);
-  font: 12.5px/1 var(--font-ui);
-  outline: 0;
-}
-
-.settings-field input:focus,
-.settings-field select:focus {
-  border-color: var(--accent);
-}
-
-.settings-form .webapp-action {
-  height: 32px;
-}
-
-/* The seat counter, above the invite form. It answers "how many can I add"
- * before a person finds out by being refused. Only rendered where a billing
- * service is attached; without one there is no cap to draw. */
-.settings-seats {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 0 14px;
-  padding: 9px 12px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-control);
-  background: var(--sunken);
-  font-size: 11.5px;
-}
-
-.settings-seats-bar {
-  overflow: hidden;
-  flex: 1;
-  min-width: 90px;
-  height: 5px;
-  border-radius: var(--r-pill);
-  background: color-mix(in oklab, var(--ink) 10%, var(--paper));
-}
-
-.settings-seats-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
-
-/* Already past the limit, which happens when a plan is downgraded under the
- * people already seated. Nobody is removed; the bar says so. */
-.settings-seats-fill--over {
-  background: var(--ansi-red);
-}
-
-.settings-seats b {
-  font-weight: 600;
-}
-
-.settings-seats .webapp-action {
-  padding: 2px 10px;
-  font-size: 11px;
-}
-
-/* The seat refusal, which is the one error that carries a way out. It borrows
- * the one-time-link block's accent frame because both are things to act on,
- * not things to read. */
-.settings-paywall {
-  display: grid;
-  gap: 10px;
-  margin: 12px 0 0;
-  padding: 13px 14px;
-  border: 1px solid color-mix(in oklab, var(--accent) 40%, var(--rule));
-  border-radius: var(--r-control);
-  background: color-mix(in oklab, var(--accent) 8%, var(--paper));
-}
-
-.settings-paywall strong {
-  font-size: 12.5px;
-}
-
-.settings-paywall p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 11.5px;
-}
-
-.settings-paywall-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.settings-paywall-price {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 11.5px;
-}
-
-.settings-onetime {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in oklab, var(--accent) 40%, var(--rule));
-  border-radius: var(--r-control);
-  background: color-mix(in oklab, var(--accent) 8%, var(--paper));
-  font-size: 12px;
-}
-
-.settings-onetime-row {
-  display: flex;
-  gap: 8px;
-}
-
-.settings-onetime-row input {
-  min-width: 0;
-  flex: 1;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-item);
-  color: var(--ink);
-  background: var(--paper);
-  font: 12px/1 var(--font-ui);
-}
-
-.settings-people {
-  display: grid;
-  margin-top: 18px;
-}
-
-.settings-person {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 4px;
-}
-
-.settings-person + .settings-person {
-  border-top: 1px solid var(--rule);
-}
-
-.settings-person--disabled .settings-person-copy {
-  opacity: 0.55;
-}
-
-.settings-person-copy {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 2px;
-}
-
-.settings-person-copy strong {
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-person-copy span {
-  overflow: hidden;
-  color: var(--faint);
-  font-size: 11.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-danger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 24px;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  padding: 14px 16px;
-}
-
-.settings-danger-copy {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.settings-danger-copy strong {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.settings-danger-copy span {
-  color: var(--faint);
-  font-size: 11.5px;
-}
-
-.settings-danger .webapp-action[disabled] {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.settings-person-role {
-  flex: none;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.settings-person-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-}
-
-.settings-person-actions select {
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-item);
-  color: var(--ink);
-  background: var(--paper);
-  font: 12px/1 var(--font-ui);
-}
 /* --------------------------------------------- connect picker
  * One component, three hosts (settings page, workspace drawer, create-workspace
  * dialog), so every rule here paints with global tokens only. The drawer adds

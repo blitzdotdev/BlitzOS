@@ -38,8 +38,6 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
       onOpenWorkspaceSettings={() => undefined}
       onInviteToWorkspace={() => undefined}
       onCreateWorkspace={() => undefined}
-      onSwitchOrg={() => undefined}
-      onCreateOrg={() => undefined}
       onOpenDrive={() => undefined}
       onOpenSettings={() => undefined}
       onCloseDrawer={() => undefined}
@@ -194,31 +192,14 @@ describe("workspace strip", () => {
     await view.unmount();
   });
 
-  it("marks only the current organization and closes from a click anywhere outside", async () => {
+  it("carries no org control: only workspace tiles live above the strip's tools", async () => {
+    // The org mark read as a workspace tile, so org switching moved to
+    // Settings → Profile (owner annotation 2026-09-01).
     const view = await render(strip());
-    const menu = () => view.container.querySelector<HTMLElement>(
-      '[role="menu"][aria-label="Organizations"]',
-    );
-    expect(menu()?.hidden).toBe(true);
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Organization: Acme"]',
-    )?.click());
-    expect(menu()?.hidden).toBe(false);
-    const checked = [...menu()!.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
-      .filter((item) => item.getAttribute("aria-checked") === "true")
-      .map(({ textContent }) => textContent);
-    expect(checked).toEqual(["Acme✓"]);
-    const other = menu()!.querySelector<HTMLElement>('[role="menuitemradio"][aria-checked="false"]');
-    expect(other?.textContent).toBe("Side");
-
-    const backdrop = view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Close organization menu"]',
-    );
-    expect(backdrop).not.toBeNull();
-    await act(async () => backdrop?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
-    expect(menu()?.hidden).toBe(true);
-    expect(view.container.querySelector('button[aria-label="Close organization menu"]')).toBeNull();
+    expect(view.container.querySelector('button[aria-label="Organization: Acme"]')).toBeNull();
+    expect(view.container.querySelector('[role="menu"][aria-label="Organizations"]')).toBeNull();
+    // One separator remains (above the account edge), not the org divider.
+    expect(view.container.querySelectorAll(".shell-strip__sep").length).toBe(1);
     await view.unmount();
   });
 

@@ -8,6 +8,8 @@
   background: color-mix(in oklab, var(--terminal-background) 84%, transparent);
 }
 
+/* On the settings ladder: the dialog body is the content pane (surface-2);
+ * each blueprint section below is a raised card (surface-0). */
 .create-workspace-dialog {
   width: min(960px, 100%);
   height: min(820px, calc(100dvh - 24px));
@@ -18,7 +20,7 @@
   border: 1px solid var(--rule);
   border-radius: var(--r-card);
   color: var(--ink);
-  background: var(--paper);
+  background: var(--surface-2);
   font: 13px/1.6 var(--font-ui);
 }
 
@@ -120,8 +122,9 @@
   display: grid;
   gap: 14px;
   padding: 16px;
-  border: 1px solid var(--rule);
+  border: 1px solid var(--mod-12);
   border-radius: var(--r-card);
+  background: var(--surface-0);
 }
 
 .blueprint-selection__heading {
@@ -187,6 +190,9 @@
   border-radius: var(--r-item);
   overflow: hidden;
   color: var(--muted);
+  /* Pane color: the pickable tiles recess against the raised section card,
+   * like the theme picker's groove (owner annotation 2026-09-01). */
+  background: var(--surface-2);
   cursor: pointer;
 }
 
@@ -345,20 +351,11 @@
   padding: 10px 12px;
 }
 
+/* A `.webapp-action` that matches the 40px select beside it; the base class
+ * carries the border, color and hover. */
 .blueprint-agent-rules-edit {
-  min-height: 38px;
+  min-height: 40px;
   padding: 0 14px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-control);
-  background: transparent;
-  color: var(--ink);
-  cursor: pointer;
-  font: 11px/1 var(--font-ui);
-}
-
-.blueprint-agent-rules-edit:hover,
-.blueprint-agent-rules-edit:focus-visible {
-  border-color: var(--accent);
 }
 
 /* The backdrop is .webapp-modal-screen, shared with every other modal. */
@@ -370,7 +367,7 @@
   border: 1px solid var(--rule);
   border-radius: var(--r-card);
   color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 2%, var(--paper));
+  background: var(--surface-2);
   font-family: var(--font-ui);
 }
 
