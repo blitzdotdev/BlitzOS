@@ -481,7 +481,7 @@ merges.**
 
 ### 7. Host suppression of surfaces BlitzOS does not serve (v1 scope cuts, 2026-09-01)
 
-**One idea, 38 hunks in seven files, and every one of them is inert by default.**
+**One idea, 40 hunks in seven files, and every one of them is inert by default.**
 The 463-row support matrix (`plans/LODY-SESSIONS.md`, the scope decision) found
 four groups of controls that RENDER in a BlitzOS browser and cannot work there.
 Each one is a control a member can click, and the failure is never at the button:
@@ -606,9 +606,13 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
 | 38 | 635 | the `repos.connectMore` `<DropdownMenuItem>` | renders it only with the capability — C65 |
 
 `packages/components/src/components/sessions/session-conversation-diff-panel.tsx`
-carries the same two-line shape as hunks 11-12 (the import at 47, the capability
-and the third argument at 430-434), which is what takes SP43 and SP44 with it:
+— the same two-line shape as hunks 11-12, and what takes SP43 and SP44 with it:
 `commentsEnabled` and `prLinked` are both `Boolean(latestPrNumber && repoFullName)`.
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 39 | 47 | the `@/lib/github-token` import | imports `useAppCapability` |
+| 40 | 430, 432, 433 | the `getSessionGitHubState` memo | reads the capability and passes it as the third argument |
 
 #### What this patch does NOT do, and why
 
