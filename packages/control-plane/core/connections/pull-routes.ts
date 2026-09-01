@@ -1,6 +1,6 @@
 import { first, rows } from "../db.js";
 import { HttpError, readJson, requiredString } from "../http.js";
-import { authenticateBox } from "../oauth.js";
+import { authenticateBox, machinePrincipal } from "../oauth.js";
 import type { Principal } from "../principals.js";
 import type { CoreRouter, RuntimeFactory } from "../runtime.js";
 import { requireWorkspaceAdmin } from "../workspace-access.js";
@@ -70,15 +70,12 @@ export async function boxCaller(
   return {
     workspace,
     machineId: box.id,
-    principal: {
-      id: box.principalId,
-      unixName: "blitz",
-      harnesses: [],
-      membershipId: membership?.id ?? null,
-      orgId: membership === null ? null : workspace.org_id,
-      role: membership?.role ?? null,
-      platformOperator: box.platformOperator,
-    },
+    principal: machinePrincipal(
+      box,
+      membership === null
+        ? null
+        : { id: membership.id, orgId: workspace.org_id, role: membership.role },
+    ),
   };
 }
 
