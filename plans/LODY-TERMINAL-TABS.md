@@ -464,8 +464,21 @@ theirs.
 Two differences from a session tab, both worth stating in the confirm copy we do
 NOT show: closing a session tab archives or deletes a real session
 (`session-detail.tsx:2120`); closing a terminal tab deletes a row in
-`webapp_state` and **leaves the tmux session running on the box**. That is
-today's behaviour and this plan does not change it.
+`webapp_state` and **ends the tmux session on the box**.
+
+> **Amendment (QA sweep TABS-1, ruled).** This section said the close left the
+> session running and that the plan did not change it. It leaked: 20 s after a
+> close `tmux ls` still listed `term-70`, and its shell or agent kept the
+> memory, for the life of the box. The ruling is that a closed tab ends its
+> session. `closeTtydSessionNow` (`CloudApp.tsx`) — the one place either strip
+> closes a tab — posts the tab's session type and key to the box's
+> `POST /terminal/kill`, which runs `blitz-term <type> <key> kill`, which runs
+> `tmux kill-session -t "=<type>-<id>"`. blitz-term keeps owning the session
+> NAME, so the door never restates the naming rule.
+>
+> **Only a close.** §4.4 stands unchanged: a reload, a navigation, a workspace
+> switch and a dropped tunnel all re-attach, and none of them reaches the door.
+> A closed websocket still means nothing on the box.
 
 ### 4.4 Survive a refresh
 

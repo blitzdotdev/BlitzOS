@@ -24,7 +24,7 @@ if [ "$#" -eq 0 ]; then
   plain_shell
 fi
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "terminal: expected <terminal|claude|codex> <session-key> [ro]" >&2
+  echo "terminal: expected <terminal|claude|codex> <session-key> [ro|kill]" >&2
   exit 2
 fi
 
@@ -49,12 +49,22 @@ if [ "${#session_key}" -gt 128 ]; then
   echo "terminal: session key must be at most 128 characters" >&2
   exit 2
 fi
-if [ "$mode" != rw ] && [ "$mode" != ro ]; then
-  echo "terminal: optional third argument must be ro" >&2
+if [ "$mode" != rw ] && [ "$mode" != ro ] && [ "$mode" != kill ]; then
+  echo "terminal: optional third argument must be ro or kill" >&2
   exit 2
 fi
 
 session="$session_prefix-$session_key"
+
+if [ "$mode" = kill ]; then
+  # Only an explicit tab CLOSE reaches this branch. A disconnect, a reload and
+  # a navigation all leave the session running, which is what makes re-attach
+  # the normal path (plans/LODY-TERMINAL-TABS.md §4.3, §4.4). The session name
+  # is built above, so the close door never has to know the naming rule.
+  # An absent session is a success: the tab is gone either way.
+  tmux kill-session -t "=$session" 2>/dev/null || :
+  exit 0
+fi
 
 if [ "$mode" = ro ]; then
   # An observer attaches to what is already running and never starts

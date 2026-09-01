@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -2475,6 +2476,102 @@ func TestSharedTicketReachesOnlyTheSessionDaemon(t *testing.T) {
 		}
 		if got := <-observed; got.body != "{}|" {
 			t.Errorf("bridge saw %q, want %q", got.body, "{}|")
+		}
+	})
+}
+
+// TestTerminalKillEndsOneNamedSession pins the close door (QA sweep TABS-1):
+// a closed terminal tab left its tmux session running for good, one leaked
+// agent process per close. The door carries the tab's own type and key, and it
+// is the ONLY thing that ends a session — a websocket that goes away is a
+// reload or a lost tunnel, and both re-attach.
+func TestTerminalKillEndsOneNamedSession(t *testing.T) {
+	const secret = "terminal-kill-secret"
+	const workspaceID = "workspace-terminal-kill"
+	type killed struct{ sessionType, sessionKey string }
+	newGateway := func(failure error) (*gateway, *[]killed) {
+		tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
+		calls := &[]killed{}
+		return &gateway{
+			terminal:               &url.URL{Scheme: "http", Host: closedLoopbackAddress(t)},
+			controlPlaneOriginPath: writeOriginFile(t, "https://cp.example"),
+			webAppTokenPath:        tokenPath,
+			workspaceIDPath:        workspacePath,
+			transport:              http.DefaultTransport,
+			killTerminal: func(sessionType, sessionKey string) error {
+				*calls = append(*calls, killed{sessionType, sessionKey})
+				return failure
+			},
+		}, calls
+	}
+	ticket := func(role string) string {
+		return signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID: workspaceID, UserID: role + "-user", MembershipID: role + "-member",
+			Role: role, Exp: time.Now().Unix() + 60,
+		})
+	}
+	post := func(handler *gateway, credential, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "http://box"+terminalKillPath, strings.NewReader(body))
+		request.Header.Set(webAppTokenHeader, credential)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	t.Run("an editor's close ends the tab's own session", func(t *testing.T) {
+		handler, calls := newGateway(nil)
+		response := post(handler, ticket("editor"), `{"type":"terminal","key":"70"}`)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204; body = %q", response.Code, response.Body.String())
+		}
+		if want := []killed{{"terminal", "70"}}; !reflect.DeepEqual(*calls, want) {
+			t.Fatalf("killed %v, want %v", *calls, want)
+		}
+	})
+
+	t.Run("a viewer never ends one", func(t *testing.T) {
+		handler, calls := newGateway(nil)
+		response := post(handler, ticket("viewer"), `{"type":"claude","key":"70"}`)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", response.Code)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("a viewer killed %v", *calls)
+		}
+	})
+
+	t.Run("a GET never ends one", func(t *testing.T) {
+		handler, calls := newGateway(nil)
+		request := httptest.NewRequest(http.MethodGet, "http://box"+terminalKillPath, nil)
+		request.Header.Set(webAppTokenHeader, ticket("owner"))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("status = %d, want 405", response.Code)
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("a GET killed %v", *calls)
+		}
+	})
+
+	t.Run("a target without a key is refused", func(t *testing.T) {
+		handler, calls := newGateway(nil)
+		for _, body := range []string{`{"type":"terminal"}`, `{"type":"","key":"70"}`, `{}`, `not json`} {
+			response := post(handler, ticket("owner"), body)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("%s status = %d, want 400", body, response.Code)
+			}
+		}
+		if len(*calls) != 0 {
+			t.Fatalf("a malformed target killed %v", *calls)
+		}
+	})
+
+	t.Run("a refusal on the box is reported, not swallowed", func(t *testing.T) {
+		handler, _ := newGateway(errors.New("blitz-term: unsupported session type"))
+		response := post(handler, ticket("owner"), `{"type":"nonesuch","key":"70"}`)
+		if response.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want 502", response.Code)
 		}
 	})
 }
