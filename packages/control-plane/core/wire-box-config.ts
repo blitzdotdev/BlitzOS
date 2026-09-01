@@ -1,3 +1,12 @@
+/** The `box config v1` wire vocabulary (CLAUDE.md cross-runtime contracts).
+ *
+ * Split out of `core/wire.ts` for the same reason `wire-machines.ts` was: the
+ * machine view now names a `BoxUpdateOutcome`, and a type-only import back
+ * from `wire.ts` would close a cycle between the two halves of one mirror.
+ * `core/wire.ts` re-exports every name here, so nothing else has to know about
+ * the seam. Its mirror is `packages/schema/src/box-config.ts`, held equal by
+ * `test/wire-drift.test.ts`. */
+
 /** The envelope `GET /workspaces/self/box-config` returns to the VM host.
  *
  * This crosses a runtime boundary: the producer is the control-plane Worker

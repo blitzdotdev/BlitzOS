@@ -1,0 +1,8 @@
+{
+  "request": {
+    "ref": "https://cp.example/box-image/manifest.json",
+    "outcome": "load-failed",
+    "tag": "blitz-box:2026-08-30"
+  },
+  "accepts": true
+}
