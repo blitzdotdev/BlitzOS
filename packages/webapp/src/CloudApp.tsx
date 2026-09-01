@@ -1428,6 +1428,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // to be read. It keeps one desktop surface: a box the browser cannot reach is
   // the one thing the member must not keep clicking through.
   const boxUnreachable = boxGateway === 'unreachable';
+  // The sign-in pair belongs to a terminal that is asking for it. One name for
+  // that condition, so the bar's presence and its contents cannot disagree.
+  const desktopTerminalSignInUrl = activeSessionUrl && ttydActiveTerminalType
+    ? terminalSignInUrl
+    : null;
   const hasControllableWorkspace = store.workspaces.some(({ canControl }) => canControl);
   const webAppBooting = route.page === 'webApp' && (
     !loaded || (hasControllableWorkspace && !activeWorkspace)
@@ -2072,8 +2077,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             * sentence, because an unreachable box has no other surface. */}
           {(mobileWebApp
             ? Boolean(activeWorkspace)
-            : boxUnreachable
-              || Boolean(activeSessionUrl && ttydActiveTerminalType && terminalSignInUrl)) && (
+            : boxUnreachable || desktopTerminalSignInUrl !== null) && (
             <footer
               className="webapp-statusline"
               aria-label={mobileWebApp
@@ -2085,12 +2089,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   {statusWorkspace}
                 </span>
               )}
-              {!mobileWebApp && terminalSignInUrl && (
+              {!mobileWebApp && desktopTerminalSignInUrl && (
                 <>
                   <button
                     className="webapp-statusline__sign-in"
                     type="button"
-                    onClick={() => window.open(terminalSignInUrl, '_blank', 'noopener')}
+                    onClick={() => window.open(desktopTerminalSignInUrl, '_blank', 'noopener')}
                   >
                     Open sign-in link
                   </button>
