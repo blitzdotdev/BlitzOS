@@ -278,6 +278,11 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           hideNotificationPrompt={V1.hideNotificationPrompt}
           hideAgentRoles={V1.hideAgentRoles}
           keyboardShortcutsAvailable={V1.keyboardShortcutsAvailable}
+          // Seam patch 10. `hideLanguageServiceActions` takes Go to Definition
+          // and Find References off the editor (SP26): the box runs no language
+          // service, so both answered every identifier with "Host language
+          // service does not support this file".
+          hideLanguageServiceActions={V1.hideLanguageServiceActions}
           {...hostTabs}
         />
       </AppThemeShell>

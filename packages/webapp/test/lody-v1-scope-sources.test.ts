@@ -44,6 +44,7 @@ describe("the v1 scope constant", () => {
       agentRolesAndMcp: false,
       keyboardShortcuts: false,
       cloudSurfaces: false,
+      languageService: false,
     });
   });
 
@@ -58,6 +59,7 @@ describe("the v1 scope constant", () => {
       hideProductHints: true,
       hideAgentRoles: true,
       keyboardShortcutsAvailable: false,
+      hideLanguageServiceActions: true,
     });
   });
 });
@@ -92,6 +94,8 @@ describe("router.tsx hands the suppression to both mounted components", () => {
       "hideNotificationPrompt",
       "hideAgentRoles",
       "keyboardShortcutsAvailable",
+      // Seam patch 10's one suppression, wired the same way.
+      "hideLanguageServiceActions",
     ]) {
       expect(detail, `SessionDetail receives ${prop}`).toContain(`${prop}={V1.${prop}}`);
     }
@@ -232,6 +236,7 @@ describe("seam patch 7 is declared where a merge agent reads it", () => {
       "hideNotificationPrompt?: boolean;",
       "hideAgentRoles?: boolean;",
       "keyboardShortcutsAvailable?: boolean;",
+      "hideLanguageServiceActions?: boolean;",
     ]) {
       expect(detail, `session-detail.tsx declares ${prop}`).toContain(prop);
     }
