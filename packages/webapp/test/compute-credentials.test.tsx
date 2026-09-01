@@ -66,6 +66,8 @@ describe('compute credential settings', () => {
       onOpenWorkspace: () => undefined,
       onSignOut: async () => undefined,
       onLeftOrg: () => undefined,
+      onSwitchOrg: () => undefined,
+      onCreateOrg: () => undefined,
     };
     const memberView = await render(
       <SettingsPage {...common} viewer={viewer} section="profile" />,

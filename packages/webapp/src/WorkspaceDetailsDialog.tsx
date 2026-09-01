@@ -201,7 +201,7 @@ function CredentialsTab({
               <span className="workspace-credential-added">{dateLabel(credential.createdAt)}</span>
               {canManage && (
                 <button
-                  className="webapp-action"
+                  className="webapp-action webapp-action--danger"
                   type="button"
                   aria-label={`Revoke ${credential.name}`}
                   onClick={() => onRevoke(credential.name)}

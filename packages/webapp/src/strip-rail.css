@@ -27,31 +27,7 @@
   user-select: none;
 }
 
-/* The org popover keeps the shell's menu markup, so the wrapper drops the
-   rail header box it used to carry. */
-.shell-strip__orgwrap {
-  height: auto;
-  flex: none;
-  border-bottom: 0;
-}
-
-/* The org mark and the workspace tiles share one size so they can never
-   drift apart (user ruling 2026-08-29). */
 .shell-strip { --strip-tile: 35px; }
-
-.shell-orgmark {
-  display: grid;
-  width: var(--strip-tile);
-  height: var(--strip-tile);
-  flex: none;
-  place-items: center;
-  border: 0;
-  border-radius: 10px;
-  color: var(--paper);
-  background: var(--accent);
-  font: 700 13px/1 var(--font-ui);
-  cursor: pointer;
-}
 
 .shell-strip__sep {
   width: 20px;
@@ -175,13 +151,6 @@
 
 /* The org popover reuses the shell's menu skin; only the anchor changes,
    because the strip is 48px wide and it opens beside it. */
-.shell-strip__menu {
-  top: 0;
-  right: auto;
-  left: calc(100% + 6px);
-  width: 220px;
-}
-
 /* --------------------------------------------------------------- column 2 */
 .session-rail {
   display: flex;

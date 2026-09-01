@@ -42,17 +42,17 @@ export type WorkspaceStripProps = {
   onOpenWorkspaceSettings: (workspaceId: string) => void;
   onInviteToWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onSwitchOrg: (orgId: string) => void;
-  onCreateOrg: () => void;
   onOpenDrive: () => void;
   onOpenSettings: () => void;
   onCloseDrawer: () => void;
 };
 
-/** Column one of the shell (plans/mockups/session-rail.html `#strip`): the org
- * mark, one tile per workspace, the create tile, Drive, and the avatar on the
- * bottom edge, which goes straight to settings. The workspace panels are the
- * right icon strip's job. */
+/** Column one of the shell (plans/mockups/session-rail.html `#strip`): one
+ * tile per workspace, the create tile, Drive, and the avatar on the bottom
+ * edge, which goes straight to settings. Only workspace tiles live up top —
+ * the org mark read as one of them, so org switching moved to Settings →
+ * Profile (owner annotation 2026-09-01). The workspace panels are the right
+ * icon strip's job. */
 export function WorkspaceStrip({
   workspaces,
   viewer,
@@ -62,29 +62,16 @@ export function WorkspaceStrip({
   onOpenWorkspaceSettings,
   onInviteToWorkspace,
   onCreateWorkspace,
-  onSwitchOrg,
-  onCreateOrg,
   onOpenDrive,
   onOpenSettings,
   onCloseDrawer,
 }: WorkspaceStripProps) {
-  const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [tileMenu, setTileMenu] = useState<TileMenu | null>(null);
   const [renaming, setRenaming] = useState<
     { workspaceId: string; value: string; left: number; top: number } | null
   >(null);
   const renameInput = useRef<HTMLInputElement>(null);
-  const orgLabel = viewer?.org.name || viewer?.org.slug || 'Organization';
   const userLabel = viewer?.identity.name || viewer?.identity.email || 'BlitzOS';
-
-  useEffect(() => {
-    if (!orgMenuOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOrgMenuOpen(false);
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [orgMenuOpen]);
 
   useEffect(() => {
     if (tileMenu === null && renaming === null) return;
@@ -112,7 +99,6 @@ export function WorkspaceStrip({
   const openTileMenu = (event: ReactMouseEvent, workspace: CloudWorkspaceModel) => {
     event.preventDefault();
     setRenaming(null);
-    setOrgMenuOpen(false);
     setTileMenu({
       workspaceId: workspace.id,
       left: Math.max(8, Math.min(event.clientX, window.innerWidth - TILE_MENU_WIDTH)),
@@ -138,73 +124,6 @@ export function WorkspaceStrip({
         aria-label="Close workspace navigation"
         onClick={onCloseDrawer}
       >×</button>
-
-      <div className="webapp-org-wrap shell-strip__orgwrap">
-        <button
-          className="shell-orgmark"
-          type="button"
-          aria-label={`Organization: ${orgLabel}`}
-          title={orgLabel}
-          aria-haspopup="menu"
-          aria-expanded={orgMenuOpen}
-          aria-controls="webapp-org-menu"
-          onClick={() => setOrgMenuOpen((open) => !open)}
-        >{orgLabel.trim().charAt(0).toUpperCase() || 'B'}</button>
-        {orgMenuOpen && (
-          <button
-            className="webapp-org-backdrop"
-            type="button"
-            aria-label="Close organization menu"
-            tabIndex={-1}
-            onMouseDown={() => setOrgMenuOpen(false)}
-          />
-        )}
-        <div
-          className="webapp-org-menu shell-strip__menu"
-          id="webapp-org-menu"
-          role="menu"
-          aria-label="Organizations"
-          hidden={!orgMenuOpen}
-        >
-          <div className="webapp-org-menu-label">organization</div>
-          <div className="webapp-org-menu-current" role="menuitemradio" aria-checked="true">
-            <span>{orgLabel}</span>
-            <span className="webapp-org-menu-check" aria-hidden="true">✓</span>
-          </div>
-          {(viewer?.organizations ?? [])
-            .map(({ org }) => org)
-            .filter((candidate) => candidate.id !== viewer?.org.id)
-            .map((candidate) => (
-              <button
-                className="webapp-org-menu-current webapp-org-menu-switch"
-                type="button"
-                role="menuitemradio"
-                aria-checked="false"
-                key={candidate.id}
-                onClick={() => {
-                  setOrgMenuOpen(false);
-                  onSwitchOrg(candidate.id);
-                }}
-              >
-                <span>{candidate.name || candidate.slug}</span>
-              </button>
-            ))}
-          <button
-            className="webapp-org-menu-create"
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOrgMenuOpen(false);
-              onCreateOrg();
-            }}
-          >
-            <span aria-hidden="true">+</span>
-            <span>Create organization</span>
-          </button>
-        </div>
-      </div>
-
-      <div className="shell-strip__sep" role="presentation" />
 
       <nav className="shell-strip__tiles" aria-label="Workspaces">
         {workspaces.map((workspace) => {

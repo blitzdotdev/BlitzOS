@@ -54,8 +54,6 @@ function nav(overrides: Partial<Parameters<typeof ShellNav>[0]> = {}) {
       onOpenWorkspaceSettings={() => undefined}
       onInviteToWorkspace={() => undefined}
       onCreateWorkspace={() => undefined}
-      onSwitchOrg={() => undefined}
-      onCreateOrg={() => undefined}
       onOpenDrive={() => undefined}
       onOpenSettings={() => undefined}
       onSelectSession={() => undefined}

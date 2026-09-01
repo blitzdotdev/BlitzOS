@@ -694,15 +694,6 @@
   font-size: 11.5px;
 }
 
-.webapp-statusline__path {
-  min-width: 0;
-  margin-left: auto;
-  overflow: hidden;
-  font-family: var(--font-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .webapp-statusline__keyboard,
 .webapp-statusline__paste,
 .webapp-statusline__enter {
@@ -742,14 +733,7 @@
     gap: 6px;
     padding: 7px 8px;
   }
-
-  .webapp-statusline__box {
-    display: none;
-  }
-
-  .webapp-statusline__degraded + .webapp-statusline__path {
-    display: none;
-  }}
+}
 
 @media (max-width: 899px) {
   .webapp-shell {
@@ -823,11 +807,6 @@
     border-top: 0;
     overflow: visible;
     font-size: 10px;
-  }
-
-  .webapp-statusline__box,
-  .webapp-statusline__path {
-    display: none;
   }
 
   .webapp-statusline__keyboard,
@@ -937,23 +916,6 @@
     height: 18px;
   }
 
-  .webapp-statusline--degraded .webapp-statusline__box,
-  .webapp-statusline--degraded .webapp-statusline__path {
-    display: none;
-  }
-
-  .webapp-statusline--degraded .webapp-statusline__degraded {
-    max-width: calc(100% - 40px - 40px - 40px - 40px - 24px);
-    flex: 1;
-    margin-left: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }}
-
-@media (max-width: 520px) {
-  .webapp-statusline__box {
-    display: none;
-  }
 }
 
 @keyframes webapp-attention-blink {
@@ -1097,11 +1059,6 @@
     font-size: 10px;
   }
 
-  .webapp-statusline__box,
-  .webapp-statusline__path {
-    display: none;
-  }
-
   .webapp-statusline__keyboard,
   .webapp-statusline__paste,
   .webapp-statusline__enter,
@@ -1211,24 +1168,16 @@
     height: 18px;
   }
 
-  .webapp-statusline--degraded .webapp-statusline__box,
-  .webapp-statusline--degraded .webapp-statusline__path {
-    display: none;
-  }
-
-  .webapp-statusline--degraded .webapp-statusline__degraded {
-    max-width: calc(100% - 40px - 40px - 40px - 40px - 24px);
-    flex: 1;
-    margin-left: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }}
+}
 /* ============================================================== pane split */
 /* The tab strips, their drag-and-drop chrome (`.webapp-tab-insert`,
  * `.webapp-pane-drop`, `.webapp-pane-ghost`, `.webapp-pane-droptip`) and the
  * dragging state were here. They are deleted with the native strip that was
  * their only handle (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"). The split
  * survives as a PLACEMENT, so its resizer does. */
+/* The `.webapp-statusline--degraded` rules were here too. Nothing renders
+ * that class, and the redesign cut the desktop bar those rules dressed; the
+ * other four copies of them merged away with it. */
 
 /* The boundary between two panes resizes the side column. A grid item pinned
  * to the side column's real left edge, so the handle stays on the border even
