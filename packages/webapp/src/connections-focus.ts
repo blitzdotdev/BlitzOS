@@ -1,4 +1,5 @@
 import { isProviderName } from '@blitzos/schema';
+import { boxGatewayFetch } from './box-gateway-health';
 import { gatewayEndpointUrl, PORTS_POLL_INTERVAL_MS } from './preview';
 import { asJsonObject, isNumber, isString, type JsonValue } from './type-guards';
 
@@ -58,10 +59,7 @@ export async function fetchWorkspaceConnectionsFocus(
   signal?: AbortSignal,
 ): Promise<ConnectionsFocusResult> {
   try {
-    const response = await fetcher(connectionsFocusEndpointUrl(filesBase), {
-      credentials: 'include',
-      signal,
-    });
+    const response = await boxGatewayFetch(connectionsFocusEndpointUrl(filesBase), fetcher, signal);
     // An old box 404s the route; that is a failure to read, not a report that
     // no focus exists, so it never becomes a baseline either.
     if (!response.ok) return { ok: false };

@@ -25,6 +25,7 @@
  * in the catalog's own `machine` block, so the catalog is the single source.
  */
 import { isJsonArray, isJsonObject, isJsonString, parseJson, type JsonValue } from "@blitzos/schema";
+import { boxGatewayFetch } from "../box-gateway-health.js";
 
 /** The four fields Lody's own parser produces, plus the machine block. */
 export interface LodyPlatformSnapshot {
@@ -149,9 +150,10 @@ export async function fetchLodyPlatformSnapshot(
   options?: LodyPlatformFetchOptions,
 ): Promise<LodyPlatformSnapshot | null> {
   const fetchImpl = options?.fetchImpl ?? globalThis.fetch;
-  const request: RequestInit = { credentials: "include" };
-  if (options?.signal !== undefined) request.signal = options.signal;
-  const response = await fetchImpl(platformUrl, request);
+  // Deadline and reachability verdict both come from the helper (BUG-CV-01):
+  // this is the 500 ms poller, and without a deadline a dead tunnel turned it
+  // into an unbounded pile of sockets that never answer.
+  const response = await boxGatewayFetch(platformUrl, fetchImpl, options?.signal);
   if (!response.ok) return null;
   return parseLodyPlatformSnapshot(parseJson(await response.text()));
 }

@@ -74,6 +74,7 @@ import type { SharedSessionRow } from "./shared-sessions.js";
 import { SurfaceTabsContext, type SurfaceTabsBinding } from "./surface-tabs.js";
 import { useDefaultSessionProjectBackfill } from "./use-session-project-backfill.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
+import { SurfaceUnavailableNotice } from "./SurfaceLoadBoundary.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { LodySurfaceProviders } from "./surface-providers.js";
 import "./lody-surface.css";
@@ -506,11 +507,9 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
 
   return (
     <div className={LODY_SURFACE_CLASS} hidden={props.hidden === true}>
-      {error !== null && (
-        <div className="lody-surface__notice" role="alert">
-          Sessions are unavailable on this workspace: {error}
-        </div>
-      )}
+      {/* The same notice the load boundary renders, out of the same module, so
+          "the chunk never arrived" and "the box never answered" read alike. */}
+      {error !== null && <SurfaceUnavailableNotice reason={error} />}
       {snapshot !== null && router !== null && error === null && (
         <JotaiProvider store={store}>
           <BlitzPlatformProviders

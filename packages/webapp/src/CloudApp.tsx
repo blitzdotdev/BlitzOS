@@ -23,6 +23,8 @@ import {
 } from './WebAppHeader';
 import { FileIcon } from './WebAppIcons';
 import type { DriveRailSession } from './shell/rail-sessions';
+import { workspaceStatusLine } from './shell/workspace-status-line';
+import { useBoxGatewayHealth } from './box-gateway-health';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
 import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
 import { ConfirmationDialog } from './ConfirmationDialog';
@@ -929,6 +931,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const lodySessions = useLodySessionsCapability(
     activeWorkspaceRunning ? activeIngressEntry?.lodyPlatformUrl ?? null : null,
   );
+  // Can the browser reach this workspace's box at all? Every box poll in the
+  // shell reports what it saw to this signal, so nothing new is asked of the
+  // network to answer it (BUG-CV-01, BUG-CV-02).
+  const boxGateway = useBoxGatewayHealth();
   const lodyRailSessions = useMemo<LodyRailSessions>(() => ({
     capability: lodySessions,
     // The fresh workspace held no tabs because the BUILD has sessions on. The
@@ -1405,9 +1411,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         : moveTab(tabs, id, target.region, target.beforeId)));
     },
   });
-  const statusWorkspace = activeWorkspace
-    ? `workspace ${activeWorkspace.lifecycleStatus}`
-    : 'workspace pending';
+  // The machine's state AND whether the browser can reach its box (BUG-CV-02).
+  // The reachability half costs no request: it is what the shell's own box
+  // polls already learned. See `shell/workspace-status-line.ts`.
+  const statusWorkspace = workspaceStatusLine(activeWorkspace?.lifecycleStatus, boxGateway);
   const hasControllableWorkspace = store.workspaces.some(({ canControl }) => canControl);
   const webAppBooting = route.page === 'webApp' && (
     !loaded || (hasControllableWorkspace && !activeWorkspace)

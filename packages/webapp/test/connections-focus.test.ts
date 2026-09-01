@@ -90,7 +90,11 @@ describe('connections-focus browser consumer contract', () => {
     });
     expect(okFetcher).toHaveBeenCalledWith('https://box.example/connections-focus', {
       credentials: 'include',
-      signal: undefined,
+      // BUG-CV-01: every read of the box gateway carries a deadline now, so a
+      // tunnel with no connections cannot hold this socket for the life of the
+      // tab. The signal is composed here rather than passed in, which is why a
+      // caller that supplied none still gets one.
+      signal: expect.any(AbortSignal),
     });
 
     // A read that never reached the box is reported as a failure, not as
