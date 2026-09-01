@@ -11,8 +11,12 @@
  * holds none, so each `+` attachment failed with "Missing workspace or auth
  * token" before a single MKCOL or PUT was issued (BUG-CA-01), and "Retry upload"
  * re-entered the same guard and did nothing (BUG-CA-02). The fourth,
- * `use-chat-landing-image-draft.ts`, has no local path to move in front of and
- * is deliberately left alone — `BLITZ-PATCHES.md` §8 records that gap.
+ * `use-chat-landing-image-draft.ts`, had no local path to move in front of and
+ * was left alone — an image staged on the LANDING was then the one combination
+ * that still failed on a box. SEAM PATCH 12 (`BLITZ-PATCHES.md` §12) closes
+ * that, by degrading such an image into the sibling FILE draft, which is the
+ * degrade `session-chat-input-area.tsx` already performs in-session. Both
+ * patches are driven here, over the same three cases and the same stub bridge.
  *
  * WHAT IS DRIVEN AND WHAT IS PINNED AT THE SOURCE. The landing composer's half
  * lives in a hook, so the REAL vendored `useChatLandingFileDraft` is mounted
@@ -34,9 +38,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { I18nextProvider } from "react-i18next";
 import { Provider as JotaiProvider, createStore } from "jotai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
 import { useChatLandingFileDraft } from "@lody/components/hooks/use-chat-landing-file-draft";
+import { useChatLandingImageDraft } from "@lody/components/hooks/use-chat-landing-image-draft";
 import { initLodyI18n } from "../src/lody/i18n.js";
 import { render, settle } from "./dom.js";
 
@@ -59,6 +64,13 @@ type Handoff = { workspaceId: unknown; sessionId: unknown; machineId: unknown };
 type Draft = {
   fileItems: readonly { status: string; error?: string }[];
   buildFileInputBlocks: () => readonly unknown[];
+  canSendFileLocally: boolean;
+  addFiles: (files: File[]) => void;
+};
+
+/** The image half of the landing composer, read back the same way. */
+type ImageDraft = {
+  imageItems: readonly { status: string; error?: string }[];
   addFiles: (files: File[]) => void;
 };
 
@@ -163,6 +175,94 @@ async function stageOneFile(options: {
   return result;
 }
 
+/**
+ * Mounts BOTH real vendored landing hooks the way `chat-landing.tsx` does — the
+ * file draft first, the image draft handed its `addFiles` while the local
+ * transport is there — and stages one image through the image draft's public
+ * entry point, the way a paste or a drop does.
+ *
+ * Both hooks are driven, and that is the point: seam patch 12's whole mechanism
+ * is the move ACROSS them, so a harness that mounted the image hook over a
+ * hand-written callback would prove nothing about where the bytes go.
+ */
+async function stageOneImage(options: { authToken: string | null; bridge: boolean }): Promise<{
+  images: ImageDraft["imageItems"];
+  files: Draft["fileItems"];
+  blocks: readonly unknown[];
+  calls: Handoff[];
+}> {
+  const calls: Handoff[] = [];
+  const uninstall = options.bridge ? installBridge(calls) : () => {};
+  const store = createStore();
+  store.set(localProbeResultAtom, { ok: true, machineId: MACHINE_ID });
+  const seen: { file: Draft | null; image: ImageDraft | null } = { file: null, image: null };
+
+  function Host(): null {
+    const fileDraft: Draft = useChatLandingFileDraft({
+      workspaceId: WORKSPACE_ID,
+      authToken: options.authToken,
+      machineId: MACHINE_ID,
+      sessionId: SESSION_ID,
+      ensureSessionId: () => SESSION_ID,
+    });
+    const imageDraft: ImageDraft = useChatLandingImageDraft({
+      workspaceId: WORKSPACE_ID,
+      authToken: options.authToken,
+      isMobile: false,
+      projectKind: "local",
+      sessionId: SESSION_ID,
+      ensureSessionId: () => SESSION_ID,
+      degradeToFileAttachments: fileDraft.canSendFileLocally ? fileDraft.addFiles : undefined,
+    });
+    seen.file = fileDraft;
+    seen.image = imageDraft;
+    const staged = useRef(false);
+    useEffect(() => {
+      if (staged.current) return;
+      staged.current = true;
+      imageDraft.addFiles([new File(["png-bytes"], "shot.png", { type: "image/png" })]);
+    }, [imageDraft]);
+    return null;
+  }
+
+  const view = await render(
+    <I18nextProvider i18n={initLodyI18n()}>
+      <JotaiProvider store={store}>
+        <Host />
+      </JotaiProvider>
+    </I18nextProvider>,
+  );
+  await settle();
+  await settle();
+  const { file, image } = seen;
+  if (!file || !image) throw new Error("the hooks never rendered");
+  const result = {
+    images: image.imageItems,
+    files: file.fileItems,
+    blocks: file.buildFileInputBlocks(),
+    calls,
+  };
+  await view.unmount();
+  uninstall();
+  return result;
+}
+
+// jsdom implements neither, and the image draft holds a preview URL per pending
+// image. Object URLs are opaque by contract, so a counter is a faithful stand-in.
+const objectUrls = { created: 0, revoked: 0 };
+const realCreateObjectURL = URL.createObjectURL;
+const realRevokeObjectURL = URL.revokeObjectURL;
+beforeAll(() => {
+  URL.createObjectURL = () => `blob:guard/${(objectUrls.created += 1)}`;
+  URL.revokeObjectURL = () => {
+    objectUrls.revoked += 1;
+  };
+});
+afterAll(() => {
+  URL.createObjectURL = realCreateObjectURL;
+  URL.revokeObjectURL = realRevokeObjectURL;
+});
+
 afterEach(() => {
   delete window.ipc;
   delete window.__LODY_LOCAL_BRIDGE__;
@@ -204,6 +304,62 @@ describe("the landing composer stages a file without a cloud token", () => {
     const { items, calls } = await stageOneFile({ authToken: "cloud-token", bridge: true });
     expect(calls).toHaveLength(1);
     expect(items.map((item) => item.status)).toEqual(["uploaded"]);
+  });
+});
+
+describe("the landing composer stages an image without a cloud token", () => {
+  it("degrades it into the file draft, which hands the bytes to the local bridge", async () => {
+    const { images, files, blocks, calls } = await stageOneImage({
+      authToken: null,
+      bridge: true,
+    });
+
+    // The remaining half of COMPB-1 in one assertion: before seam patch 12 this
+    // list was empty and the image chip read "Missing workspace or auth token".
+    expect(calls).toEqual([
+      { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, machineId: MACHINE_ID },
+    ]);
+    // The image is gone from the image draft and present in the file draft —
+    // the same move `session-chat-input-area.tsx` makes inside a session.
+    expect(images).toHaveLength(0);
+    expect(files.map((item) => item.status)).toEqual(["uploaded"]);
+    expect(files[0]?.error).toBeUndefined();
+    // And it is a FILE block on the outgoing message, carried over the local
+    // transport rather than an image id the box could never have minted.
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      type: "file",
+      fileName: "shot.png",
+      transport: "local",
+      machineId: MACHINE_ID,
+    });
+  });
+
+  it("still refuses, with the same message, when no local transport is there", async () => {
+    // With no bridge there is no draft to degrade into, so the unchanged guard
+    // owns the case and reports exactly what it always did.
+    const { images, files, calls } = await stageOneImage({ authToken: null, bridge: false });
+    expect(calls).toEqual([]);
+    expect(files).toHaveLength(0);
+    expect(images.map((item) => item.status)).toEqual(["failed"]);
+    expect(images[0]?.error).toBe("Missing workspace or auth token");
+  });
+
+  it("leaves the cloud image upload untouched when a cloud token IS present", async () => {
+    // With a token the inserted block's leading `!authToken` is false, so the
+    // image takes upstream's cloud path and stays the image draft's. If this
+    // ever reported a handoff, the patch would have widened the degrade past
+    // the tokenless case it declared. The upload's own OUTCOME is deliberately
+    // not pinned: there is no image server here, and how a jsdom XHR to an
+    // absent host ends is not what this patch changed.
+    const { images, files, calls } = await stageOneImage({
+      authToken: "cloud-token",
+      bridge: true,
+    });
+    expect(calls).toEqual([]);
+    expect(files).toHaveLength(0);
+    expect(images).toHaveLength(1);
+    expect(images[0]?.error).not.toBe("Missing workspace or auth token");
   });
 });
 
@@ -266,6 +422,24 @@ describe("seam patch 8 is declared where a merge agent reads it", () => {
     expect(patches).toContain("plans/evidence/lody-attachment-guard-pr.md");
     expect(read("plans/evidence/lody-attachment-guard-pr.md")).toContain(
       "a missing cloud token disables the local file handoff",
+    );
+  });
+});
+
+describe("seam patch 12 is declared where a merge agent reads it", () => {
+  it("has a numbered entry naming all three files and its upstream sketch", () => {
+    const patches = read("vendor/lody/BLITZ-PATCHES.md");
+    expect(patches).toContain("### 12. A landing image has no offline fallback");
+    for (const file of [
+      "hooks/use-chat-landing-image-draft.ts",
+      "hooks/use-chat-landing-file-draft.ts",
+      "components/chat/chat-landing.tsx",
+    ]) {
+      expect(patches, `seam patch 12 declares ${file}`).toContain(file);
+    }
+    expect(patches).toContain("plans/evidence/lody-landing-image-degrade-pr.md");
+    expect(read("plans/evidence/lody-landing-image-degrade-pr.md")).toContain(
+      "an image staged on the chat landing has no offline fallback",
     );
   });
 });

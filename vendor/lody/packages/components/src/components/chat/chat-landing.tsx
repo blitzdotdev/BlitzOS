@@ -1310,6 +1310,28 @@ function WorkspaceChatLanding({
     resetSessionId: resetDraftSessionId,
   } = useChatLandingDraftSession();
   const attachmentInputRef = useRef<HTMLInputElement>(null);
+  // The file draft is declared FIRST because the image draft degrades into it:
+  // with no cloud token there is no image upload to attempt, and this draft can
+  // still hand the bytes to the machine over its local transport. It reads
+  // nothing from the image draft, so the order costs nothing.
+  const {
+    fileItems,
+    hasBlockingFiles,
+    hasUploadedFiles,
+    canAddMoreFiles,
+    canSendFileLocally,
+    addFiles: addFileAttachments,
+    handleRemoveFile,
+    handleRetryFile,
+    clearPendingFiles,
+    buildFileInputBlocks,
+  } = useChatLandingFileDraft({
+    workspaceId: (workspaceId as WorkspaceId | null) ?? null,
+    authToken,
+    machineId: selectedMachineId,
+    sessionId: draftSessionId,
+    ensureSessionId: ensureDraftSessionId,
+  });
   const {
     imageItems,
     hasBlockingImages,
@@ -1328,23 +1350,7 @@ function WorkspaceChatLanding({
     projectKind: contextType === 'chat' ? null : contextType,
     sessionId: draftSessionId,
     ensureSessionId: ensureDraftSessionId,
-  });
-  const {
-    fileItems,
-    hasBlockingFiles,
-    hasUploadedFiles,
-    canAddMoreFiles,
-    addFiles: addFileAttachments,
-    handleRemoveFile,
-    handleRetryFile,
-    clearPendingFiles,
-    buildFileInputBlocks,
-  } = useChatLandingFileDraft({
-    workspaceId: (workspaceId as WorkspaceId | null) ?? null,
-    authToken,
-    machineId: selectedMachineId,
-    sessionId: draftSessionId,
-    ensureSessionId: ensureDraftSessionId,
+    degradeToFileAttachments: canSendFileLocally ? addFileAttachments : undefined,
   });
   const lastAppliedResetDraftKeyRef = useRef<string | null>(null);
 

@@ -705,16 +705,17 @@ rather than write a second fallback beside it. The one behaviour change inside
 it: `reason_code` reads `upload_error` instead of `missing_auth` on that path,
 and renderer telemetry is hard-disabled in a local build anyway.
 
-**One entry point is deliberately NOT patched, and it is the remaining gap.**
-`hooks/use-chat-landing-image-draft.ts:138` carries the same guard, and there is
-nothing to move in front of it: that hook has no `canSendFileLocally`, no
-handoff and no degrade-to-file fallback — an image on the LANDING has only the
-cloud path upstream. Giving it one would mean adding a fallback upstream does
-not have, across two sibling hooks, which is a product opinion rather than this
-patch's one idea. So on a box an image staged on the landing still fails, while
-the same image staged inside a session becomes a file attachment (hunks 3-4),
-and any non-image file works on both. Fixing it is a follow-up, and it belongs
-in `packages/webapp/src/lody/` or in an upstream PR of its own.
+**One entry point is deliberately NOT patched here, and it was the remaining
+gap.** `hooks/use-chat-landing-image-draft.ts:138` carries the same guard, and
+there is nothing to MOVE in front of it: that hook has no `canSendFileLocally`,
+no handoff and no degrade-to-file fallback — an image on the LANDING has only
+the cloud path upstream. Giving it one means adding a fallback upstream does not
+have, across two sibling hooks, which is a product opinion rather than this
+patch's one idea. So this patch left it, and an image staged on the landing
+still failed on a box while the same image staged inside a session became a file
+attachment (hunks 3-4). **Seam patch 12 is that follow-up** and closes the gap;
+read the two together, but keep them separable — 12 drops on its own if upstream
+grows the fallback, and this one drops on its own if upstream fixes the order.
 
 **Upstream behaviour with a token present is unchanged, and that is checkable
 rather than asserted.** Hunks 1 and 5 move a block whose only reachable
@@ -1023,6 +1024,108 @@ are `ui/mention/mention-trigger.ts`, `ui/mention/mention-root.tsx`,
   path one character at a time; ArrowLeft moves a level.
 - If upstream gives a chip click an action of its own, drop hunk 7 rather than
   merge the two — two things happening on one click is not the fix.
+
+### 12. A landing image has no offline fallback (COMPB-1 remainder, 2026-09-01)
+
+**One idea, five hunks in three files, and it finishes seam patch 8.** Patch 8
+put the local transport in front of the cloud-token guard everywhere a local
+handoff already existed, and named the one place none did: the landing image
+draft. So on a box a file attaches from the landing, an image attaches from
+inside a session (it degrades to a file), and an image on the LANDING is the
+single combination that still fails with "Missing workspace or auth token".
+
+The behaviour that closes it is upstream's own, and it already ships one surface
+away. `session-chat-input-area.tsx:1004-1066` turns an image it cannot upload
+into a pending FILE attachment over the local transport, with the toast
+`sessions.imageStoredAsLocalFile`. In-session that is one component holding both
+state machines, so the image moves from `pendingImages` into `pendingFiles` in
+place. On the landing the same two state machines are two sibling hooks
+(`use-chat-landing-image-draft.ts`, `use-chat-landing-file-draft.ts`), both
+mounted by `chat-landing.tsx` and already sharing one draft session id. So the
+degrade is the same move across that seam: the image hook hands the raw `File`
+to the file hook's own entry point. Open upstream as "an image staged on the
+chat landing has no offline fallback"; the sketch is
+`plans/evidence/lody-landing-image-degrade-pr.md`. **Drop this patch when it
+merges.**
+
+#### The hunks
+
+Line numbers are the vendored tree's BEFORE this patch.
+
+`packages/components/src/hooks/use-chat-landing-image-draft.ts`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 57 | `  ensureSessionId: () => SessionId;` in the args type | adds the optional `degradeToFileAttachments?: (files: File[]) => void`, and destructures it |
+| 2 | 80 | `const imageSelectionSkippedLabel = t(` | hoists `imageStoredAsLocalFileLabel` beside the other labels, from upstream's own key |
+| 3 | 138 | `if (!workspaceId || !authToken) {` in `startUpload`, with its `capturePostHogEvent` block | INSERTS the degrade above it, gated on `!authToken && workspaceId && degradeToFileAttachments`. The guard's text is unchanged and still owns the cloud path below |
+
+`packages/components/src/hooks/use-chat-landing-file-draft.ts`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 4 | 377 | `canAddMoreFiles: pendingFiles.length < SESSION_FILE_MAX_COUNT,` | also returns `canSendFileLocally`, the predicate this hook already computes at :100 |
+
+`packages/components/src/components/chat/chat-landing.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 5 | 1313 | the `useChatLandingImageDraft({…})` / `useChatLandingFileDraft({…})` pair | swaps their order (the file draft has never read anything from the image draft) and passes `degradeToFileAttachments: canSendFileLocally ? addFileAttachments : undefined` |
+
+**The image hook re-uses the file hook rather than copying its transport.** The
+degrade calls `addFiles` on the file draft, which is `handleAddFiles` — the same
+entry point the composer's `+` uses. So the bytes take seam patch 8's hunk 5,
+under the file draft's own size and count limits, with its own chip, its own
+status and its own Retry. Nothing about `sendSessionFileToLocalRuntime` is
+restated in the image hook, and there is exactly one place on the landing that
+knows how to hand a file to a box. The two hooks already share `sessionId` and
+`ensureSessionId`, so the degraded file lands on the same reserved session id
+the image would have.
+
+**Availability is asked, not re-derived.** Hunk 4 returns the file draft's
+existing `canSendFileLocally` instead of computing a third copy of
+`localMachineId === machineId && canUseElectronLocalFileSend()` (it already
+exists twice, at `use-chat-landing-file-draft.ts:100` and
+`session-chat-input-area.tsx:530`). The draft that would carry the bytes is the
+right authority on whether it can. With no bridge the callback is `undefined`,
+the inserted block is skipped, and the unchanged guard fails the image with the
+unchanged message — a browser with no token and no bridge still has nowhere to
+put an image, and must still say so.
+
+**Upstream behaviour with a cloud token present is unchanged, and that is
+checkable rather than asserted.** The inserted block's condition leads with
+`!authToken`, so with a token it is `false` and `startUpload` runs the same
+statements in the same order as before. Hunks 1, 2 and 4 add a parameter, a
+label and a returned field, and change no existing expression. Hunk 5 reorders
+two independent hook calls and adds one argument. The degrade is also NOT
+extended to a genuine upload failure: upstream degrades on any failed image
+upload in-session, but doing that here would change what a token holder sees,
+and this patch's one idea is the tokenless case alone.
+
+`packages/webapp/test/lody-attachment-guard.test.tsx` drives the REAL vendored
+image hook over a stub `window.ipc` for the same three cases seam patch 8 pinned
+— no token with the bridge, no token without it, and a token WITH the bridge —
+and pins this section by name.
+
+Verify this divergence by diffing OUR subtree against the upstream commit it was
+imported from, exactly as seam patch 1 describes. **Expected after seam patch 12:
+one more file than seam patch 11's twenty-five — TWENTY-SIX.** The new one is
+`hooks/use-chat-landing-image-draft.ts`; the other two files this patch touches
+were already diverged by seam patches 7 and 8.
+
+#### Merge conflict drill
+
+- If upstream gives the landing image draft a fallback of its own — a local
+  handoff, or a degrade to the file draft — drop all five hunks and keep
+  upstream's.
+- If upstream deletes the in-session degrade, drop this patch with it: the
+  behaviour it mirrors would no longer exist, and keeping it would make the
+  landing do something no other surface does.
+- If the two landing drafts are merged into one hook, re-apply by the one rule:
+  **with no cloud token and a local transport available, a staged image becomes
+  a pending file attachment instead of an error.**
+- Hunk 5's reorder is not the idea; if upstream moves those calls, keep whatever
+  order it chooses and pass the argument from wherever the predicate is legible.
 
 ## Patches to the published npm artifact (NOT to this tree)
 
