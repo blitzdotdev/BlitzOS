@@ -1,0 +1,205 @@
+  [
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "kind": "execute",
+        "rawInput": {
+          "call_id": "call_47hqFYHbdWfeKgUeoNGnhleM",
+          "command": [
+            "/bin/zsh",
+            "-lc",
+            "for i in $(seq 1 200); do echo \"line-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"; sleep 0.02; done"
+          ],
+          "cwd": "/var/folders/x9/v95xfgsd7q77l65gphtc4vdw0000gn/T/lody-acp-history-e2e-compact",
+          "parsed_cmd": [
+            {
+              "cmd": "for i in $(seq 1 200); do echo \"line-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"; sleep 0.02; done",
+              "type": "unknown"
+            }
+          ],
+          "source": "agent",
+          "turn_id": "1"
+        },
+        "status": "in_progress",
+        "title": "Run for i in $(seq 1 200); do echo \"line-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"; sleep 0.02; done",
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-6-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-6-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-6-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-6-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-6-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    },
+    {
+      "sessionId": "019b6067-2917-7830-837c-d7147241826a",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "```sh\nline-1-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-2-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-3-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-4-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-5-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nline-6-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n```\n",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "toolCallId": "call_47hqFYHbdWfeKgUeoNGnhleM",
+        "sessionUpdate": "tool_call_update"
+      }
+    }
+  ]

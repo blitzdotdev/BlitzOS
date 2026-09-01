@@ -47,6 +47,9 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
         !error && <div className="drive-empty" role="status">Loading…</div>
       ) : (
         <>
+          {/* A switch that writes on change, which is what the primitive is
+            * for; it replaces the create-template screen's `.tplf-share`
+            * label this panel used to borrow. */}
           <SettingsSwitch
             label="Capture agent usage"
             description={<>Workspaces mirror their agents&rsquo; native transcripts
@@ -56,7 +59,7 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
             disabled={busy}
             onChange={toggle}
           />
-          <p className="settings-note" role="status">
+          <p className="cfg-help" role="status">
             {state.enabled
               ? 'Capture is on. New workspace activity syncs into the usage folder.'
               : state.folderId === null
@@ -64,7 +67,7 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
                 : 'Capture is off. The usage folder and everything already collected are kept.'}
           </p>
           {state.folderId !== null && (
-            <p className="settings-note">
+            <p className="cfg-help">
               <a href={folderPagePath(state.folderId)}>Open the usage folder in Drive</a>
               {' — share it explicitly to grant access; it has no org-wide role.'}
             </p>

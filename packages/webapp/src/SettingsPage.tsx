@@ -31,11 +31,13 @@ function OrganizationsSection({
   const [switching, setSwitching] = useState<string | null>(null);
   const organizations = viewer.organizations.map(({ org }) => org);
   return (
-    <section className="settings-credential-section" aria-label="Organizations">
+    <section className="cfg-section" aria-label="Organizations">
+      {/* The heading row is the settings-surface one: a `cfg-` title, and the
+        * caps eyebrow this section shipped with is gone with the rest of them
+        * (settings-surface.css anchor 2). */}
       <div className="settings-section-heading">
-        <div>
-          <p>Account</p>
-          <h2>Organizations</h2>
+        <div className="cfg-section-head">
+          <h2 className="cfg-title">Organizations</h2>
         </div>
         <button className="webapp-action" type="button" onClick={onCreateOrg}>
           Create organization
@@ -131,11 +133,17 @@ function ProfilePanel({
           <span>{viewer.identity.email}</span>
         </div>
       </div>
-      <dl className="settings-definition-list">
-        <div><dt>Display name</dt><dd>{displayName}</dd></div>
-        <div><dt>Identity</dt><dd>{viewer.identity.email}</dd></div>
-        <div><dt>Role</dt><dd>{viewer.membership.role}</dd></div>
-      </dl>
+      <div className="cfg-section">
+        <dl className="cfg-meta">
+          <div><dt>Display name</dt><dd>{displayName}</dd></div>
+          <div><dt>Identity</dt><dd>{viewer.identity.email}</dd></div>
+          {/* Workspace scope left this list when Organizations arrived below:
+            * the section names the current organization and switches it. */}
+          {/* `OrgRole` is a wire term shown to a person; the e-mail above is
+            * not, which is why the list itself re-cases nothing. */}
+          <div><dt>Role</dt><dd className="cfg-meta-term">{viewer.membership.role}</dd></div>
+        </dl>
+      </div>
       <AppearanceControl />
       <OrganizationsSection
         viewer={viewer}
@@ -155,11 +163,10 @@ function AppearanceControl() {
     { id: 'dark', label: 'Dark' },
   ];
   return (
-    <div className="settings-appearance">
-      <span className="settings-appearance-copy">
-        <span className="settings-appearance-label">Appearance</span>
-        <span className="settings-appearance-note">Applies to this device only.</span>
-      </span>
+    <div className="cfg-section">
+      <div className="cfg-section-head">
+        <h2 className="cfg-title">Appearance</h2>
+      </div>
       <div className="settings-appearance-options" role="radiogroup" aria-label="Theme">
         {choices.map((choice) => (
           <button
@@ -174,6 +181,7 @@ function AppearanceControl() {
           >{choice.label}</button>
         ))}
       </div>
+      <span className="cfg-help">Applies to this device only.</span>
     </div>
   );
 }

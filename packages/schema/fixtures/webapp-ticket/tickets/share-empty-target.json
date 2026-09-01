@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItZ3JhbnRlZSIsIm1lbWJlcnNoaXBJZCI6Im1lbWJlcnNoaXAtZ3JhbnRlZSIsInJvbGUiOiJlZGl0b3IiLCJleHAiOjE4MDAwMDAwNjAsInNoYXJlIjp7InRhcmdldCI6IiIsInNjb3BlIjoic2Vzc2lvbnMiLCJyZWFkIjpbInNlc3MtYWxwaGEiXSwid3JpdGUiOltdfX0.qPSwiogy8ChVIACfwuCqMhftgOZ3N4ujM2H4GbxPVq8",
+  "expect": {
+    "valid": false
+  },
+  "note": "A share claim names the machine it is routed to; an empty target names nothing."
+}

@@ -1,0 +1,52 @@
+#!/command/with-contenv bash
+# The Lody session daemon (plans/LODY-SESSIONS.md §6). It owns session CRDT
+# documents, the ACP agent child processes and the worktree lifecycle; the
+# browser reaches it only through blitz-lody-bridge and the box gateway.
+#
+# WHY `lody start` AND NOT `lody daemon start`: `daemon start` forks a watchdog
+# and returns, which is exactly the supervision s6 already provides — under s6
+# it would exit immediately and be restarted forever. `start` is the same
+# service in the foreground.
+#
+# WHY LODY_PLATFORM=local: it selects the account-free platform. The published
+# npm bundle is the cloud build and reads this variable only because
+# packages/box/patches/lody-local-platform.mjs put the read back (see that
+# file). Without both, `lody start` blocks on a device-authorization login
+# against backend.lody.ai and opens no socket at all.
+#
+# WHY LODY_MCP_HTTP_DISABLED=1: the daemon otherwise starts an MCP HTTP host on
+# an EPHEMERAL loopback port, which the gateway's port discovery would offer the
+# member as a phantom preview. Agents keep stdio MCP, which needs no port. If a
+# later phase needs the HTTP host, pin it with LODY_MCP_HTTP_PREFERRED_PORT and
+# reserve that port in all four places RESERVED_PREVIEW_PORTS lives.
+#
+# The daemon still binds one loopback port it cannot be talked out of: 17789,
+# its single-instance host lease. That port IS in the reserved set.
+set -euo pipefail
+
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+
+# Dark by default (plans/LODY-SESSIONS.md §9.1). The daemon costs ~300 MiB
+# resident, so a box does not pay for it until the workspace surface that uses
+# it ships. `sleep infinity` rather than exit: s6 restarts a longrun the moment
+# its run script returns, and a disabled service must idle, not spin.
+if [ "${BLITZ_LODY_SESSIONS:-0}" != "1" ]; then
+	echo "lody-daemon: disabled (set BLITZ_LODY_SESSIONS=1 to enable)"
+	exec sleep infinity
+fi
+
+# The daemon hosts the ACP agent child processes, so it is user work and it
+# inherits the placement the deleted actor had (docs/MEMORY-BOUNDARY.md). An
+# agent spawns its own CLI copy out of reach of any wrapper here, so placing
+# the daemon itself is what puts every agent it starts under the ceiling.
+#
+# The gateway, not the daemon, is what the control plane talks to. A dead
+# daemon costs the sessions surface; it does not cost the box its tunnel, its
+# terminal, or its files.
+exec /usr/local/bin/blitz-cgroup enter user/lody.scope -- /command/s6-setuidgid blitz /usr/bin/env \
+	HOME="$state_dir/home" USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+	PATH=/usr/local/bin:/opt/blitz/npm/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
+	LODY_PLATFORM=local \
+	LODY_DATA_DIR="$state_dir/lody" \
+	LODY_MCP_HTTP_DISABLED=1 \
+	/opt/blitz/npm/bin/lody start

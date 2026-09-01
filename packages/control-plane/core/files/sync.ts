@@ -61,6 +61,7 @@ function syncPrincipal(row: SyncAttachmentRow): Principal {
     orgId: row.attacher_org_id,
     role: row.attacher_role,
     platformOperator: false,
+    plane: "session",
   };
 }
 

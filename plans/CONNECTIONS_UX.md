@@ -1,6 +1,10 @@
 # Plan: Connections — reachable, one-click, and usable as `@name`
 
 Status: **plan.** The `integrations → connections` rename is live on this branch; everything else here waits for approval.
+
+> Partly stale: the box actor and its ACP `session/new` are deleted (2026-08-29,
+> branch `lody-sessions`). Phase B's "one actor change" has no actor to change —
+> MCP passthrough needs a new host for that config. See `plans/LODY-SESSIONS.md`.
 Date: 2026-08-19, revised same day after the ownership-model decision (per-user grants only — see §1).
 Grounding: full audit of the credential subsystem in `~/blitz-core-aws` (citations use pre-rename names where the code still has them).
 

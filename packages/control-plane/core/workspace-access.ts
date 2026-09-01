@@ -187,6 +187,7 @@ export async function webAppWorkspaceForRequest(
         orgId: row.session_org_id,
         role: row.session_member_role,
         platformOperator: false,
+    plane: "session",
       };
       if (row.org_id !== principal.orgId) throw new HttpError(404, "workspace not found");
       const access = accessFor(principal, row, row.stored_role);

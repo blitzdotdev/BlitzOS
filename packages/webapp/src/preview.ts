@@ -1,4 +1,5 @@
 import { isPreviewPath, isPreviewPort } from '@blitzos/schema';
+import { boxGatewayFetch } from './box-gateway-health';
 import type { WorkspaceTabs } from './storage';
 import {
   asJsonObject,
@@ -213,10 +214,7 @@ export async function fetchWorkspacePorts(
   signal?: AbortSignal,
 ): Promise<Array<{ port: number; process: string }>> {
   try {
-    const response = await fetcher(portsEndpointUrl(filesBase), {
-      credentials: 'include',
-      signal,
-    });
+    const response = await boxGatewayFetch(portsEndpointUrl(filesBase), fetcher, signal);
     if (!response.ok) return [];
     // SAFETY: The explicit unknown assertion prevents Response.json's ambient any from bypassing parsedPorts validation.
     return parsedPorts(await response.json() as unknown);
@@ -231,10 +229,7 @@ export async function fetchWorkspacePreviews(
   signal?: AbortSignal,
 ): Promise<PreviewLink[]> {
   try {
-    const response = await fetcher(previewsEndpointUrl(filesBase), {
-      credentials: 'include',
-      signal,
-    });
+    const response = await boxGatewayFetch(previewsEndpointUrl(filesBase), fetcher, signal);
     if (!response.ok) return [];
     // SAFETY: Response.json parses JSON text, whose values are representable by JsonValue.
     const value = await response.json() as JsonValue;
@@ -258,10 +253,7 @@ export async function fetchWorkspacePreviewFocus(
   signal?: AbortSignal,
 ): Promise<PreviewFocusResult> {
   try {
-    const response = await fetcher(previewFocusEndpointUrl(filesBase), {
-      credentials: 'include',
-      signal,
-    });
+    const response = await boxGatewayFetch(previewFocusEndpointUrl(filesBase), fetcher, signal);
     // An old box 404s the route; that is a failure to read, not a report that
     // no focus exists, so it never becomes a baseline either.
     if (!response.ok) return { ok: false };

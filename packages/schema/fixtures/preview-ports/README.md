@@ -15,7 +15,7 @@ use. Four readers decide this independently and must never disagree:
 The Go and shell runtimes cannot import the TypeScript constant, so they mirror
 it and each test suite pins its own mirror to this file:
 `packages/box/gateway/main_test.go`,
-`packages/box/actor/test/preview-focus-conformance.test.ts`, and
+`packages/box/guest-tests/test/preview-focus-conformance.test.ts`, and
 `packages/webapp/test/preview-focus.test.ts`.
 
 `maxPathLength` is the deep-link `--path` bound. The control plane rejects a

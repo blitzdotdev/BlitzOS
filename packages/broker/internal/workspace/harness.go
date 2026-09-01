@@ -75,8 +75,8 @@ refresh_interval_ms = ` + strconv.Itoa(codexRefreshInterval) + `
 //
 // Claude gets NOTHING written here, deliberately. The broker mints an OAuth
 // access token (`sk-ant-oat01-…`), which reaches claude as
-// CLAUDE_CODE_OAUTH_TOKEN — exported by the PATH shim for terminals and set in
-// options.env by the actor for chat. There is no config file in that path, and
+// CLAUDE_CODE_OAUTH_TOKEN — exported by the PATH shim for terminals, or set
+// directly by an embedding caller. There is no config file in that path, and
 // there must not be one: `apiKeyHelper` is the API-KEY hook, it rejects an
 // OAuth token outright, and a managed apiKeyHelper does not lose to a valid
 // CLAUDE_CODE_OAUTH_TOKEN — with both set, claude hangs. Deleting

@@ -19,8 +19,7 @@ const CURRENCY_CODE_PATTERN = /^[A-Za-z]{3}$/u;
  * from a control plane that deploys on its own clock, and a throw inside the
  * card map would blank the whole grid.
  *
- * The locale stays pinned to en-US, like the chat date format, because the
- * whole dialog is English.
+ * The locale stays pinned to en-US because the whole dialog is English.
  */
 export function monthlyPriceLabel(price: MachinePrice | null | undefined): string | null {
   if (price === null || price === undefined) return null;

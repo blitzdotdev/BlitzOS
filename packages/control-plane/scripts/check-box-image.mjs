@@ -12,8 +12,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isNonEmptyString } from "./lib/values.mjs";
 
-// Everything baked into the image. packages/box holds the actor, the gateway
-// and the rootfs; packages/broker holds the credential broker binary.
+// Everything baked into the image. packages/box holds the gateway and the
+// rootfs; packages/broker holds the credential broker binary.
 export const IMAGE_PATHS = Object.freeze(["packages/box", "packages/broker"]);
 
 /**

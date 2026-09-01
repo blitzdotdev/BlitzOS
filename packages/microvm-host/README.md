@@ -29,7 +29,9 @@ Every endpoint requires `Authorization: Bearer <token>`. The token is read once 
 - `GET /v1/capacity` returns `{total_cpu,physical_cpu,effective_cpu,total_mem_mb,used_cpu,used_mem_mb,vm_count,max_vms}`. `total_cpu` remains the allocatable ceiling used by existing clients and matches `effective_cpu`; `physical_cpu` reports the configured host CPU count.
 - `GET /v1/healthz` returns `{ok,versions}` with agent, Firecracker, and kernel versions.
 - `ANY /vms/:id/webapp/:port/*` streams HTTP and WebSocket traffic to the
-  named guest, with `port` restricted to `7444` (ACP) or `7445` (box gateway).
+  named guest, with `port` restricted to `7445` (the box gateway) or the
+  reserved `7444`, which the retired ACP actor used and guests already in the
+  field still answer.
   The agent bearer credential and control-plane cookie are removed before the
   request reaches the guest. Missing VMs return HTTP 404.
 
@@ -38,10 +40,10 @@ The first free slot determines all network resources: slot N uses TAP
 `BLITZ_MICROVM_SSH_PORT_BASE+N`. DNAT and both forwarding rules carry comment
 `blitz-microvm:slot-N`.
 
-The box gateway and ACP deliberately remain bound to guest loopback. During
+The box gateway deliberately remains bound to guest loopback. During
 microVM boot, `/microvm-init` enables `route_localnet` on `eth0` and installs
 guest-side NAT rules that translate only traffic from the TAP gateway address,
-to the guest address, on ports 7444/7445 back to `127.0.0.1`. This avoids public
+to the guest address, on the reserved ports 7444/7445 back to `127.0.0.1`. This avoids public
 host-port allocation and preserves the box image's loopback contract while
 making the webApp endpoints reachable solely across each VM's host-only `/30`.
 

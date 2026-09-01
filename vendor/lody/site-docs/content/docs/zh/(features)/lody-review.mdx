@@ -1,0 +1,62 @@
+---
+title: Lody Review
+description: 使用 lody review 将 Agent 生成的代码审查转换为可交互、可分享的 HTML 报告，无需登录 Lody。
+---
+
+# Lody Review
+
+`lody review` 可以把结构化代码审查转换为一个自包含的 HTML 报告。它会在本地以只读方式解析 Git
+仓库，无需登录 Lody，也不需要启动服务器，直接通过 `file://` 打开结果。
+
+## 创建审查报告
+
+最简单的方式是直接让 Coding Agent 完成整个流程：
+
+```text
+使用 `npx lody review` 帮我审查 <pull-request-url>。
+```
+
+底层流程分为三步：
+
+1. 输出权威的审查格式说明：
+
+   ```bash
+   npx lody review prompt
+   ```
+
+2. 让 Agent 检查目标分支或 Pull Request，并按照说明生成 `.review.md` 文件。
+3. 渲染并打开报告：
+
+   ```bash
+   npx lody review <name>.review.md
+   ```
+
+生成的 `.review.html` 默认写入系统临时目录，避免意外提交到仓库。CLI 会输出绝对路径，方便你重新
+打开、移动或分享这个文件。
+
+## 报告内容
+
+报告会按主题组织相关修改，渲染文件 Diff，将发现项链接到对应代码行，并支持严重级别和审查清单。
+阅读报告时也可以添加评论，再将评论复制为 Markdown。
+
+## 使用要求
+
+- 在待审查的 Git 工作目录中运行，或通过 `--repo <dir>` 指定仓库。
+- 审查引用的 Commit 必须存在于本地。渲染 Pull Request 前需要先 Fetch 或 Checkout 对应分支。
+- `.review.md` 会以只读方式结合本地仓库解析，不会修改代码。
+- 已导出的 `.review.json`、`.review.json.gz` 或 `.review.json.br` 快照是自包含的，无需 Git
+  仓库也能渲染。
+
+首次渲染时可能需要下载对应版本的 Review Viewer。Lody 会校验并缓存它，后续可以直接复用。
+
+## 常用参数
+
+```bash
+npx lody review <file> --repo <dir>
+npx lody review <file> --output <report.html>
+npx lody review <file> --no-open
+```
+
+- `--repo`：指定解析 `.review.md` 时使用的仓库。
+- `--output`：自定义生成的 HTML 路径。
+- `--no-open`：只生成报告，不自动打开浏览器。

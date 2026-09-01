@@ -1,0 +1,727 @@
+/* Blog — editorial index + article on a static field. No WebGL atmosphere. */
+
+.blog-shell {
+  --blog-nav-offset: 64px;
+  --blog-radius: 14px;
+  /* Hover surfaces bleed past the text edge, but never past the 4vw gutter. */
+  --blog-bleed: min(1rem, 2vw);
+  /* The article's reading measure. Every column on the page is pinned to this
+     so they share both edges; only the headline is allowed to exceed it. */
+  --blog-measure: 44rem;
+  /* Amp's Chronicle runs one vertical column per section: the date sits
+     right-aligned in a gutter and every item's content shares the same left
+     edge. Lead and list rows both use this pair. */
+  --blog-gutter: 11rem;
+  --blog-gutter-gap: 2rem;
+  /* Editorial meta voice: mono, uppercase, letterspaced. Borrowed from Amp's
+     Chronicle, which uses it for every date and section label. */
+  --blog-mono:
+    var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --ocean-aqua: var(--landing-primary);
+
+  /* Light mode keeps its white ground; these two tokens are the layering fix.
+     Stock values (surface-2 210 40% 98%, border 214 32% 91%) sit so close to
+     white that inline code and hairlines read as nothing. */
+  --landing-surface-2: 214 22% 95%;
+  --landing-border: 214 20% 87%;
+
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: hsl(var(--landing-ink));
+  background: hsl(var(--landing-bg));
+  font-family: var(--font-body, var(--lody-docs-font-sans));
+}
+
+.blog-container,
+.blog-article {
+  width: min(920px, 92vw);
+  margin-inline: auto;
+  padding-block: calc(var(--blog-nav-offset) + 4.5rem) 5.5rem;
+}
+
+.blog-article {
+  width: min(840px, 92vw);
+  padding-block: calc(var(--blog-nav-offset) + 4rem) 5.5rem;
+}
+
+/* Blog ground, mapped onto the shared reading palette in `reading-theme.css`.
+   surface-1 deliberately tracks bg: the site nav paints itself with surface-1
+   and would otherwise float lighter than the page. */
+html.dark .blog-shell {
+  --landing-bg: var(--ink-bg);
+  --landing-surface-1: var(--ink-bg);
+  --landing-surface-2: var(--ink-surface-1);
+  --landing-surface-3: var(--ink-surface-2);
+  --landing-border: var(--ink-border);
+  --landing-ink: var(--ink-fg);
+  --landing-ink-muted: var(--ink-fg-muted);
+  --landing-primary: var(--ink-accent);
+}
+
+/* One focus treatment for every block link and inline control on the page. */
+.blog-lead:focus-visible,
+.blog-row:focus-visible,
+.blog-back:focus-visible,
+.blog-adjacent__link:focus-visible,
+.blog-meta a:focus-visible,
+.blog-prose a:focus-visible {
+  outline: 2px solid hsl(var(--landing-primary));
+  outline-offset: 2px;
+  border-radius: var(--blog-radius);
+}
+
+/* ---------- Masthead ---------- */
+
+.blog-masthead {
+  display: grid;
+  justify-items: start;
+  gap: 0.65rem;
+  margin-bottom: 4.5rem;
+}
+
+.blog-masthead__title {
+  margin: 0;
+  max-width: 20ch;
+  color: hsl(var(--landing-ink));
+  font-family: var(--font-heading, var(--lody-docs-font-heading));
+  font-size: clamp(2.1rem, 5.5vw, 3rem);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: 1.06;
+  text-wrap: balance;
+}
+
+.blog-masthead__dek {
+  margin: 0;
+  max-width: 42rem;
+  color: hsl(var(--landing-ink-muted));
+  font-size: 1.06rem;
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+/* ---------- Shared meta ---------- */
+
+.blog-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  margin: 0;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--blog-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* CJK gains nothing from uppercase and letterspacing only adds gaps between
+   already-monospaced glyphs. */
+html[lang='zh-CN'] .blog-meta {
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.blog-meta a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+
+.blog-meta a:hover {
+  color: hsl(var(--landing-ink));
+}
+
+.blog-meta-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: hsl(var(--landing-ink-muted) / 0.45);
+}
+
+/* ---------- Shared cover art ---------- */
+
+.blog-lead__cover,
+.blog-article-cover {
+  display: block;
+  width: 100%;
+  border-radius: var(--blog-radius);
+  outline: 1px solid oklch(0 0 0 / 0.1);
+  outline-offset: -1px;
+}
+
+/* Index covers are cropped to one ratio so the list reads as a set. The width
+   matches the lead's title and dek: the cover sits directly beneath them, and
+   adjacent blocks that differ in width read as misalignment, not as art
+   direction. */
+.blog-lead__cover {
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+/* The article shows a single cover, so consistency buys nothing here and
+   cropping costs real content — several covers are UI screenshots whose right
+   edge the 16:9 box was cutting off. */
+.blog-article-cover {
+  height: auto;
+  max-width: var(--blog-measure);
+}
+
+html.dark .blog-lead__cover,
+html.dark .blog-article-cover {
+  outline-color: oklch(1 0 0 / 0.1);
+}
+
+/* ---------- Lead story ---------- */
+
+.blog-lead {
+  display: grid;
+  grid-template-columns: var(--blog-gutter) minmax(0, 1fr);
+  column-gap: var(--blog-gutter-gap);
+  align-items: start;
+  margin-bottom: 4.5rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Right-aligned against the content column: the shared edge is what makes the
+   dates read as a spine rather than a ragged first column. */
+.blog-lead__date,
+.blog-row__date {
+  justify-content: flex-end;
+  text-align: end;
+}
+
+.blog-lead__date {
+  padding-top: 0.6rem;
+}
+
+.blog-lead__body {
+  display: grid;
+  justify-items: start;
+  min-width: 0;
+}
+
+.blog-lead__title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--font-heading, var(--lody-docs-font-heading));
+  font-size: clamp(1.55rem, 3.4vw, 2.1rem);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.16;
+  text-wrap: balance;
+}
+
+.blog-lead__dek {
+  margin: 0.7rem 0 0;
+  color: hsl(var(--landing-ink-muted));
+  font-size: 1.06rem;
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.blog-lead__byline {
+  margin-top: 0.9rem;
+}
+
+.blog-lead__read {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: fit-content;
+  margin-top: 0.9rem;
+  color: hsl(var(--landing-ink-muted));
+  font-size: 0.85rem;
+  font-weight: 550;
+  transition-property: color, gap;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.blog-lead__read svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.blog-lead:hover .blog-lead__read {
+  color: hsl(var(--landing-ink));
+  gap: 0.5rem;
+}
+
+.blog-lead:hover .blog-lead__title {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.blog-lead__cover {
+  margin-top: 1.6rem;
+}
+
+/* ---------- Post list ---------- */
+
+.blog-section-label {
+  margin: 0 0 0.9rem;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--blog-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.blog-list {
+  display: grid;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The rule sits on the item, not the link, so the link keeps its rounded hover
+   surface without the border curving around it. It stays at the column edge so
+   it lines up with the section label and the date gutter; only the hover
+   surface bleeds past. */
+.blog-list > li {
+  border-top: 1px solid hsl(var(--landing-border) / 0.55);
+}
+
+/* Rows are grouped by space and a hover surface rather than hairline rules. */
+.blog-row {
+  display: grid;
+  grid-template-columns: var(--blog-gutter) minmax(0, 1fr);
+  column-gap: var(--blog-gutter-gap);
+  align-items: start;
+  padding-block: 1.4rem;
+  padding-inline: var(--blog-bleed);
+  margin-inline: calc(var(--blog-bleed) * -1);
+  border-radius: var(--blog-radius);
+  color: inherit;
+  text-decoration: none;
+  transition-property: background-color;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.blog-row:hover {
+  background: hsl(var(--landing-ink) / 0.05);
+}
+
+.blog-row__date {
+  padding-top: 0.35rem;
+}
+
+.blog-row__body {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.blog-row__meta {
+  margin: 0.15rem 0 0;
+}
+
+.blog-row__title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--font-heading, var(--lody-docs-font-heading));
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  text-wrap: pretty;
+}
+
+.blog-row__dek {
+  margin: 0;
+  color: hsl(var(--landing-ink-muted));
+  font-size: 1rem;
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.blog-row:hover .blog-row__title {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.blog-empty {
+  max-width: 36rem;
+  color: hsl(var(--landing-ink-muted));
+}
+
+.blog-empty h2 {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--font-heading, var(--lody-docs-font-heading));
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.blog-empty p {
+  margin: 0.65rem 0 0;
+  line-height: 1.65;
+}
+
+/* ---------- Article ---------- */
+
+.blog-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: fit-content;
+  color: hsl(var(--landing-ink-muted));
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition-property: color, scale;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.blog-back:hover {
+  color: hsl(var(--landing-ink));
+}
+
+.blog-back:active {
+  scale: 0.96;
+}
+
+.blog-back svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.blog-article-header {
+  display: grid;
+  justify-items: start;
+  gap: 0.9rem;
+  margin-block: 2.25rem 0;
+}
+
+.blog-article-title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--font-heading, var(--lody-docs-font-heading));
+  font-size: clamp(1.85rem, 3.8vw, 2.55rem);
+  font-weight: 650;
+  letter-spacing: -0.028em;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+
+.blog-article-dek {
+  margin: 0;
+  max-width: var(--blog-measure);
+  color: hsl(var(--landing-ink-muted));
+  font-size: 1.12rem;
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.blog-article-cover {
+  margin-top: 2.5rem;
+}
+
+.blog-prose {
+  max-width: var(--blog-measure);
+  margin-top: 2.5rem;
+  color: hsl(var(--landing-ink) / 0.84);
+  font-size: 1.1rem;
+  /* Longer measures need more leading to keep line tracking easy. */
+  line-height: 1.75;
+}
+
+.blog-prose > :first-child {
+  margin-top: 0;
+}
+
+.blog-prose > :last-child {
+  margin-bottom: 0;
+}
+
+/* Safety net: the title already renders from frontmatter. */
+.blog-prose > h1:first-child {
+  display: none;
+}
+
+.blog-prose h2,
+.blog-prose h3,
+.blog-prose h4 {
+  margin: 2rem 0 0.7rem;
+  color: hsl(var(--landing-ink));
+  font-family: var(--font-heading, var(--lody-docs-font-heading));
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.blog-prose h2 {
+  font-size: 1.25rem;
+}
+
+.blog-prose h3 {
+  font-size: 1.08rem;
+}
+
+.blog-prose h4 {
+  font-size: 1rem;
+}
+
+.blog-prose p {
+  margin: 0.85rem 0;
+}
+
+.blog-prose ul,
+.blog-prose ol {
+  margin: 0.85rem 0;
+  padding-inline-start: 1.2rem;
+}
+
+/* Tailwind preflight strips markers; prose lists need them back. */
+.blog-prose ul {
+  list-style: disc;
+}
+
+.blog-prose ol {
+  list-style: decimal;
+}
+
+.blog-prose li::marker {
+  color: hsl(var(--landing-ink-muted) / 0.7);
+}
+
+.blog-prose li {
+  margin: 0.35rem 0;
+}
+
+.blog-prose a {
+  color: hsl(var(--landing-primary));
+  text-decoration: none;
+}
+
+.blog-prose a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+
+/* Fumadocs wraps heading text in its own anchor — it is not a body link. */
+.blog-prose :is(h1, h2, h3, h4, h5, h6) a {
+  color: inherit;
+}
+
+.blog-prose code {
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  background: hsl(var(--landing-surface-2));
+  font-family:
+    var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.86em;
+}
+
+.blog-prose pre {
+  margin: 1.15rem 0;
+  padding: 0.95rem 1rem;
+  border: 1px solid hsl(var(--landing-border) / 0.55);
+  border-radius: 10px;
+  background: hsl(var(--landing-surface-1));
+  overflow-x: auto;
+}
+
+.blog-prose pre code {
+  padding: 0;
+  background: transparent;
+}
+
+/* Fumadocs code blocks bring their own <figure> frame — a styled <pre> inside
+   one double-frames the block. */
+.blog-prose figure.shiki {
+  margin-block: 1.15rem;
+}
+
+.blog-prose figure.shiki pre {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.blog-prose hr {
+  margin: 2rem 0;
+  border: 0;
+  border-top: 1px solid hsl(var(--landing-border) / 0.55);
+}
+
+.blog-prose img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  outline: 1px solid oklch(0 0 0 / 0.1);
+  outline-offset: -1px;
+}
+
+html.dark .blog-prose img {
+  outline-color: oklch(1 0 0 / 0.1);
+}
+
+.blog-prose blockquote {
+  margin: 1.15rem 0;
+  padding-inline-start: 1rem;
+  border-inline-start: 2px solid hsl(var(--landing-border) / 0.8);
+  color: hsl(var(--landing-ink-muted));
+}
+
+/* ---------- Adjacent posts ---------- */
+
+/* The rule here separates article body from navigation chrome, which space
+   alone cannot do at the end of a long scroll. */
+.blog-adjacent {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  max-width: var(--blog-measure);
+  margin-top: 4rem;
+  padding-top: 2rem;
+  border-top: 1px solid hsl(var(--landing-border) / 0.5);
+}
+
+.blog-adjacent__link {
+  display: grid;
+  gap: 0.35rem;
+  padding-block: 0.95rem;
+  padding-inline: var(--blog-bleed);
+  margin-inline: calc(var(--blog-bleed) * -1);
+  border-radius: var(--blog-radius);
+  color: inherit;
+  text-decoration: none;
+  transition-property: background-color;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.blog-adjacent__link:hover {
+  background: hsl(var(--landing-ink) / 0.05);
+}
+
+.blog-adjacent__link--next {
+  grid-column: 2;
+  text-align: end;
+}
+
+.blog-adjacent__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: hsl(var(--landing-ink-muted));
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.blog-adjacent__link--next .blog-adjacent__label {
+  justify-content: flex-end;
+}
+
+.blog-adjacent__label svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex: none;
+}
+
+.blog-adjacent__title {
+  color: hsl(var(--landing-ink));
+  font-family: var(--font-heading, var(--lody-docs-font-heading));
+  font-size: 0.98rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+.blog-adjacent__link:hover .blog-adjacent__title {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+/* ---------- Narrow viewports ---------- */
+
+@media (max-width: 640px) {
+  .blog-masthead {
+    margin-bottom: 3.25rem;
+  }
+
+  .blog-lead {
+    margin-bottom: 3.5rem;
+  }
+
+  .blog-lead__cover {
+    margin-top: 1.25rem;
+  }
+
+  .blog-lead,
+  .blog-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.4rem;
+  }
+
+  .blog-row {
+    padding-block: 1.1rem;
+  }
+
+  .blog-lead__date {
+    padding-top: 0;
+  }
+
+  .blog-lead__date,
+  .blog-row__date {
+    justify-content: flex-start;
+    text-align: start;
+  }
+
+  /* No gutter to hug at this width, so the date returns to the reading edge. */
+  .blog-row__date {
+    padding-top: 0;
+  }
+
+  .blog-article-cover,
+  .blog-prose {
+    margin-top: 1.75rem;
+  }
+
+  /* Stacked columns read start-aligned; a trailing-aligned card looks stray. */
+  .blog-adjacent {
+    grid-template-columns: 1fr;
+  }
+
+  .blog-adjacent__link--next {
+    grid-column: auto;
+    text-align: start;
+  }
+
+  .blog-adjacent__link--next .blog-adjacent__label {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blog-back,
+  .blog-lead__read,
+  .blog-lead:hover .blog-lead__read,
+  .blog-row,
+  .blog-adjacent__link {
+    transition: none;
+  }
+
+  .blog-back:active {
+    scale: 1;
+  }
+
+  .blog-lead:hover .blog-lead__read {
+    gap: 0.35rem;
+  }
+}

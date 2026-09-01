@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItZ3JhbnRlZSIsIm1lbWJlcnNoaXBJZCI6Im1lbWJlcnNoaXAtZ3JhbnRlZSIsInJvbGUiOiJlZGl0b3IiLCJleHAiOjE4MDAwMDAwNjAsInNoYXJlIjp7InRhcmdldCI6Im1lbWJlcnNoaXAtb3duZXIiLCJzY29wZSI6InNlc3Npb25zIiwicmVhZCI6WyJzZXNzLWFscGhhIl0sIndyaXRlIjpbInNlc3MtYWxwaGEiXX19.68R42rtkCC67_A4HODA4pXqFsPKj09b3920RMgCeOkA",
+  "expect": {
+    "valid": false
+  },
+  "note": "The same session in both lists is refused rather than resolved: the join and update predicates must not be able to disagree about one session."
+}

@@ -1,0 +1,6 @@
+{
+    "ok": false,
+    "type": "local-project/add",
+    "error": "path_invalid",
+    "message": "Selected path is not a directory"
+}

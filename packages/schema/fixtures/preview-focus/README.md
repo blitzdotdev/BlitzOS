@@ -21,7 +21,7 @@ and onto another box surface.
 
 Conformance: the Go gateway reader is tested in
 `packages/box/gateway/main_test.go`; the CLI producer is tested in
-`packages/box/actor/test/preview-focus-conformance.test.ts`; the browser
+`packages/box/guest-tests/test/preview-focus-conformance.test.ts`; the browser
 consumer (`fetchWorkspacePreviewFocus` / `parsePreviewFocus` in
 `packages/webapp/src/preview.ts`) is tested in
 `packages/webapp/test/preview-focus.test.ts`.

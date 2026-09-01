@@ -33,12 +33,7 @@ const workspaceDoc = {
     version: 1,
     tabs: [
       { id: 1, type: "terminal" },
-      {
-        id: 2,
-        type: "chat",
-        chatSessionId: "chat-session-1",
-        chatProvider: "claude",
-      },
+      { id: 2, type: "claude" },
     ],
     activeId: 2,
     nextId: 3,
@@ -321,6 +316,55 @@ describe("server-side webApp state", () => {
     await expect(got.json()).resolves.toMatchObject({
       doc: { drawer: { open: true, segment: "files", width: 280 } },
     });
+  });
+
+  it("drops a stored legacy chat tab on read instead of failing the document", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const path = `/workspaces/${workspace.id}/webapp-state`;
+    // Seed a row the way the retired native-chat surface wrote it: a chat tab
+    // in each pane, and both active ids pointing at one. The document is
+    // shared, so a refusal here would take the whole tab layout down for
+    // everyone rather than only losing the tabs that no longer exist.
+    await appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify(workspaceDoc),
+    });
+    await env.DB.prepare("UPDATE webapp_state SET doc = ?1 WHERE workspace_id = ?2").bind(
+      JSON.stringify({
+        ...workspaceDoc,
+        tabs: {
+          version: 1,
+          tabs: [
+            { id: 1, type: "chat", chatSessionId: "chat-session-1", chatProvider: "claude" },
+            { id: 2, type: "terminal" },
+            { id: 3, type: "chat", region: "side" },
+          ],
+          activeId: 1,
+          nextId: 4,
+          sideActiveId: 3,
+        },
+      }),
+      workspace.id,
+    ).run();
+
+    const got = await appRequest(app, path, { headers: { Cookie: cookie } });
+    expect(got.status).toBe(200);
+    await expect(got.json()).resolves.toMatchObject({
+      doc: {
+        tabs: {
+          version: 1,
+          tabs: [{ id: 2, type: "terminal" }],
+          activeId: null,
+          nextId: 4,
+        },
+      },
+    });
+    const doc = (await appRequest(app, path, { headers: { Cookie: cookie } })
+      .then((response) => response.json<{ doc: { tabs: { sideActiveId?: number } } }>())).doc;
+    expect(doc.tabs.sideActiveId).toBeUndefined();
   });
 
   it("rejects panel and region fields that name nothing", async () => {

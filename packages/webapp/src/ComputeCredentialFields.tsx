@@ -80,7 +80,7 @@ export function ComputeCredentialFields({
   if (provider === 'hetzner') {
     return (
       <label className="connect-field connect-field--wide">
-        <span className="connect-field__label">API token</span>
+        <span className="cfg-label">API token</span>
         <input
           name="token"
           type="password"
@@ -95,7 +95,7 @@ export function ComputeCredentialFields({
   return (
     <>
       <label className="connect-field">
-        <span className="connect-field__label">Access key ID</span>
+        <span className="cfg-label">Access key ID</span>
         <input
           name="accessKeyId"
           required={required}
@@ -105,7 +105,7 @@ export function ComputeCredentialFields({
         />
       </label>
       <label className="connect-field">
-        <span className="connect-field__label">Secret access key</span>
+        <span className="cfg-label">Secret access key</span>
         <input
           name="secretAccessKey"
           type="password"
@@ -116,7 +116,7 @@ export function ComputeCredentialFields({
         />
       </label>
       <label className="connect-field connect-field--wide">
-        <span className="connect-field__label">Session token (optional)</span>
+        <span className="cfg-label">Session token (optional)</span>
         <input
           name="sessionToken"
           type="password"

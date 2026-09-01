@@ -57,7 +57,12 @@ import { putWorkspaceCredential } from "./workspace-credentials.js";
 import type { WebAppPort } from "./compute/types.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { rewriteWebDavDestination } from "./webapp-proxy.js";
-import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
+import {
+  requireWorkspaceWebAppAuth,
+  WEBAPP_TOKEN_HEADER,
+  type WebAppTicketClaims,
+} from "./webapp-tickets.js";
+import { shareClaimForTarget } from "./session-shares.js";
 import {
   insertWorkspaceRepos,
   parseTemplateRepos,
@@ -138,6 +143,9 @@ function parseCreateCredentials(value: JsonValue): CreateWorkspaceCredential[] {
     if (entry.label !== undefined && entry.label !== null) {
       result.label = requiredString(entry.label, `credentials[${String(index)}].label`, 128);
     }
+    if (entry.comment !== undefined && entry.comment !== null) {
+      result.comment = requiredString(entry.comment, `credentials[${String(index)}].comment`, 256);
+    }
     return result;
   });
 }
@@ -182,18 +190,6 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
       : requiredString(value.name, "name", 64);
     if (name !== "") result.name = requiredString(name, "name", 64);
   }
-  if (value.sshPublicKey !== undefined) {
-    const sshPublicKey = isString(value.sshPublicKey)
-      ? value.sshPublicKey.trim()
-      : requiredString(value.sshPublicKey, "sshPublicKey");
-    if (sshPublicKey !== "") {
-      requiredString(sshPublicKey, "sshPublicKey");
-      if (!isSshPublicKey(sshPublicKey)) {
-        throw new HttpError(400, "sshPublicKey must be an SSH public key");
-      }
-      result.sshPublicKey = sshPublicKey;
-    }
-  }
   if (value.volumeId !== undefined) {
     result.volumeId = requiredString(value.volumeId, "volumeId", 256);
   }
@@ -234,16 +230,14 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   return result;
 }
 
-/** The recreate body is optional: an empty POST restores the workspace as it
- * was. Only the SSH key may be supplied, because it belongs to whoever is
- * asking rather than to the row being restored. */
-interface RecreateOverrides {
-  sshPublicKey?: string;
-}
-
-async function readOptionalJson(request: Request): Promise<RecreateOverrides> {
+/** The recreate body is optional and now carries nothing: an empty POST
+ * restores the workspace as it was. It used to accept an SSH key, which was
+ * the last caller of the workspace-level key field; a key reaches a machine
+ * through `POST /machines/:id/provision|recreate` alone. A body is still
+ * tolerated and ignored so a client that sends `{}` keeps working. */
+async function readOptionalJson(request: Request): Promise<void> {
   const raw = await request.text();
-  if (raw.trim() === "") return {};
+  if (raw.trim() === "") return;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -251,13 +245,6 @@ async function readOptionalJson(request: Request): Promise<RecreateOverrides> {
     throw new HttpError(400, "request body must be JSON");
   }
   if (!isRecord(parsed)) throw new HttpError(400, "request body must be an object");
-  if (parsed.sshPublicKey === undefined) return {};
-  const sshPublicKey = requiredString(parsed.sshPublicKey, "sshPublicKey").trim();
-  if (sshPublicKey === "") return {};
-  if (!isSshPublicKey(sshPublicKey)) {
-    throw new HttpError(400, "sshPublicKey must be an SSH public key");
-  }
-  return { sshPublicKey };
 }
 
 function canonicalFieldForLegacyHostKey(
@@ -606,7 +593,6 @@ export async function performWorkspaceCreate(
     machineTypeId: defaultMachineTypeId,
     requestOrigin,
   };
-  if (input.sshPublicKey !== undefined) creatorMachine.sshPublicKey = input.sshPublicKey;
   if (input.userData !== undefined) creatorMachine.userData = input.userData;
   if (input.volumeId !== undefined) creatorMachine.volumeId = input.volumeId;
   if (recipe !== undefined) creatorMachine.recipe = recipe.bootstrap;
@@ -678,6 +664,28 @@ async function machineForRequest(
   }
   if (machine.vm_id === null) {
     throw new HttpError(409, "your machine in this workspace is not running");
+  }
+  return machine;
+}
+
+/**
+ * The machine a SHARED request is routed to: the named member's own.
+ *
+ * No viewer fallback and no owner fallback. The address names one member, and
+ * a share is a grant against that member's box; falling back to anyone else's
+ * would silently serve a different machine than the grant covers.
+ */
+async function machineForTarget(
+  runtime: CoreRuntime,
+  workspace: WorkspaceRow,
+  targetMembershipId: string,
+): Promise<MachineRow> {
+  const machine = await machineFor(runtime.db, workspace.id, targetMembershipId);
+  if (machine === null || machine.state === "destroyed") {
+    throw new HttpError(409, "that member has no machine in this workspace");
+  }
+  if (machine.vm_id === null) {
+    throw new HttpError(409, "that member's machine in this workspace is not running");
   }
   return machine;
 }
@@ -792,14 +800,11 @@ export function addWorkspaceRoutes(
     if (owner?.volume_id == null) {
       throw new HttpError(409, "workspace kept no volume, so it cannot be recreated");
     }
-    // The SSH key is the caller's, not the workspace's: the row never stored
-    // one, and a key from weeks ago may not be the key they hold now.
-    const overrides = await readOptionalJson(context.req.raw);
+    await readOptionalJson(context.req.raw);
     const request: CreateWorkspaceRequest = {
       defaultMachineTypeId: owner.machine_type_id,
       volumeId: owner.volume_id,
     };
-    if (overrides.sshPublicKey !== undefined) request.sshPublicKey = overrides.sshPublicKey;
     if (row.name !== null) request.name = row.name;
     if (row.agent_rule_id !== null) request.agentRuleId = row.agent_rule_id;
     // The tombstone lets go first. A create that fails still leaves the volume
@@ -832,17 +837,35 @@ export function addWorkspaceRoutes(
     }
   });
 
+  /**
+   * The app shell, when the request is a browser navigation rather than a
+   * fetch.
+   *
+   * Content negotiation is the whole test: a hard navigation — refresh, deep
+   * link, bookmark, open-in-new-tab — asks for `text/html`, and the SPA's own
+   * fetch calls do not. The shell is the same bytes for everyone, so it is
+   * served before any principal is resolved and carries the asset binding's
+   * own caching headers unchanged.
+   *
+   * Null means "not an HTML navigation": the caller answers as it otherwise
+   * would.
+   */
+  const appShell = (
+    runtime: CoreRuntime,
+    context: CoreContext,
+  ): Promise<Response> | null =>
+    runtime.assets !== undefined
+      && (context.req.header("accept") ?? "").includes("text/html")
+      ? runtime.assets.fetch(context.req.raw)
+      : null;
+
   router.get("/workspaces/:id", async (context) => {
     // The SPA's workspace page shares this path. A browser refresh navigates
     // here with an HTML accept; serve the app shell and keep JSON for fetch
     // callers.
     const runtime = runtimeFactory(context);
-    if (
-      runtime.assets !== undefined
-      && (context.req.header("accept") ?? "").includes("text/html")
-    ) {
-      return runtime.assets.fetch(context.req.raw);
-    }
+    const shell = appShell(runtime, context);
+    if (shell !== null) return shell;
     const principal = await requirePrincipal(context);
     const row = await workspaceById(runtime.db, context.req.param("id"));
     if (row === null || row.org_id !== principal.orgId || row.deleted_at !== null) {
@@ -853,38 +876,76 @@ export function addWorkspaceRoutes(
     return context.json<CreateWorkspaceResponse>({ workspace: view });
   });
 
+  /**
+   * The chat surface, which the SPA routes on the client alone.
+   *
+   * Five addresses live under here — `/chat`, `/chat/:sessionId`,
+   * `/chat/shared/:membershipId/:sessionId`, `/chat/terminal/:tabId` and
+   * `/chat/:sessionId/terminal/:tabId` (packages/webapp/src/sessions-page-state.ts).
+   * None of them is an API. They need a route anyway, because `/workspaces` is
+   * worker-first: the asset layer's single-page fallback never sees a path
+   * under it, so an address core does not route answered the JSON 404 from
+   * `installControlPlaneRoutes` and the SPA never loaded on a refresh.
+   *
+   * `chat` is a segment no API route uses, so these two registrations shadow
+   * nothing. The proxy answers under `/webapp/` and `/shared/`, and every
+   * other route under `/workspaces/:id/` names its own literal segment. A
+   * request that is not an HTML navigation keeps the 404 it has today, so no
+   * fetch caller sees a change.
+   */
+  const chatShell = (context: CoreContext): Promise<Response> => {
+    const shell = appShell(runtimeFactory(context), context);
+    if (shell === null) throw new HttpError(404, "not found");
+    return shell;
+  };
+  router.get("/workspaces/:id/chat", chatShell);
+  router.get("/workspaces/:id/chat/*", chatShell);
+
+  /**
+   * The proxy, for both addresses it answers on.
+   *
+   * `/workspaces/:id/webapp/7445/...` routes to the REQUESTING member's machine
+   * — a workspace holds one VM per member, so "the workspace's VM" is not a
+   * thing that exists, and the ticket already names who is asking.
+   *
+   * `/workspaces/:id/shared/:membershipId/webapp/7445/...` routes to the named
+   * member's machine and mints a `share` claim from the caller's grants
+   * (plans/LODY-SHARING.md §2.2). It is a distinct PREFIX rather than a
+   * parameter on the first address, because a caller who forgets it then
+   * reaches their own box — the safe answer — instead of somebody else's.
+   */
   const webApp = async (context: CoreContext): Promise<Response> => {
     const id = context.req.param("id");
     const runtime = runtimeFactory(context);
     const access = await webAppWorkspaceForRequest(runtime, requirePrincipal, context, id);
     const row = access.workspace;
-    // The proxy routes to the REQUESTING member's machine. A workspace holds
-    // one VM per member now, so "the workspace's VM" is not a thing that
-    // exists; the ticket already names who is asking.
     const rawPort = context.req.param("port");
-    if (rawPort !== "7444" && rawPort !== "7445") {
-      throw new HttpError(400, "webApp port must be 7444 or 7445");
+    if (rawPort !== "7445") {
+      throw new HttpError(400, "webApp port must be 7445");
     }
-    const port: WebAppPort = rawPort === "7444" ? 7444 : 7445;
-    // The agent port is closed to viewers before any machine is resolved: a
-    // viewer may not drive an agent on anybody's machine, so there is nothing
-    // to look up.
-    if (access.role === "viewer" && port === 7444) {
-      throw new HttpError(403, "viewers cannot drive the workspace agent");
+    const port: WebAppPort = 7445;
+    const target = context.req.param("membershipId");
+    const shared = target !== undefined;
+    if (shared && target === access.membershipId) {
+      throw new HttpError(400, "reach your own machine through /workspaces/:id/webapp/7445");
     }
-    const machine = await machineForRequest(runtime, row, access.membershipId, access.role);
+    const machine = shared
+      ? await machineForTarget(runtime, row, target)
+      : await machineForRequest(runtime, row, access.membershipId, access.role);
     const vmId = machine.vm_id;
     if (vmId === null) throw new HttpError(409, "workspace is not ready for webapp access");
     const provider = providerForVmId(runtime, vmId);
     const requestURL = new URL(context.req.url);
-    const routePrefix = `/workspaces/${encodeURIComponent(id)}/webapp/${rawPort}`;
+    const routePrefix = shared
+      ? `/workspaces/${encodeURIComponent(id)}/shared/${encodeURIComponent(target)}/webapp/${rawPort}`
+      : `/workspaces/${encodeURIComponent(id)}/webapp/${rawPort}`;
     if (!requestURL.pathname.startsWith(routePrefix)) {
       throw new HttpError(400, "invalid workspace webApp path");
     }
     assertWebSocketOrigin(context.req.raw, requestURL);
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const path = suffix === "" ? "/" : suffix;
-    if (!isWebAppSurfacePath(port, path)) {
+    if (!isWebAppSurfacePath(path)) {
       throw new HttpError(403, "path is not a workspace webApp surface");
     }
     const pathAndQuery = `${path}${requestURL.search}`;
@@ -903,14 +964,35 @@ export function addWorkspaceRoutes(
       throw new HttpError(403, "read-only access arrives when this workspace VM is recycled");
     }
     const webAppAuth = requireWorkspaceWebAppAuth(runtime.providers.webAppAuth);
+    // A `share` claim reaches a gateway that predates it as an UNKNOWN claim,
+    // and that verifier refuses rather than ignores — which is the property
+    // `unknown-claim.json` exists to keep. So the refusal is made here, where
+    // it can name the fix (§3.1).
+    const shareSince = capabilities.webAppSharedSessionsSinceMs;
+    if (shared && (shareSince === undefined || machine.created_at < shareSince)) {
+      throw new HttpError(403, "shared sessions arrive when that member's machine is recycled");
+    }
+    const share = shared
+      ? await shareClaimForTarget(runtime.db, row.id, access, target)
+      : null;
+    if (shared && share === null) {
+      throw new HttpError(403, "no session on that member's machine is shared with you");
+    }
+    const claims: Omit<WebAppTicketClaims, "exp"> = {
+      workspaceId: row.id,
+      userId: access.userId,
+      membershipId: access.membershipId,
+      role: access.role,
+    };
+    if (share !== null) claims.share = share;
     const credential = ticketCapable
-      ? await webAppAuth.mint({
-          workspaceId: row.id,
-          userId: access.userId,
-          membershipId: access.membershipId,
-          role: access.role,
-        })
+      ? await webAppAuth.mint(claims)
       : await webAppAuth.tokenFor(row.id);
+    // A shared request has no static-token fallback: that credential presents
+    // as the OWNER on the guest, which would hand a grantee the whole box.
+    if (shared && !ticketCapable) {
+      throw new HttpError(403, "shared sessions arrive when that member's machine is recycled");
+    }
     const authenticatedRequest = requestWithWebAppCredential(
       context.req.raw,
       requestURL,
@@ -950,6 +1032,8 @@ export function addWorkspaceRoutes(
 
   router.all("/workspaces/:id/webapp/:port", webApp);
   router.all("/workspaces/:id/webapp/:port/*", webApp);
+  router.all("/workspaces/:id/shared/:membershipId/webapp/:port", webApp);
+  router.all("/workspaces/:id/shared/:membershipId/webapp/:port/*", webApp);
 
   /** Deletes the workspace: every machine destroys, then the row tombstones.
    * Workspace admins and org admins only (§3). */

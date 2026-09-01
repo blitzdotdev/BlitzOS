@@ -1,5 +1,5 @@
 // Live e2e: cloud-VM workspace with zero local forwards.
-// Proves: create -> tunnel+DNS provisioned -> terminal WS echo, ACP handshake,
+// Proves: create -> tunnel+DNS provisioned -> terminal WS echo,
 // files listing, preview fetch, leases API -> destroy -> tunnel+DNS removed.
 // Auth: operator key -> session cookie only (exactly what the browser does).
 import WebSocket from "ws";
@@ -175,21 +175,6 @@ const terminalOnce = () => new Promise((resolve, reject) => {
   }
   if (!out.includes("blitz-42-proof")) fail(`terminal echo missing; got ${out.length} bytes: ${JSON.stringify(out.slice(-300))}`);
   log("STEP7 terminal echo ok (blitz-42-proof seen)");
-}
-
-// 8. ACP chat handshake through CP webapp proxy (port 7444 -> /acp)
-{
-  const url = `${CP.replace("https://", "wss://")}/workspaces/${id}/webapp/7444/`;
-  const reply = await new Promise((resolve, reject) => {
-    const w = new WebSocket(url, { headers: { Cookie: cookie, Origin: CP } });
-    const timer = setTimeout(() => { w.close(); reject(new Error("acp timeout")); }, 15_000);
-    w.on("unexpected-response", (_q, r) => { clearTimeout(timer); reject(new Error(`acp HTTP ${r.statusCode}`)); });
-    w.on("error", (e) => { clearTimeout(timer); reject(e); });
-    w.on("open", () => w.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {} } })));
-    w.on("message", (d) => { clearTimeout(timer); w.close(); resolve(JSON.parse(Buffer.from(d).toString("utf8"))); });
-  });
-  if (reply.id !== 1 || reply.error) fail(`acp initialize bad reply: ${JSON.stringify(reply)}`);
-  log("STEP8 acp initialize ok:", JSON.stringify(reply.result ?? {}).slice(0, 120));
 }
 
 // 9. files through CP webapp proxy (dufs JSON listing)

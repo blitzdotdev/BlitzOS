@@ -1,0 +1,11 @@
+-- WORKSPACE CREDENTIAL COMMENTS.
+--
+-- A comment says what a key is FOR, so an agent reading `blitz-cred list`
+-- can pick the right name without asking. It is documentation, not
+-- provenance: `label` records where a value came from (a file name,
+-- mostly); the comment explains why the key exists.
+--
+-- The comment survives rotation. A write that carries no comment inherits
+-- the live row's, because the value changes more often than its meaning —
+-- an env-file re-import must not erase the explanations an admin wrote.
+ALTER TABLE workspace_credentials ADD COLUMN comment TEXT;

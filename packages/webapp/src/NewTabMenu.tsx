@@ -1,18 +1,15 @@
 import { SessionTypeIcon } from './SessionTypeIcon';
 import { previewLinkLabel, type LivePort, type PreviewLink } from './preview';
-import { NATIVE_CHAT_ENABLED } from './product-features';
 
-export type SpawnSessionType = 'claude' | 'codex' | 'terminal' | 'chat';
+export type SpawnSessionType = 'claude' | 'codex' | 'terminal';
 
 export const SPAWN_SESSION_LABELS = {
-  chat: 'Chat',
   claude: 'Claude',
   codex: 'Codex',
   terminal: 'Terminal',
 } satisfies Record<SpawnSessionType, string>;
 
 const SPAWN_SESSION_TYPES: SpawnSessionType[] = [
-  ...(NATIVE_CHAT_ENABLED ? ['chat' as const] : []),
   'claude',
   'codex',
   'terminal',

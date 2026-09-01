@@ -105,7 +105,6 @@ export class MicrovmPoolProvider implements VmProvider {
     return {
       volumes: false,
       maxUserDataBytes: null,
-      webAppActorBypassesGateway: true,
       offersMachineTypes: false,
     };
   }

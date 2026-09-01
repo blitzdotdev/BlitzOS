@@ -1,5 +1,10 @@
 # e2e deficiencies & gaps log
 
+> Dated run log. Every ACP / port-7444 / chat line below records a surface that
+> was DELETED on 2026-08-29 (branch `lody-sessions`) — the box actor, its
+> journal, and the browser chat client. The e2e harnesses no longer probe 7444.
+> See `plans/LODY-SESSIONS.md`.
+
 ## MICROVM FEATURE + FINALE (2026-08-13, feat/microvm)
 
 - **MicroVM workspaces live through the deployed control plane: gate 9/9, create→ready 1279–1414 ms** (target <5000). Spike: 739 ms boot; agent API p50 1.06 s. Stress: 108+ lifecycles, unloaded p95 1.49 s, loaded (8 cores + 4 GB stress-ng) p95 1.81 s, 40-cycle churn p95 1.36 s, 10-min endurance 54/54 webApp checks, zero leaks throughout. 10 concurrent ready together (1.06 s); 11th create cleanly rejected (principal quota 409). Host: minjune-650S via host agent (systemd) + cloudflared tunnel (ephemeral — durable tunnel is a follow-up).

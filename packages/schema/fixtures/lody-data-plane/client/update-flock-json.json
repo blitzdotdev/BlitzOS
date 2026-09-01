@@ -1,0 +1,28 @@
+{
+  "type": "update",
+  "protocolVersion": 7,
+  "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+  "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+  "room": {
+    "scope": "flock-doc",
+    "flockDocId": "machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+  },
+  "haveVersion": "{}",
+  "payload": {
+    "kind": "flock-json",
+    "bundle": {
+      "version": 1,
+      "entries": {
+        "agentConfig/blitz-claude": {
+          "value": {
+            "id": "blitz-claude"
+          },
+          "clock": {
+            "physicalTime": 1788050131674,
+            "logicalCounter": 0
+          }
+        }
+      }
+    }
+  }
+}

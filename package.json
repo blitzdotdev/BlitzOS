@@ -27,14 +27,15 @@
   "workspaces": [
     "packages/schema",
     "packages/control-plane",
-    "packages/box/actor",
+    "packages/box/guest-tests",
     "packages/webapp"
   ],
   "scripts": {
+    "postinstall": "node scripts/apply-vendor-patches.mjs",
     "build": "npm run build -w @blitzos/webapp && npm run typecheck",
     "blitzdev:build": "npm run blitzdev:build -w @blitzos/control-plane",
     "test:blitzdev": "npm run test:blitzdev -w @blitzos/control-plane",
-    "lint": "oxlint .",
+    "lint": "oxlint --ignore-pattern \"**/vendor/**\" .",
     "lint:gate": "node scripts/lint-gate.mjs",
     "provider:check": "npm run provider:check --workspace @blitzos/control-plane --",
     "typecheck": "npm run typecheck --workspaces --if-present",
@@ -44,5 +45,10 @@
     "@oxlint/plugins": "1.79.0",
     "jsdom": "29.0.0",
     "oxlint": "1.79.0"
+  },
+  "overrides": {
+    "convex": {
+      "esbuild": "0.28.1"
+    }
   }
 }

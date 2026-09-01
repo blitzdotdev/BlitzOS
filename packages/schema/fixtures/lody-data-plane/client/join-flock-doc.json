@@ -1,0 +1,12 @@
+{
+  "type": "join",
+  "protocolVersion": 7,
+  "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+  "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+  "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+  "room": {
+    "scope": "flock-doc",
+    "flockDocId": "machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+  },
+  "haveVersion": "{}"
+}

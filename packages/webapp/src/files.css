@@ -1009,6 +1009,16 @@
   font-weight: 400;
 }
 
+/* The scope line under the Connections heading. It carries what every row
+   used to repeat, so a row's own copy can stay short. */
+.wsc-scope {
+  margin: 0 16px 10px;
+  color: var(--muted);
+  font: 11px/1.5 var(--font-ui);
+}
+
+.wsc-scope a { color: var(--accent); }
+
 /* The connections column scrolls as one page of slabs. */
 .workspace-connections {
   min-height: 0;

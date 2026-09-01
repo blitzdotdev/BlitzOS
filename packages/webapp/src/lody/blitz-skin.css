@@ -1,0 +1,175 @@
+/*
+ * What the theme engine cannot reach (plans/LODY-RUNTIME-DESIGN.md §5.3).
+ *
+ * `src/lody/blitz-theme.ts` compiles a Blitz VS Code theme into ~70 semantic
+ * custom properties, which is where every COLOUR in the vendored surface comes
+ * from. Three kinds of thing are left over, and this file is exactly those:
+ *
+ * 1. NON-COLOUR TOKENS. Their radius scale and their two font names are
+ *    ordinary custom properties, not theme output. Re-pointing them at
+ *    `tokens.css` is a declaration, not a rule.
+ * 2. GEOMETRY. The rail has to read as ONE component, and a row's height,
+ *    gutter and type size are Tailwind utilities on their markup, not tokens.
+ *    `plans/mockups/session-rail.html` and `strip-rail.css` are the authority
+ *    for the numbers here; they are the same numbers `.shell-s` carries, so the
+ *    vendored Chats rows and the native Terminals rows below them line up.
+ * 3. A COLOUR A COMPONENT HARD-CODED. Two of them, both named below with the
+ *    vendor line that spends them. `packages/webapp/test/lody-blitz-theme.test.ts`
+ *    greps the vendor source for each class string this file targets, so an
+ *    upstream rename fails a test instead of quietly reverting the skin.
+ *
+ * Unlayered, like every stylesheet under `packages/webapp/src`, so it outranks
+ * the vendored sheet inside `@layer lody` whatever the specificity.
+ */
+
+/* ---------------------------------------------------------------- tokens */
+
+/*
+ * Their radius scale, pointed at ours (`tokens.css`). `--radius-md` is what
+ * `rounded-md` resolves to (`vendor/lody/packages/configs/tailwind-preset.cjs:8`),
+ * and `rounded-md` is the radius of a session row, a tab pill and a menu item —
+ * so this one declaration is most of the shape change.
+ *
+ * `--font-sans` and `--font-terminal` are written by the generated theme sheet
+ * beside the colours, because they belong with the rest of the surface's
+ * variable block. `--font-mono` needs no line at all: it is the fifth token
+ * collision, both trees hold a font stack, and ours wins by being unlayered.
+ */
+.lody-surface,
+.session-list--vendor,
+body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
+  --radius: var(--r-item);
+  --radius-sm: 6px;
+  --radius-md: var(--r-item);
+  --radius-lg: var(--r-control);
+}
+
+/* Their scrollbars, in the rail's own colours (`strip-rail.css:297`). */
+.lody-surface,
+.lody-surface *,
+.session-list--vendor * {
+  scrollbar-color: var(--rule) transparent;
+  scrollbar-width: thin;
+}
+
+/* ------------------------------------------- the side panel's tab strip */
+
+/*
+ * WHY A MEMBER COULD NOT REACH THE FIRST TAB (wave 4, C3).
+ *
+ * The strip is `SessionSidePanelTabBar`, and its tablist DOES sit in a scroll
+ * container: their `ScrollArea` with `scrollableX`, which Radix gives
+ * `overflow-x: scroll` as an inline style. So the tabs are not lost — but
+ * nothing on screen says so, and one thing actively hides them:
+ *
+ * - Radix hides the NATIVE bar (`[data-radix-scroll-area-viewport]{scrollbar-
+ *   width:none}`, injected beside the viewport) and draws its own only while the
+ *   pointer is inside the strip. At rest a strip that overflows looks exactly
+ *   like one that does not.
+ * - The strip scrolls its ACTIVE tab into view on every selection
+ *   (`session-side-panel-tab-bar.tsx:219`, `inline: 'nearest'`), which parks that
+ *   tab flush against the clipped edge. With four panels open at the panel's
+ *   default width that is a strip whose first and last tabs are cut in half by
+ *   the frame, with no bar and no hint that the rest is one flick away.
+ *
+ * `scroll-padding` is what `inline: 'nearest'` reads, so a gutter here means the
+ * active tab always lands with its neighbours peeking in on both sides — the
+ * strip says it scrolls by showing that it has more. `scrollbar-width` is
+ * restated because the rule above hands every element in the surface `thin`, and
+ * a 15px native bar inside a 44px strip is a third of it; ours and Radix's agree
+ * today only through document order, which is not a thing to depend on.
+ *
+ * Zero vendor change: `data-lody-session-tab-region="side-panel"` is upstream's
+ * own attribute on the panel (`session-detail.tsx`), and the tablist is theirs.
+ */
+.lody-surface [data-lody-session-tab-region="side-panel"] [data-radix-scroll-area-viewport] {
+  scrollbar-width: none;
+  scroll-padding-inline: 28px;
+  /* A horizontal flick inside a 44px strip must not become the browser's back
+     gesture, which is what an unhandled inline overscroll turns into. */
+  overscroll-behavior-inline: contain;
+}
+
+.lody-surface
+  [data-lody-session-tab-region="side-panel"]
+  [data-radix-scroll-area-viewport]::-webkit-scrollbar {
+  display: none;
+}
+
+/* --------------------------------------------------- the rail's own rows */
+
+/*
+ * The scroll viewport carries the list's horizontal gutter upstream
+ * (`loro-sidebar.tsx:1064`, `pl-1.5 pr-2.5 pb-3`). The rail's is 8px on both
+ * sides (`strip-rail.css:296`), and the asymmetry is what made the vendored
+ * rows sit a pixel off the native Terminals rows below them.
+ */
+.session-list--vendor [data-radix-scroll-area-viewport] {
+  padding-right: 8px;
+  padding-bottom: 8px;
+  padding-left: 8px;
+}
+
+/*
+ * The row: gutter · title · time, at `.shell-s`'s size
+ * (`strip-rail.css:352`, mockup `.s`). Upstream draws it as a block with
+ * `px-2 py-1` and a 14px title, which is a different row from the one directly
+ * below it in the same list.
+ */
+.session-list--vendor [data-sidebar-session-id] {
+  display: flex;
+  min-height: 31px;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: var(--r-item);
+  color: var(--soft-ink);
+  font: 13px/1.5 var(--font-ui);
+}
+
+/* Their inner flex row takes the width the block layout used to give it. */
+.session-list--vendor [data-sidebar-session-id] > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* The title (`text-sm`) and the timestamp (`text-xs`), at the mockup's sizes. */
+.session-list--vendor [data-sidebar-session-id] .text-sm {
+  font-size: 13px;
+}
+
+.session-list--vendor [data-sidebar-session-id] .text-xs {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * SELECTED. Upstream fills the row with `bg-sidebar-foreground/10`
+ * (`session-list.tsx:919`) — an alpha of the TEXT colour, so it deliberately
+ * does not read `--sidebar-selection` and the theme cannot move it. BlitzOS
+ * selects with the accent wash (`--selected`, `strip-rail.css:369`), which is
+ * what the native rows in the same list use.
+ */
+.session-list--vendor [data-sidebar-session-id].bg-sidebar-foreground\/10 {
+  border-color: transparent;
+  color: var(--ink);
+  background: var(--selected);
+}
+
+.session-list--vendor [data-sidebar-session-id].bg-sidebar-foreground\/10 .truncate {
+  font-weight: 600;
+}
+
+/*
+ * LIVE. The working spinner and the unread dot are `text-primary` / `bg-primary`
+ * (`sidebar-row-shared.tsx:139`, `:143`), and `--primary` is the accent
+ * everywhere else in the surface. In the rail, running is green: it is the same
+ * signal `.shell-s__a--live` carries (`strip-rail.css:403`, mockup `.s__a--live`),
+ * and a rail that says "running" two ways is two components.
+ */
+.session-list--vendor .text-primary {
+  color: var(--live);
+}
+
+.session-list--vendor .bg-primary {
+  background-color: var(--live);
+}

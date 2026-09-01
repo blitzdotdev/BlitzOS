@@ -37,7 +37,7 @@ describe("UI protocol and persistence object contracts", () => {
     expect(JSON.stringify(customTitle)).toBe('{"title":"Docs","agentDefault":"codex"}');
   });
 
-  it("drops disabled native Chat layout records without rejecting the document", () => {
+  it("drops a legacy chat layout record without rejecting the document", () => {
     const restored = decodeWorkspaceWebAppStateResponse(JSON.stringify({
       doc: {
         version: 1,

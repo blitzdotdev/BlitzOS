@@ -278,67 +278,6 @@ describe('create recipe screen', () => {
     await view.unmount();
   });
 
-  it('requires a model for chat, scopes efforts to its provider, and posts both', async () => {
-    const fetcher = stub((url, init) => {
-      if (url.pathname === '/workspace-recipes' && init?.method === 'POST') {
-        // SAFETY: The screen always sends a JSON body on this route.
-        const body = JSON.parse(String(init.body)) as { name: string };
-        return Response.json({ recipe: { id: 'r-2', ...body } }, { status: 201 });
-      }
-      return null;
-    });
-    const { view, onSaved } = await screenWith(fetcher);
-
-    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Recipe name"]')!;
-    const prompt = view.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')!;
-    await act(async () => {
-      setInput!.call(name, 'triage inbox');
-      name.dispatchEvent(new Event('input', { bubbles: true }));
-      setTextarea!.call(prompt, 'Triage the inbox folder.');
-      prompt.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await choose(select(view, 'Workspace template'), 'template-1');
-    await choose(select(view, 'Harness'), 'chat');
-
-    // Chat pins its provider through the model, so submitting without one is
-    // blocked and the effort list stays empty until the model decides it.
-    expect(view.container.textContent).toContain('A chat recipe must pin a model');
-    expect(view.container.querySelector<HTMLButtonElement>('.create-workspace-primary')?.disabled)
-      .toBe(true);
-    expect(select(view, 'Effort').disabled).toBe(true);
-    await submit(view);
-    expect(fetcher.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
-
-    const model = select(view, 'Model');
-    expect([...model.options].map((option) => option.textContent)).toEqual([
-      'Choose a model…',
-      'claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001',
-      'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra',
-      'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark',
-    ]);
-    await choose(model, 'gpt-5.6-sol');
-    // sol carries the full extension: base + max + ultra.
-    expect([...select(view, 'Effort').options].map((option) => option.textContent)).toEqual([
-      'Default', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra',
-    ]);
-    await choose(select(view, 'Effort'), 'high');
-    await submit(view);
-
-    const post = fetcher.mock.calls.find(([input, init]) => (
-      new URL(String(input)).pathname === '/workspace-recipes' && init?.method === 'POST'
-    ));
-    expect(JSON.parse(String(post?.[1]?.body ?? '{}'))).toEqual({
-      name: 'triage inbox',
-      templateId: 'template-1',
-      harness: 'chat',
-      model: 'gpt-5.6-sol',
-      effort: 'high',
-      prompt: 'Triage the inbox folder.',
-    });
-    expect(onSaved).toHaveBeenCalledOnce();
-    await view.unmount();
-  });
-
   it('drops a model and effort the next harness cannot run', async () => {
     const { view } = await screenWith();
     await choose(select(view, 'Model'), 'claude-opus-5');
@@ -353,10 +292,6 @@ describe('create recipe screen', () => {
       'Default', 'low', 'medium', 'high', 'xhigh',
     ]);
 
-    // Chat accepts any catalog model, so a codex pick survives the switch.
-    await choose(select(view, 'Model'), 'gpt-5.6-sol');
-    await choose(select(view, 'Harness'), 'chat');
-    expect(select(view, 'Model').value).toBe('gpt-5.6-sol');
     await view.unmount();
   });
 
@@ -478,6 +413,9 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     provisionMemberMachine: vi.fn(async () => { throw new Error('unused'); }),
     updateWorkspace: vi.fn(async () => { throw new Error('unused'); }),
     listWorkspaceRepos: vi.fn(async () => ({ repos: [] })),
+    listSessionShares: vi.fn(async () => ({ granted: [], received: [] })),
+    grantSessionShare: vi.fn(async () => { throw new Error("unused"); }),
+    revokeSessionShare: vi.fn(async () => undefined),
     addWorkspaceRepo: vi.fn(async () => { throw new Error('unused'); }),
     removeWorkspaceRepo: vi.fn(async () => { throw new Error('unused'); }),
     updateWorkspaceMember: vi.fn(async () => { throw new Error('unused'); }),
@@ -489,6 +427,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     setMachineType: vi.fn(async () => { throw new Error('unused'); }),
     destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
     putWorkspaceCredential: vi.fn(async () => undefined),
+    importWorkspaceCredentials: vi.fn(async () => { throw new Error('unused'); }),
     revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error('unused'); }),
@@ -681,7 +620,7 @@ describe('recipe run flow', () => {
       const view = await render(
         <CloudApp
           client={client()}
-          resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+          resolver={standaloneResolver({ files: 7445 })}
         />,
       );
       await settle();

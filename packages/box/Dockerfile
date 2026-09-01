@@ -22,40 +22,32 @@ COPY packages/schema/fixtures /src/packages/schema/fixtures
 RUN go test ./... \
     && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w" -o /out/blitz-box-gateway .
 
-FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS actor-build
-
-RUN set -eux; \
-    sed -i \
-      -e 's|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/20260811T000000Z|g' \
-      -e 's|http://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/20260811T000000Z|g' \
-      -e '/^Signed-By:/a Check-Valid-Until: no' \
-      /etc/apt/sources.list.d/debian.sources; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-      g++=4:12.2.0-3 \
-      make=4.3-4.1 \
-      python3=3.11.2-1+b1; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/*
-
-COPY tsconfig.base.json /src/tsconfig.base.json
-WORKDIR /src/packages/box/actor
-COPY packages/box/actor/package.json packages/box/actor/package-lock.json ./
-RUN npm ci
-COPY packages/box/actor/tsconfig.json ./
-COPY packages/box/actor/src ./src
-RUN npm run build \
-    && npm prune --omit=dev
-
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS vendors
 
 # Agents install into a prefix the runtime user owns, so `claude` can
 # auto-update and users can `npm install -g` without root.
 ENV NPM_CONFIG_PREFIX=/opt/blitz/npm
+# `ws` carries no binary: it is the only dependency of
+# /usr/local/libexec/blitz-lody-bridge, which reaches it through NODE_PATH.
+# `lody` is the session daemon (plans/LODY-SESSIONS.md §6). Its published
+# bundle is the CLOUD build and refuses to start without a Lody account, so the
+# patch below re-enables the local platform; see the script's header.
 RUN npm install --global --omit=dev \
       @anthropic-ai/claude-code@2.1.228 \
       @openai/codex@0.147.0 \
+      lody@0.88.1 \
+      ws@8.21.0 \
     && npm cache clean --force
+COPY packages/box/patches/lody-local-platform.mjs /tmp/lody-local-platform.mjs
+COPY packages/box/patches/lody-acp-auth-queue.mjs /tmp/lody-acp-auth-queue.mjs
+COPY packages/box/patches/lody-code-collab-worktree-root.mjs /tmp/lody-code-collab-worktree-root.mjs
+# Order matters only for the first: its guard is a sha256 of the bundle AS
+# PUBLISHED, so nothing may rewrite the file before it runs. The others guard on
+# the package version and their own anchor instead, for that reason.
+RUN node /tmp/lody-local-platform.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
+    && node /tmp/lody-acp-auth-queue.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
+    && node /tmp/lody-code-collab-worktree-root.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
+    && rm /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime-base
 
@@ -132,16 +124,13 @@ COPY --from=artifacts /out/root/ /
 COPY --from=vendors /opt/blitz/npm/ /opt/blitz/npm/
 COPY --from=cred-build /out/blitz-cred /usr/local/bin/blitz-cred
 COPY --from=gateway-build /out/blitz-box-gateway /usr/local/bin/blitz-box-gateway
-COPY --from=actor-build /src/packages/box/actor/package.json /opt/blitz/actor/package.json
-COPY --from=actor-build /src/packages/box/actor/package-lock.json /opt/blitz/actor/package-lock.json
-COPY --from=actor-build /src/packages/box/actor/dist /opt/blitz/actor/dist
-COPY --from=actor-build /src/packages/box/actor/node_modules /opt/blitz/actor/node_modules
 COPY env.defaults /etc/blitz/env.defaults
 COPY packages/box/rootfs/ /
 RUN set -eux; \
     chmod 0755 /usr/local/bin/blitz /usr/local/bin/claude /usr/local/bin/codex \
       /usr/local/bin/blitz-cred-claude /usr/local/bin/blitz-cred-codex \
-      /usr/local/bin/blitz-rules; \
+      /usr/local/bin/blitz-rules /usr/local/bin/blitz-cgroup \
+      /usr/local/bin/blitz-machine-stats; \
     chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \
@@ -151,7 +140,7 @@ RUN set -eux; \
 # /usr/local/bin/claude and /usr/local/bin/codex win over the real binaries they
 # exec — and so a copy a member installs into their own writable prefix cannot
 # shadow them. That shadowing is the single most common way a terminal ends up
-# signed out while the same box's chat is authenticated.
+# signed out while the same box holds a valid credential.
 #
 # DISABLE_AUTOUPDATER is set image-wide for the same reason: an auto-update
 # breaks the version pin above AND drops a second copy into the member's prefix.
@@ -160,13 +149,34 @@ RUN set -eux; \
 # "Update available!" prompt runs `npm install -g @openai/codex` straight into
 # NPM_CONFIG_PREFIX and overwrites the pin above in place — the chown on the
 # line above hands uid 1000 the write permission that makes it possible.
+#
+# LODY_PLATFORM and LODY_DATA_DIR are image-wide, not service-local, and that is
+# deliberate. `lody` is on PATH, so a member can type it in a terminal. With the
+# defaults it would pick the CLOUD installation profile — a second data
+# directory at ~/.lody, its own host lease on 17788, its own `lody-*` socket
+# basenames — see nothing of the running daemon, and offer to log in to
+# lody.ai. Setting both here means every entry point, service or shell, lands on
+# the one local daemon under /var/lib/blitz/lody.
+#
+# The path also has to stay short: `sun_path` caps a unix socket at 103 bytes
+# and the daemon throws `local_ipc_socket_path_too_long` rather than falling
+# back. The longest socket it opens under this root,
+# /var/lib/blitz/lody/run/lody-oss-loro-data-plane.sock, is 53 bytes.
 ENV HOME=/var/lib/blitz/home \
     USER=blitz \
     NPM_CONFIG_PREFIX=/opt/blitz/npm \
     DISABLE_AUTOUPDATER=1 \
+    LODY_PLATFORM=local \
+    LODY_DATA_DIR=/var/lib/blitz/lody \
     PATH=/usr/local/bin:/opt/blitz/npm/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 VOLUME ["/var/lib/blitz"]
 EXPOSE 22 7443 7444 7445
 STOPSIGNAL SIGTERM
+# A running container is not a reachable box. The start period covers the s6
+# graph and the first tunnel connect; after that an unhealthy verdict means the
+# box stopped answering while it kept running, which is exactly the state that
+# used to be invisible.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+  CMD /usr/local/libexec/blitz-healthcheck
 ENTRYPOINT ["/init"]

@@ -87,6 +87,12 @@ Before deploying it asks the running canary for its commit and diffs the image
 paths since then. Canary images are built by hand, so a stale image gets a
 warning. That step is advisory and never fails the run.
 
+Canary serves its box image as an **R2 archive (mode B)**, out of its own
+account; client prod serves it from a registry (mode A), pushed by the tag
+workflow. That split is why a canary rebake reaches nothing in the customer's
+account, and why it needs no tag. The procedure, and the reason it exists, is
+[BOX-IMAGE.md](BOX-IMAGE.md#which-mode-each-hosted-deployment-uses).
+
 Canary is one shared Worker and the last deploy wins. That is why it deploys
 from `main` and not from a laptop: a branch deployed by hand replaces whatever
 was there, and the next person debugs a build that matches no commit. This has
@@ -229,6 +235,23 @@ There is no traffic ramp. A deploy goes to full traffic at once.
 - **A provider-specific line in the shared bootstrap kills every other
   provider's box.** See [../plans/PROVIDER-BOOTSTRAP.md](../plans/PROVIDER-BOOTSTRAP.md);
   an AWS-only mirror probe failed every Hetzner workspace under `pipefail`.
+- **No workspace or agent credential can push the box image to the registry.**
+  `write:packages` on that package exists in exactly one place: the
+  `GITHUB_TOKEN` inside `release.yml`, which runs only on a `v*` tag push.
+  Measured 2026-08-30, the workspace credential `GH_PAT` reads the repository
+  and pulls the image manifest — both HTTP 200 — and is refused at
+  `POST /v2/.../blobs/uploads/` with HTTP 403; the GitHub App token has no
+  package access at all (403, `Resource not accessible by integration`). That
+  is the boundary working, not a fault to route around: the same tag that
+  would push an image also ships client prod. Canary rebakes through R2
+  instead.
+- **The `wrangler.toml` in a working checkout is client prod's.**
+  `packages/control-plane/scripts/publish-box-image.mjs` always passes
+  `--config packages/control-plane/wrangler.toml`, so publishing a canary image
+  from a checkout carrying the client-prod config uploads it into the
+  customer's bucket. Write a canary-scoped config from `wrangler.toml.example`
+  first. That file is gitignored, so it never lands in a commit and never
+  travels between the two accounts.
 
 ## Rules for agents
 
@@ -251,5 +274,11 @@ that is said.
    command proves upload, not content.
 6. **Check whether the box image needs rebuilding** with `box-image:check`
    before assuming a Worker deploy is enough.
-7. **Say what you could not verify.** A gate that could not run is not a gate
+7. **Rebake the box image through canary's R2 path, and never cut a `v*` tag to
+   refresh an image.** A tag ships client prod to real users. Partly enforced:
+   no workspace or agent credential can push to the registry, so mode A is out
+   of reach anyway (see the gotcha above); nothing blocks the tag itself, and
+   the `production` reviewer is all that stands between it and a customer. The
+   procedure is [BOX-IMAGE.md](BOX-IMAGE.md#rebaking-the-canary-image).
+8. **Say what you could not verify.** A gate that could not run is not a gate
    that passed.

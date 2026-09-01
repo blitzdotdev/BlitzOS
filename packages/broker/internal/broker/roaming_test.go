@@ -114,10 +114,10 @@ func TestMintKilledMidRefreshLeavesTheStoredCredentialIntact(t *testing.T) {
 // wire format cannot express. The reply is a single line — main.go writes the
 // token with fmt.Fprintln — and every consumer down the chain copies the bytes
 // into CLAUDE_CODE_OAUTH_TOKEN verbatim, so a token that carries whitespace of
-// its own is indistinguishable from the terminator and the box's two consumers
-// disagree about where it ends: the PATH shim's $(...) eats it, the actor's
-// options.env keeps it, and the vendor rejects an Authorization header holding
-// a newline. Failing the mint is the only answer that names the harness.
+// its own is indistinguishable from the terminator and two consumers disagree
+// about where it ends: the PATH shim's $(...) eats it, a caller that sets the
+// variable directly keeps it, and the vendor rejects an Authorization header
+// holding a newline. Failing the mint is the only answer that names the harness.
 func TestMintRefusesAnAccessTokenCarryingWhitespace(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, filepath.FromSlash(vendor.Claude.CredentialPath))

@@ -1,12 +1,9 @@
 # BlitzOS box
 
 One OCI image is one complete agent workspace: key-only SSH, a ttyd + tmux
-terminal, the ACP session actor, WebDAV plus preview routing, and
-Docker-in-Docker. The state volume keeps host keys, broker client state, agent
-HOME, the actor's ACP session store, and box credentials. `/workspace` is a
-caller-owned bind mount. The ACP actor supports headless recipe execution and
-protocol compatibility; it is not currently exposed as a native cockpit Chat
-surface.
+terminal, WebDAV plus preview routing, and Docker-in-Docker. The state volume
+keeps host keys, broker client state, agent HOME, and box credentials.
+`/workspace` is a caller-owned bind mount.
 
 ## Install
 
@@ -52,8 +49,8 @@ docker run -d \
 The long `--mount` form fails when a bind-mount source is missing; short `-v`
 can silently create a directory instead.
 
-`--privileged` enables the inner Docker daemon. Without it, the other four
-webApp endpoints still start and dockerd reports a clean skip.
+`--privileged` enables the inner Docker daemon. Without it, the other webApp
+endpoints still start and dockerd reports a clean skip.
 
 The box works without BlitzOS accounts or a control plane. Sign in to an agent
 once over SSH with `claude login` or `codex login --device-auth`; HOME
@@ -84,7 +81,7 @@ docker exec blitz-box ssh-keygen -lf /var/lib/blitz/ssh/ssh_host_ed25519_key.pub
 ssh-keyscan -p 2222 127.0.0.1 2>/dev/null | ssh-keygen -lf -
 ```
 
-After the fingerprints match, save the scanned key and open the three
+After the fingerprints match, save the scanned key and open the two
 loopback-only tunnels:
 
 ```sh
@@ -93,13 +90,11 @@ ssh -p 2222 \
   -o UserKnownHostsFile="$HOME/.ssh/blitz-box-known_hosts" \
   -N \
   -L 7443:127.0.0.1:7443 \
-  -L 7444:127.0.0.1:7444 \
   -L 7445:127.0.0.1:7445 \
   blitz@127.0.0.1
 ```
 
-The terminal is then at `http://127.0.0.1:7443`, ACP at
-`ws://127.0.0.1:7444`, and workspace files at
+The terminal is then at `http://127.0.0.1:7443` and workspace files at
 `http://127.0.0.1:7445/workspace/`. The agent HOME is deliberately not
 published: it holds the agent's OAuth credentials. Port discovery and preview
 share the files origin, so they need no additional SSH forward or ingress
@@ -125,10 +120,9 @@ Recipe launches leave `/var/lib/blitz/recipe/{invocation.env,prompt.txt}`
 behind; the first `claude`/`codex` request whose type matches `HARNESS` and
 that CREATES its tmux session consumes them — model/effort flags plus the
 prompt as a final positional argument — renaming both files to `*.delivered`
-before tmux starts (once-only). Attach never re-injects, `ro` never consumes,
-and `HARNESS=chat` files belong to the headless recipe prompt sender, not a
-native cockpit Chat surface. Pinned by
-`schema/fixtures/recipe-invocation/` + `actor/test/recipe-invocation-guest.test.ts`.
+before tmux starts (once-only). Attach never re-injects and `ro` never
+consumes. Pinned by `schema/fixtures/recipe-invocation/` +
+`guest-tests/test/recipe-invocation-guest.test.ts`.
 
 ### Ports and preview URL contract
 
@@ -139,8 +133,9 @@ GET http://127.0.0.1:7445/ports
 => {"ports":[{"port":3000,"process":"node"}]}
 ```
 
-The list includes listening TCP ports and excludes SSH, ttyd, ACP, the public
-gateway, and its private dufs upstream. Use the same origin for preview URLs:
+The list includes listening TCP ports and excludes SSH, ttyd, the public
+gateway, its private dufs upstream, the reserved port 7444, and 17789 (the Lody
+daemon's single-instance host lease). Use the same origin for preview URLs:
 
 ```text
 http://127.0.0.1:7445/preview/<port>/
@@ -154,22 +149,54 @@ authentication, and WebSocket handling remain those of that existing route.
 
 Limitation: dufs 0.46.0 has no stock Origin allowlist; concurrent file-sidebar saves are last-write-wins.
 
-## ACP session store
+### Lody session surface
 
-The ACP actor persists ACP sessions used by headless recipes to the
-legacy-named `chat-session.db` on the state volume — two SQLite tables,
-`sessions` and `events`. This retained backend is not an available native
-cockpit Chat feature. It serves the ACP session list, replay, and resume, and
-nothing else: both journaled frame shapes
-(`session/update` and `blitz/permission_answered`) live in `events`, so replay
-keeps permission history. On open the actor adopts a pre-rename `journal.db`
-from a reused volume and drops the retired `turns`, `permissions`, and
-`participants` tables.
+Five exact paths on the same 7445 origin, added by phases 1 and 2 of
+`plans/LODY-SESSIONS.md`:
 
-Scope fence: this store is deliberately NOT an analytics, metering, or usage
-store. Usage and eval data comes from the native harness transcripts in the
-agent HOME (`~/.claude/projects/…`, `~/.codex/sessions/…`). Do not extend this
-store beyond its headless ACP session role.
+```text
+GET  http://127.0.0.1:7445/lody/sync      (websocket)  CRDT data plane
+POST http://127.0.0.1:7445/lody/rpc                    machine RPC
+POST http://127.0.0.1:7445/lody/control                session control
+POST http://127.0.0.1:7445/lody/project                local-project control
+GET  http://127.0.0.1:7445/lody/platform               the daemon's own identity
+```
+
+All five are ticket-authenticated like every other 7445 surface, and all five
+are refused to a workspace viewer with 403 — unless the ticket carries a session
+SHARE claim, which is the phase-6 exception (`plans/LODY-SHARING.md`). A shared
+ticket may reach these five paths and nothing else on the box: not dufs, not a
+preview, not the terminal. They are declared in
+`packages/schema/src/webapp-surface.ts` and
+`packages/control-plane/core/webapp-surface.ts`, and drift-tested on both sides.
+
+What a share may SAY on those paths is the bridge's decision, not the gateway's:
+the gateway forwards the verified claim on `X-Blitz-Lody-Share` (stripping any
+inbound copy) and the bridge enforces the per-room ACL, scopes machine RPC and
+worktree reads to the granted sessions, refuses `/lody/control` outright, and
+serves `/lody/platform` narrowed so a grantee never learns the box's other
+sessions. The decision table is a fixture corpus,
+`packages/schema/fixtures/lody-share-claim/`.
+
+Neither reaches the daemon directly. The gateway proxies them over a unix socket
+to `blitz-lody-bridge`, which re-serves two of the Lody daemon's own unix
+sockets: `/sync` onto its Loro data plane and `/rpc` onto its control socket's
+`/machine-rpc`. The daemon binds no TCP port the browser can reach — only the
+17789 host lease, which is reserved rather than proxied.
+
+A third service, `lody-projects`, registers every git repository directly under
+`/workspace` with the daemon as a Lody local project, so a worktree session has
+something to cut a worktree off (`plans/LODY-SESSIONS.md` §6.4). It polls rather
+than running once, because the template-repo cloner keeps arriving for up to ten
+minutes after boot and a member may clone by hand on any day after that. It talks
+only to the daemon's own control socket and opens no port.
+
+All three s6 services (`lody-daemon`, `lody-bridge`, `lody-projects`) are dark
+unless `BLITZ_LODY_SESSIONS=1`; the default in `env.defaults` is `0`.
+
+Scope fence: the box keeps deliberately NO analytics, metering, or usage store.
+Usage and eval data comes from the native harness transcripts in the agent HOME
+(`~/.claude/projects/…`, `~/.codex/sessions/…`).
 
 ## Stop and upgrade
 

@@ -87,6 +87,10 @@ export function ProviderConnectSurface({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
 }) {
+  // A fallback path is not a second choice: where the round trip is live, the
+  // paste form would offer a worse credential beside a better one. It comes
+  // back the moment an instance has no OAuth client registered.
+  const pasteHidden = entry.personalTokenFallbackOnly && oauthHref !== null;
   return (
     <>
       {entry.oauthAvailable && (oauthHref !== null ? (
@@ -105,7 +109,7 @@ export function ProviderConnectSurface({
         </p>
       ))}
 
-      {entry.personalTokenLabel === null ? (
+      {pasteHidden ? null : entry.personalTokenLabel === null ? (
         <p className="connect-note">
           <InfoGlyph />
           <span>
@@ -117,16 +121,16 @@ export function ProviderConnectSurface({
       ) : (
         <form className="connect-form" key={formKey} onSubmit={onSubmit}>
           <label className="connect-field">
-            <span className="connect-field__label">Connection name</span>
+            <span className="cfg-label">Connection name</span>
             <input name="name" required value={connectionName} readOnly />
           </label>
           <label className="connect-field">
-            <span className="connect-field__label">Label (optional)</span>
+            <span className="cfg-label">Label (optional)</span>
             <input name="label" placeholder="work account" />
           </label>
           {entry.personalTokenBaseUrlLabel !== null && (
             <label className="connect-field">
-              <span className="connect-field__label">{entry.personalTokenBaseUrlLabel}</span>
+              <span className="cfg-label">{entry.personalTokenBaseUrlLabel}</span>
               {lockedBaseUrl === null ? (
                 <input name="baseUrl" type="url" required placeholder="https://" />
               ) : (
@@ -137,7 +141,7 @@ export function ProviderConnectSurface({
             </label>
           )}
           <label className="connect-field connect-field--wide">
-            <span className="connect-field__label">{entry.personalTokenLabel}</span>
+            <span className="cfg-label">{entry.personalTokenLabel}</span>
             <input name="token" type="password" required autoComplete="new-password" />
           </label>
           {entry.personalTokenHelp !== null && (

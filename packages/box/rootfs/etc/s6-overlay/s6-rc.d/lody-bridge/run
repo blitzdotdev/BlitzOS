@@ -1,0 +1,32 @@
+#!/command/with-contenv bash
+# Re-serves two of the Lody daemon's unix-socket surfaces on one unix socket the
+# Go gateway proxies as /lody/sync and /lody/rpc. See
+# /usr/local/libexec/blitz-lody-bridge for the design and why it is not a Loro
+# relay.
+#
+# It runs as the same uid as the daemon and the gateway, which is what makes a
+# 0600 socket enough: nothing else on the box may open it, and the bridge itself
+# holds no credential.
+#
+# NODE_PATH is load-bearing. `ws` is installed into the image's global npm
+# prefix, and that prefix is on no module search path of a script under
+# /usr/local/libexec.
+set -euo pipefail
+
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+
+# Follows lody-daemon: with no daemon there is nothing to bridge, and a socket
+# that answers 502 to every call is worse than one that is absent.
+if [ "${BLITZ_LODY_SESSIONS:-0}" != "1" ]; then
+	echo "lody-bridge: disabled (set BLITZ_LODY_SESSIONS=1 to enable)"
+	exec sleep infinity
+fi
+
+exec /command/s6-setuidgid blitz /usr/bin/env \
+	HOME="$state_dir/home" USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+	NODE_PATH=/opt/blitz/npm/lib/node_modules \
+	BLITZ_STATE_DIR="$state_dir" \
+	LODY_PLATFORM=local \
+	LODY_DATA_DIR="$state_dir/lody" \
+	BLITZ_LODY_BRIDGE_SOCKET="$state_dir/lody-bridge.sock" \
+	/usr/local/libexec/blitz-lody-bridge

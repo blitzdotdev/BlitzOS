@@ -1,29 +1,14 @@
 import type { AgentProvider } from "./wire.js";
 
-/** A TUI recipe launch adds only the two invocation files; `blitz-term`
- * consumes them, and the box keeps its image-default `BLITZ_AGENT`, so the
- * workspace chat tab is untouched by the recipe. */
-export interface TuiRecipeBootstrap {
+/** A recipe launch adds only the two invocation files; `blitz-term` consumes
+ * them when the first TUI session starts. Built by core/recipes.ts from a
+ * validated recipe row. */
+export interface RecipeBootstrap {
   harness: AgentProvider;
   model?: string;
   effort?: string;
   prompt: string;
 }
-
-/** A chat recipe launch additionally pins the actor's adapter with
- * `-e BLITZ_AGENT` (the pinned model's provider) and emits the prompt
- * sender. */
-export interface ChatRecipeBootstrap {
-  harness: "chat";
-  agentProvider: AgentProvider;
-  model?: string;
-  effort?: string;
-  prompt: string;
-}
-
-/** A recipe launch's additions to the boot. Built by core/recipes.ts from a
- * validated recipe row. */
-export type RecipeBootstrap = TuiRecipeBootstrap | ChatRecipeBootstrap;
 
 export interface BootstrapOptions {
   boxImageSha256: string;
@@ -81,8 +66,7 @@ export function shellQuote(value: string): string {
  * /var/lib/blitz/recipe/invocation.env: one shell-sourceable KEY='value' line
  * per set key, HARNESS then MODEL then EFFORT, unset keys omitted, values
  * single-quoted with shellQuote's escaping. Sole reader: the shared bash
- * parser `blitz-recipe-invocation` that `blitz-term` sources (the chat sender
- * gets model/effort interpolated at render time and reads only prompt.txt).
+ * parser `blitz-recipe-invocation` that `blitz-term` sources.
  * Pinned by `packages/schema/fixtures/recipe-invocation/` and its conformance
  * suite. */
 export function recipeInvocationEnvFile(recipe: RecipeBootstrap): string {
@@ -90,173 +74,6 @@ export function recipeInvocationEnvFile(recipe: RecipeBootstrap): string {
   if (recipe.model !== undefined) lines.push(`MODEL=${shellQuote(recipe.model)}`);
   if (recipe.effort !== undefined) lines.push(`EFFORT=${shellQuote(recipe.effort)}`);
   return `${lines.join("\n")}\n`;
-}
-
-/** The chat-harness prompt sender. Emitted into the bootstrap as a quoted
- * heredoc and `docker exec`'d in the background as the blitz user; it retries
- * connecting to the actor with the box's own webapp token (the static-token
- * path grants owner, and 127.0.0.1 is an allowed origin), then runs the
- * minimal ACP sequence once: initialize, session/new, the pinned config
- * options, session/prompt — and exits without waiting for the turn. Model,
- * effort, and the provider's bypass permission are control-plane-known, so
- * they are interpolated at render time; the sender reads only prompt.txt from
- * disk. Any error after the handshake is logged to the delivery log and exits
- * nonzero — fail loudly, but never the boot (it runs detached). Plain
- * CommonJS with no template literals so the surrounding TypeScript template
- * stays literal; `ws` is resolved from the actor's vendored node_modules
- * because Node's global WebSocket cannot send the auth header. */
-function recipeSenderSource(recipe: ChatRecipeBootstrap): string {
-  // JSON.stringify emits valid JS string literals; model and effort are
-  // catalog/pattern-validated tokens, so none of them can form the heredoc
-  // terminator or a template-literal escape.
-  const model = recipe.model === undefined ? "null" : JSON.stringify(recipe.model);
-  const effort = recipe.effort === undefined ? "null" : JSON.stringify(recipe.effort);
-  const permission = JSON.stringify(
-    recipe.agentProvider === "claude" ? "bypassPermissions" : "never",
-  );
-  return String.raw`'use strict';
-const fs = require('node:fs');
-const WebSocket = require('/opt/blitz/actor/node_modules/ws');
-
-const RECIPE_DIR = '/var/lib/blitz/recipe';
-const TOKEN_PATH = '/var/lib/blitz/webapp-token';
-const ACTOR_URL = 'ws://127.0.0.1:7444';
-const CONNECT_DEADLINE_MS = Date.now() + 10 * 60 * 1000;
-const CONNECT_RETRY_MS = 3000;
-const REQUEST_TIMEOUT_MS = 120 * 1000;
-const MODEL = ${model};
-const EFFORT = ${effort};
-const PERMISSION = ${permission};
-
-function log(line) {
-  const stamped = new Date().toISOString() + ' ' + line + '\n';
-  try {
-    fs.appendFileSync(RECIPE_DIR + '/delivery.log', stamped);
-  } catch (ignored) {}
-  process.stdout.write(stamped);
-}
-
-function describe(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function sleep(ms) {
-  return new Promise(function (resolve) { setTimeout(resolve, ms); });
-}
-
-function connectOnce(token) {
-  return new Promise(function (resolve, reject) {
-    const socket = new WebSocket(ACTOR_URL, {
-      headers: { 'x-blitz-webapp-token': token },
-      origin: 'http://127.0.0.1',
-      perMessageDeflate: false,
-      handshakeTimeout: 15000,
-    });
-    socket.once('open', function () { resolve(socket); });
-    socket.once('error', reject);
-    socket.once('unexpected-response', function (request, response) {
-      reject(new Error('actor refused the handshake with status ' + response.statusCode));
-    });
-  });
-}
-
-async function connectUntilDeadline() {
-  while (Date.now() < CONNECT_DEADLINE_MS) {
-    try {
-      const token = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
-      if (token === '') throw new Error('webapp token is empty');
-      return await connectOnce(token);
-    } catch (error) {
-      log('connect attempt failed: ' + describe(error));
-    }
-    await sleep(Math.max(0, Math.min(CONNECT_RETRY_MS, CONNECT_DEADLINE_MS - Date.now())));
-  }
-  throw new Error('gave up connecting to the actor: deadline passed');
-}
-
-let nextId = 0;
-
-function request(socket, method, params) {
-  nextId += 1;
-  const id = nextId;
-  return new Promise(function (resolve, reject) {
-    const timer = setTimeout(function () {
-      settle(new Error(method + ' timed out after ' + REQUEST_TIMEOUT_MS + ' ms'), undefined);
-    }, REQUEST_TIMEOUT_MS);
-    function settle(error, result) {
-      clearTimeout(timer);
-      socket.removeListener('message', onMessage);
-      socket.removeListener('close', onClose);
-      if (error === null) resolve(result);
-      else reject(error);
-    }
-    function onMessage(data) {
-      let frame = null;
-      try {
-        frame = JSON.parse(String(data));
-      } catch (ignored) {
-        return;
-      }
-      // Responses only: inbound requests and notifications carry a method
-      // and are left alone (permissions are pre-bypassed, so nothing the
-      // actor asks needs an answer from this client).
-      if (frame === null || typeof frame !== 'object' || typeof frame.method === 'string') return;
-      if (frame.id !== id) return;
-      if ('error' in frame) settle(new Error(method + ' failed: ' + JSON.stringify(frame.error)), undefined);
-      else settle(null, frame.result);
-    }
-    function onClose() {
-      settle(new Error('socket closed before ' + method + ' answered'), undefined);
-    }
-    socket.on('message', onMessage);
-    socket.on('close', onClose);
-    socket.send(JSON.stringify({ jsonrpc: '2.0', id: id, method: method, params: params }));
-  });
-}
-
-async function main() {
-  let prompt = null;
-  try {
-    prompt = fs.readFileSync(RECIPE_DIR + '/prompt.txt', 'utf8');
-  } catch (error) {
-    log('recipe prompt is unreadable: ' + describe(error));
-    process.exit(1);
-  }
-  const socket = await connectUntilDeadline();
-  await request(socket, 'initialize', {
-    protocolVersion: 1,
-    clientCapabilities: {},
-    clientInfo: { name: 'blitz-recipe-sender', version: '0.1.0' },
-  });
-  const created = await request(socket, 'session/new', { cwd: '/workspace', mcpServers: [] });
-  if (created === null || typeof created !== 'object' || typeof created.sessionId !== 'string') {
-    throw new Error('session/new returned no sessionId');
-  }
-  const sessionId = created.sessionId;
-  if (MODEL !== null) {
-    await request(socket, 'session/set_config_option', { sessionId: sessionId, configId: 'model', value: MODEL });
-  }
-  if (EFFORT !== null) {
-    await request(socket, 'session/set_config_option', { sessionId: sessionId, configId: 'effort', value: EFFORT });
-  }
-  await request(socket, 'session/set_config_option', { sessionId: sessionId, configId: 'permission', value: PERMISSION });
-  nextId += 1;
-  socket.send(JSON.stringify({
-    jsonrpc: '2.0',
-    id: nextId,
-    method: 'session/prompt',
-    params: { sessionId: sessionId, prompt: [{ type: 'text', text: prompt }] },
-  }));
-  log('prompt submitted to session ' + sessionId);
-  // Let the frame flush; the turn itself runs in the actor without us.
-  await sleep(2000);
-  process.exit(0);
-}
-
-main().catch(function (error) {
-  log('recipe delivery failed: ' + describe(error));
-  process.exit(1);
-});`;
 }
 
 /** Emits the first-boot script a VM runs: bash, with Python inline for the
@@ -410,6 +227,66 @@ docker image inspect "$BOX_IMAGE_REF" >/dev/null
 box_image="$BOX_IMAGE_REF"`;
 }
 
+/** Compressed swap for the VM, emitted into the bootstrap.
+ *
+ * A Hetzner Ubuntu image ships no swap at all. With none, a workspace that
+ * fills RAM skips every soft stage and lands in direct reclaim: every process stalls,
+ * the tunnel stops answering its heartbeats, and the box reads as "connecting"
+ * with no OOM line anywhere to explain it. That silent stall, not a kill, is
+ * the failure this closes.
+ *
+ * zram and not a swapfile: the pages stay in RAM, compressed, so the tail of a
+ * spike costs CPU instead of disk. A swapfile on the workspace volume would
+ * turn a memory spike into an I/O storm on the same disk the build is using.
+ *
+ * The stock Hetzner Ubuntu image ships without the zram module — it lives in
+ * linux-modules-extra, which the lab measured as absent on 2026-08-29. The
+ * install fallback covers it; a kernel with no package still boots, swapless.
+ *
+ * swappiness 100 and page-cluster 0 are the standard pairing for zram. The
+ * default 60 assumes a slow disk and holds anonymous pages too long, and the
+ * default readahead of 8 pages wastes decompression on pages nobody wants.
+ *
+ * The disksize arithmetic is `kb * 256`, which is `kb * 1024 / 4` — a
+ * quarter of RAM, expressed in bytes.
+ *
+ * KEEP THIS TERSE. Every byte here is cloud-init user-data, and Hetzner caps
+ * that at HETZNER_USER_DATA_MAX_BYTES. Reasoning belongs in this comment,
+ * which never ships; the emitted script carries only what bash must read. */
+const ZRAM_SETUP = `cat >/usr/local/sbin/blitz-zram <<'ZRAM'
+#!/bin/bash
+set -Eeuo pipefail
+swapoff /dev/zram0 2>/dev/null || true
+modprobe zram 2>/dev/null || {
+  apt-get install -y -qq linux-modules-extra-$(uname -r) >/dev/null 2>&1 || true
+  modprobe zram || exit 0
+}
+kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
+echo 1 >/sys/block/zram0/reset 2>/dev/null || true
+echo lz4 >/sys/block/zram0/comp_algorithm 2>/dev/null || true
+echo $(( kb * 256 )) >/sys/block/zram0/disksize
+mkswap /dev/zram0 >/dev/null
+swapon -p 100 /dev/zram0
+sysctl -qw vm.swappiness=100 vm.page-cluster=0
+ZRAM
+chmod 0755 /usr/local/sbin/blitz-zram
+cat >/etc/systemd/system/blitz-zram.service <<'ZU'
+[Unit]
+Description=Blitz compressed swap
+Before=docker.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/blitz-zram
+[Install]
+WantedBy=multi-user.target
+ZU
+systemctl daemon-reload
+systemctl enable --now blitz-zram.service || echo "blitz bootstrap: no zram, continuing"
+blitz_phase zram-ready
+
+`;
+
 export function buildBootstrapScript(options: BootstrapOptions): string {
   const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
   const trimmedSshPublicKey = options.sshPublicKey?.trim();
@@ -432,11 +309,6 @@ printf '%s' ${shellQuote(recipeInvocationEnvFile(recipe))} >/var/lib/blitz/recip
 chown 1000:1000 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env
 chmod 0600 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env
 `;
-  // Only chat pins the actor's adapter; TUI recipes leave the image-default
-  // BLITZ_AGENT alone so the workspace chat tab keeps it.
-  const agentFlag = recipe?.harness !== "chat"
-    ? ""
-    : `  -e BLITZ_AGENT=${shellQuote(recipe.agentProvider)} \\\n`;
   // This value lands in an emitted shell command. The emitter is the
   // shell-interpolation boundary. `boxHostname` is the real gate. This
   // re-check keeps the boundary local, the way the template repos do.
@@ -463,22 +335,6 @@ install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
     ? ""
     : `  --mount type=bind,src=/var/lib/blitz/home/.claude/projects,dst=/workspace/shared/agent-usage/claude,readonly \\
   --mount type=bind,src=/var/lib/blitz/home/.codex/sessions,dst=/workspace/shared/agent-usage/codex,readonly \\
-`;
-  const promptSender = recipe?.harness !== "chat"
-    ? ""
-    : `cat >/var/lib/blitz/recipe/sender.cjs <<'RECIPE_SENDER'
-${recipeSenderSource(recipe)}
-RECIPE_SENDER
-chown 1000:1000 /var/lib/blitz/recipe/sender.cjs
-chmod 0600 /var/lib/blitz/recipe/sender.cjs
-echo "blitz bootstrap: recipe prompt sender starting in the background (best-effort)"
-nohup docker exec \\
-  --user 1000:1000 \\
-  --env HOME=/var/lib/blitz/home \\
-  --env USER=blitz \\
-  blitz-box \\
-  node /var/lib/blitz/recipe/sender.cjs >>/var/lib/blitz/recipe/sender.log 2>&1 &
-
 `;
   // The detached `blitz-rc` remote-control tmux session used to be emitted
   // here. Parked 2026-08-24 (owner ruling): that session created the box's
@@ -532,8 +388,15 @@ done' >>/var/lib/blitz/repo-clone.log 2>&1 || true &
   const sshPublicKeyDeclaration = sshPublicKey === undefined
     ? ""
     : `readonly SSH_PUBLIC_KEY=${shellQuote(sshPublicKey)}\n`;
+  // No key supplied PRESERVES whatever the volume already carries, and only
+  // creates the file when it is missing. `/var/lib/blitz` is the mounted
+  // volume by the time this runs, so the truncation this replaced destroyed
+  // the member's own access every time a machine was re-provisioned without a
+  // key — including machines whose key arrived through the retired
+  // workspace-level field, which have no other copy of it. The bind mount
+  // still needs the file to exist, hence the create-if-absent.
   const sshPublicKeyProvisioning = sshPublicKey === undefined
-    ? String.raw`: >/var/lib/blitz/authorized_key
+    ? String.raw`[ -e /var/lib/blitz/authorized_key ] || : >/var/lib/blitz/authorized_key
 chown root:root /var/lib/blitz/authorized_key
 chmod 0644 /var/lib/blitz/authorized_key
 `
@@ -775,7 +638,7 @@ done
 fi
 blitz_phase sshd-ready
 
-${imageSetup}
+${ZRAM_SETUP}${imageSetup}
 blitz_phase box-image-ready
 install -d -m 0755 /etc/blitz
 ${invocationFiles}${usageDirectories}# The one docker run for the box container, extracted to a host script so
@@ -794,14 +657,33 @@ box_image=${"${1:?usage: blitz-box-run <image-ref>}"}
 docker run --rm --entrypoint cat "$box_image" /etc/blitz/env.defaults >/etc/blitz/env.defaults.next
 chmod 0644 /etc/blitz/env.defaults.next
 mv /etc/blitz/env.defaults.next /etc/blitz/env.defaults
+# Ceiling from this VM's own RAM; see bootstrap.ts for why. The limits file is
+# optional: an operator or a load test writes it to override any default below.
+limits_file=/etc/blitz/box-limits.env
+[ -f "$limits_file" ] || : >"$limits_file"
+. "$limits_file"
+mem_total_mb=$(( $(awk '/^MemTotal:/ {print $2}' /proc/meminfo) / 1024 ))
+host_reserve_mb=${"${BLITZ_HOST_RESERVE_MB:-512}"}
+box_swap_mb=${"${BLITZ_BOX_SWAP_MB:-2048}"}
+box_pids=${"${BLITZ_BOX_PIDS:-8192}"}
+box_mem_mb=$(( mem_total_mb - host_reserve_mb ))
+limit_flags=(--pids-limit "$box_pids")
+if [ "$box_mem_mb" -ge 1024 ]; then
+  limit_flags+=(--memory "$box_mem_mb"m --memory-swap $(( box_mem_mb + box_swap_mb ))m)
+else
+  echo "blitz-box-run: only $mem_total_mb MB total; starting without a memory ceiling" >&2
+fi
+
 docker run --detach \
   --name blitz-box \
 ${hostnameFlag}  --restart unless-stopped \
   --privileged \
+  ${"${limit_flags[@]}"} \
   --env-file /etc/blitz/env.defaults \
+  --env-file /etc/blitz/box-limits.env \
   -e BLITZ_UID=1000 \
   -e BLITZ_GID=1000 \
-${agentFlag}  --mount type=bind,src=/var/lib/blitz,dst=/var/lib/blitz \
+  --mount type=bind,src=/var/lib/blitz,dst=/var/lib/blitz \
   --mount type=bind,src=/var/lib/blitz/authorized_key,dst=/run/blitz/authorized_key,readonly \
   --mount type=bind,src=/var/lib/blitz/workspace,dst=/workspace \
 ${usageMounts}  -p 0.0.0.0:22:22 \
@@ -823,7 +705,7 @@ while (( SECONDS < health_deadline )); do
 done
 [ "$box_healthy" = true ] || fail "box health timeout after 180 seconds"
 
-${promptSender}${repoCloner}read_host_key() {
+${repoCloner}read_host_key() {
   local key_path="/var/lib/blitz/ssh/ssh_host_$1_key.pub"
   if [ -s "$key_path" ]; then
     sed -n '1p' "$key_path"

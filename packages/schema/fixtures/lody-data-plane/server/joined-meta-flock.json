@@ -1,0 +1,18 @@
+{
+  "type": "joined",
+  "protocolVersion": 7,
+  "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+  "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+  "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+  "room": {
+    "scope": "meta"
+  },
+  "serverVersion": "{\"b70fc6dbafd17667d35d7cdaec6573a196ba2ac5fd64bf817c9a77bd729cf9da\":{\"physicalTime\":1788050131674,\"logicalCounter\":0}}",
+  "payload": {
+    "kind": "flock-json",
+    "bundle": {
+      "version": 1,
+      "entries": {}
+    }
+  }
+}

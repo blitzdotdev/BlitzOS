@@ -1,0 +1,71 @@
+[
+  {
+    "sessionId": "session-sample",
+    "update": {
+      "sessionUpdate": "available_commands_update",
+      "availableCommands": []
+    }
+  },
+  {
+    "sessionId": "session-sample",
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "call_sample_1",
+      "title": "Run printf \"\\u001b[31mred\\u001b[0m\\n\"",
+      "status": "in_progress",
+      "kind": "execute",
+      "rawInput": {
+        "call_id": "call_sample_1",
+        "command": [
+          "/bin/zsh",
+          "-lc",
+          "printf \"\\u001b[31mred\\u001b[0m\\n\""
+        ],
+        "cwd": "/tmp",
+        "parsed_cmd": [
+          {
+            "cmd": "printf \"\\u001b[31mred\\u001b[0m\\n\"",
+            "type": "unknown"
+          }
+        ],
+        "source": "agent",
+        "turn_id": "1"
+      }
+    }
+  },
+  {
+    "sessionId": "session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "call_sample_1",
+      "status": "completed",
+      "kind": "execute",
+      "rawOutput": {
+        "call_id": "call_sample_1",
+        "exit_code": 0,
+        "stdout": "\u001b[31mred\u001b[0m\n",
+        "stderr": "",
+        "aggregated_output": "\u001b[31mred\u001b[0m\n",
+        "formatted_output": "red\n",
+        "parsed_cmd": [
+          {
+            "cmd": "printf \"\\u001b[31mred\\u001b[0m\\n\"",
+            "type": "unknown"
+          }
+        ],
+        "source": "agent",
+        "turn_id": "1"
+      },
+      "content": [
+        {
+          "type": "content",
+          "content": {
+            "type": "text",
+            "text": "```sh\n\\u001b[31mred\\u001b[0m\n```\n"
+          }
+        }
+      ]
+    }
+  }
+]
+

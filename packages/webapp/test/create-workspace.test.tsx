@@ -89,12 +89,11 @@ describe("create workspace dialog", () => {
 
     expect(view.container.textContent).toContain("Hetzner · fsn1");
     expect(view.container.textContent).toContain("Local lab");
-    expect(view.container.textContent).toContain("SSH public key (optional)");
     expect(view.container.querySelector<HTMLDetailsElement>('.blueprint-advanced')?.open).toBe(false);
-    expect(view.container.textContent).toContain(
-      "Optional. Without a key the workspace is webapp-only. Recreate the workspace to add one later.",
-    );
-    expect(view.container.querySelector<HTMLTextAreaElement>('textarea[name="sshPublicKey"]')?.required).toBe(false);
+    // The SSH key field is GONE. A key reaches a machine through
+    // POST /machines/:id/provision|recreate, never through workspace creation.
+    expect(view.container.textContent).not.toContain("SSH public key");
+    expect(view.container.querySelector('textarea[name="sshPublicKey"]')).toBeNull();
 
     await act(async () => {
       view.container.querySelector("form")?.dispatchEvent(
@@ -112,43 +111,6 @@ describe("create workspace dialog", () => {
     expect("members" in keylessRequest).toBe(false);
     expect("credentials" in keylessRequest).toBe(false);
     expect(JSON.stringify(keylessRequest)).toBe('{"machineTypeId":"cx23@fsn1"}');
-    await view.unmount();
-  });
-
-  it("includes the optional SSH key only when one is typed", async () => {
-    const submit = vi.fn();
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient()}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-
-    const key = view.container.querySelector<HTMLTextAreaElement>('textarea[name="sshPublicKey"]')!;
-    await act(async () => {
-      key.value = "ssh-ed25519 AAAA operator@example";
-      key.dispatchEvent(new Event("input", { bubbles: true }));
-      view.container.querySelector("form")?.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true }),
-      );
-    });
-
-    expect(submit).toHaveBeenCalledWith({
-      machineTypeId: "cx23@fsn1",
-      sshPublicKey: "ssh-ed25519 AAAA operator@example",
-    });
-    const completeRequest = submit.mock.calls[0]?.[0];
-    expect(Object.keys(completeRequest).sort()).toEqual(["machineTypeId", "sshPublicKey"]);
-    // The workspace no longer picks a volume: each member's row does, and the
-    // `volumeId` field stays on the wire for a recreate alone.
-    expect("volumeId" in completeRequest).toBe(false);
-    expect(view.container.querySelector('select[name="volumeId"]')).toBeNull();
     await view.unmount();
   });
 

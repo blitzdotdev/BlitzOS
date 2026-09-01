@@ -46,12 +46,6 @@
   display: none;
 }
 
-.webapp-dev-canvas--chat > .chat-panel {
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
 @media (max-width: 899px) {
   .webapp-shell {
     position: fixed;

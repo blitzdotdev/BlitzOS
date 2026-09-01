@@ -1,0 +1,287 @@
+/* Section 3 — the control plane.
+ * An isometric "data center": a server cube projects an upright holographic Lody
+ * logo; machines sit above (work streams out) and clients below (control streams
+ * in), wired along the iso floor (floor axis + riser, in-lane, no crossings).
+ * Theme-aware: light blueprint vs. a dark core (see .dark). */
+
+.control-plane {
+  --cp-accent: 211 92% 54%;
+  --cp-ink: 215 26% 30%;
+  --cp-title: 216 40% 17%;
+  --cp-bg: linear-gradient(180deg, hsl(210 44% 99%), hsl(214 42% 96%));
+  --cp-device-filter: none;
+  --cp-hub-top: hsl(205 70% 90%);
+  --cp-hub-face: hsl(213 34% 91%);
+  --cp-hub-edge: hsl(215 26% 42%);
+  --cp-hub-seam: hsl(214 20% 62%);
+  --cp-hub-lit: hsl(204 92% 78% / 0.6);
+
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+  padding: clamp(4rem, 8vw, 8.5rem) 0;
+  background: var(--cp-bg);
+  color: hsl(var(--cp-ink));
+}
+
+.dark .control-plane {
+  --cp-accent: 205 90% 64%;
+  --cp-ink: 214 20% 72%;
+  --cp-title: 210 40% 97%;
+  --cp-bg: linear-gradient(180deg, hsl(222 48% 9%), hsl(224 56% 6%));
+  --cp-device-filter: invert(1) hue-rotate(180deg) brightness(1.06);
+  --cp-hub-top: hsl(213 52% 16%);
+  --cp-hub-face: hsl(221 46% 11%);
+  --cp-hub-edge: hsl(210 28% 68%);
+  --cp-hub-seam: hsl(214 24% 44%);
+  --cp-hub-lit: hsl(205 90% 56% / 0.3);
+}
+
+.cp-inner {
+  display: grid;
+  grid-template-columns: 0.66fr 1.34fr;
+  align-items: center;
+  gap: clamp(1rem, 3vw, 3rem);
+  width: min(1340px, 95vw);
+  margin: 0 auto;
+}
+
+/* ---- Copy ---------------------------------------------------------------- */
+
+.cp-copy {
+  max-width: 25rem;
+}
+
+.cp-kicker {
+  margin: 0 0 0.9rem;
+  color: hsl(var(--cp-accent));
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.cp-title {
+  margin: 0;
+  color: hsl(var(--cp-title));
+  font-family: var(--font-heading);
+  font-size: clamp(1.9rem, 3.6vw, 3rem);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.cp-body {
+  margin: 1.15rem 0 0;
+  max-width: 25rem;
+  color: hsl(var(--cp-ink) / 0.82);
+  font-size: clamp(1rem, 1.2vw, 1.12rem);
+  line-height: 1.6;
+}
+
+/* ---- Isometric scene ----------------------------------------------------- */
+
+.cp-scene {
+  position: relative;
+  aspect-ratio: 1100 / 940;
+  width: 100%;
+  perspective: 1600px;
+}
+
+/* Isometric "tile" floor the wiring routes along. */
+.cp-scene__grid {
+  position: absolute;
+  inset: -12%;
+  background-image:
+    repeating-linear-gradient(27deg, hsl(var(--cp-ink) / 0.1) 0 1px, transparent 1px 52px),
+    repeating-linear-gradient(-27deg, hsl(var(--cp-ink) / 0.1) 0 1px, transparent 1px 52px);
+  -webkit-mask-image: radial-gradient(ellipse 64% 62% at 50% 52%, #000 14%, transparent 78%);
+  mask-image: radial-gradient(ellipse 64% 62% at 50% 52%, #000 14%, transparent 78%);
+  pointer-events: none;
+}
+
+.cp-scene__glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(28% 24% at 50% 52%, hsl(var(--cp-accent) / 0.32), transparent 72%),
+    radial-gradient(46% 42% at 50% 52%, hsl(199 90% 60% / 0.12), transparent 74%);
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+/* The whole scene tilts gently toward the pointer (one plane, so the wiring
+ * stays connected). */
+.cp-stage {
+  position: absolute;
+  inset: 0;
+  transform: rotateX(calc(var(--rx, 0) * 1deg)) rotateY(calc(var(--ry, 0) * 1deg));
+  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.cp-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* Machines — flip the monochrome line-art to light strokes in dark theme. */
+.cp-machine {
+  filter: var(--cp-device-filter);
+}
+
+/* Conduits + streaming packets. */
+.cp-wire {
+  stroke: hsl(var(--cp-accent) / 0.32);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.cp-wire-flow {
+  stroke: hsl(var(--cp-accent));
+  stroke-width: 4.5;
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 18;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 3px hsl(var(--cp-accent) / 0.6));
+  animation: cp-flow var(--flow-dur, 2.2s) linear infinite;
+  animation-delay: var(--flow-delay, 0s);
+}
+
+/* Hub cube. */
+.cp-hub-face {
+  fill: var(--cp-hub-face);
+}
+
+.cp-hub-top {
+  fill: var(--cp-hub-top);
+}
+
+.cp-hub-edge {
+  fill: none;
+  stroke: var(--cp-hub-edge);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.cp-hub-seam {
+  fill: none;
+  stroke: var(--cp-hub-seam);
+  stroke-width: 1;
+  opacity: 0.7;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The server's top face glows softly under the projector. */
+.cp-hub-top--lit {
+  fill: var(--cp-hub-lit);
+  animation: cp-pulse 4.5s ease-in-out infinite;
+}
+
+/* Status LEDs + the projector emitter on the data-center top. */
+.cp-hub-led {
+  fill: hsl(var(--cp-accent));
+  filter: drop-shadow(0 0 3px hsl(var(--cp-accent) / 0.85));
+}
+
+.cp-hub-emitter {
+  fill: hsl(var(--cp-accent) / 0.5);
+  filter: blur(2.5px);
+  animation: cp-pulse 4.5s ease-in-out infinite;
+}
+
+/* Holographic Lody projection rising from the server. */
+.cp-holo-cone {
+  fill: url(#cp-holo-cone);
+  animation: cp-pulse 4.5s ease-in-out infinite;
+}
+
+.cp-holo {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0.95;
+  filter: drop-shadow(0 0 14px hsl(190 92% 58% / 0.7)) drop-shadow(0 0 30px hsl(198 90% 56% / 0.4));
+  animation: cp-holo-float 5s ease-in-out infinite;
+}
+
+/* ---- Client nodes (control points) --------------------------------------- */
+
+.cp-client-line {
+  fill: none;
+  stroke: var(--cp-hub-edge);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.cp-client-dot {
+  fill: var(--cp-hub-edge);
+  stroke: none;
+}
+
+/* Control packets flow the other way (client → hub) and are tinted apart. */
+.cp-wire-flow--control {
+  stroke: hsl(168 76% 46%);
+  filter: drop-shadow(0 0 3px hsl(168 76% 46% / 0.6));
+}
+
+@keyframes cp-flow {
+  to {
+    stroke-dashoffset: -18.1;
+  }
+}
+
+@keyframes cp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes cp-holo-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4%);
+  }
+}
+
+@media (max-width: 900px) {
+  .cp-inner {
+    grid-template-columns: 1fr;
+    gap: clamp(1.5rem, 5vw, 2.5rem);
+  }
+
+  .cp-scene {
+    width: min(34rem, 100%);
+    margin: 0 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cp-stage {
+    transition: none;
+  }
+
+  .cp-hub-top--lit,
+  .cp-hub-emitter,
+  .cp-holo-cone,
+  .cp-holo,
+  .cp-wire-flow {
+    animation: none;
+  }
+}

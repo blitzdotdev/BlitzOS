@@ -1,0 +1,366 @@
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
+import { clamp } from '@/lib/clamp';
+import { cn } from '@/lib/utils';
+
+const SWIPE_ACTION_ROW_OPEN_EVENT = 'lody:swipe-action-row-open';
+const HORIZONTAL_LOCK_PX = 8;
+const REVEAL_THRESHOLD_RATIO = 0.35;
+const CLOSE_THRESHOLD_PX = 28;
+const DEFAULT_ACTION_WIDTH = 72;
+const DEFAULT_COMMIT_DISTANCE = 52;
+const CLICK_SUPPRESS_MS = 350;
+const SPRING_TRANSITION_CLASS =
+  'duration-300 [transition-timing-function:cubic-bezier(0.2,1.35,0.22,1)]';
+
+export type SwipeActionRowAction = {
+  key: string;
+  label: string;
+  ariaLabel?: string;
+  icon?: ReactNode;
+  hideLabel?: boolean;
+  className?: string;
+  onClick: () => void;
+};
+
+type SwipeGestureState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startOffset: number;
+  lastOffset: number;
+  isHorizontal: boolean;
+  isOpenAtStart: boolean;
+};
+
+type SwipeActionRowProps = {
+  enabled: boolean;
+  actions: SwipeActionRowAction[];
+  children: ReactNode;
+  className?: string;
+  contentClassName?: string;
+  actionWidth?: number;
+  commitDistance?: number;
+  onCommit?: () => void;
+};
+
+export function SwipeActionRow({
+  enabled,
+  actions,
+  children,
+  className,
+  contentClassName,
+  actionWidth = DEFAULT_ACTION_WIDTH,
+  commitDistance = DEFAULT_COMMIT_DISTANCE,
+  onCommit,
+}: SwipeActionRowProps) {
+  const rowId = useId();
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const gestureRef = useRef<SwipeGestureState | null>(null);
+  const suppressNextClickRef = useRef(false);
+  const suppressClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState(0);
+
+  const revealWidth = useMemo(() => actions.length * actionWidth, [actionWidth, actions.length]);
+  const hasCommit = typeof onCommit === 'function';
+  const maxSwipeWidth = revealWidth + (hasCommit ? commitDistance : 0);
+  const restingOffset = isOpen ? -revealWidth : 0;
+  const visualOffset = isDragging ? dragOffset : restingOffset;
+  const visibleActionWidth = Math.abs(visualOffset);
+  const commitStretchEnabled = hasCommit && actions.length === 1;
+  const commitOverswipe = commitStretchEnabled ? Math.max(0, visibleActionWidth - revealWidth) : 0;
+  const commitProgress = commitDistance > 0 ? clamp(commitOverswipe / commitDistance, [0, 1]) : 0;
+  const commitActionWidth = commitStretchEnabled
+    ? Math.max(actionWidth, Math.min(maxSwipeWidth, visibleActionWidth))
+    : actionWidth;
+
+  const clearSuppressClickTimer = useCallback(() => {
+    if (suppressClickTimerRef.current === null) return;
+    clearTimeout(suppressClickTimerRef.current);
+    suppressClickTimerRef.current = null;
+  }, []);
+
+  const suppressClickBriefly = useCallback(() => {
+    suppressNextClickRef.current = true;
+    clearSuppressClickTimer();
+    suppressClickTimerRef.current = setTimeout(() => {
+      suppressNextClickRef.current = false;
+      suppressClickTimerRef.current = null;
+    }, CLICK_SUPPRESS_MS);
+  }, [clearSuppressClickTimer]);
+
+  const openRow = useCallback(() => {
+    setIsOpen(true);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(SWIPE_ACTION_ROW_OPEN_EVENT, { detail: rowId }));
+    }
+  }, [rowId]);
+
+  const closeRow = useCallback(() => {
+    setIsOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!enabled && isOpen) {
+      closeRow();
+    }
+  }, [closeRow, enabled, isOpen]);
+
+  useEffect(() => {
+    return () => {
+      clearSuppressClickTimer();
+    };
+  }, [clearSuppressClickTimer]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    const handleOtherRowOpen = (event: Event) => {
+      const nextOpenRowId = (event as CustomEvent<string>).detail;
+      if (nextOpenRowId !== rowId) {
+        closeRow();
+      }
+    };
+
+    window.addEventListener(SWIPE_ACTION_ROW_OPEN_EVENT, handleOtherRowOpen);
+    return () => window.removeEventListener(SWIPE_ACTION_ROW_OPEN_EVENT, handleOtherRowOpen);
+  }, [closeRow, enabled, rowId]);
+
+  useEffect(() => {
+    if (!enabled || !isOpen) return undefined;
+
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      const root = rootRef.current;
+      if (!root) return;
+      if (event.target instanceof Node && root.contains(event.target)) return;
+      closeRow();
+    };
+
+    window.addEventListener('pointerdown', handleOutsidePointerDown, true);
+    return () => window.removeEventListener('pointerdown', handleOutsidePointerDown, true);
+  }, [closeRow, enabled, isOpen]);
+
+  const endGesture = useCallback((target: HTMLDivElement, pointerId: number) => {
+    if (target.hasPointerCapture(pointerId)) {
+      target.releasePointerCapture(pointerId);
+    }
+    gestureRef.current = null;
+    setIsDragging(false);
+    setDragOffset(0);
+  }, []);
+
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!enabled || revealWidth <= 0 || event.pointerType !== 'touch') return;
+
+      gestureRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startOffset: isOpen ? -revealWidth : 0,
+        lastOffset: isOpen ? -revealWidth : 0,
+        isHorizontal: false,
+        isOpenAtStart: isOpen,
+      };
+      setIsDragging(true);
+      setDragOffset(isOpen ? -revealWidth : 0);
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [enabled, isOpen, revealWidth]
+  );
+
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const gesture = gestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+
+      const deltaX = event.clientX - gesture.startX;
+      const deltaY = event.clientY - gesture.startY;
+      const absDeltaX = Math.abs(deltaX);
+      const absDeltaY = Math.abs(deltaY);
+
+      if (!gesture.isHorizontal) {
+        if (absDeltaX < HORIZONTAL_LOCK_PX && absDeltaY < HORIZONTAL_LOCK_PX) return;
+        if (absDeltaY > absDeltaX) {
+          endGesture(event.currentTarget, event.pointerId);
+          return;
+        }
+        gesture.isHorizontal = true;
+      }
+
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+
+      suppressClickBriefly();
+      const nextOffset = clamp(gesture.startOffset + deltaX, [-maxSwipeWidth, 0]);
+      gesture.lastOffset = nextOffset;
+      setDragOffset(nextOffset);
+    },
+    [endGesture, maxSwipeWidth, suppressClickBriefly]
+  );
+
+  const handlePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const gesture = gestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+
+      const deltaX = event.clientX - gesture.startX;
+      const shouldCommit =
+        hasCommit && gesture.isOpenAtStart && deltaX <= -commitDistance && gesture.isHorizontal;
+      const shouldOpen =
+        gesture.isHorizontal &&
+        (gesture.isOpenAtStart
+          ? deltaX <= CLOSE_THRESHOLD_PX
+          : gesture.lastOffset <= -revealWidth * REVEAL_THRESHOLD_RATIO);
+
+      endGesture(event.currentTarget, event.pointerId);
+
+      if (!gesture.isHorizontal) return;
+
+      suppressClickBriefly();
+      if (shouldCommit) {
+        closeRow();
+        onCommit?.();
+        return;
+      }
+
+      if (shouldOpen) {
+        openRow();
+        return;
+      }
+
+      closeRow();
+    },
+    [
+      closeRow,
+      commitDistance,
+      endGesture,
+      hasCommit,
+      onCommit,
+      openRow,
+      revealWidth,
+      suppressClickBriefly,
+    ]
+  );
+
+  const handlePointerCancel = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const gesture = gestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      endGesture(event.currentTarget, event.pointerId);
+    },
+    [endGesture]
+  );
+
+  const handleContentClickCapture = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!enabled) return;
+
+      if (suppressNextClickRef.current) {
+        suppressNextClickRef.current = false;
+        clearSuppressClickTimer();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      if (!isOpen) return;
+
+      closeRow();
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    [clearSuppressClickTimer, closeRow, enabled, isOpen]
+  );
+
+  if (!enabled || actions.length === 0 || revealWidth <= 0) {
+    return <>{children}</>;
+  }
+
+  return (
+    <div ref={rootRef} className={cn('relative overflow-hidden rounded-md', className)}>
+      <div
+        className="absolute inset-y-0 right-0 flex justify-end overflow-hidden rounded-md"
+        style={{ width: maxSwipeWidth }}
+        aria-hidden={!isOpen && !isDragging}
+      >
+        {actions.map((action, index) => {
+          const shouldStretchAction = commitStretchEnabled && index === actions.length - 1;
+          return (
+            <button
+              key={action.key}
+              type="button"
+              className={cn(
+                'flex h-full items-center justify-center px-1.5 text-xs font-medium',
+                isDragging
+                  ? 'transition-colors'
+                  : `transition-[width,background-color,color] ${SPRING_TRANSITION_CLASS}`,
+                'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring/60',
+                action.className
+              )}
+              style={{ width: shouldStretchAction ? commitActionWidth : actionWidth }}
+              aria-label={action.ariaLabel ?? action.label}
+              tabIndex={isOpen ? 0 : -1}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                closeRow();
+                action.onClick();
+              }}
+            >
+              <span
+                className={cn(
+                  'flex max-w-full flex-col items-center justify-center gap-1',
+                  isDragging ? 'transition-none' : `transition-transform ${SPRING_TRANSITION_CLASS}`
+                )}
+                style={
+                  shouldStretchAction
+                    ? {
+                        transform: `translate3d(${-commitOverswipe * 0.16}px, 0, 0) scale(${
+                          1 + commitProgress * 0.05
+                        })`,
+                      }
+                    : undefined
+                }
+              >
+                {action.icon}
+                {action.hideLabel ? null : (
+                  <span className="max-w-full truncate">{action.label}</span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div
+        className={cn(
+          'relative z-10 touch-pan-y bg-background will-change-transform',
+          isDragging
+            ? 'transition-none'
+            : `transition-[translate,scale] ${SPRING_TRANSITION_CLASS}`,
+          contentClassName
+        )}
+        style={{ transform: `translate3d(${visualOffset}px, 0, 0)` }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onClickCapture={handleContentClickCapture}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}

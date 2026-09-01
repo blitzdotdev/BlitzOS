@@ -1,0 +1,55 @@
+---
+title: File Attachments
+description: Send arbitrary files to Lody agents, preview text attachments, download other file types, and receive generated files back in the conversation.
+---
+
+# File Attachments
+
+Lody supports arbitrary file attachments in both new and existing conversations. Attachments travel
+with the prompt, so the agent can read the original file from the session workspace instead of
+requiring its contents to be pasted into the message.
+
+## Add an attachment
+
+1. Open the attachment `+` menu in the composer.
+2. Choose **Upload file**, then select one or more files.
+3. Wait for active uploads to finish, add any instructions, and send the message.
+
+You can also drag files into the session interface. When starting a conversation, pending
+attachments remain associated with that new session.
+
+## Preview and download
+
+Text-previewable files open in a preview dialog. From there you can:
+
+- view rendered Markdown or the raw source
+- copy the original text
+- download the complete file
+
+Other file types use download as their primary action. On the native mobile app, downloads open
+through the system share sheet so you can save or send the file to another app.
+
+## How the agent receives files
+
+Before the turn starts, Lody materializes each attachment under the session workspace in
+`.lody/attachments/` and gives the agent a file reference. File contents are not inserted into the
+text prompt.
+
+Agents can also return files and images. Supported ACP output and Lody upload tools add those files
+to the conversation as normal attachment cards.
+
+## Limits and retention
+
+- Up to 8 files can be attached to one message.
+- Each file can be up to 100 MiB.
+- All file types are accepted.
+- Relay-stored files are retained for 90 days.
+
+Images have separate image handling: up to 8 images per message and 5 MiB per image. A larger image
+can be sent as a regular file instead. See [Image Input](/docs/image-input) and
+[Image Output](/docs/image-output).
+
+## Availability
+
+The owning machine must be able to retrieve the attachment before the agent can read it. If an
+upload fails, retry or remove that attachment; other successful attachments can still be sent.

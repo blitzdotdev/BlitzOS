@@ -14,14 +14,17 @@ plain_shell() {
     exit 1
   fi
   cd "$workspace"
-  exec "$shell" -l
+  # A bare connection still runs user work, so it belongs under the user
+  # ceiling. Its own leaf, keyed by pid, so one runaway plain shell cannot
+  # take another one down with it.
+  exec /usr/local/bin/blitz-cgroup enter "user/tab-plain-$$" -- "$shell" -l
 }
 
 if [ "$#" -eq 0 ]; then
   plain_shell
 fi
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "terminal: expected <terminal|claude|codex> <session-key> [ro]" >&2
+  echo "terminal: expected <terminal|claude|codex> <session-key> [ro|kill]" >&2
   exit 2
 fi
 
@@ -46,12 +49,22 @@ if [ "${#session_key}" -gt 128 ]; then
   echo "terminal: session key must be at most 128 characters" >&2
   exit 2
 fi
-if [ "$mode" != rw ] && [ "$mode" != ro ]; then
-  echo "terminal: optional third argument must be ro" >&2
+if [ "$mode" != rw ] && [ "$mode" != ro ] && [ "$mode" != kill ]; then
+  echo "terminal: optional third argument must be ro or kill" >&2
   exit 2
 fi
 
 session="$session_prefix-$session_key"
+
+if [ "$mode" = kill ]; then
+  # Only an explicit tab CLOSE reaches this branch. A disconnect, a reload and
+  # a navigation all leave the session running, which is what makes re-attach
+  # the normal path (plans/LODY-TERMINAL-TABS.md §4.3, §4.4). The session name
+  # is built above, so the close door never has to know the naming rule.
+  # An absent session is a success: the tab is gone either way.
+  tmux kill-session -t "=$session" 2>/dev/null || :
+  exit 0
+fi
 
 if [ "$mode" = ro ]; then
   # An observer attaches to what is already running and never starts
@@ -88,9 +101,8 @@ session_env=(-e "LANG=${LANG:-C.UTF-8}" -e "LC_ALL=${LC_ALL:-C.UTF-8}")
 # positional argument (tmux execs a multi-argument command directly, so the
 # prompt bytes never pass through a shell). Renaming invocation.env is the
 # atomic once-only claim and happens before tmux starts. `new-session -A` on
-# an existing session attaches and never re-injects (has-session decides),
-# `ro` exited above without consuming, and HARNESS=chat files belong to the
-# bootstrap chat sender, never to blitz-term.
+# an existing session attaches and never re-injects (has-session decides), and
+# `ro` exited above without consuming. blitz-term is the only consumer.
 recipe_dir="$state_dir/recipe"
 case "$session_type" in
   claude|codex)
@@ -114,5 +126,25 @@ case "$session_type" in
     fi
     ;;
 esac
+
+# THE CGROUP WRAPPER GOES ON THE PANE COMMAND, NOT ON THIS SCRIPT. tmux forks
+# every pane from its long-lived server process, so this script's own cgroup is
+# not what a pane inherits. Wrapping the command tmux execs is the one place
+# the join lands in the right process.
+#
+# One leaf per session name. A runaway agent in one tab is killed as a group,
+# and every other tab, the tmux server, and ttyd itself keep running — that is
+# the whole point of a per-tab leaf over a single shared user scope.
+#
+# `new-session -A` ignores the command when it attaches to a live session, so
+# an attach keeps the leaf the session already had.
+if [ "${#session_cmd[@]}" -eq 0 ]; then
+  pane_shell=${SHELL:-}
+  if [ -z "$pane_shell" ]; then
+    pane_shell=$(getent passwd "$(id -u)" | cut -d: -f7)
+  fi
+  session_cmd=("$pane_shell" -l)
+fi
+session_cmd=(/usr/local/bin/blitz-cgroup enter "user/tab-$session" -- "${session_cmd[@]}")
 
 exec tmux -u new-session -A -s "$session" -c "$workspace" "${session_env[@]}" "${session_cmd[@]}"

@@ -1,4 +1,3 @@
-export * from "./acp.js";
 export * from "./agent-catalog.js";
 export * from "./agent-rules.js";
 export * from "./api.js";

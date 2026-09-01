@@ -1,0 +1,177 @@
+/*
+ * How the Lody surface sits inside our shell, and the five token collisions
+ * (plans/LODY-RUNTIME-DESIGN.md §5.2, plans/evidence/lody-phase0.md §3).
+ *
+ * Unlayered, like every stylesheet under `packages/webapp/src`, so it outranks
+ * the vendored sheet inside `@layer lody`.
+ *
+ * THE COLLISION, AND THE FLIP. Both trees define `--font-mono`, `--hover`,
+ * `--muted`, `--terminal-background` and `--terminal-selection`. Ours sit
+ * unlayered on `:root`; theirs sit layered on `:root` and `.dark`, so ours win
+ * on the html element and INHERIT into their components. Two of the five were
+ * then broken by TYPE rather than by value: Lody reads `--muted` and `--hover`
+ * as bare HSL TRIPLETS (`hsl(var(--muted))`) and ours hold finished
+ * `color-mix()` colors.
+ *
+ * Phase 3 resolved all four value-carrying names with LODY's values, and said
+ * why: deriving triplets by hand would fork our palette into a second, silently
+ * drifting copy, and a reskin belongs in the theme layer. The reskin has now
+ * been built (`src/lody/blitz-theme.ts`), so the resolution flips to OURS, and
+ * the type mismatch is converted rather than aliased:
+ *
+ * | Token | Resolution now |
+ * |---|---|
+ * | `--muted` | Blitz. The theme engine's `hexColorToHslChannel` turns our `--sunken` into an `H S% L%` triplet. Written by the GENERATED sheet, not here. |
+ * | `--hover` | Blitz, same conversion, from our `--hover`. |
+ * | `--terminal-background` | Ours, unchanged. Their `:root` value is `hsl(var(--background))`, and `--background` inside the surface is now our `--paper` — the same colour, so the override is deleted rather than restated. |
+ * | `--terminal-selection` | Ours, unchanged, for the same reason: theirs derives from `--selection`, which is now our `--selected`. |
+ * | `--font-mono` | Ours (Fira Code), still by being unlayered. Never was broken. |
+ *
+ * Two of the five therefore have no rule left in this file at all, and the
+ * other two moved into `blitzThemeStylesheet()` where the palette they are
+ * derived from lives. What stays here is the surface's BOX.
+ *
+ * WHERE THE VARIABLES LAND. A custom property declared on an ELEMENT beats one
+ * inherited from an ancestor, whatever the specificity, so `.lody-surface` fixes
+ * everything the surface renders. It does not fix what Radix PORTALS: dropdowns,
+ * selects, popovers, tooltips, dialogs and the command palette mount as direct
+ * children of `document.body`, outside the surface, where they inherit ours
+ * again. So the generated sheet carries a third selector reading "a body child
+ * that is not ours" — our app is `#root` and our one body-level portal is the
+ * Files context menu, so the exclusion list is complete and small.
+ * `packages/webapp/test/lody-token-collisions.test.ts` pins it against the
+ * classes our own portals actually render, so a new BlitzOS portal fails a test
+ * instead of silently inheriting a Lody theme.
+ */
+
+/* Absolute inside `section.webapp-workspace-view`, which is already
+   `position: relative` (webapp-workspace.css:303). The surface covers the panes
+   rather than reflowing them, so `<WorkPanes>` keeps its measured geometry and
+   every ttyd terminal keeps its size across a switch — the same reason the panes
+   themselves are never unmounted. */
+.lody-surface {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--terminal-background);
+  /* Above the panes, whatever the sibling order: `WorkPanes` positions its own
+     children, and a positioned sibling would otherwise paint over the surface. */
+  z-index: 2;
+}
+
+.lody-surface[hidden] {
+  display: none;
+}
+
+.lody-surface > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* `--soft-ink`, deliberately not `--muted`: the block below turns `--muted`
+   into a Lody HSL triplet on this very element, so our own text colour has to
+   come from a token the collision does not touch. */
+.lody-surface__notice {
+  padding: 16px;
+  color: var(--soft-ink);
+  font: 13px/1.5 var(--font-ui);
+}
+
+/* The starting / did-not-start message (`agent-config-gate.tsx`) is the only
+   notice with more than one line, so its two parts are styled here rather than
+   given a block of their own. */
+.lody-surface__notice p {
+  margin: 0;
+}
+
+.lody-surface__notice-title {
+  margin-bottom: 4px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.lody-surface__notice-action {
+  margin-top: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* The signed-out banner (`agent-auth-notice.tsx`). It is a BAND above the chat,
+   not a pane: `.lody-surface > *` hands every child `flex: 1 1 auto`, which
+   would give a three-line notice half the surface. */
+.lody-surface__auth-notice {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--soft-ink);
+  font: 13px/1.5 var(--font-ui);
+}
+
+.lody-surface__auth-notice-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.lody-surface__auth-notice-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.lody-surface__auth-notice-dismiss {
+  padding: 4px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* The toast host (`SessionSurface.tsx`, `LodySurfaceProviders`). Sonner's live
+   region is an empty `<section>` whose toasts are all `position: fixed`, so it
+   needs no box: without this, `.lody-surface > *` hands it `flex: 1 1 auto` and
+   an empty element takes a share of the surface's height. Fixed descendants are
+   not clipped by an ancestor's `overflow`, and `.lody-surface` establishes no
+   containing block for them — no transform, no filter, no `contain` — so the
+   toasts still land against the viewport, where their `top-center` offset puts
+   them. */
+.lody-surface__toaster {
+  flex: 0 0 auto;
+}
+
+/* Lody's own `AcpAuthenticationPanel`, hosted in the band. It styles itself with
+   their Tailwind utilities inside the `lody` cascade layer, so this wrapper only
+   places it — never restyles it, or the panel would stop matching the identical
+   one the failed transcript entry renders. */
+.lody-surface__auth-notice-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.lody-surface__auth-notice-hint {
+  color: var(--soft-ink);
+}
+
+.lody-surface__auth-notice-hint code {
+  font-family: var(--font-mono, monospace);
+}
+
+/* `.session-list--vendor` is the SECOND Lody mount phase 4 added
+   (plans/LODY-SESSIONS.md §0.3): the rail's list region is a
+   `React.createPortal` target inside `SessionSurface`'s provider stack, so it
+   is Lody DOM living under `#root` rather than under `.lody-surface`. Its box
+   is the rail's and lives in `strip-rail.css`; its tokens come from the
+   generated theme sheet, which names it beside `.lody-surface`; and the rows
+   inside it are converged on the rail's own row in `blitz-skin.css`. */

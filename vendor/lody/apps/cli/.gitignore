@@ -1,0 +1,3 @@
+LODY_WORKDIR
+# Sentry Config File
+.env.sentry-build-plugin

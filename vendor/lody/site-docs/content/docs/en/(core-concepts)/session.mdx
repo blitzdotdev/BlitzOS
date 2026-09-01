@@ -1,0 +1,127 @@
+---
+title: Sessions
+description: Understand Lody sessions, including setup, forking, side chats, repository and model selection, session lists, tabs, archiving, restoring, and deletion.
+---
+
+# Sessions
+
+A session is the most fundamental concept in Lody. You start a new session from the home page
+composer. This is equivalent to one conversation in the Claude Code / Codex CLI.
+
+Before starting, you can configure the session through menus around the composer:
+
+- repository and branch
+- agent config
+- model
+- permission scope
+
+Lody launches the session based on these selections.
+
+A session can also contain multiple tabs: the main chat, child chats, file previews, and diff views can all stay inside the same session. If you want to keep chatting while reading code, or split one task into several review threads, see [Session Tabs](/docs/session-tabs).
+
+## Fork a Session
+
+When your Agent supports native session forking, the latest completed Agent reply shows a **Fork
+session** button below the reply. Forking creates a new session with the conversation history up to
+that reply, then lets you continue in a separate direction without changing the original session.
+
+Codex and Claude Code can also fork from an earlier completed Agent reply. Forked sessions share the
+same machine and working directory as the source session, so file changes made in one are visible to
+the others; only the conversation history and subsequent turns are independent.
+
+Fork is available only when the active Agent reports native support for it. It is not a separate Git
+branch or worktree.
+
+## Right Sidebar: Browser and Side Chat
+
+The right sidebar can keep tools beside the main conversation. Open **Browser** from the session
+toolbar to browse a page, or use the `+` menu in the sidebar to add panels.
+
+**Side Chat** creates a fork of the latest eligible Agent reply and opens it as a separate chat in
+the right sidebar. It is useful for asking a follow-up or review question while keeping the main
+session in place. You can create more than one Side Chat, switch between them in the sidebar, and
+close one with its `X` button when it is no longer needed. Side Chat is available when the active
+Agent supports native session forking.
+
+See [Lody Preview](/docs/preview) for URL and remote-port access details.
+
+## Session List
+
+In the left sidebar, Lody shows conversations from chats, GitHub worktrees, and local projects.
+You can use the default workspace-oriented organization, or switch to **Updated** mode to group
+everything by recency: Today, This week, and Older.
+
+Each session includes an AI-generated semantic title, current branch name and status, and
+line-level file changes compared with the base branch, making it easy to scan.
+
+<img src="/_docs-assets/session-list.png" width="200px" />
+
+Hover a repository row and use the drag handle on the right to reorder repository groups.
+
+## Session Actions
+
+Right-click a session in the sidebar to open its context menu. From there you can rename, pin,
+archive, copy the session URL, or copy the current branch name.
+
+Pinned sessions stay at the top of their list so important or long-running work remains easy to
+find. In the web app, middle-click or Cmd/Ctrl-click a sidebar task to open it in a new browser tab.
+
+The conversation action bar and session information controls group the actions relevant to the
+current task, including project, branch, preview, pull request, and code-change actions when they
+are available. This keeps common GitHub and project actions beside the conversation instead of
+requiring a separate view.
+
+## Quick Session on Desktop
+
+Press `Cmd/Ctrl+Shift+N` to open the standalone Quick Session window. This is a system-wide desktop
+shortcut, so it works even when Lody is not focused. Use the compact composer to choose a project,
+agent, and model, then start the session without opening the main window first.
+
+The shortcut can be changed under **Settings** -> **Keyboard Shortcuts**. See
+[Command Palette and Keyboard Shortcuts](/docs/keyboard-shortcuts).
+
+## Open the Workspace in an Editor
+
+In the desktop session header, use **Open in** to launch the current worktree or project directory.
+Built-in launchers include supported editors such as VS Code, Xcode, and Sublime Text.
+
+Under **Settings** -> **General** -> **Path launchers**, you can choose the default launcher or add
+a custom shell command. Custom templates must use `{path}` as an argument for the session folder
+and are stored only on the current desktop.
+
+Opening a project that is already open in the editor focuses the existing window instead of opening
+a new one (for example, in Zed).
+
+## Archive Sessions
+
+Hover a session in the list (or tap it on mobile) to reveal the archive button at the bottom-right.
+Click it to archive the session.
+
+Archived sessions are moved into the archive list but are not truly deleted — your conversation
+content and the session's Git branch are preserved, so you can restore one and pick up where you
+left off at any time. For sessions backed by a worktree, archiving already frees disk space on the
+CLI machine by removing the worktree's working directory; any uncommitted changes are committed to
+the branch first, so nothing is lost, and the worktree is recreated automatically when you restore
+and continue. To also remove the conversation history and reclaim the rest of its disk space, use
+**Delete Session**.
+
+## Unarchive Sessions
+
+At the bottom-right of the left sidebar, click the archive-list button to open archived sessions.
+Use search and sorting to find a session, then click its restore button to move it back to the active
+list and continue chatting at any time.
+
+<img src="/_docs-assets/cancel-archive.png" alt="" />
+
+## Delete Sessions
+
+At the bottom-right of the left sidebar, click the archive-list button to open archived sessions.
+Click the delete button next to a session to permanently remove it. This deletes the conversation
+history and reclaims the remaining disk space on the CLI machine, and it cannot be undone.
+
+<img src="/_docs-assets/delete-archive.png" alt="" />
+
+## Bulk Restore and Delete
+
+Hover a conversation and click the checkbox at the front to enter multi-select mode. Then click
+more actions for batch selection, and choose bulk restore or delete from the top-right controls.

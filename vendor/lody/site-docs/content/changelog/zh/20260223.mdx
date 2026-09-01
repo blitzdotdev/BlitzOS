@@ -1,0 +1,27 @@
+---
+title: '20260223'
+version: 0.32.3
+date: 2026-02-23
+description: 支持 Sonnet 4.6 和 gpt-5.3-code-spark，新增本地项目，并改进 CLI 启动、登录体验与性能稳定性。
+---
+### Sonnet 4.6 与 gpt-5.3-code-spark 支持
+
+### 本地项目支持
+
+- 支持任意本地目录的导入与实时同步
+
+<img src="/_docs-assets/20260223-local-project.png" width="300px" />
+
+### CLI 启动与登录体验
+
+- 简化 CLI 启动流程，一键启动
+- 移除 docker 模式
+- 新增 project 系列命令管理本地项目
+- npx lody project add [path] 添加本地项目到 lody
+- npx lody project list 列出本地项目
+- npx lody project delete 交互式删除本地项目
+
+### 性能与可用性修复
+
+- 修复打开文件差异卡顿的问题
+- 修复部分情况 Auth 流程异常

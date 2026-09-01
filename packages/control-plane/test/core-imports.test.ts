@@ -64,6 +64,8 @@ const expected = [
   "identity/routes.ts",
   "index.ts",
   "janitors.ts",
+  "machine-plane.ts",
+  "machine-stats.ts",
   "machines.ts",
   "oauth.ts",
   "operator-tokens.ts",
@@ -89,13 +91,16 @@ const expected = [
   "compute/types.ts",
   "registry.ts",
   "runtime.ts",
+  "session-shares.ts",
   "sessions.ts",
   "version.ts",
   "signup-config.js",
   "template-repos.ts",
   "workspace-names.ts",
   "workspace-access.ts",
+  "workspace-credential-import.ts",
   "workspace-credentials.ts",
+  "workspace-drain.ts",
   "workspace-members.ts",
   "workspace-projection.ts",
   "workspace-records.ts",
@@ -109,6 +114,7 @@ const expected = [
   "webapp-surface.ts",
   "webapp-tickets.ts",
   "wire-machines.ts",
+  "wire-sharing.ts",
   "wire.ts",
   "workspaces.ts",
 ] as const;
@@ -129,6 +135,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(104);
+    expect(expected).toHaveLength(110);
   });
 });

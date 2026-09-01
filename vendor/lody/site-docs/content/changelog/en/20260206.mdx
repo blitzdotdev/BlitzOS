@@ -1,0 +1,34 @@
+---
+title: '20260206'
+version: 0.31.0
+date: 2026-02-06
+description: Added new model support, chat mentions, local workspace integration, and an updated CLI authentication flow.
+---
+### Opus 4.6 and gpt-5.3-code
+
+<img src="/_docs-assets/20260206-new-model.png" style={{ maxHeight: '400px' }} />
+
+### Mentions in Chat
+
+- Use `@` to mention files with fuzzy search support
+- Use `#` to mention GitHub Issues and PRs
+
+<img src="/_docs-assets/20260206-mention.png" alt="mention" />
+
+### Local Workspace Integration
+
+- If working on the same machine with CLI, you can now seamlessly open IDE directly from chat
+
+<img src="/_docs-assets/20260206-open-in.png" style={{ maxHeight: '300px' }} />
+
+### New CLI Auth Scheme
+
+- CLI now supports chat requests for all user workspaces
+
+## Fixes
+
+- API Key mode now correctly loads environment variables when resuming sessions
+- Fixed multiple editor/input issues
+- Fixed workspace/session UI edge cases
+- Fixed mobile chat failure details rendering for easier troubleshooting
+- Improved backend/runtime stability

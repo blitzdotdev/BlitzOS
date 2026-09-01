@@ -1,0 +1,19 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItZ3JhbnRlZSIsIm1lbWJlcnNoaXBJZCI6Im1lbWJlcnNoaXAtZ3JhbnRlZSIsInJvbGUiOiJlZGl0b3IiLCJleHAiOjE4MDAwMDAwNjAsInNoYXJlIjp7InRhcmdldCI6Im1lbWJlcnNoaXAtb3duZXIiLCJzY29wZSI6InNlc3Npb25zIiwicmVhZCI6WyJzZXNzLWFscGhhIl0sIndyaXRlIjpbXX19.FnQ_RR_mjAY23S_v_EUByhYRcOzTBAB3Gkp6cqhrSws",
+  "expect": {
+    "valid": true,
+    "kind": "ticket",
+    "role": "editor",
+    "userId": "user-grantee",
+    "membershipId": "membership-grantee",
+    "share": {
+      "target": "membership-owner",
+      "scope": "sessions",
+      "read": [
+        "sess-alpha"
+      ],
+      "write": []
+    }
+  },
+  "note": "A read-only grantee: one granted session, nothing writable."
+}

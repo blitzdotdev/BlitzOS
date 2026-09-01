@@ -1,0 +1,28 @@
+{
+  "name": "@lody/cloud-api",
+  "version": "0.0.1",
+  "description": "Public client contract for optional Lody Cloud integrations.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "format": "prettier --write src/**/*.ts",
+    "format:check": "prettier --check src/**/*.ts"
+  },
+  "dependencies": {
+    "@lody/shared": "workspace:*",
+    "acp-extension-core": "workspace:*",
+    "convex": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

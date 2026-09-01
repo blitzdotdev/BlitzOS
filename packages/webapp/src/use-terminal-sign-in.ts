@@ -42,10 +42,14 @@ interface PendingTerminalSignIn {
 }
 
 /**
- * Drives a harness's terminal tab into its login flow on behalf of chat.
+ * Drives a harness's terminal tab into its login flow.
  *
- * Chat reported that the box could not authenticate. The returned callback
- * takes the reader to wherever that harness's sign-in actually happens.
+ * The caller has learned that the box cannot authenticate that harness. The
+ * returned callback takes the reader to wherever its sign-in actually happens.
+ *
+ * No caller today: the surface that reported the failure is gone. The hook and
+ * `terminal-sign-in.ts` are kept because the delivery semantics they encode
+ * (warm-up, separate submit write) are the ones any future caller needs.
  *
  * For Claude, it creates or selects its terminal tab and queues the TUI's
  * login command. Codex gets a fresh terminal tab instead: the box launcher

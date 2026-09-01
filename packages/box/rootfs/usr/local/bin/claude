@@ -22,7 +22,7 @@
 
 # A self-updating vendor CLI drops a second copy into the member's own npm
 # prefix, which then wins the PATH and shadows this shim: a terminal signed out
-# while the same box's chat is authenticated. A fresh box has no user-local
+# while the same box holds a valid credential. A fresh box has no user-local
 # copy, so the first run comes through here and never acquires one.
 DISABLE_AUTOUPDATER=1
 export DISABLE_AUTOUPDATER

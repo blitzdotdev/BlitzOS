@@ -26,6 +26,10 @@ export const WORKSPACE_CREDENTIAL_MAX_BYTES = 8 * 1024;
 /** How many live credentials one workspace may hold. */
 export const WORKSPACE_CREDENTIAL_MAX_COUNT = 50;
 
+/** A comment is one printed line: `blitz-cred list` writes it after a `#`,
+ * so it obeys the same alphabet every other blitz-cred output line does. */
+export const WORKSPACE_CREDENTIAL_COMMENT_MAX = 256;
+
 /** The AAD every workspace credential is sealed under. It binds a ciphertext
  * to the row it belongs to, so a value cannot be moved to another workspace or
  * renamed onto another variable and still open. */
@@ -49,11 +53,12 @@ export interface WorkspaceCredentialRow {
   workspace_id: string;
   name: string;
   label: string | null;
+  comment: string | null;
   created_at: number;
 }
 
 export function workspaceCredentialView(row: WorkspaceCredentialRow): WorkspaceCredentialView {
-  return { name: row.name, label: row.label, createdAt: row.created_at };
+  return { name: row.name, label: row.label, comment: row.comment, createdAt: row.created_at };
 }
 
 export async function liveWorkspaceCredentials(
@@ -61,7 +66,7 @@ export async function liveWorkspaceCredentials(
   workspaceId: string,
 ): Promise<WorkspaceCredentialRow[]> {
   return rows<WorkspaceCredentialRow>(db, {
-    q: `SELECT workspace_id, name, label, created_at
+    q: `SELECT workspace_id, name, label, comment, created_at
         FROM workspace_credentials
         WHERE workspace_id = ?1 AND revoked_at IS NULL
         ORDER BY name`,
@@ -114,6 +119,17 @@ export function parseWorkspaceCredential(value: JsonValue): PutWorkspaceCredenti
   if (value.label !== undefined && value.label !== null) {
     result.label = requiredString(value.label, "label", 128);
   }
+  // Tri-state on purpose: absent keeps the live row's comment across a
+  // rotation, an explicit null clears it, a string sets it.
+  if (value.comment === null) {
+    result.comment = null;
+  } else if (value.comment !== undefined) {
+    const comment = requiredString(value.comment, "comment", WORKSPACE_CREDENTIAL_COMMENT_MAX);
+    if (/[\r\n\0]/u.test(comment)) {
+      throw new HttpError(400, "comment must be a single line");
+    }
+    result.comment = comment;
+  }
   return result;
 }
 
@@ -149,22 +165,29 @@ export async function putWorkspaceCredential(
         WHERE workspace_id = ?2 AND name = ?3 AND revoked_at IS NULL`,
     v: [now, workspaceId, input.name],
   });
+  // Documentation outlives the value it documents: a write that carries no
+  // comment keeps the live row's, because a rotation changes the secret, not
+  // what the secret is for. An env-file re-import must not erase them.
+  const comment = input.comment !== undefined
+    ? input.comment
+    : live.find((row) => row.name === input.name)?.comment ?? null;
   await rows(runtime.db, {
     q: `INSERT INTO workspace_credentials
-        (id, workspace_id, name, label, ciphertext,
+        (id, workspace_id, name, label, comment, ciphertext,
          created_by_membership_id, created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)`,
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)`,
     v: [
       crypto.randomUUID(),
       workspaceId,
       input.name,
       input.label ?? null,
+      comment,
       ciphertext,
       membershipId,
       now,
     ],
   });
-  return { name: input.name, label: input.label ?? null, createdAt: now };
+  return { name: input.name, label: input.label ?? null, comment, createdAt: now };
 }
 
 async function workspaceForCredentials(

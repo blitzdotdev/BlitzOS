@@ -1,0 +1,632 @@
+[
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": ""
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "I'll run"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " all"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " five"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " commands for"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " you and show"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " you the output of"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " each."
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+    "title": "Terminal",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+    "title": "`echo \"Hello World\"`",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [
+      "command",
+      "description",
+      "timeout"
+    ],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+    "title": "Terminal",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+    "title": "`echo -e \"Line1\\nLine2\\nLine3\"`",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [
+      "command",
+      "description",
+      "timeout"
+    ],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+    "title": "Terminal",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+    "title": "`printf \"\\033[31mRed Text\\033[0m\\n\"`",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [
+      "command",
+      "description",
+      "timeout"
+    ],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+    "title": "Terminal",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+    "title": "`seq 1 5`",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [
+      "command",
+      "description",
+      "timeout"
+    ],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+    "title": "Terminal",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+    "title": "`ls -la`",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [
+      "command",
+      "description",
+      "timeout"
+    ],
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+    "title": "Print Hello World",
+    "status": "in_progress",
+    "terminalChunks": 1,
+    "hasClaudeCodeMeta": false
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash",
+    "claudeCodeToolResponse": "[{\"type\":\"text\",\"text\":\"Exited with code 0.Final output:\\n\\nHello World\\n\"}]"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+    "status": "completed",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+    "title": "Print multiple lines",
+    "status": "in_progress",
+    "terminalChunks": 1,
+    "hasClaudeCodeMeta": false
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash",
+    "claudeCodeToolResponse": "[{\"type\":\"text\",\"text\":\"Exited with code 0.Final output:\\n\\nLine1\\nLine2\\nLine3\\n\"}]"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+    "status": "completed",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+    "title": "Print ANSI colored text",
+    "status": "in_progress",
+    "terminalChunks": 1,
+    "hasClaudeCodeMeta": false
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash",
+    "claudeCodeToolResponse": "[{\"type\":\"text\",\"text\":\"Exited with code 0.Final output:\\n\\n\\u001b[31mRed Text\\u001b[0m\\n\"}]"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+    "status": "completed",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+    "title": "Print numbers 1 to 5",
+    "status": "in_progress",
+    "terminalChunks": 1,
+    "hasClaudeCodeMeta": false
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash",
+    "claudeCodeToolResponse": "[{\"type\":\"text\",\"text\":\"Exited with code 0.Final output:\\n\\n1\\n2\\n3\\n4\\n5\\n\"}]"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+    "status": "completed",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+    "title": "List directory contents",
+    "status": "in_progress",
+    "terminalChunks": 1,
+    "hasClaudeCodeMeta": false
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash",
+    "claudeCodeToolResponse": "[{\"type\":\"text\",\"text\":\"Exited with code 0.Final output:\\n\\ntotal 24\\ndrwxr-xr-x   2 zx   zx    4096 Jan  7 14:08 .\\ndrwxrwxrwt 261 root root 20480 Jan  7 14:08 ..\\n\"}]"
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+    "status": "completed",
+    "terminalChunks": 0,
+    "hasClaudeCodeMeta": true,
+    "claudeCodeToolName": "mcp__acp__Bash"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": ""
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "Here"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " are the results"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " of all five commands:"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n\n**1. `"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "echo \"Hello World\"`"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "**\n```"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\nHello World\n```"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n\n**2. `"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "echo -e \"Line"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "1\\nLine2"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\\nLine3\"`"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "**\n```\nLine"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "1\nLine2"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\nLine3\n```"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n\n**3. `printf"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " \"\\033[31m"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "Red Text\\033"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "[0m\\n"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\"`**\n```"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\nRed Text\n```"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n(This"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " woul"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "d appear"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " in"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " re"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "d in"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " a"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " terminal that"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " supports ANSI colors"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": ")\n\n**4."
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " `seq 1 "
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "5`**\n```"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n1\n2"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n3\n4\n5"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n```\n\n**5"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": ". `ls -la"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "`**\n```"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\ntotal 24\ndr"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "wxr-x"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "r-x   2"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " zx   z"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "x    4096 "
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "Jan  7 14"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": ":08 ."
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\ndrwxrw"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "xrwt "
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "261 root root "
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "20480 Jan  "
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "7 14:08"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " ..\n```"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n\n**Most"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " interesting output:**"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " The `ls -la"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "` command had the most"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " interesting output because"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " it reveals"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " actual"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " system"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " information"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " -"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " showing"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " this"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " is an"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " empty"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " directory owne"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "d by user"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " \"zx\","
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " with the"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " parent"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " being"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " a"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " worl"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "d-writable temp"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " directory (indicated by the"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " sticky"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " bit "
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "'t"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "' in the permissions)."
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " It"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " also shows timestamps"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " and the"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " directory"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " structure context"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "."
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n\nTERMINAL_TEST_"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "DONE"
+  }
+]

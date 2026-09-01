@@ -1,0 +1,23 @@
+/*
+ * Tailwind containment experiment for the vendored Lody surface
+ * (plans/LODY-SESSIONS.md §7.4, defence (a)).
+ *
+ * Their entry is pulled in unedited — `vendor/lody` stays upstream-pristine — and
+ * `lodyCascadeLayerPlugin` in `vendor-bridge.ts` wraps the COMPILED result in
+ * the `lody` cascade layer. It cannot be wrapped at the `@import`, because
+ * Tailwind v4 refuses `@utility` (which their entry declares) inside a layer. Every stylesheet in
+ * `packages/webapp/src` is UNLAYERED, and an unlayered declaration beats a
+ * layered one whatever the specificity, so nothing in here can outrank our own
+ * rules on an element we style.
+ *
+ * That is the whole of the defence, and it is not containment: a layer changes
+ * WHO WINS, never WHICH ELEMENTS MATCH. Tailwind's preflight and their
+ * `@layer base` block still select `*`, `html`, `body`, `button`, `::selection`
+ * document-wide, so every property our CSS leaves undeclared is theirs.
+ * `packages/webapp/test/lody-tailwind-containment.test.ts` measures exactly
+ * that set, and `plans/evidence/lody-phase0.md` records the verdict.
+ *
+ * `@source` cannot help here: it scopes which CLASS NAMES get generated, not
+ * which elements the base layer reaches.
+ */
+@import "../../../../vendor/lody/packages/components/src/tailwind/index.css";

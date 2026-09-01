@@ -1,9 +1,7 @@
 import {
   AGENT_MODELS,
   agentEffortsForModel,
-  agentProviderForModel,
   RECIPE_HARNESSES,
-  type AgentProvider,
   type CreateRecipeRequest,
   type RecipeHarness,
   type RecipeView,
@@ -13,18 +11,10 @@ import { useEffect, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { recipeHarnessLabel } from './RecipesHome';
 
-/** The provider whose model catalog and efforts apply: the harness itself for
- * the TUI harnesses, the pinned model's provider for chat (null until a chat
- * recipe picks its model). */
-export function recipeProvider(harness: RecipeHarness, model: string): AgentProvider | null {
-  if (harness !== 'chat') return harness;
-  return model === '' ? null : agentProviderForModel(model);
-}
-
 /** Dedicated screen for building a recipe: name it, pick the template its
  * workspaces launch from, and pin the invocation — harness, model, effort,
- * prompt. Model and effort choices follow the shared agent catalog; a chat
- * recipe must pin a model because that model selects the adapter provider. */
+ * prompt. A harness is a TUI provider, so its own catalog supplies the model
+ * and effort choices. */
 export function CreateRecipeScreen({
   client,
   editRecipeId,
@@ -79,35 +69,25 @@ export function CreateRecipeScreen({
     return () => { mounted = false; };
   }, [client, editRecipeId]);
 
-  const provider = recipeProvider(harness, model);
   // The effort list follows the pinned model (AGENT_MODEL_EFFORTS); with no
-  // model pinned it falls back to the provider base.
-  const efforts = provider === null ? [] : agentEffortsForModel(provider, model);
-  const chatNeedsModel = harness === 'chat' && model === '';
-  const ready = name.trim() !== ''
-    && templateId !== ''
-    && prompt.trim() !== ''
-    && !chatNeedsModel;
+  // model pinned it falls back to the harness base.
+  const efforts = agentEffortsForModel(harness, model);
+  const ready = name.trim() !== '' && templateId !== '' && prompt.trim() !== '';
 
   const pickHarness = (next: RecipeHarness) => {
     setHarness(next);
-    // Keep the model only where the new harness accepts it: chat takes any
-    // catalog model, a TUI harness only its own provider's. The effort list
-    // follows the provider, so an orphaned choice resets with it.
-    const nextModel = next === 'chat'
-      ? (agentProviderForModel(model) === null ? '' : model)
-      : (AGENT_MODELS[next].some((candidate) => candidate === model) ? model : '');
+    // Keep the model only where the new harness accepts it. The effort list
+    // follows the harness, so an orphaned choice resets with it.
+    const nextModel = AGENT_MODELS[next].some((candidate) => candidate === model) ? model : '';
     setModel(nextModel);
-    const nextProvider = recipeProvider(next, nextModel);
-    if (nextProvider === null || !agentEffortsForModel(nextProvider, nextModel).some((candidate) => candidate === effort)) {
+    if (!agentEffortsForModel(next, nextModel).some((candidate) => candidate === effort)) {
       setEffort('');
     }
   };
 
   const pickModel = (next: string) => {
     setModel(next);
-    const nextProvider = recipeProvider(harness, next);
-    if (nextProvider === null || !agentEffortsForModel(nextProvider, next).some((candidate) => candidate === effort)) {
+    if (!agentEffortsForModel(harness, next).some((candidate) => candidate === effort)) {
       setEffort('');
     }
   };
@@ -161,11 +141,11 @@ export function CreateRecipeScreen({
           )}
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Name</h2>
-              <p>Everyone in your organization sees this recipe on the Recipes page.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Name</h2>
+              <p className="cfg-desc">Everyone in your organization sees this recipe on the Recipes page.</p>
             </div>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Recipe name
               <input
                 aria-label="Recipe name"
@@ -178,11 +158,11 @@ export function CreateRecipeScreen({
           </section>
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Template</h2>
-              <p>Every run launches a workspace from this template — its machine, folders, environment, and agent rules.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Template</h2>
+              <p className="cfg-desc">Every run launches a workspace from this template — its machine, folders, environment, and agent rules.</p>
             </div>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Workspace template
               <select
                 aria-label="Workspace template"
@@ -206,11 +186,11 @@ export function CreateRecipeScreen({
           </section>
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Invocation</h2>
-              <p>The agent every run starts with. Chat runs headless in the workspace; the model picks its provider.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Invocation</h2>
+              <p className="cfg-desc">The agent every run starts with, in a terminal tab of the launched workspace.</p>
             </div>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Harness
               <select
                 aria-label="Harness"
@@ -227,51 +207,27 @@ export function CreateRecipeScreen({
                 ))}
               </select>
             </label>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Model
               <select
                 aria-label="Model"
                 value={model}
                 onChange={(event) => pickModel(event.currentTarget.value)}
               >
-                {harness === 'chat' ? (
-                  <>
-                    <option value="">Choose a model…</option>
-                    <optgroup label="Claude">
-                      {AGENT_MODELS.claude.map((candidate) => (
-                        <option value={candidate} key={candidate}>{candidate}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Codex">
-                      {AGENT_MODELS.codex.map((candidate) => (
-                        <option value={candidate} key={candidate}>{candidate}</option>
-                      ))}
-                    </optgroup>
-                  </>
-                ) : (
-                  <>
-                    <option value="">Harness default</option>
-                    {AGENT_MODELS[harness].map((candidate) => (
-                      <option value={candidate} key={candidate}>{candidate}</option>
-                    ))}
-                  </>
-                )}
+                <option value="">Harness default</option>
+                {AGENT_MODELS[harness].map((candidate) => (
+                  <option value={candidate} key={candidate}>{candidate}</option>
+                ))}
               </select>
             </label>
-            {chatNeedsModel && (
-              <p className="webapp-form-message" role="alert">
-                A chat recipe must pin a model — the model selects its provider.
-              </p>
-            )}
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Effort
               <select
                 aria-label="Effort"
                 value={effort}
-                disabled={provider === null}
                 onChange={(event) => setEffort(event.currentTarget.value)}
               >
-                <option value="">{provider === null ? 'Pick a model first' : 'Default'}</option>
+                <option value="">Default</option>
                 {efforts.map((candidate) => (
                   <option value={candidate} key={candidate}>{candidate}</option>
                 ))}
@@ -280,9 +236,9 @@ export function CreateRecipeScreen({
           </section>
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Prompt</h2>
-              <p>Delivered to the agent when the workspace boots. Runs are unattended by default — you can still open one and take over.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Prompt</h2>
+              <p className="cfg-desc">Delivered to the agent when the workspace boots. Runs are unattended by default — you can still open one and take over.</p>
             </div>
             <div className="blueprint-setup-script">
               <textarea

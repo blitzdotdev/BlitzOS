@@ -182,6 +182,7 @@ const juneMachine: MachineView = {
   state: 'running',
   machineTypeId: 'cx32@hel1',
   volumeId: 'vol-june',
+  volumeUsedPercent: 62,
   membershipId: 'm-june',
   error: null,
   createdAt: NOW - 12 * DAY,
@@ -193,6 +194,7 @@ const adaMachine: MachineView = {
   state: 'provisioning',
   machineTypeId: 'cx22@hel1',
   volumeId: null,
+  volumeUsedPercent: null,
   membershipId: 'm-ada',
   error: null,
   createdAt: NOW - 3 * MINUTE,
@@ -206,8 +208,13 @@ const workspaceMembers: WorkspaceMemberView[] = [
 ];
 
 const workspaceCredentials: WorkspaceCredentialView[] = [
-  { name: 'STRIPE_API_KEY', label: 'test-mode key, safe for CI', createdAt: NOW - 9 * DAY },
-  { name: 'OPENAI_API_KEY', label: null, createdAt: NOW - 3 * DAY },
+  {
+    name: 'STRIPE_API_KEY',
+    label: 'test-mode key, safe for CI',
+    comment: 'test-mode key, safe for CI',
+    createdAt: NOW - 9 * DAY,
+  },
+  { name: 'OPENAI_API_KEY', label: null, comment: null, createdAt: NOW - 3 * DAY },
 ];
 
 export const previewWorkspace: CloudWorkspaceModel = {
@@ -344,6 +351,7 @@ export const connectionCatalog: CatalogEntryView[] = [
     personalTokenLabel: 'Personal access token',
     personalTokenHelp: 'A classic PAT with repo scope.',
     personalTokenBaseUrlLabel: null,
+    personalTokenFallbackOnly: false,
     adminForm: null,
   },
   {
@@ -356,6 +364,7 @@ export const connectionCatalog: CatalogEntryView[] = [
     personalTokenLabel: 'Personal API key',
     personalTokenHelp: 'From Linear settings → API.',
     personalTokenBaseUrlLabel: null,
+    personalTokenFallbackOnly: false,
     adminForm: null,
   },
   {
@@ -368,6 +377,7 @@ export const connectionCatalog: CatalogEntryView[] = [
     personalTokenLabel: 'Internal integration secret',
     personalTokenHelp: 'From notion.so/my-integrations.',
     personalTokenBaseUrlLabel: null,
+    personalTokenFallbackOnly: false,
     adminForm: null,
   },
 ];

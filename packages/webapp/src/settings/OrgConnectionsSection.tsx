@@ -59,13 +59,13 @@ export function OrgConnectionsSection({ client }: { client: OrgClient }) {
 
   return (
     <section
-      className="settings-credential-section"
+      className="cfg-section"
       aria-label="Organization connections"
     >
       <div className="settings-section-heading">
-        <div>
-          <p>Organization</p>
-          <h2>Admin-configured</h2>
+        <div className="cfg-section-head">
+          <h2 className="cfg-title">Admin-configured</h2>
+          <p className="cfg-desc">Organization</p>
         </div>
         {connections.length > 0 && <span>{connections.length} stored</span>}
       </div>

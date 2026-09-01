@@ -14,6 +14,16 @@ import type {
 } from "./wire.js";
 import type { ComputeCredentialSource } from "./compute/types.js";
 
+/**
+ * Which plane asked for a machine.
+ *
+ * An agent acts as its own member, so membership cannot distinguish a person
+ * from the agent on their box — it is the same membership. Provenance can, and
+ * it is the whole basis of the rule that an agent may destroy only what the
+ * agent plane made (`assertMachinePlaneMayDestroy`).
+ */
+export type CreatedByPlane = "session" | "machine";
+
 /** The workspace row after MEMBER-MACHINES: configuration only. Every VM
  * column moved to `machines`, the sharing ACL moved to `workspace_members`,
  * and the plaintext environment moved to `workspace_credentials`. */
@@ -60,6 +70,11 @@ export interface MachineRow {
   broker_box_id: string | null;
   box_update_requested: number;
   box_image_reported: string | null;
+  disk_used_percent: number | null;
+  disk_reported_at: number | null;
+  /** The plane that asked for this machine: a person's session, or an agent's
+   * box credential. An agent may destroy only what the agent plane made. */
+  created_by_plane: CreatedByPlane;
   error: string | null;
   created_at: number;
   updated_at: number;
@@ -111,12 +126,22 @@ function machineTypeIdForRow(row: MachineRow): string {
     : row.machine_type_id;
 }
 
+/** The guest's last disk report, but only for a machine that has a volume to
+ * report on. A machine with no volume measures its VM's root disk, which is
+ * the provider's business and not a durable thing anybody keeps files on, so
+ * the field keeps the name it is given and answers null. The 0-100 range is
+ * the column's own CHECK (migration 0045), not something to re-decide here. */
+function volumeUsedPercentForRow(row: MachineRow): number | null {
+  return row.volume_id === null ? null : row.disk_used_percent;
+}
+
 export function machineView(row: MachineRow): MachineView {
   return {
     id: row.id,
     state: row.state,
     machineTypeId: machineTypeIdForRow(row),
     volumeId: row.volume_id,
+    volumeUsedPercent: volumeUsedPercentForRow(row),
     membershipId: row.membership_id,
     error: row.error,
     createdAt: row.created_at,

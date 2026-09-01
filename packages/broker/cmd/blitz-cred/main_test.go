@@ -43,7 +43,7 @@ func TestEnrollAcceptsCredentialWithAdditionalFields(t *testing.T) {
 // The verb list an agent reads when it guesses wrong. `--help` used to print
 // "unknown blitz-cred command" and exit 1.
 func TestHelpAndNoArgumentsNameEveryVerb(t *testing.T) {
-	verbs := []string{"enroll", "register", "token", "list", "get", "env", "git-helper", "watch"}
+	verbs := []string{"enroll", "register", "token", "list", "get", "env", "import", "put", "git-helper", "watch"}
 	// Empty on purpose: help answers before the state check, so it works on a
 	// machine that is not a box.
 	t.Setenv("BLITZ_STATE_DIR", "")
@@ -104,6 +104,12 @@ func TestTokenHarnessOutputStaysRawForTheShims(t *testing.T) {
 func TestListPrintsOneProviderPerLine(t *testing.T) {
 	stateDir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		// The comment read rides beside the allow-list read; names come from
+		// the allow-list alone.
+		if request.URL.Path == "/workspaces/self/credentials" {
+			io.WriteString(writer, `{"credentials":[]}`)
+			return
+		}
 		if request.Method != http.MethodGet || request.URL.Path != "/workspaces/self/connections" {
 			t.Errorf("request = %s %s", request.Method, request.URL.Path)
 		}
@@ -137,6 +143,101 @@ func TestListWithNoConnectionsPrintsTheConnectGuidance(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "blitz connections open") {
 		t.Fatalf("list output = %q", output.String())
+	}
+}
+
+// A credential that carries a comment prints it after a `#`, so an agent
+// picking a key reads what each one is for without a second command.
+func TestListPrintsCredentialCommentsAfterAHash(t *testing.T) {
+	stateDir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/workspaces/self/credentials" {
+			io.WriteString(writer, `{"credentials":[{"name":"CF_TOKEN","comment":"canary token; deploys the control plane"}]}`)
+			return
+		}
+		io.WriteString(writer, `{"connections":["CF_TOKEN","github"]}`)
+	}))
+	defer server.Close()
+	prepareCPState(t, stateDir, server.URL)
+
+	var output strings.Builder
+	if err := run([]string{"list"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "CF_TOKEN  # canary token; deploys the control plane\ngithub\n" {
+		t.Fatalf("list output = %q", output.String())
+	}
+}
+
+// A control plane too old to serve the credential list costs the comments,
+// never the list itself.
+func TestListSurvivesAMissingCredentialRoute(t *testing.T) {
+	stateDir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/workspaces/self/credentials" {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		io.WriteString(writer, `{"connections":["github"]}`)
+	}))
+	defer server.Close()
+	prepareCPState(t, stateDir, server.URL)
+
+	var output strings.Builder
+	if err := run([]string{"list"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "github\n" {
+		t.Fatalf("list output = %q", output.String())
+	}
+}
+
+// The value arrives on stdin, never argv: a process list must not hold a
+// secret. One trailing newline is the pipe's, not the value's.
+func TestPutSendsTheStdinValueWithItsComment(t *testing.T) {
+	stateDir := t.TempDir()
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPut || request.URL.Path != "/workspaces/self/credentials" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		data, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		body = data
+		writer.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+	prepareCPState(t, stateDir, server.URL)
+
+	var output strings.Builder
+	err := runWithInput(
+		[]string{"put", "STRIPE_API_KEY", "--comment", "test-mode key, safe for CI"},
+		strings.NewReader("sk_test\n"),
+		&output,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != `{"name":"STRIPE_API_KEY","value":"sk_test","comment":"test-mode key, safe for CI"}` {
+		t.Fatalf("body = %s", body)
+	}
+	if output.String() != "stored    STRIPE_API_KEY\n" {
+		t.Fatalf("put output = %q", output.String())
+	}
+}
+
+func TestPutRefusesAMultilineValueWithTheBase64Sentence(t *testing.T) {
+	stateDir := t.TempDir()
+	prepareCPState(t, stateDir, "https://cp.example")
+	err := runWithInput(
+		[]string{"put", "GOOGLE_SA_JSON"},
+		strings.NewReader("{\n  \"type\": \"service_account\"\n}\n"),
+		io.Discard,
+	)
+	if err == nil || !strings.Contains(err.Error(), "base64") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

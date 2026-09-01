@@ -1,0 +1,15 @@
+{
+  "type": "update",
+  "protocolVersion": 7,
+  "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+  "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+  "room": {
+    "scope": "doc",
+    "docId": "session-cap2-3700ee1b"
+  },
+  "serverVersion": "Abu4rJaq8KrXGzQ=",
+  "payload": {
+    "kind": "doc-update",
+    "dataBase64": "bG9ybwAAAAAAAAAAAAAAAPTrsnwABFYAGgAaARABOxzLooKrrhsBAQAAAAAABQEAAAEABgEEAQIAAAUEYm9keQAOAQQCAQACAQACAQUCARoAGxpjYXB0dXJlZC1ieS1ibGl0em9zLXBoYXNlMg=="
+  }
+}

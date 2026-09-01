@@ -1,0 +1,30 @@
+{
+    "ok": true,
+    "type": "local-project/browse-dir",
+    "result": {
+        "path": "/tmp/lpb/ws",
+        "parentPath": "/tmp/lpb",
+        "entries": [
+            {
+                "name": "alpha",
+                "absolutePath": "/tmp/lpb/ws/alpha",
+                "isSymlink": false,
+                "hidden": false,
+                "hints": {
+                    "git": true
+                }
+            },
+            {
+                "name": "beta",
+                "absolutePath": "/tmp/lpb/ws/beta",
+                "isSymlink": false,
+                "hidden": false,
+                "hints": {
+                    "git": true
+                }
+            }
+        ],
+        "truncated": true,
+        "nextCursor": "2"
+    }
+}

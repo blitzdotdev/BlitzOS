@@ -1,0 +1,107 @@
+---
+title: 工作树
+description: 了解 Lody 如何使用 Git worktree 隔离并发编码 Agent 任务、同步改动并避免文件冲突。
+---
+
+# 工作树
+
+工作树是 Lody 隔离和管理并发任务的基础。
+
+## 什么是工作树？
+
+Git 工作树是仓库的一个链接工作副本。每个工作树都有自己的工作目录和单独检出的分支，但与主仓库共享相同的 Git 历史。
+
+## Lody 如何使用工作树
+
+当你在 Lody 中创建任务时，它会自动：
+
+1. **创建新分支** - 默认分支名为 `session/<shortSessionId>`（`sessionId` 的前 8 位；你也可以后续重命名）
+2. **设置工作树** - 代理工作的隔离目录（每个会话一个）
+3. **运行 setup 脚本** - 可选的项目级命令，例如安装依赖或复制 env 模板
+4. **同步更改** - 实时更新在 Web UI 中可见
+
+```
+~/.lody/repos/<repoId>/
+├── bare.git/                # Bare Git repository (shared history)
+├── cache/                   # Build cache, etc.
+└── worktrees/
+    ├── <sessionId-1>/       # Worktree for session 1
+    └── <sessionId-2>/       # Worktree for session 2
+```
+
+## 优势
+
+### 并行执行
+
+同时运行多个代理而不会冲突：
+
+每个任务都有自己的工作树，代理之间的更改永远不会相互干扰。
+
+### 干净隔离
+
+- 任务之间没有未提交的更改混淆
+- 易于审查、批准或放弃单个任务
+- 每个任务简单创建 PR
+
+### 自动清理
+
+会话归档时，对应的工作树会被自动回收，`~/.lody/repos` 不会越积越大。如果想一次性彻底清理，仍然可以
+手动删除 `~/.lody/repos` 目录。
+
+## Worktree Setup 与 Cleanup 脚本
+
+项目级脚本可以让每个新会话都以一致的方式准备工作目录。
+
+**Setup 脚本**会在 Lody 创建 worktree 之后、Agent 收到第一条 prompt 之前运行，适合执行：
+
+```bash
+cp .env.example .env
+pnpm install
+```
+
+**Cleanup 脚本**会在会话归档、Lody 从磁盘移除 worktree 之前运行，适合执行：
+
+```bash
+rm -rf node_modules
+```
+
+### 配置方式
+
+1. 打开 **Settings** -> **Projects**。
+2. 选择一个本地项目或 GitHub 仓库。
+3. 打开 **Worktree setup** 和 **Worktree cleanup**。
+4. 填写对应 shell 的命令，离开编辑框后会自动保存。
+
+本地项目会显示该项目所在机器实际使用的 shell：Windows 使用 PowerShell，macOS、Linux 和 WSL 使用 Bash。
+GitHub 仓库可能在不同系统的机器上运行，所以可以同时填写 Bash 和 PowerShell。
+
+脚本会在 worktree 目录内执行。在脚本里 export 的环境变量只在脚本进程中有效；如果 Agent 进程本身需要环境变量，
+请在 [Agent Config](/zh/docs/agents) 中配置。
+
+<span id="available-environment-variables"></span>
+
+### 可用环境变量
+
+Setup 和 cleanup 脚本运行时，Lody 会注入这些环境变量：
+
+| 变量                         | 说明                                        |
+| ---------------------------- | ------------------------------------------- |
+| `LODY_WORKSPACE_ID`          | 当前 workspace ID                           |
+| `LODY_SESSION_ID`            | 当前对话/session ID                         |
+| `LODY_WORKTREE_PATH`         | 当前 session worktree 的绝对路径            |
+| `LODY_WORKTREE_BRANCH`       | worktree 中检出的分支                       |
+| `LODY_WORKTREE_SCRIPT_PHASE` | `setup` 或 `cleanup`                        |
+| `LODY_GITHUB_REPO`           | GitHub 项目的仓库全名，仅 GitHub project 有 |
+| `LODY_LOCAL_PROJECT_ID`      | 本地项目 ID，仅 local project 有            |
+
+脚本进程的当前工作目录也会设为 `LODY_WORKTREE_PATH`，所以可以直接使用 `pwd`，也可以读取显式环境变量：
+
+```bash
+echo "$LODY_SESSION_ID"
+echo "$LODY_WORKTREE_PATH"
+pnpm install
+```
+
+## 下一步
+
+- [配置代理](/zh/docs/agents) - 设置你喜欢的 AI 编程代理

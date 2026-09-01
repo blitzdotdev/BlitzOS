@@ -4,6 +4,7 @@ import type { ControlPlaneClient } from './api';
 import { caughtErrorMessage } from './error-message';
 import { ProviderGlyph } from './connections/ProviderGlyph';
 import { WorkspaceProviderRows } from './connections/WorkspaceProviderRows';
+import { settingsPath } from './sessions-page-state';
 import { asJsonObject, isString } from './type-guards';
 
 export function portAge(firstSeenAt: number, now = Date.now()): string {
@@ -273,6 +274,14 @@ export function WorkspaceConnectionsPanel({
         </>
       )}
       <h3 className="workspace-sect">Connections</h3>
+      {/* The scope, once, where the list starts. Every control below is
+        * workspace-scoped, and saying so here is what lets a row's own copy
+        * stay short: Disconnect no longer has to explain what it disconnects. */}
+      <p className="wsc-scope">
+        What agents may use in this workspace. Disconnecting affects this
+        workspace only. Account sign-ins live in{' '}
+        <a href={settingsPath('connections')}>Settings</a>.
+      </p>
       <WorkspaceProviderRows
         client={client}
         workspaceId={workspaceId}

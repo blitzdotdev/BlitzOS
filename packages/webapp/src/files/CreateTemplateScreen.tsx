@@ -367,11 +367,11 @@ export function CreateTemplateScreen({
           )}
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Name</h2>
-              <p>Everyone at {orgName} sees this template on the create-workspace page.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Name</h2>
+              <p className="cfg-desc">Everyone at {orgName} sees this template on the create-workspace page.</p>
             </div>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Template name
               <input
                 aria-label="Template name"
@@ -398,9 +398,9 @@ export function CreateTemplateScreen({
           />
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Files</h2>
-              <p>Every workspace starts with these. Click to attach, double-click to look inside.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Files</h2>
+              <p className="cfg-desc">Every workspace starts with these. Click to attach, double-click to look inside.</p>
             </div>
             <div className="tplf">
               <div

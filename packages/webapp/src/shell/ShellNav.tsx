@@ -3,7 +3,7 @@ import type { SpawnSessionType } from '../NewTabMenu';
 import type { LivePort, PreviewLink } from '../preview';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import type { DriveRailSession } from './rail-sessions';
-import { WorkspaceSessionRail } from './WorkspaceSessionRail';
+import { SessionRail } from './SessionRail';
 import { WorkspaceStrip } from './WorkspaceStrip';
 
 export type ShellNavProps = {
@@ -20,6 +20,13 @@ export type ShellNavProps = {
   livePorts: LivePort[];
   previewLinks: PreviewLink[];
   drawerOpen: boolean;
+  /** The rail's vendored zone, when Lody sessions are on. See
+   * `SessionRailProps.onVendorHost`. */
+  onVendorHost?: (node: HTMLDivElement | null) => void;
+  /** See `SessionRailProps.sessionsNeedNewerMachine`. */
+  sessionsNeedNewerMachine?: boolean;
+  /** See `SessionRailProps.sessionsNeedMachine`. */
+  sessionsNeedMachine?: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   onOpenWorkspaceSettings: (workspaceId: string) => void;
@@ -51,6 +58,9 @@ export function ShellNav({
   livePorts,
   previewLinks,
   drawerOpen,
+  onVendorHost,
+  sessionsNeedNewerMachine,
+  sessionsNeedMachine,
   onSelectWorkspace,
   onRenameWorkspace,
   onOpenWorkspaceSettings,
@@ -84,12 +94,15 @@ export function ShellNav({
           onCloseDrawer={onCloseDrawer}
         />
         {showRail && (
-          <WorkspaceSessionRail
+          <SessionRail
             workspace={activeWorkspace}
             sessions={sessions}
             activeSessionId={activeSessionId}
             livePorts={livePorts}
             previewLinks={previewLinks}
+            {...(onVendorHost === undefined ? {} : { onVendorHost })}
+            {...(sessionsNeedNewerMachine === undefined ? {} : { sessionsNeedNewerMachine })}
+            {...(sessionsNeedMachine === undefined ? {} : { sessionsNeedMachine })}
             onSelectSession={onSelectSession}
             onSpawnSession={onSpawnSession}
             onOpenPreview={onOpenPreview}

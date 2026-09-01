@@ -104,7 +104,7 @@ const recipe: SharedShape<wire.RecipeView, schema.RecipeView> = {
   id: "recipe",
   name: "nightly evals",
   templateId: "template",
-  harness: "chat",
+  harness: "claude",
   model: "claude-sonnet-5",
   effort: "xhigh",
   prompt: "Aggregate usage and write evals.\n",
@@ -142,11 +142,25 @@ const machine: SharedShape<wire.MachineView, schema.MachineView> = {
   state: "running",
   machineTypeId: "mv-2c2g@lab",
   volumeId: volume.id,
+  volumeUsedPercent: 62,
   membershipId: "membership",
   error: null,
   createdAt: 1_700_000_000_000,
   updatedAt: 1_700_000_005_000,
 };
+
+// A machine whose guest has not reported yet answers null, which covers
+// different ground than an integer does.
+const unreportedMachine: SharedShape<wire.MachineView, schema.MachineView> = {
+  ...machine,
+  id: "machine-unreported",
+  volumeUsedPercent: null,
+};
+
+const machineStats: SharedShape<
+  wire.MachineStatsRequest,
+  schema.MachineStatsRequest
+> = { diskUsedPercent: 62 };
 
 const workspaceMember: SharedShape<
   wire.WorkspaceMemberView,
@@ -175,7 +189,7 @@ const viewerMember: SharedShape<
 const workspaceCredential: SharedShape<
   wire.WorkspaceCredentialView,
   schema.WorkspaceCredentialView
-> = { name: "STRIPE_API_KEY", label: "live", createdAt: 6 };
+> = { name: "STRIPE_API_KEY", label: "live", comment: "test-mode key, safe for CI", createdAt: 6 };
 
 const machineResponse: SharedShape<
   wire.MachineResponse,
@@ -233,7 +247,28 @@ const workspaceMemberResponse: SharedShape<
 const putWorkspaceCredentialRequest: SharedShape<
   wire.PutWorkspaceCredentialRequest,
   schema.PutWorkspaceCredentialRequest
-> = { name: workspaceCredential.name, label: "live", value: "sk_test_only" };
+> = {
+  name: workspaceCredential.name,
+  label: "live",
+  comment: "test-mode key, safe for CI",
+  value: "sk_test_only",
+};
+
+const importWorkspaceCredentialsRequest: SharedShape<
+  wire.ImportWorkspaceCredentialsRequest,
+  schema.ImportWorkspaceCredentialsRequest
+> = { text: "STRIPE_API_KEY=sk_test_only\n", label: "blitzos.env", dryRun: true };
+
+const importWorkspaceCredentialsResponse: SharedShape<
+  wire.ImportWorkspaceCredentialsResponse,
+  schema.ImportWorkspaceCredentialsResponse
+> = {
+  results: [
+    { name: workspaceCredential.name, line: 1, outcome: "stored" },
+    { name: "GOOGLE_SA_JSON", line: 2, outcome: "refused", reason: "empty value" },
+  ],
+  linesRead: 2,
+};
 
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
@@ -287,6 +322,34 @@ const listWorkspaceReposResponse: SharedShape<
   wire.ListWorkspaceReposResponse,
   schema.ListWorkspaceReposResponse
 > = { repos: [templateRepo] };
+
+const sessionShare: SharedShape<
+  wire.SessionShareView,
+  schema.SessionShareView
+> = {
+  id: "share-1",
+  sessionId: "sess-abc",
+  ownerMembershipId: "membership-owner",
+  granteeMembershipId: "membership-grantee",
+  level: "rw",
+  createdAt: 1_788_000_000_000,
+  createdByMembershipId: "membership-owner",
+};
+
+const listSessionSharesResponse: SharedShape<
+  wire.ListSessionSharesResponse,
+  schema.ListSessionSharesResponse
+> = { granted: [sessionShare], received: [sessionShare] };
+
+const grantSessionShareRequest: SharedShape<
+  wire.GrantSessionShareRequest,
+  schema.GrantSessionShareRequest
+> = {
+  sessionId: sessionShare.sessionId,
+  granteeMembershipId: sessionShare.granteeMembershipId,
+  level: "ro",
+  ownerMembershipId: sessionShare.ownerMembershipId,
+};
 
 const githubInstallation: SharedShape<
   wire.GithubInstallationView,
@@ -392,7 +455,6 @@ const createWorkspaceRequest: SharedShape<
   }],
   credentials: [{ name: workspaceCredential.name, label: "live", value: "sk_test_only" }],
   cloneFromWorkspaceId: "workspace",
-  sshPublicKey: "ssh-ed25519 AAAAcaller",
   volumeId: volume.id,
   userData: "#cloud-config\n",
   manifest: {
@@ -578,6 +640,7 @@ const catalogEntry: SharedShape<
   oauthAvailable: true,
   oauthConfigured: false,
   personalTokenLabel: "Personal API key",
+  personalTokenFallbackOnly: false,
   personalTokenHelp: "Create it in Linear's own settings.",
   personalTokenBaseUrlLabel: null,
   adminForm: catalogAdminForm,
@@ -660,6 +723,8 @@ const connectionsResponse: SharedShape<
 
 const fullFieldValues = [
   machine,
+  unreportedMachine,
+  machineStats,
   workspaceMember,
   viewerMember,
   workspaceCredential,
@@ -672,6 +737,8 @@ const fullFieldValues = [
   clearAgentRuleRequest,
   workspaceMemberResponse,
   putWorkspaceCredentialRequest,
+  importWorkspaceCredentialsRequest,
+  importWorkspaceCredentialsResponse,
   machineType,
   pricedMachineType,
   machineTypeFailure,
@@ -690,6 +757,9 @@ const fullFieldValues = [
   templateRepo,
   addWorkspaceRepoRequest,
   listWorkspaceReposResponse,
+  sessionShare,
+  listSessionSharesResponse,
+  grantSessionShareRequest,
   githubInstallation,
   listGithubInstallations,
   githubRepository,
@@ -752,6 +822,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.WorkspaceMemberRole>().toEqualTypeOf<schema.WorkspaceMemberRole>();
     expectTypeOf<wire.MachineState>().toEqualTypeOf<schema.MachineState>();
     expectTypeOf<wire.MachineView>().toEqualTypeOf<schema.MachineView>();
+    expectTypeOf<wire.MachineStatsRequest>().toEqualTypeOf<schema.MachineStatsRequest>();
     expectTypeOf<wire.MachineResponse>().toEqualTypeOf<schema.MachineResponse>();
     expectTypeOf<wire.SetMachineTypeRequest>().toEqualTypeOf<schema.SetMachineTypeRequest>();
     expectTypeOf<wire.WorkspaceMemberView>().toEqualTypeOf<schema.WorkspaceMemberView>();
@@ -762,6 +833,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.UpdateWorkspaceRequest>().toEqualTypeOf<schema.UpdateWorkspaceRequest>();
     expectTypeOf<wire.WorkspaceMemberResponse>().toEqualTypeOf<schema.WorkspaceMemberResponse>();
     expectTypeOf<wire.PutWorkspaceCredentialRequest>().toEqualTypeOf<schema.PutWorkspaceCredentialRequest>();
+    expectTypeOf<wire.ImportWorkspaceCredentialsRequest>().toEqualTypeOf<schema.ImportWorkspaceCredentialsRequest>();
+    expectTypeOf<wire.ImportWorkspaceCredentialsResponse>().toEqualTypeOf<schema.ImportWorkspaceCredentialsResponse>();
     expectTypeOf<wire.MachinePrice>().toEqualTypeOf<schema.MachinePrice>();
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
@@ -781,6 +854,10 @@ describe("local wire copies", () => {
     expectTypeOf<wire.TemplateRepoView>().toEqualTypeOf<schema.TemplateRepoView>();
     expectTypeOf<wire.AddWorkspaceRepoRequest>().toEqualTypeOf<schema.AddWorkspaceRepoRequest>();
     expectTypeOf<wire.ListWorkspaceReposResponse>().toEqualTypeOf<schema.ListWorkspaceReposResponse>();
+    expectTypeOf<wire.SessionShareLevel>().toEqualTypeOf<schema.SessionShareLevel>();
+    expectTypeOf<wire.SessionShareView>().toEqualTypeOf<schema.SessionShareView>();
+    expectTypeOf<wire.ListSessionSharesResponse>().toEqualTypeOf<schema.ListSessionSharesResponse>();
+    expectTypeOf<wire.GrantSessionShareRequest>().toEqualTypeOf<schema.GrantSessionShareRequest>();
     expectTypeOf<wire.GithubInstallationView>().toEqualTypeOf<schema.GithubInstallationView>();
     expectTypeOf<wire.ListGithubInstallationsResponse>().toEqualTypeOf<schema.ListGithubInstallationsResponse>();
     expectTypeOf<wire.GithubRepositoryView>().toEqualTypeOf<schema.GithubRepositoryView>();
@@ -833,6 +910,10 @@ describe("local wire copies", () => {
     expectTypeOf<connections.MintResult>().toEqualTypeOf<schema.MintResult>();
     expectTypeOf<connections.WorkspaceConnectionsResponse>()
       .toEqualTypeOf<schema.WorkspaceConnectionsResponse>();
+    expectTypeOf<connections.WorkspaceCredentialEntry>()
+      .toEqualTypeOf<schema.WorkspaceCredentialEntry>();
+    expectTypeOf<connections.WorkspaceCredentialsResponse>()
+      .toEqualTypeOf<schema.WorkspaceCredentialsResponse>();
     expectTypeOf<connections.Lease>().toEqualTypeOf<schema.CredentialLeaseView>();
     expectTypeOf<connections.CatalogAdminPlacement>().toEqualTypeOf<schema.CatalogAdminPlacement>();
     expectTypeOf<connections.CatalogAdminFormView>().toEqualTypeOf<schema.CatalogAdminFormView>();

@@ -92,7 +92,6 @@ for _attempt in $(seq 1 100); do
   listeners=$(docker exec "$container" ss -ltnH 2>/dev/null || true)
   if grep -q '0.0.0.0:22' <<<"$listeners" \
     && grep -q '127.0.0.1:7443' <<<"$listeners" \
-    && grep -q '127.0.0.1:7444' <<<"$listeners" \
     && grep -q '127.0.0.1:7445' <<<"$listeners" \
     && grep -q '127.0.0.1:17445' <<<"$listeners"; then
     ready=true
@@ -103,10 +102,10 @@ done
 [ "$ready" = true ] || fail "loopback services did not become ready"
 
 services=$(docker exec "$container" /command/s6-rc -a list)
-for service in init-state enroll register sshd ttyd actor dufs gateway watch dockerd; do
+for service in init-state enroll register sshd ttyd dufs gateway watch dockerd; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
-for service in sshd ttyd actor dufs gateway watch dockerd; do
+for service in sshd ttyd dufs gateway watch dockerd; do
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
 dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
@@ -119,6 +118,90 @@ docker exec "$container" test ! -e /srv/blitz-files/home \
   || fail "dufs publishes the agent HOME again: /srv/blitz-files/home exists"
 echo "PASS s6 graph and longruns"
 
+# ---- the memory boundary ----
+# This is the only gate that runs the real s6 graph, so it is the only place
+# the cgroup layout can be proved. Every check below is an invariant the
+# boundary depends on, and each one has failed at least once during its build.
+#
+# The checks require the memory controller to be DELEGATED into the container,
+# which a box-in-box dev workspace cannot do (its own flat root pins the
+# controller). There the boundary correctly stays flat, the boot must still
+# succeed — the lines above proved that — and the layout is asserted where
+# delegation exists: CI runners and real VMs.
+boundary_expected=yes
+docker exec "$container" grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null \
+  || boundary_expected=no
+
+cgroup_of() {
+  # Prints the cgroup path of the first process matching a pgrep pattern.
+  local pid
+  pid=$(docker exec "$container" pgrep -x "$1" | head -1) || return 1
+  [ -n "$pid" ] || return 1
+  docker exec "$container" sed -n 's|^0::||p' "/proc/$pid/cgroup"
+}
+
+if [ "$boundary_expected" = no ]; then
+  docker exec "$container" test ! -d /sys/fs/cgroup/blitz-system.slice \
+    || fail "no memory controller here, yet a half-built system slice exists"
+  echo "SKIP memory boundary layout (memory controller is not delegated here; CI and the Hetzner lab assert it)"
+else
+docker exec "$container" test -d /sys/fs/cgroup/blitz-system.slice \
+  || fail "the system slice was not created"
+docker exec "$container" test -d /sys/fs/cgroup/blitz-user.slice \
+  || fail "the user slice was not created"
+
+# cgroup v2 forbids a cgroup from holding processes AND controller-enabled
+# children. If anything is left in the container root, the controllers were
+# enabled on a populated cgroup and the whole boundary is silently inert.
+root_procs=$(docker exec "$container" sh -c 'wc -l </sys/fs/cgroup/cgroup.procs')
+[ "$root_procs" = 0 ] || fail "the container root cgroup still holds $root_procs processes"
+
+controllers=$(docker exec "$container" cat /sys/fs/cgroup/cgroup.subtree_control)
+grep -q memory <<<"$controllers" || fail "the memory controller is not delegated: [$controllers]"
+grep -q pids <<<"$controllers" || fail "the pids controller is not delegated: [$controllers]"
+
+for service in sshd ttyd dufs blitz-box-gatew; do
+  where=$(cgroup_of "$service") || fail "$service is not running, so its cgroup cannot be checked"
+  [ "$where" = /blitz-system.slice ] \
+    || fail "$service must sit in the reservation, but it is in [$where]"
+done
+# The actor that used to hold user/actor.scope is gone; the Lody daemon
+# inherited the placement. It is dark by default, so a smoke box idles it in
+# `sleep infinity` and there is no node to look at here. The placement is
+# asserted by reading its run script instead — see the boundary lab
+# (packages/box/test/memory-load.sh) for the live check on an enabled box.
+docker exec "$container" grep -q 'blitz-cgroup enter user/lody.scope' \
+  /etc/s6-overlay/s6-rc.d/lody-daemon/run \
+  || fail "the lody daemon does not enter the user ceiling"
+where=$(cgroup_of dockerd) || fail "dockerd is not running"
+[ "$where" = /blitz-user.slice/dockerd.scope ] \
+  || fail "dockerd must sit beside its containers, not in them: [$where]"
+
+# The reservation is the half that stops a stall, so a zero here means the box
+# is back to the failure that started all this.
+system_min=$(docker exec "$container" cat /sys/fs/cgroup/blitz-system.slice/memory.min)
+[ "$system_min" -gt 0 ] || fail "the system slice carries no memory reservation"
+user_max=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/memory.max)
+user_high=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/memory.high)
+[ "$user_max" != max ] || fail "the user slice has no ceiling"
+[ "$user_high" -lt "$user_max" ] \
+  || fail "memory.high ($user_high) must throttle below memory.max ($user_max)"
+
+# PID 1 carries the score every service inherits. Losing it means a kill can
+# take s6 and restart the whole container, which is the loudest failure of all.
+pid1_adj=$(docker exec "$container" cat /proc/1/oom_score_adj)
+[ "$pid1_adj" -lt 0 ] || fail "PID 1 is a normal OOM candidate (oom_score_adj=$pid1_adj)"
+
+# Delegation, and its containment. uid 1000 must be able to move its own work
+# between leaves it owns, and must NOT be able to park work in the reservation.
+owner=$(docker exec "$container" stat -c %u /sys/fs/cgroup/blitz-user.slice/cgroup.procs)
+[ "$owner" = 1000 ] || fail "the user slice is not delegated to uid 1000 (owner $owner)"
+owner=$(docker exec "$container" stat -c %u /sys/fs/cgroup/blitz-system.slice/cgroup.procs)
+[ "$owner" = 0 ] || fail "the system slice is writable by uid $owner; it must stay root-owned"
+echo "PASS memory boundary layout"
+fi
+
+
 docker logs "$container" >"$test_dir/container.log" 2>&1
 grep -q 'enroll: skipped (no control-plane origin)' "$test_dir/container.log" || fail "enroll did not skip cleanly"
 grep -q 'register: skipped (no control-plane origin)' "$test_dir/container.log" || fail "register did not skip cleanly"
@@ -129,7 +212,7 @@ echo "PASS no-CP skips"
 # Terminal delivery: the shim must WIN the PATH over the pinned binary it execs,
 # in a plain login shell as well as in the image environment. A member-installed
 # copy landing in the writable npm prefix and shadowing it is the single most
-# common way a terminal ends up signed out while chat is authenticated.
+# common way a terminal ends up signed out while the box holds a credential.
 resolved=$(docker exec "$container" /bin/sh -lc 'command -v claude')
 [ "$resolved" = '/usr/local/bin/claude' ] || fail "login-shell claude resolves to $resolved, not the shim"
 resolved=$(docker exec "$container" /bin/sh -c 'command -v claude')
@@ -146,7 +229,7 @@ echo "PASS terminal delivery shim"
 
 listeners=$(docker exec "$container" ss -ltnH)
 grep -Eq '[[:space:]]0\.0\.0\.0:22[[:space:]]' <<<"$listeners" || fail "sshd is not listening on port 22"
-for port in 7443 7444 7445; do
+for port in 7443 7445; do
   grep -Eq "[[:space:]]127\\.0\\.0\\.1:$port[[:space:]]" <<<"$listeners" || fail "$port is not on loopback"
   if grep -Eq "[[:space:]](0\\.0\\.0\\.0|\[::\]):$port[[:space:]]" <<<"$listeners"; then
     fail "$port has a non-loopback listener"
@@ -176,6 +259,31 @@ if ssh "${ssh_common[@]}" -o PubkeyAuthentication=no -o PasswordAuthentication=y
 fi
 echo "PASS sshd key-only authentication"
 
+# An SSH session is user work. sshd itself belongs in the reservation — it is
+# the rescue path — so its children start there and would otherwise be the one
+# workload with no ceiling at all. A ForceCommand moves each session out.
+if [ "$boundary_expected" = yes ]; then
+  remote_cgroup=$(ssh "${ssh_common[@]}" -i "$test_dir/id_ed25519" blitz@127.0.0.1 \
+    'sed -n "s|^0::||p" /proc/$$/cgroup')
+  case "$remote_cgroup" in
+    /blitz-user.slice/ssh-*) ;;
+    *) fail "an ssh session runs in [$remote_cgroup], not its own user leaf" ;;
+  esac
+fi
+# A ForceCommand replaces the sftp subsystem too, so sftp is the thing most
+# likely to break silently. Prove a round trip rather than trust the branch.
+printf 'sftp-payload\n' >"$test_dir/sftp-src"
+# sftp(1) reads lowercase -p as "preserve times" and only takes -P as the
+# port, so ssh_common (built for ssh) cannot be reused here verbatim.
+sftp -P "$host_port" "${ssh_common[@]:2}" -i "$test_dir/id_ed25519" -b - blitz@127.0.0.1 >/dev/null 2>&1 <<SFTP \
+  || fail "sftp stopped working under the ForceCommand"
+put $test_dir/sftp-src /workspace/sftp-dst
+SFTP
+docker exec "$container" grep -q sftp-payload /workspace/sftp-dst \
+  || fail "sftp uploaded nothing"
+echo "PASS ssh sessions carry the user ceiling"
+
+docker cp "$script_dir/ws-client.mjs" "$container:/tmp/ws-client.mjs" >/dev/null
 docker cp "$script_dir/ttyd-client.mjs" "$container:/tmp/ttyd-client.mjs" >/dev/null
 ttyd_url='ws://127.0.0.1:7443/ws?arg=terminal&arg=smoke-contract'
 docker exec --user blitz \
@@ -211,49 +319,22 @@ if docker exec --user blitz "$container" /usr/local/libexec/blitz-term terminal 
 fi
 echo "PASS ttyd URL args, no-arg shell, read-only attach, and tmux persistence ($session_before)"
 
-# The actor always authenticates WebSocket upgrades, including in standalone
-# mode. Install the per-run sentinel as its temporary static compatibility
-# token, then remove it before the unauthenticated files smoke below.
-#
-# ORDERING CONSTRAINT: do not touch the gateway (7445) between the install and
-# the rm below. currentWebAppAuth latches: the first non-empty token it reads
-# sets authRequired for the life of the process and it keeps serving from
-# lastWebAppToken after the file is gone, so every later unauthenticated
-# gateway assertion in this script would fail with 403. The block below talks
-# to the actor on 7444 directly, which is why this is safe today.
-docker exec "$container" install -o blitz -g blitz -m 0600 \
-  /run/blitz/smoke-secret /var/lib/blitz/webapp-token
-docker exec -i --workdir /opt/blitz/actor "$container" node --input-type=module <<'NODE'
-import { readFileSync } from "node:fs";
-import { WebSocket } from "ws";
-
-const token = readFileSync("/run/blitz/smoke-secret", "utf8").trim();
-const socket = new WebSocket("ws://127.0.0.1:7444", {
-  origin: "http://127.0.0.1",
-  headers: { "x-blitz-webapp-token": token },
-});
-const result = await new Promise((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error("ACP smoke timeout")), 5000);
-  socket.on("open", () => {
-    socket.send(JSON.stringify({ jsonrpc: "2.0", id: "initialize", method: "initialize", params: { protocolVersion: 1, clientCapabilities: {} } }));
-  });
-  socket.on("message", (data) => {
-    const frame = JSON.parse(data.toString());
-    if (frame.id === "initialize") {
-      if (frame.result?.agentInfo?.name !== "BlitzOS box") reject(new Error("bad initialize response"));
-      socket.send(JSON.stringify({ jsonrpc: "2.0", id: "new", method: "session/new", params: { cwd: "/workspace", mcpServers: [] } }));
-    } else if (frame.id === "new") {
-      if (typeof frame.result?.sessionId !== "string") reject(new Error("bad session/new response"));
-      resolve(frame.result.sessionId);
-    }
-  });
-  socket.on("error", reject);
-  socket.on("close", () => clearTimeout(timer));
-});
-console.log(`PASS ACP initialize + session/new (${result})`);
-socket.close();
-NODE
-docker exec "$container" rm -f /var/lib/blitz/webapp-token
+# The per-tab leaf is what lets one runaway agent be killed without taking the
+# tmux server, ttyd, or any other tab with it. tmux forks panes from its own
+# long-lived server, so the wrapper had to go on the PANE COMMAND — this
+# asserts the placement landed in the pane, not in blitz-term.
+if [ "$boundary_expected" = yes ]; then
+  pane_pid=${session_after##*:}
+  pane_cgroup=$(docker exec "$container" sed -n 's|^0::||p' "/proc/$pane_pid/cgroup")
+  [ "$pane_cgroup" = /blitz-user.slice/tab-term-smoke-contract ] \
+    || fail "the tab pane runs in [$pane_cgroup], not its own per-tab leaf"
+  # A kill must take the tab as a unit. A half-killed agent that leaves a live
+  # child still holding its memory is the failure oom.group prevents.
+  tab_group=$(docker exec "$container" cat \
+    /sys/fs/cgroup/blitz-user.slice/tab-term-smoke-contract/memory.oom.group)
+  [ "$tab_group" = 1 ] || fail "the tab leaf does not kill as a group"
+  echo "PASS per-tab memory leaves"
+fi
 
 docker run --rm \
   --network "container:$container" \
@@ -299,21 +380,18 @@ preview_http=$(docker run --rm --network "container:$container" "$curl_image" \
   -fsS 'http://127.0.0.1:7445/preview/31234/deep/path?probe=1')
 [ "$preview_http" = 'preview-http:GET:/deep/path?probe=1' ] \
   || fail "preview HTTP proxy returned: $preview_http"
-docker exec -i --workdir /opt/blitz/actor "$container" node --input-type=module <<'NODE'
-import { WebSocket } from "ws";
+docker exec -i "$container" node --input-type=module <<'NODE'
+import { openWebSocket } from "/tmp/ws-client.mjs";
 
 const result = await new Promise((resolve, reject) => {
-  const socket = new WebSocket("ws://127.0.0.1:7445/preview/31234/socket?probe=1", {
-    origin: "http://127.0.0.1",
-  });
   const timer = setTimeout(() => reject(new Error("preview WebSocket timeout")), 5000);
-  socket.on("open", () => socket.send("hello"));
-  socket.on("message", (message) => {
-    clearTimeout(timer);
-    socket.close();
-    resolve(message.toString());
-  });
-  socket.on("error", reject);
+  openWebSocket("ws://127.0.0.1:7445/preview/31234/socket?probe=1", {
+    origin: "http://127.0.0.1",
+    onMessage: (message) => {
+      clearTimeout(timer);
+      resolve(message.toString());
+    },
+  }).then((socket) => socket.send("hello"), reject);
 });
 if (result !== "preview-ws:/socket?probe=1:hello") throw new Error(`bad preview WebSocket response: ${result}`);
 NODE
@@ -355,4 +433,15 @@ docker exec "$unprivileged_container" /command/s6-svstat /run/service/dockerd | 
 docker exec "$unprivileged_container" ss -ltnH | grep -q '127.0.0.1:7445' \
   || fail "unprivileged mode lost a box webapp"
 echo "PASS unprivileged dockerd degradation"
+
+# An unprivileged box cannot write cgroups, and it must still boot. Every
+# blitz-cgroup call is a passthrough there, so the absence of the tree is the
+# correct state — not a failure to report.
+if docker exec "$unprivileged_container" test -d /sys/fs/cgroup/blitz-system.slice 2>/dev/null; then
+  fail "the unprivileged box built a cgroup tree it cannot own"
+fi
+docker exec "$unprivileged_container" /usr/local/bin/blitz-cgroup enter user/probe -- true \
+  || fail "blitz-cgroup must pass through when it cannot build a boundary"
+echo "PASS unprivileged boundary degradation"
+
 echo "PASS box smoke"

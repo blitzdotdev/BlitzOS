@@ -58,7 +58,11 @@ describe('box preview contract', () => {
     ]);
     expect(fetcher).toHaveBeenCalledWith('https://box.example/ports', {
       credentials: 'include',
-      signal: undefined,
+      // BUG-CV-01: every read of the box gateway carries a deadline now, so a
+      // tunnel with no connections cannot hold this socket for the life of the
+      // tab. The signal is composed here rather than passed in, which is why a
+      // caller that supplied none still gets one.
+      signal: expect.any(AbortSignal),
     });
 
     const previewFetcher = vi.fn(async () => new Response(JSON.stringify({
@@ -80,7 +84,11 @@ describe('box preview contract', () => {
     }]);
     expect(previewFetcher).toHaveBeenCalledWith('https://box.example/previews', {
       credentials: 'include',
-      signal: undefined,
+      // BUG-CV-01: every read of the box gateway carries a deadline now, so a
+      // tunnel with no connections cannot hold this socket for the life of the
+      // tab. The signal is composed here rather than passed in, which is why a
+      // caller that supplied none still gets one.
+      signal: expect.any(AbortSignal),
     });
   });
 

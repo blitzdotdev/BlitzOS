@@ -40,8 +40,8 @@ func Token(ctx context.Context, stateDir, harness string) ([]byte, error) {
 // is never part of the token. Everything downstream of this function copies
 // these bytes VERBATIM into CLAUDE_CODE_OAUTH_TOKEN, and only one of those
 // consumers strips anything by accident: the PATH shim substitutes the helper
-// with $(...), which eats trailing newlines, while the actor sets the value
-// straight into options.env. A token with a trailing newline reaches the vendor
+// with $(...), which eats trailing newlines, while a caller that sets the
+// variable directly keeps them. A token with a trailing newline reaches the vendor
 // as an Authorization header value containing a newline — rejected, with an
 // error that names nothing on this box.
 //

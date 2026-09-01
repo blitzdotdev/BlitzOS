@@ -1,0 +1,15 @@
+#!/command/with-contenv bash
+# Report the state directory's disk usage to the control plane, every ten
+# minutes, forever.
+#
+# The loop lives here rather than in the script so the script stays one shot
+# and one thing: `blitz-machine-stats report` measures once, posts once, and
+# exits 0 whatever happened. A disk figure is worth nothing next to the box it
+# describes, so nothing in this service may take the box down with it — hence
+# the `|| true` and the sleep that follows every outcome alike.
+set -uo pipefail
+
+while true; do
+	/usr/local/bin/blitz-machine-stats report || true
+	sleep 600
+done

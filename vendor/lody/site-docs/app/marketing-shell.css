@@ -1,0 +1,280 @@
+/* Marketing shell — restrained deep-ocean brand (homepage dark).
+   Price / download / changelog only. Prefer type + hairlines over glass cards. */
+
+.marketing-shell {
+  /*
+   * Default = light shallow water (matches atmosphere uTheme=1).
+   * Dark abyss tokens under html.dark below.
+   */
+  color-scheme: light;
+  /* Slightly cooler/deeper so panels sit on visible water, not white fog. */
+  --landing-bg: 205 42% 88%;
+  --landing-ink: 210 45% 14%;
+  --landing-ink-muted: 207 24% 34%;
+  --landing-border: 205 26% 62%;
+  --landing-surface-1: 200 38% 97%;
+  --landing-surface-2: 200 32% 94%;
+  --landing-surface-3: 200 28% 90%;
+  --landing-primary: 195 72% 34%;
+  --landing-primary-contrast: 0 0% 100%;
+  --landing-glow-1: 195 70% 38%;
+  --landing-glow-2: 200 55% 40%;
+  --landing-shadow: none;
+  --landing-shadow-soft: none;
+  --landing-shadow-button: none;
+  --ocean-aqua: 195 72% 34%;
+  --ocean-ice: 205 40% 28%;
+
+  --mkt-panel-bg: hsl(var(--landing-surface-1) / 0.78);
+  --mkt-panel-bg-strong: hsl(var(--landing-surface-2) / 0.9);
+  --mkt-panel-border: hsl(var(--landing-border) / 0.7);
+  --mkt-panel-border-strong: hsl(195 40% 40% / 0.45);
+  --mkt-panel-blur: blur(16px) saturate(1.05);
+
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: hsl(var(--landing-ink));
+  background: transparent;
+  overflow-x: clip;
+  isolation: isolate;
+}
+
+/* Dark abyss — locked to marketing-atmosphere mid water (≈ dMid navy-teal). */
+html.dark .marketing-shell {
+  color-scheme: dark;
+  --landing-bg: 208 55% 8%;
+  --landing-ink: 200 30% 94%;
+  --landing-ink-muted: 200 18% 72%;
+  --landing-border: 200 28% 38%;
+  --landing-surface-1: 208 42% 14%;
+  --landing-surface-2: 207 40% 17%;
+  --landing-surface-3: 206 36% 20%;
+  --landing-primary: 195 78% 58%;
+  --landing-primary-contrast: 210 50% 8%;
+  --landing-glow-1: 195 80% 52%;
+  --landing-glow-2: 200 65% 48%;
+  --ocean-aqua: 195 78% 58%;
+  --ocean-ice: 200 35% 84%;
+
+  --mkt-panel-bg: hsl(var(--landing-surface-1) / 0.58);
+  --mkt-panel-bg-strong: hsl(var(--landing-surface-2) / 0.68);
+  --mkt-panel-border: hsl(var(--landing-border) / 0.42);
+  --mkt-panel-border-strong: hsl(195 35% 52% / 0.38);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .marketing-shell {
+    --mkt-panel-bg: hsl(var(--landing-surface-1) / 0.94);
+    --mkt-panel-bg-strong: hsl(var(--landing-surface-2) / 0.97);
+    --mkt-panel-blur: none;
+  }
+}
+
+/* Pricing also carries `.landing-page-root`, which sets an opaque solid bg —
+   clear it so the shader field is not painted over by a flat fill. */
+.landing-page-root.marketing-shell {
+  background: transparent;
+  background-color: transparent;
+}
+
+/* Static fallback field (used before the WebGL atmosphere mounts, or when
+   WebGL is unavailable). Extremely faint dotted wash near the top only. */
+.marketing-shell::before {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 0;
+  height: 42vh;
+  pointer-events: none;
+  content: '';
+  background-image: radial-gradient(hsl(200 50% 75% / 0.14) 0.55px, transparent 0.7px);
+  background-size: 32px 32px;
+  opacity: 0.35;
+  mask-image: linear-gradient(to bottom, black, transparent 100%);
+}
+
+/* When the fragment shader is running, drop the CSS dots — the shader owns the field. */
+html.marketing-atmosphere-active .marketing-shell::before {
+  opacity: 0;
+}
+
+/* Fixed deep-ocean fragment shader (see marketing-atmosphere.tsx). */
+.marketing-atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* Light shallow fallback — mid blue, not near-white (matches shader lMid). */
+  background: linear-gradient(
+    to bottom,
+    rgb(224, 237, 250) 0%,
+    rgb(158, 199, 234) 52%,
+    rgb(122, 168, 214) 100%
+  );
+}
+
+/* Dark abyss fallback when html.dark (or after atmosphere marks light off). */
+html.dark .marketing-atmosphere {
+  background: linear-gradient(
+    to bottom,
+    rgb(7, 24, 43) 0%,
+    rgb(14, 45, 73) 50%,
+    rgb(6, 17, 35) 100%
+  );
+}
+
+.marketing-atmosphere__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+
+.marketing-atmosphere__canvas[data-ready='true'] {
+  opacity: 1;
+}
+
+/* Host stays mounted off-route; hide without destroying the GL context. */
+.marketing-atmosphere[data-page-active='false'] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.marketing-atmosphere[data-page-active='false'] .marketing-atmosphere__canvas {
+  opacity: 0;
+}
+
+/* No-WebGL: keep the richer CSS gradient (already on the wrapper). */
+.marketing-atmosphere__canvas[data-fallback='true'] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marketing-atmosphere__canvas {
+    transition: none;
+  }
+}
+
+/* Lift page sections above the fixed atmosphere.
+   Exclusions, all of which own their own layer and must not be flattened into
+   flow at z-index 1:
+   - `.site-nav` / `.site-nav__backdrop`: this rule has the same specificity as
+     `.site-nav` but lands later in the cascade, so without the exclusion the open
+     mobile sheet paints *under* every later section and the scrim stops being
+     fixed. Keep site-nav.css the single owner of the nav's layer.
+   - `.marketing-atmosphere`: the `:not()` list makes this rule (0,3,0), which
+     outranks the (0,2,0) `> .marketing-atmosphere` override below, so listing it
+     here is what keeps the field fixed and behind. The atmosphere is currently
+     hosted at the document root, not inside the shell, but this rule must not be
+     the thing that breaks if it ever moves back in. */
+.marketing-shell > *:not(.site-nav, .site-nav__backdrop, .marketing-atmosphere) {
+  position: relative;
+  z-index: 1;
+}
+
+/* Atmosphere stays fixed behind content, wherever it is hosted. */
+.marketing-shell > .marketing-atmosphere {
+  position: fixed;
+  z-index: 0;
+}
+
+/* ---- Nav: continuous with page (no frosted band / no hard divider) --------
+   Same idea as `.underwater-landing .site-nav` — melts into the field. */
+.marketing-shell .site-nav {
+  border-bottom: 0;
+  background: linear-gradient(
+    to bottom,
+    hsl(var(--landing-bg) / 0.92) 0%,
+    hsl(var(--landing-bg) / 0.55) 55%,
+    hsl(var(--landing-bg) / 0) 100%
+  );
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: hsl(var(--landing-ink));
+}
+
+.marketing-shell .site-nav__link,
+.marketing-shell .site-nav__theme-toggle {
+  color: hsl(var(--landing-ink-muted));
+}
+
+.marketing-shell .site-nav__link:hover,
+.marketing-shell .site-nav__theme-toggle:hover {
+  color: hsl(var(--landing-ink));
+  background: transparent;
+}
+
+.marketing-shell .site-nav__theme-toggle:hover {
+  background: hsl(var(--landing-ink) / 0.06);
+}
+
+/* Mobile sheet: frosted continuation of the bar (not a solid ink slab). */
+.marketing-shell .site-nav[data-open='true'] {
+  background: hsl(var(--landing-surface-1) / 0.9);
+  -webkit-backdrop-filter: saturate(1.2) blur(18px);
+  backdrop-filter: saturate(1.2) blur(18px);
+}
+
+.marketing-shell .site-nav__menu {
+  background: hsl(var(--landing-surface-1) / 0.9);
+  border-color: transparent;
+  box-shadow:
+    0 1px 0 hsl(var(--landing-border) / 0.3) inset,
+    0 18px 40px hsl(210 40% 8% / 0.18);
+  -webkit-backdrop-filter: saturate(1.2) blur(18px);
+  backdrop-filter: saturate(1.2) blur(18px);
+}
+
+html.dark .marketing-shell .site-nav[data-open='true'],
+html.dark .marketing-shell .site-nav__menu {
+  background: hsl(214 55% 7% / 0.92);
+  box-shadow:
+    0 1px 0 hsl(var(--landing-border) / 0.22) inset,
+    0 20px 48px hsl(214 80% 4% / 0.4);
+}
+
+/* Shared homepage footer on marketing pages — continuous with the field. */
+.marketing-shell .underwater-footer {
+  margin-top: clamp(2rem, 5vh, 3.5rem);
+}
+
+.marketing-shell .underwater-footer__inner {
+  width: var(--site-content-width);
+  border-top-color: hsl(var(--landing-border) / 0.4);
+}
+
+/* Shared type — quiet, not badge-y. */
+.marketing-shell .mkt-eyebrow {
+  display: block;
+  margin: 0 0 0.85rem;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.marketing-shell .mkt-eyebrow-dot {
+  display: none;
+}
+
+.marketing-shell .mkt-title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-heading);
+  font-size: clamp(2.15rem, 4.2vw, 3.1rem);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+  text-wrap: balance;
+}
+
+.marketing-shell .mkt-lead {
+  margin: 0.9rem 0 0;
+  max-width: 38rem;
+  color: hsl(var(--landing-ink-muted));
+  font-size: clamp(0.98rem, 1.35vw, 1.08rem);
+  font-weight: 400;
+  line-height: 1.65;
+}

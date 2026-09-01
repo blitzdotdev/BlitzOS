@@ -13,9 +13,7 @@ import {
 import { RecipeDuoIcon } from '../files-icons';
 
 export function recipeHarnessLabel(harness: RecipeHarness): string {
-  if (harness === 'claude') return 'Claude Code';
-  if (harness === 'codex') return 'Codex';
-  return 'Chat';
+  return harness === 'claude' ? 'Claude Code' : 'Codex';
 }
 
 /** The Recipes surface: saved invocations (template + harness + model + prompt)

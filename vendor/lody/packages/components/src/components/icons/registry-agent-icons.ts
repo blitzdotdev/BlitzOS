@@ -1,0 +1,79 @@
+// Auto-registered local SVG icons for REGISTRY_ACP_AGENTS.
+// Each SVG uses currentColor so themes apply cleanly in dark/light mode.
+
+import agoragenticAcpSvg from './registry-assets/agoragentic-acp.svg?raw';
+import ampAcpSvg from './registry-assets/amp-acp.svg?raw';
+import auggieSvg from './registry-assets/auggie.svg?raw';
+import autohandSvg from './registry-assets/autohand.svg?raw';
+import clineSvg from './registry-assets/cline.svg?raw';
+import codebuddyCodeSvg from './registry-assets/codebuddy-code.svg?raw';
+import cortexCodeSvg from './registry-assets/cortex-code.svg?raw';
+import corustAgentSvg from './registry-assets/corust-agent.svg?raw';
+import crowCliSvg from './registry-assets/crow-cli.svg?raw';
+import cursorSvg from './registry-assets/cursor.svg?raw';
+import deepagentsSvg from './registry-assets/deepagents.svg?raw';
+import devinSvg from './registry-assets/devin.svg?raw';
+import dimcodeSvg from './registry-assets/dimcode.svg?raw';
+import diracSvg from './registry-assets/dirac.svg?raw';
+import factoryDroidSvg from './registry-assets/factory-droid.svg?raw';
+import fastAgentSvg from './registry-assets/fast-agent.svg?raw';
+import geminiSvg from './registry-assets/gemini.svg?raw';
+import githubCopilotCliSvg from './registry-assets/github-copilot-cli.svg?raw';
+import glmAcpAgentSvg from './registry-assets/glm-acp-agent.svg?raw';
+import gooseSvg from './registry-assets/goose.svg?raw';
+import grokBuildSvg from './registry-assets/grok-build.svg?raw';
+import junieSvg from './registry-assets/junie.svg?raw';
+import kiloSvg from './registry-assets/kilo.svg?raw';
+import kimiSvg from './registry-assets/kimi.svg?raw';
+import minionCodeSvg from './registry-assets/minion-code.svg?raw';
+import mistralVibeSvg from './registry-assets/mistral-vibe.svg?raw';
+import novaSvg from './registry-assets/nova.svg?raw';
+import opencodeSvg from './registry-assets/opencode.svg?raw';
+import piAcpSvg from './registry-assets/pi-acp.svg?raw';
+import poolsideSvg from './registry-assets/poolside.svg?raw';
+import qoderSvg from './registry-assets/qoder.svg?raw';
+import qwenCodeSvg from './registry-assets/qwen-code.svg?raw';
+import reasonixSvg from './registry-assets/reasonix.svg?raw';
+import sigitSvg from './registry-assets/sigit.svg?raw';
+import stakpakSvg from './registry-assets/stakpak.svg?raw';
+import vtcodeSvg from './registry-assets/vtcode.svg?raw';
+
+export const REGISTRY_AGENT_ICON_SVGS: Partial<Record<string, string>> = {
+  'agoragentic-acp': agoragenticAcpSvg,
+  'amp-acp': ampAcpSvg,
+  auggie: auggieSvg,
+  autohand: autohandSvg,
+  cline: clineSvg,
+  'codebuddy-code': codebuddyCodeSvg,
+  'cortex-code': cortexCodeSvg,
+  'corust-agent': corustAgentSvg,
+  'crow-cli': crowCliSvg,
+  cursor: cursorSvg,
+  deepagents: deepagentsSvg,
+  devin: devinSvg,
+  dimcode: dimcodeSvg,
+  dirac: diracSvg,
+  'factory-droid': factoryDroidSvg,
+  'fast-agent': fastAgentSvg,
+  gemini: geminiSvg,
+  'github-copilot-cli': githubCopilotCliSvg,
+  'glm-acp-agent': glmAcpAgentSvg,
+  goose: gooseSvg,
+  'grok-build': grokBuildSvg,
+  junie: junieSvg,
+  kilo: kiloSvg,
+  kimi: kimiSvg,
+  'kimi-code': kimiSvg,
+  'minion-code': minionCodeSvg,
+  'mistral-vibe': mistralVibeSvg,
+  nova: novaSvg,
+  opencode: opencodeSvg,
+  'pi-acp': piAcpSvg,
+  poolside: poolsideSvg,
+  qoder: qoderSvg,
+  'qwen-code': qwenCodeSvg,
+  reasonix: reasonixSvg,
+  sigit: sigitSvg,
+  stakpak: stakpakSvg,
+  vtcode: vtcodeSvg,
+};

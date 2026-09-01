@@ -565,6 +565,7 @@ export async function resetDatabase(): Promise<void> {
     "microvm_hosts",
     "provider_health",
     "workspace_repos",
+    "session_shares",
     "folder_grants",
     "folder_attachments",
     "folders",

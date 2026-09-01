@@ -2,21 +2,44 @@ import type { WorkspaceView } from "@blitzos/schema";
 
 export interface BoxEndpoints {
   terminalUrl: string;
-  acpUrl: string;
   filesBase: string;
+  /** WebSocket carrying the Lody session daemon's CRDT data plane. */
+  lodySyncUrl: string;
+  /** HTTP endpoint for the Lody daemon's machine RPC. */
+  lodyRpcUrl: string;
+  /** HTTP endpoint for the Lody daemon's session control plane. */
+  lodyControlUrl: string;
+  /** HTTP endpoint for the Lody daemon's local-project control plane. */
+  lodyProjectUrl: string;
+  /** The daemon's own local identity, implicit workspace and machineId. */
+  lodyPlatformUrl: string;
 }
 
 export interface EndpointResolver {
   resolve(workspace: WorkspaceView): BoxEndpoints;
+  /**
+   * The same box surfaces on ANOTHER member's machine, for a session they
+   * shared (plans/LODY-SHARING.md §2.2, §8 step 2).
+   *
+   * One prefix swap and nothing else: everything after `/webapp/` is unchanged,
+   * so `isWebAppSurfacePath` and the whole `webapp-surface` contract apply
+   * byte-for-byte. `ownerMembershipId` is the TARGET — the membership whose
+   * machine runs the session — and a caller who forgets to use this builder
+   * reaches their own box, which is the safe answer.
+   *
+   * Only the Lody doors are reachable through it. The gateway refuses a ticket
+   * carrying a `share` claim on every other path (§4.1), so `terminalUrl` and
+   * `filesBase` are built for shape and would be refused if dialled.
+   */
+  resolveShared(workspace: WorkspaceView, ownerMembershipId: string): BoxEndpoints;
   previewUrl(workspace: WorkspaceView, port: number): string;
 }
 
 export interface StandalonePorts {
-  acp: number;
   files: number;
 }
 
-export const DEFAULT_PORTS: StandalonePorts = { acp: 7444, files: 7445 };
+export const DEFAULT_PORTS: StandalonePorts = { files: 7445 };
 
 /** The guest's dufs serves the workspace tree under this path and emits DAV
  * hrefs rooted at it — without the control-plane proxy prefix. WebDAV clients
@@ -28,20 +51,33 @@ export function standaloneResolver(
   controlPlaneOrigin = globalThis.location?.origin ?? "",
 ): EndpointResolver {
   const cpOrigin = controlPlaneOrigin.replace(/\/+$/u, "");
-  const endpoints = (workspace: WorkspaceView): BoxEndpoints => {
-    if (cpOrigin === "") throw new Error("control-plane origin is required for workspace surfaces");
-    const prefix = `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/webapp`;
-    const acp = new URL(`${prefix}/7444`);
-    acp.protocol = acp.protocol === "https:" ? "wss:" : "ws:";
+  const endpointsAt = (prefix: string): BoxEndpoints => {
     return {
       terminalUrl: `${prefix}/7445/terminal/`,
-      acpUrl: acp.toString(),
       filesBase: `${prefix}/7445${FILES_DAV_ROOT}/`,
+      // The terminal keeps its http URL and is flipped to wss by
+      // `terminalWebSocketUrl`, which also appends `/ws` and needs
+      // `window.location` to resolve it. This one is already the exact path the
+      // gateway routes, so the scheme swap happens here instead — a resolver
+      // used from a test or a worker has no `window` to lean on.
+      lodySyncUrl: `${prefix.replace(/^http(s?):\/\//u, "ws$1://")}/7445/lody/sync`,
+      lodyRpcUrl: `${prefix}/7445/lody/rpc`,
+      lodyControlUrl: `${prefix}/7445/lody/control`,
+      lodyProjectUrl: `${prefix}/7445/lody/project`,
+      lodyPlatformUrl: `${prefix}/7445/lody/platform`,
     };
   };
+  const workspacePrefix = (workspace: WorkspaceView): string => {
+    if (cpOrigin === "") throw new Error("control-plane origin is required for workspace surfaces");
+    return `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}`;
+  };
   return {
-    resolve: endpoints,
-    previewUrl: (workspace, port) => `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/webapp/7445/preview/${port}/`,
+    resolve: (workspace) => endpointsAt(`${workspacePrefix(workspace)}/webapp`),
+    resolveShared: (workspace, ownerMembershipId) =>
+      endpointsAt(
+        `${workspacePrefix(workspace)}/shared/${encodeURIComponent(ownerMembershipId)}/webapp`,
+      ),
+    previewUrl: (workspace, port) => `${workspacePrefix(workspace)}/webapp/7445/preview/${port}/`,
   };
 }
 

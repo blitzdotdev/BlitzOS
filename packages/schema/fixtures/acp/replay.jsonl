@@ -1,4 +1,0 @@
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-replay","update":{"sessionUpdate":"agent_message_chunk","messageId":"message-replay-1","content":{"type":"text","text":"Render this once."}}}}
-{"jsonrpc":"2.0","id":"load-replay-1","method":"session/load","params":{"sessionId":"session-replay","cwd":"/workspace","mcpServers":[]}}
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-replay","update":{"sessionUpdate":"agent_message_chunk","messageId":"message-replay-1","content":{"type":"text","text":"Render this once."}}}}
-{"jsonrpc":"2.0","id":"load-replay-1","result":{}}

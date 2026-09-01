@@ -23,12 +23,11 @@ Run all three before claiming success on any change:
 ```sh
 npm run typecheck     # all workspaces, incl. the wire-drift tsconfig
 npm run lint:gate     # per-rule ratchet vs lint-baseline.json (see below)
-npm test              # control-plane, box actor, ui, guest node:test,
+npm test              # control-plane, box guest tests, ui, guest node:test,
                       # house-rule tests, and Python fixture conformance
 ```
 
-`npm test` needs a working `python3` on PATH (fixture conformance) and
-compiles `better-sqlite3` for the box actor's tests.
+`npm test` needs a working `python3` on PATH (fixture conformance).
 
 ## The lint ratchet
 

@@ -1,5 +1,13 @@
 # Cockpit UI restoration — current direction
 
+> **Retired 2026-08-29 (branch `lody-sessions`).** The deferred native-chat
+> phases below are not resumed; they are deleted. The browser ACP client, the
+> box actor on port 7444, its SQLite session journal, the `chat` tab type and
+> the recipe `chat` harness are removed from the tree, and `plans/LODY-SESSIONS.md`
+> replaces them with a vendored Lody session plane. Read every Chat, ACP and
+> actor statement below as product history. Everything about tabs, terminals,
+> files, previews and the rail still stands.
+
 Status: **implementation complete; final PR walkthrough pending** (2026-08-26).
 This update supersedes the historical plan below without deleting it. The
 earlier work remains useful product and implementation history, but native Chat

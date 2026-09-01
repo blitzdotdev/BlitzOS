@@ -129,6 +129,7 @@ function WorkspaceDetailsSection() {
           client={previewClient}
           workspace={previewWorkspace}
           listMachineTypes={listMachineTypesFixture}
+          refreshWorkspaces={() => undefined}
           initialTab={tab}
           onClose={close}
           onClone={close}

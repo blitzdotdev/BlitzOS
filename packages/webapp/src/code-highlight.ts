@@ -2,7 +2,7 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
 import { tags } from '@lezer/highlight';
 
-// House CodeMirror syntax palette, shared by the file editor and chat code views.
+// House CodeMirror syntax palette used by the file editor.
 export const codeSyntaxHighlighting: Extension = syntaxHighlighting(HighlightStyle.define([
   { tag: [tags.keyword, tags.controlKeyword, tags.moduleKeyword], color: 'var(--ansi-magenta)' },
   { tag: [tags.name, tags.variableName, tags.propertyName], color: 'var(--ink)' },

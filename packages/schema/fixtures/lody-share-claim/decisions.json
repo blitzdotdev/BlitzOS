@@ -1,0 +1,1018 @@
+{
+  "frames": [
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        }
+      },
+      "verdict": "forward",
+      "note": "The granted session's own room. This is the whole of what a read-only share buys on the data plane."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-zulu"
+        }
+      },
+      "verdict": "refuse",
+      "note": "A session on the same box that was never granted. Refused rather than dropped: the client is waiting on a `joined` that will never come."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        },
+        "payload": {
+          "kind": "doc-update",
+          "dataBase64": "AA=="
+        }
+      },
+      "verdict": "drop",
+      "note": "Read-only IS this line. A peer told its write failed tears the room down and retries; a peer whose write never lands re-converges from the owner's state."
+    },
+    {
+      "claim": "rw",
+      "frame": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-beta"
+        },
+        "payload": {
+          "kind": "doc-update",
+          "dataBase64": "AA=="
+        }
+      },
+      "verdict": "forward",
+      "note": "A read-write co-driver's write, including the one that answers a permission request — upstream brokers permissions through this document and no other door."
+    },
+    {
+      "claim": "rw",
+      "frame": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        },
+        "payload": {
+          "kind": "doc-update",
+          "dataBase64": "AA=="
+        }
+      },
+      "verdict": "drop",
+      "note": "One connection, two levels: the same grantee holds read-only on this session and read-write on another."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        }
+      },
+      "verdict": "forward",
+      "note": "`meta` is where SessionMeta lives, so a grantee refused the room has no session to render (plans/LODY-SHARING.md §10.1). The join is forwarded and the daemon's answer is projected on the way back — see `metaProjections`."
+    },
+    {
+      "claim": "admin",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        }
+      },
+      "verdict": "forward",
+      "note": "A workspace admin already holds implicit read-only on every session, so the room leaks nothing they are not entitled to."
+    },
+    {
+      "claim": "admin",
+      "frame": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        },
+        "payload": {
+          "kind": "doc-update",
+          "dataBase64": "AA=="
+        }
+      },
+      "verdict": "drop",
+      "note": "The admin's implicit access is read-only BY CONSTRUCTION: the write predicate never reads `scope`."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "ping",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd"
+      },
+      "verdict": "forward",
+      "note": "Liveness belongs to the peers at each end and crosses untouched."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "leave",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        }
+      },
+      "verdict": "forward",
+      "note": "`leave` only unsubscribes the sender."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "detach",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd"
+      },
+      "verdict": "forward",
+      "note": "`detach` only unsubscribes the sender."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "machine-monitor",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "dataBase64": "AA=="
+      },
+      "verdict": "drop",
+      "note": "Machine-level telemetry, not session state. No share carries it."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "flock-doc",
+          "flockDocId": "machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+        }
+      },
+      "verdict": "refuse",
+      "note": "The machine flock carries local projects and agent configs for the whole box."
+    },
+    {
+      "claim": "admin",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "flock-doc",
+          "flockDocId": "machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+        }
+      },
+      "verdict": "forward",
+      "note": "Same reason as `meta`."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "doc",
+          "docId": "session-comment-sess-alpha"
+        }
+      },
+      "verdict": "refuse",
+      "note": "THE PREFIX TRAP. `session-comment-` starts with `session-` and is a different document family; a reader that strips the shorter prefix first would grant a room it was never asked to."
+    },
+    {
+      "claim": "admin",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "doc",
+          "docId": "preview-comment-sess-alpha"
+        }
+      },
+      "verdict": "refuse",
+      "note": "Not a session document either, and `scope: \"all\"` is over SESSIONS."
+    }
+  ],
+  "requests": [
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "code-collab/open-turn-diff",
+        "params": {
+          "sessionId": "sess-alpha",
+          "turnId": "t"
+        }
+      },
+      "allowed": true,
+      "note": "A granted session's diff. This is the \"read access scoped to that session's worktree\" §0.1 grants."
+    },
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "code-collab/open-turn-diff",
+        "params": {
+          "sessionId": "sess-zulu",
+          "turnId": "t"
+        }
+      },
+      "allowed": false,
+      "note": "The same method against a session nobody granted."
+    },
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "sess-alpha",
+          "turnId": "t"
+        }
+      },
+      "allowed": false,
+      "note": "Cancelling a turn is a co-driver's act, not an observer's."
+    },
+    {
+      "claim": "rw",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "sess-beta",
+          "turnId": "t"
+        }
+      },
+      "allowed": true,
+      "note": "§0.1's read-write co-driver: prompt, steer, cancel."
+    },
+    {
+      "claim": "rw",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "sess-alpha",
+          "turnId": "t"
+        }
+      },
+      "allowed": false,
+      "note": "Read-write on one session is not read-write on the other."
+    },
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "file/preview",
+        "params": {
+          "path": "/etc/passwd"
+        }
+      },
+      "allowed": false,
+      "note": "The two `file/preview*` methods name an arbitrary path and no session, which is why they are excluded rather than scoped."
+    },
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "code-collab/save-text",
+        "params": {
+          "sessionId": "sess-alpha",
+          "path": "a.ts",
+          "text": "x"
+        }
+      },
+      "allowed": false,
+      "note": "A share grants READ access to the worktree; saving a file is not a read."
+    },
+    {
+      "claim": "rw",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/terminate",
+        "params": {
+          "sessionId": "sess-beta"
+        }
+      },
+      "allowed": false,
+      "note": "Killing the agent process is not the same act as cancelling a turn."
+    },
+    {
+      "claim": "ro",
+      "door": "/control",
+      "body": {
+        "type": "session/create",
+        "sessionId": "s",
+        "machineId": "m"
+      },
+      "allowed": false,
+      "note": "`/session-control` is refused outright: `session/create` would create a session on somebody else's box."
+    },
+    {
+      "claim": "rw",
+      "door": "/control",
+      "body": {
+        "type": "session/chat",
+        "sessionId": "sess-beta",
+        "machineId": "m"
+      },
+      "allowed": false,
+      "note": "Everything a read-write grantee needs is a machine RPC, so this door stays shut for both levels."
+    },
+    {
+      "claim": "ro",
+      "door": "/project",
+      "body": {
+        "type": "worktree/read-file",
+        "machineId": "m",
+        "repoFullName": "o/r",
+        "sessionId": "sess-alpha",
+        "relativePath": "a.ts"
+      },
+      "allowed": true,
+      "note": "The worktree read pair IS the session-scoped file access §0.1 grants."
+    },
+    {
+      "claim": "ro",
+      "door": "/project",
+      "body": {
+        "type": "worktree/read-file",
+        "machineId": "m",
+        "repoFullName": "o/r",
+        "sessionId": "sess-zulu",
+        "relativePath": "a.ts"
+      },
+      "allowed": false,
+      "note": "Same door, ungranted session."
+    },
+    {
+      "claim": "ro",
+      "door": "/project",
+      "body": {
+        "type": "local-project/list",
+        "machineId": "m"
+      },
+      "allowed": false,
+      "note": "Every `local-project/*` request names a PROJECT, not a session, so none can be scoped by a share."
+    },
+    {
+      "claim": "admin",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "code-collab/get-file-index",
+        "params": {
+          "sessionId": "sess-anything"
+        }
+      },
+      "allowed": true,
+      "note": "A workspace admin reads any session on the machine, with no grant row."
+    },
+    {
+      "claim": "admin",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/dispatch-turn",
+        "params": {
+          "sessionId": "sess-anything",
+          "userTurnId": "u",
+          "userId": "x",
+          "timestamp": "t",
+          "inputConfig": {}
+        }
+      },
+      "allowed": false,
+      "note": "…and writes none of them."
+    }
+  ],
+  "metaProjections": [
+    {
+      "claim": "ro",
+      "from": {
+        "type": "joined",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        },
+        "serverVersion": "{\"b70fc6db\":{\"physicalTime\":1788050131674,\"logicalCounter\":0}}",
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"e\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-alpha\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-zulu\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"ef\",\"lw_287726ab08f7490493e262c0062bf8b3:mf:c15a67ef\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"id\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"name\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "blitzos-dev"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"ownerUserId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "local:d643963a6fb24409bd2ae88d1b89405e"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"sessions\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": [
+                  "sess-alpha",
+                  "sess-zulu"
+                ]
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"localProjects\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": {
+                  "lp-1": {
+                    "rootPath": "/workspace/private-repo"
+                  }
+                }
+              },
+              "[\"m\",\"session-sess-alpha\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "the granted session"
+              },
+              "[\"m\",\"session-sess-alpha\",\"machineId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"session-sess-zulu\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "a session nobody shared"
+              },
+              "[\"not-a-key\"": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              }
+            }
+          }
+        }
+      },
+      "to": {
+        "type": "joined",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        },
+        "serverVersion": "{\"b70fc6db\":{\"physicalTime\":1788050131674,\"logicalCounter\":0}}",
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"e\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-alpha\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"id\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"name\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "blitzos-dev"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"ownerUserId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "local:d643963a6fb24409bd2ae88d1b89405e"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"sessions\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": []
+              },
+              "[\"m\",\"session-sess-alpha\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "the granted session"
+              },
+              "[\"m\",\"session-sess-alpha\",\"machineId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              }
+            }
+          }
+        }
+      },
+      "note": "The whole of the projection in one frame. Kept: the granted session's existence record and every metadata field it has, plus the machine document, without which the grantee's surface reports the machine removed and disables its composer. Withheld: an ungranted session (existence record and fields alike), the machine Flock's existence record, `localProjects`, and a key this reader cannot parse. `sessions` is EMPTIED rather than dropped, because a reader that finds the key absent and a reader that finds it empty are not the same reader."
+    },
+    {
+      "claim": "rw",
+      "from": {
+        "type": "joined",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        },
+        "serverVersion": "{\"b70fc6db\":{\"physicalTime\":1788050131674,\"logicalCounter\":0}}",
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"e\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-alpha\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-zulu\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"ef\",\"lw_287726ab08f7490493e262c0062bf8b3:mf:c15a67ef\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"id\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"name\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "blitzos-dev"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"ownerUserId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "local:d643963a6fb24409bd2ae88d1b89405e"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"sessions\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": [
+                  "sess-alpha",
+                  "sess-zulu"
+                ]
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"localProjects\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": {
+                  "lp-1": {
+                    "rootPath": "/workspace/private-repo"
+                  }
+                }
+              },
+              "[\"m\",\"session-sess-alpha\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "the granted session"
+              },
+              "[\"m\",\"session-sess-alpha\",\"machineId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"session-sess-zulu\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "a session nobody shared"
+              },
+              "[\"not-a-key\"": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              }
+            }
+          }
+        }
+      },
+      "to": {
+        "type": "joined",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        },
+        "serverVersion": "{\"b70fc6db\":{\"physicalTime\":1788050131674,\"logicalCounter\":0}}",
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"e\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-alpha\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"id\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"name\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "blitzos-dev"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"ownerUserId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "local:d643963a6fb24409bd2ae88d1b89405e"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"sessions\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": []
+              },
+              "[\"m\",\"session-sess-alpha\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "the granted session"
+              },
+              "[\"m\",\"session-sess-alpha\",\"machineId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              }
+            }
+          }
+        }
+      },
+      "note": "A read-write claim reads exactly what a read-only one reads: the two lists differ about writing and about nothing else, and `sess-beta` is not on this box's meta."
+    },
+    {
+      "claim": "admin",
+      "from": {
+        "type": "joined",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        },
+        "serverVersion": "{\"b70fc6db\":{\"physicalTime\":1788050131674,\"logicalCounter\":0}}",
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"e\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-alpha\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-zulu\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"ef\",\"lw_287726ab08f7490493e262c0062bf8b3:mf:c15a67ef\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"id\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"name\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "blitzos-dev"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"ownerUserId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "local:d643963a6fb24409bd2ae88d1b89405e"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"sessions\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": [
+                  "sess-alpha",
+                  "sess-zulu"
+                ]
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"localProjects\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": {
+                  "lp-1": {
+                    "rootPath": "/workspace/private-repo"
+                  }
+                }
+              },
+              "[\"m\",\"session-sess-alpha\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "the granted session"
+              },
+              "[\"m\",\"session-sess-alpha\",\"machineId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"session-sess-zulu\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "a session nobody shared"
+              },
+              "[\"not-a-key\"": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              }
+            }
+          }
+        }
+      },
+      "to": {
+        "type": "joined",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        },
+        "serverVersion": "{\"b70fc6db\":{\"physicalTime\":1788050131674,\"logicalCounter\":0}}",
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"e\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-alpha\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"e\",\"session-sess-zulu\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"ef\",\"lw_287726ab08f7490493e262c0062bf8b3:mf:c15a67ef\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"id\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"name\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "blitzos-dev"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"ownerUserId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "local:d643963a6fb24409bd2ae88d1b89405e"
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"sessions\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": [
+                  "sess-alpha",
+                  "sess-zulu"
+                ]
+              },
+              "[\"m\",\"machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2\",\"localProjects\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": {
+                  "lp-1": {
+                    "rootPath": "/workspace/private-repo"
+                  }
+                }
+              },
+              "[\"m\",\"session-sess-alpha\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "the granted session"
+              },
+              "[\"m\",\"session-sess-alpha\",\"machineId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+              },
+              "[\"m\",\"session-sess-zulu\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "a session nobody shared"
+              },
+              "[\"not-a-key\"": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              }
+            }
+          }
+        }
+      },
+      "note": "`scope: \"all\"` is forwarded byte-for-byte. A workspace admin already holds implicit read-only on every session, so the room leaks nothing they are not entitled to — and the frame is never re-serialized, so it stays the daemon's own bytes."
+    }
+  ],
+  "metaWrites": [
+    {
+      "claim": "rw",
+      "from": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "meta"
+        },
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"m\",\"session-sess-beta\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-1"
+              },
+              "[\"m\",\"session-sess-beta\",\"lastMessageAt\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": 1788050131674
+              },
+              "[\"m\",\"session-sess-beta\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "renamed by a co-driver"
+              },
+              "[\"m\",\"session-sess-beta\",\"isArchived\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"m\",\"session-sess-alpha\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-2"
+              },
+              "[\"e\",\"session-sess-beta\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              }
+            }
+          }
+        }
+      },
+      "to": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "meta"
+        },
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"m\",\"session-sess-beta\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-1"
+              },
+              "[\"m\",\"session-sess-beta\",\"lastMessageAt\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": 1788050131674
+              }
+            }
+          }
+        }
+      },
+      "note": "`latestUserMsgId` is the DURABLE DISPATCH POINTER — the RPC that asks a machine to run a turn is only an accelerator — so a co-driver who may prompt must be able to write it. Withheld in the same frame: a rename and an archive on the session they may drive, every field on a session they may only read, and an existence record."
+    },
+    {
+      "claim": "ro",
+      "from": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "meta"
+        },
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"m\",\"session-sess-alpha\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-3"
+              }
+            }
+          }
+        }
+      },
+      "to": null,
+      "note": "A read-only grantee writes no metadata at all, so nothing survives and the frame is dropped rather than refused — the same rule that drops their document writes."
+    },
+    {
+      "claim": "admin",
+      "from": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "meta"
+        },
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"m\",\"session-sess-alpha\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-4"
+              }
+            }
+          }
+        }
+      },
+      "to": null,
+      "note": "`scope: \"all\"` is implicit READ-ONLY over every session and carries no write list, so the same predicate that decides a document write decides this one, and it never reads `scope`."
+    }
+  ]
+}

@@ -4,7 +4,9 @@
 > current truth. Several gaps reported below have since landed: orgs, members,
 > invites, and grants (identity), workspace sharing, and workspace templates.
 > Other references have moved on too (for example, the composite provider it
-> cites was deleted). Trust the code and tests over this document.
+> cites was deleted, and the box actor with its ACP chat, session journal and
+> 7444 listener was deleted on 2026-08-29 — see `plans/LODY-SESSIONS.md`).
+> Trust the code and tests over this document.
 
 Audited 2026-08-15 against the current working tree. This document compares the
 product claims in the root `README.md` with the implementation in the open Blitz

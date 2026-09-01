@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Every SSH session is user work, so it must run under the user ceiling.
+#
+# WHY A ForceCommand AND NOT THE cgroup JOIN IN sshd/run: sshd forks a child
+# per connection and that child inherits sshd's cgroup. sshd itself belongs in
+# the reservation — it is the rescue path when the box is squeezed — so its
+# children start in the protected slice and would carry no ceiling at all. A
+# build started over SSH would then be the one workload the boundary misses.
+#
+# WHY NOT PAM: the box runs `UsePAM no`, so pam_exec is not available. A
+# ForceCommand is the only per-session hook sshd offers here.
+#
+# The uid this runs as is 1000, which cannot migrate into the system slice —
+# that destination stays root-owned. It can only reach the leaves it owns.
+set -euo pipefail
+
+login_shell=${SHELL:-}
+if [ -z "$login_shell" ] || [ ! -x "$login_shell" ]; then
+  login_shell=$(getent passwd "$(id -u)" | cut -d: -f7)
+fi
+
+# One leaf per connection, keyed by this process. A runaway in one session is
+# killed as a group and every other session survives.
+leaf="user/ssh-$$"
+
+run() { exec /usr/local/bin/blitz-cgroup enter "$leaf" -- "$@"; }
+
+command=${SSH_ORIGINAL_COMMAND:-}
+case "$command" in
+  "")
+    run "$login_shell" -l
+    ;;
+  sftp | internal-sftp | internal-sftp\ *)
+    # A ForceCommand replaces the subsystem too, so the external server binary
+    # has to be named explicitly. Without this branch scp and any editor that
+    # speaks sftp stop working, and the smoke test asserts it does not happen.
+    run /usr/lib/openssh/sftp-server
+    ;;
+  *)
+    run "$login_shell" -c "$command"
+    ;;
+esac

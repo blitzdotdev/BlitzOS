@@ -36,6 +36,12 @@ export const githubManifest = {
     help: "github.com → Settings → Developer settings → Personal access tokens → Fine-grained. Scope it to the repositories the agent needs. Some organizations require an owner to approve each token.",
     header: { name: "Authorization", prefix: "Bearer " },
     baseUrlLabel: null,
+    // Where the App is registered, authorizing is strictly the better path and
+    // the paste form only invites the worse one: a fine-grained token needs an
+    // owner to approve EVERY token, and it cannot enumerate organizations at
+    // all, so the repo picker goes blind. The paste path stays for an instance
+    // with no App registered, which is the case this flag still serves.
+    fallbackOnly: true,
   },
   adminForm: null,
   // Empty on purpose. GitHub App user tokens and fine-grained personal tokens

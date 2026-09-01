@@ -6,10 +6,12 @@ import type {
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient } from './api';
+import { caughtErrorMessage } from './error-message';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { monthlyPriceLabel } from './MachineCatalogGrid';
 import { MachineTypeSelect } from './MachineTypeSelect';
 import { ModalOverlay } from './ModalOverlay';
+import { VolumeMeter } from './VolumeMeter';
 import { machineActionsFor, type MachineAction } from './WorkspaceMembersEditor';
 import type { CloudWorkspaceModel } from './workspace-store';
 
@@ -45,6 +47,42 @@ function dateLabel(timestamp: number): string {
 
 function Detail({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
+}
+
+/** The empty catalog, before the first answer arrives. */
+const NO_CATALOG: ListMachineTypesResponse = { machineTypes: [], failures: [] };
+
+/**
+ * Why the catalog cannot describe this machine's type.
+ *
+ * `GET /machine-types` is what an organization may create NOW, not what its
+ * machines run on: the Hetzner adapter drops deprecated types, drops locations
+ * that report no availability, and keeps only the ids in
+ * `HETZNER_MACHINE_TYPES`, while `core/app.ts` drops whole providers whose
+ * access is `credential-required`. A live machine on a type that has since
+ * left the catalog is normal and documented (`hetzner-config.ts`), and it is
+ * what this panel used to render as four bare "Unavailable" rows.
+ *
+ * The same response carries the reason in `failures` and `providerStatuses`,
+ * which this dialog used to discard. `CreateWorkspaceDialog` reads both.
+ */
+function catalogGap(
+  catalog: ListMachineTypesResponse,
+  machineTypeId: string,
+): string {
+  if (catalog.failures.length > 0) {
+    const listed = catalog.failures
+      .map(({ providerId, error }) => `${providerId}: ${error}`)
+      .join('; ');
+    return `The machine catalog came back incomplete (${listed}), so the size of ${machineTypeId} cannot be shown. The machine itself is unaffected.`;
+  }
+  const needCredential = (catalog.providerStatuses ?? [])
+    .filter(({ access }) => access === 'credential-required')
+    .map(({ providerId }) => providerId);
+  if (needCredential.length > 0) {
+    return `Machine sizes come from the compute provider, and ${needCredential.join(', ')} needs an organization compute credential, so the size of ${machineTypeId} cannot be shown. The machine itself is unaffected.`;
+  }
+  return `The catalog no longer offers ${machineTypeId}, so this machine's size cannot be shown. The machine itself is unaffected.`;
 }
 
 /** The volume's location, so a type change can refuse what cannot reach it.
@@ -94,16 +132,26 @@ export function MyMachineDialog({
   onClose: () => void;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
-  const [machines, setMachines] = useState<MachineType[]>([]);
+  // The WHOLE answer, not just its machine list: `failures` and
+  // `providerStatuses` are what explain a catalog that cannot describe this
+  // machine, and dropping them is what left the panel saying "Unavailable".
+  const [catalog, setCatalog] = useState<ListMachineTypesResponse>(NO_CATALOG);
   const [error, setError] = useState<string | null>(null);
   const [pendingTypeId, setPendingTypeId] = useState<string | null>(null);
+  const machines: MachineType[] = catalog.machineTypes;
 
   useEffect(() => { closeButton.current?.focus(); }, []);
   useEffect(() => {
     let cancelled = false;
     void listMachineTypes()
-      .then((response) => { if (!cancelled) setMachines(response.machineTypes); })
-      .catch((caught: Error) => { if (!cancelled) setError(caught.message); });
+      .then((response) => { if (!cancelled) setCatalog(response); })
+      // A rejection is not always an Error. Reading `.message` off one that is
+      // not put `undefined` in the alert, which renders an empty banner.
+      .catch((caught) => {
+        if (!cancelled) {
+          setError(caughtErrorMessage(caught, 'The machine catalog could not be loaded.'));
+        }
+      });
     return () => { cancelled = true; };
   }, [listMachineTypes]);
 
@@ -160,77 +208,105 @@ export function MyMachineDialog({
             </p>
           ) : (
             <section className="my-machine-panel">
-              <h2>Machine</h2>
-              <dl className="workspace-details-list">
-                <Detail label="Status" value={machine === null ? 'No machine' : machine.state} />
-                <Detail
-                  label="Machine type"
-                  value={type?.name ?? machine?.machineTypeId ?? workspace.defaultMachineTypeId}
-                />
-                <Detail label="CPU" value={type === undefined ? 'Unavailable' : `${String(type.cpuCores)} vCPU`} />
-                <Detail label="Memory" value={type === undefined ? 'Unavailable' : `${String(type.memGb)} GB`} />
-                <Detail label="Disk" value={type === undefined ? 'Unavailable' : `${String(type.diskGb)} GB`} />
-                <Detail label="Price" value={price ?? 'Unavailable'} />
-                <Detail
-                  label="Persistent volume"
-                  value={machine?.volumeId == null ? 'None' : 'Attached'}
-                />
-                <Detail label="Created" value={machine === null ? 'Unavailable' : dateLabel(machine.createdAt)} />
-              </dl>
-              {machine?.error != null && (
-                <p className="workspace-details-error" role="alert">{machine.error}</p>
-              )}
-
-              <h2>Machine type</h2>
-              {admin && machine !== null ? (
-                <MachineTypeSelect
-                  machines={machines}
-                  value={machine.machineTypeId}
-                  defaultMachineTypeId={workspace.defaultMachineTypeId}
-                  volumeLocation={volumeLocationOf(machine, machines)}
-                  ariaLabel="Change my machine type"
-                  onChange={(machineTypeId) => {
-                    if (machineTypeId !== machine.machineTypeId) setPendingTypeId(machineTypeId);
-                  }}
-                />
-              ) : (
-                <p className="workspace-details-note">
-                  {machine === null
-                    ? 'There is no machine to re-type yet.'
-                    : `Changing a machine's type is workspace-admin work. ${askLine(workspace.members)}`}
-                </p>
-              )}
-
-              <h2>Lifecycle</h2>
-              {actions.length === 0 && (
-                <p className="workspace-details-note">
-                  {machine === null
-                    ? 'You have no machine yet.'
-                    : `A machine that is ${machine.state} accepts nothing until it arrives.`}
-                </p>
-              )}
-              <div className="my-machine-actions">
-                {actions.map((action) => {
-                  const blocked = needsAdmin(action, machine) && !admin;
-                  return (
-                    <button
-                      className={action === 'destroy'
-                        ? 'workspace-details-delete'
-                        : 'webapp-action'}
-                      type="button"
-                      key={action}
-                      disabled={blocked}
-                      title={blocked ? askLine(workspace.members) : undefined}
-                      onClick={() => act(action)}
-                    >
-                      {ACTION_LABELS[action]}
-                    </button>
-                  );
-                })}
+              <div className="cfg-section">
+                <div className="cfg-section-head">
+                  <h2 className="cfg-title">Machine</h2>
+                </div>
+                <dl className="cfg-meta">
+                  <div>
+                    <dt>Status</dt>
+                    {/* `MachineState` is a wire term shown to a person. */}
+                    <dd className="cfg-meta-term">
+                      {machine === null ? 'No machine' : machine.state}
+                    </dd>
+                  </div>
+                  <Detail
+                    label="Machine type"
+                    value={type?.name ?? machine?.machineTypeId ?? workspace.defaultMachineTypeId}
+                  />
+                  {type !== undefined && <>
+                    <Detail label="CPU" value={`${String(type.cpuCores)} vCPU`} />
+                    <Detail label="Memory" value={`${String(type.memGb)} GB`} />
+                    <Detail label="Disk" value={`${String(type.diskGb)} GB`} />
+                    <Detail label="Price" value={price ?? 'Unavailable'} />
+                  </>}
+                  <div>
+                    <dt>Persistent volume</dt>
+                    <dd>
+                      <VolumeMeter
+                        volumeId={machine?.volumeId ?? null}
+                        usedPercent={machine?.volumeUsedPercent ?? null}
+                      />
+                    </dd>
+                  </div>
+                  <Detail label="Created" value={machine === null ? 'Unavailable' : dateLabel(machine.createdAt)} />
+                </dl>
+                {type === undefined && machine !== null && (
+                  <p className="cfg-help">{catalogGap(catalog, machine.machineTypeId)}</p>
+                )}
+                {machine?.error != null && (
+                  <p className="workspace-details-error" role="alert">{machine.error}</p>
+                )}
               </div>
-              {refused.length > 0 && (
-                <p className="workspace-details-note">{askLine(workspace.members)}</p>
-              )}
+
+              <div className="cfg-section">
+                <div className="cfg-section-head">
+                  <h2 className="cfg-title">Machine type</h2>
+                </div>
+                {admin && machine !== null ? (
+                  <MachineTypeSelect
+                    machines={machines}
+                    value={machine.machineTypeId}
+                    defaultMachineTypeId={workspace.defaultMachineTypeId}
+                    volumeLocation={volumeLocationOf(machine, machines)}
+                    ariaLabel="Change my machine type"
+                    onChange={(machineTypeId) => {
+                      if (machineTypeId !== machine.machineTypeId) setPendingTypeId(machineTypeId);
+                    }}
+                  />
+                ) : (
+                  <p className="cfg-help">
+                    {machine === null
+                      ? 'There is no machine to re-type yet.'
+                      : `Changing a machine's type is workspace-admin work. ${askLine(workspace.members)}`}
+                  </p>
+                )}
+              </div>
+
+              <div className="cfg-section">
+                <div className="cfg-section-head">
+                  <h2 className="cfg-title">Lifecycle</h2>
+                </div>
+                {actions.length === 0 && (
+                  <p className="cfg-help">
+                    {machine === null
+                      ? 'You have no machine yet.'
+                      : `A machine that is ${machine.state} accepts nothing until it arrives.`}
+                  </p>
+                )}
+                <div className="cfg-actions">
+                  {actions.map((action) => {
+                    const blocked = needsAdmin(action, machine) && !admin;
+                    return (
+                      <button
+                        className={action === 'destroy'
+                          ? 'cfg-danger-action'
+                          : 'webapp-action'}
+                        type="button"
+                        key={action}
+                        disabled={blocked}
+                        title={blocked ? askLine(workspace.members) : undefined}
+                        onClick={() => act(action)}
+                      >
+                        {ACTION_LABELS[action]}
+                      </button>
+                    );
+                  })}
+                </div>
+                {refused.length > 0 && (
+                  <p className="cfg-help">{askLine(workspace.members)}</p>
+                )}
+              </div>
             </section>
           )}
         </div>
