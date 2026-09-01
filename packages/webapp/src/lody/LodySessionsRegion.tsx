@@ -17,7 +17,7 @@
  * `main.tsx`, where there is no control plane and therefore no address to
  * parse.
  */
-import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from "react";
 import type { SessionShareLevel } from "@blitzos/schema";
 import type { BoxEndpoints } from "../resolver.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
@@ -25,9 +25,21 @@ import type { LodySessionsCapability } from "./box-capability.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 import type { LodyRailBinding, LodySessionSurfaceApi } from "./SessionSurface.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
+import { SurfaceLoadBoundary } from "./SurfaceLoadBoundary.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
 
-const SessionSurface = lazy(async () => await import("./SessionSurface.js"));
+/**
+ * A fresh `lazy()` per attempt, and that is what makes the retry a retry.
+ *
+ * React stores a rejected import's outcome on the `lazy` object and re-throws
+ * it on every later render, so reusing one after a failure only reproduces the
+ * failure. The browser may still have the failed module in its map, in which
+ * case the second attempt fails too — and lands on the same notice, which is
+ * the whole point: a failure here is a message, never a blank page.
+ */
+function loadSessionSurface() {
+  return lazy(async () => await import("./SessionSurface.js"));
+}
 
 export interface LodySessionsRegionProps {
   /** `null` until the box is running — the surface must not dial a box that
@@ -151,6 +163,10 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   useEffect(() => {
     if (wanted) setEverRequested(true);
   }, [wanted]);
+  const [SessionSurface, setSessionSurface] = useState(loadSessionSurface);
+  const retrySurface = useCallback(() => {
+    setSessionSurface(loadSessionSurface());
+  }, []);
 
   const { endpoints } = props;
   // THE PROBE COMES BEFORE THE IMPORT (plans/LODY-RUNTIME-DESIGN.md §17). A box
@@ -204,24 +220,30 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const hostTabs = sharedOpen !== null || props.surfaceTabs === undefined
     ? {}
     : { surfaceTabs: props.surfaceTabs };
+  // THE BOUNDARY IS OUTSIDE THE SUSPENSE, so it catches the import's rejection
+  // as well as anything the surface throws once it has mounted. Without it a
+  // rejected chunk propagates past the whole tree and React unmounts the
+  // document (BUG-CV-01).
   return (
-    <Suspense fallback={null}>
-      <SessionSurface
-        key={surfaceProps.key}
-        endpoints={surfaceProps.endpoints}
-        viewer={viewer}
-        workspaceTitle={props.workspaceTitle}
-        hidden={!props.visible}
-        railHost={props.railHost}
-        rail={rail}
-        readOnly={surfaceProps.readOnly}
-        {...hostTabs}
-        {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
-        {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
-        {...(props.onActiveSessionChange === undefined
-          ? {}
-          : { onActiveSessionChange: props.onActiveSessionChange })}
-      />
-    </Suspense>
+    <SurfaceLoadBoundary onRetry={retrySurface}>
+      <Suspense fallback={null}>
+        <SessionSurface
+          key={surfaceProps.key}
+          endpoints={surfaceProps.endpoints}
+          viewer={viewer}
+          workspaceTitle={props.workspaceTitle}
+          hidden={!props.visible}
+          railHost={props.railHost}
+          rail={rail}
+          readOnly={surfaceProps.readOnly}
+          {...hostTabs}
+          {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
+          {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
+          {...(props.onActiveSessionChange === undefined
+            ? {}
+            : { onActiveSessionChange: props.onActiveSessionChange })}
+        />
+      </Suspense>
+    </SurfaceLoadBoundary>
   );
 }

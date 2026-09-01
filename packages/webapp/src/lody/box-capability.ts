@@ -58,6 +58,7 @@
  */
 import { useEffect, useState } from "react";
 import { isJsonObject, isJsonString, parseJson } from "@blitzos/schema";
+import { boxGatewayFetch, resetBoxGatewayHealth } from "../box-gateway-health.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 
 /**
@@ -157,10 +158,13 @@ export async function probeLodySessionsDoor(
   options?: LodyDoorProbeOptions,
 ): Promise<LodyDoorReading> {
   const fetchImpl = options?.fetchImpl ?? globalThis.fetch;
-  const request: RequestInit = { method: "GET", credentials: "include" };
-  if (options?.signal !== undefined) request.signal = options.signal;
   try {
-    const response = await fetchImpl(platformUrl, request);
+    // Through `boxGatewayFetch` for the DEADLINE first (BUG-CV-01): this probe
+    // used to hand the browser a request that could hang for the life of the
+    // tab. Its verdict reaching the shell's reachability signal (BUG-CV-02) is
+    // the second thing the helper does, and the reason no new poll was added
+    // for it — five probes against a dead tunnel are already five answers.
+    const response = await boxGatewayFetch(platformUrl, fetchImpl, options?.signal);
     if (response.status === 409) {
       return readNoMachineRefusal(await response.text()) ? "noMachine" : "retry";
     }
@@ -199,6 +203,11 @@ export function useLodySessionsCapability(
 
   useEffect(() => {
     setCapability("probing");
+    // A new box is a new question about reachability too. This effect keys on
+    // exactly the change that invalidates the old answer — a different
+    // workspace, or a machine that stopped and came back — so the reset lives
+    // here rather than in a second effect that would have to guess the moment.
+    resetBoxGatewayHealth();
     if (!LODY_SESSIONS_ENABLED || platformUrl === null) return undefined;
     let cancelled = false;
     let timer = 0;

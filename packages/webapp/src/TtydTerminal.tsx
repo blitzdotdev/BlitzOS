@@ -22,6 +22,19 @@ const OSC8_LINK_MEMORY = 8;
  * pastes; past it the oldest chunk goes, loudly. */
 const MAX_PENDING_INPUT_CHARS = 32 * 1024;
 
+/**
+ * The ceiling on the reconnect backoff (BUG-CV-01).
+ *
+ * It was 5 s, which is a fine cadence for a box that is coming back and a bad
+ * one for a box whose tunnel is down: every open tab kept dialling twelve times
+ * a minute, each dial an HTTP upgrade against the same exhausted socket pool
+ * that was already costing the shell its lazy chunks. Thirty seconds still
+ * reconnects a woken laptop promptly — the first attempt after any successful
+ * frame starts from 500 ms again — and costs a dead gateway two dials a minute
+ * per tab instead of twelve.
+ */
+const TTYD_RECONNECT_MAX_MS = 30_000;
+
 export const TERMINAL_BACKGROUND_PROPERTY = '--terminal-background';
 
 /** The full xterm palette derives from the app tokens, so the terminal
@@ -467,7 +480,7 @@ export function TtydTerminal({
         if (stopped || socket !== next) return;
         setConnected(false);
         const delay = reconnectDelay;
-        reconnectDelay = Math.min(reconnectDelay * 2, 5_000);
+        reconnectDelay = Math.min(reconnectDelay * 2, TTYD_RECONNECT_MAX_MS);
         reconnectTimer = window.setTimeout(connect, delay);
       };
     };

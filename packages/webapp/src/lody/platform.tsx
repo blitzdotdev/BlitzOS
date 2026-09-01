@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConvexProvider, type ConvexReactClient } from "convex/react";
 import { createCapabilitySet, createLocalPlatformProvider, createStore } from "@lody/platform";
 import { PlatformContext } from "@lody/platform/react";
+import { boxGatewayHealth, boxGatewayPollIntervalMs } from "../box-gateway-health.js";
 import { lodyExtraCapabilities } from "./v1-scope.js";
 import { AuthenticatedConvexContext } from "@lody/components/hooks/use-authenticated-convex";
 import { AuthProvider } from "@lody/components/providers/convex-provider";
@@ -91,30 +92,49 @@ export function useLodyPlatformSnapshot(
 
   useEffect(() => {
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
     const options: LodyPlatformFetchOptions = { signal: controller.signal };
     if (fetchImpl !== undefined) options.fetchImpl = fetchImpl;
+    // ONE READ IN FLIGHT AT A TIME, AND THE NEXT ONE SCHEDULED WHEN IT LANDS
+    // (BUG-CV-01). This was a `setInterval`, which fires on the clock whether
+    // or not the previous read has answered. Against a box whose tunnel was
+    // down, every tick added a request that would never come back, the browser
+    // ran out of sockets, and the lazy `SessionSurface` chunk lost the race
+    // with `ERR_INSUFFICIENT_RESOURCES` — which blanked the whole document.
     const poll = async (): Promise<void> => {
       if (settled) return;
       try {
         const next = await fetchLodyPlatformSnapshot(platformUrl, options);
-        if (next === null || settled) return;
-        settled = true;
-        setSnapshot(next);
+        if (settled) return;
+        if (next !== null) {
+          settled = true;
+          setSnapshot(next);
+          return;
+        }
       } catch (cause) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || settled) return;
         // Retrying a malformed catalog forever would hide the cause behind a
-        // spinner, so this settles too.
+        // spinner, so this settles too. A transport failure settles here as
+        // well, and always has: it is what puts the degraded notice on screen.
         settled = true;
         setError(cause instanceof Error ? cause.message : String(cause));
+        return;
       }
+      // A NOT-OK ANSWER IS THE UNBOUNDED CASE, AND THIS IS ITS BRAKE. A cold
+      // daemon answers 503 in a millisecond and deserves 500 ms; a dead tunnel
+      // answers 530 forever and deserves 30 s. The reachability signal already
+      // knows which one this is, so no second probe decides it.
+      timer = setTimeout(
+        () => void poll(),
+        boxGatewayPollIntervalMs(boxGatewayHealth(), SNAPSHOT_POLL_INTERVAL_MS),
+      );
     };
     void poll();
-    const timer = setInterval(() => void poll(), SNAPSHOT_POLL_INTERVAL_MS);
     return () => {
       settled = true;
       controller.abort();
-      clearInterval(timer);
+      if (timer !== undefined) clearTimeout(timer);
     };
   }, [platformUrl, fetchImpl]);
 
