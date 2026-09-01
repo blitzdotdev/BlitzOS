@@ -52,3 +52,34 @@ export function parseMentionNamespaceSearch(
 export function isMentionNavigationPrefix(search: string): boolean {
   return parseMentionNamespaceSearch(search)?.term === '';
 }
+
+/**
+ * The parent of a completed PATH level — `src/components/` becomes `src/`, and
+ * `src/` becomes the empty search. Anything mid-segment (`src/comp`) has no
+ * level above it yet and answers null, so a key bound to this stays out of the
+ * way while the user is still typing one.
+ */
+function getPathDrillDownParent(search: string): string | null {
+  if (!search.endsWith('/')) return null;
+  const withoutTrailingSlash = search.slice(0, -1);
+  const lastSeparator = withoutTrailingSlash.lastIndexOf('/');
+  return lastSeparator === -1 ? '' : withoutTrailingSlash.slice(0, lastSeparator + 1);
+}
+
+/**
+ * The search ONE drill-down level above `search`, or null when there is no
+ * level above it. A bare `<ns>:` prefix pops to the bare trigger, as
+ * `isMentionNavigationPrefix` already says; a path pops one segment, whether or
+ * not it sits inside a namespace (`file:src/components/` -> `file:src/`).
+ *
+ * Deliberately NOT what Backspace uses: inside a path Backspace still deletes
+ * one character at a time. This is the rule for the gestures that mean "go up"
+ * rather than "delete" — ArrowLeft and the menu's own Back control.
+ */
+export function getMentionDrillDownParent(search: string): string | null {
+  const namespaced = parseMentionNamespaceSearch(search);
+  if (!namespaced) return getPathDrillDownParent(search);
+  if (namespaced.term === '') return '';
+  const parent = getPathDrillDownParent(namespaced.term);
+  return parent === null ? null : `${namespaced.namespace}:${parent}`;
+}
