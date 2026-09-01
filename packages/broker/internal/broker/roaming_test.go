@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -328,38 +327,3 @@ func (accounts *recordingAccounts) Deprovision(name, home string) error {
 	return os.RemoveAll(home)
 }
 
-// TestVendorRunsWithTheAutoUpdaterDisabled: a self-updating vendor CLI is what
-// un-pins the image, and this process is the one that rewrites the only copy
-// of a credential. A version that moves the file format under a refresh does
-// not fail cleanly.
-func TestVendorRunsWithTheAutoUpdaterDisabled(t *testing.T) {
-	home := t.TempDir()
-	path := filepath.Join(home, filepath.FromSlash(vendor.Claude.CredentialPath))
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"claudeAiOauth":{"accessToken":"expired","refreshToken":"r","expiresAt":1}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	seen := filepath.Join(t.TempDir(), "env")
-	bin := t.TempDir()
-	script := "#!/bin/sh\nset -eu\n" +
-		"printf '%s\\n' \"${DISABLE_AUTOUPDATER-unset}\" > " + strconv.Quote(seen) + "\n" +
-		"printf '%s\\n' '" + liveClaudeCredential + "' > \"$HOME/.claude/.credentials.json\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("DISABLE_AUTOUPDATER", "0")
-
-	if _, err := Mint(context.Background(), home, []string{"claude"}, "claude", vendor.Claude, nil); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(seen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(string(got)) != "1" {
-		t.Fatalf("DISABLE_AUTOUPDATER seen by the vendor CLI = %q, want 1", got)
-	}
-}

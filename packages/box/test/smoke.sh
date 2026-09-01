@@ -223,7 +223,7 @@ docker exec "$container" test ! -e /etc/claude-code/managed-settings.json ||
   fail "managed settings exist; a managed apiKeyHelper hangs claude when a token is also set"
 # Signed out is fine; a dead command is not. With no broker the shim must still
 # reach the real binary.
-docker exec "$container" /bin/sh -lc 'DISABLE_AUTOUPDATER=1 claude --version' >/dev/null ||
+docker exec "$container" /bin/sh -lc 'claude --version' >/dev/null ||
   fail "the claude shim does not run with no broker configured"
 echo "PASS terminal delivery shim"
 

@@ -1,27 +1,31 @@
 #!/bin/sh
 # PATH shim for the Codex CLI. Every terminal `codex` comes through here, turns
-# the startup update check off, and execs the pinned binary.
+# the startup update check ON, and execs the vendor binary.
 #
-# WHAT IT PREVENTS: codex offers "Update available!" on its first screen, and
-# taking that offer runs `npm install -g @openai/codex` into NPM_CONFIG_PREFIX
-# — which is /opt/blitz/npm, the pinned copy the image shipped. The pin is
-# overwritten in place, and the box silently stops running the version it was
-# built with. claude cannot do this: its own shim exports DISABLE_AUTOUPDATER.
-# codex had no shim at all.
+# WHY IT IS ON. Both vendor CLIs are meant to update themselves on the box: a
+# build-time version is a floor, not a pin, and for claude the version is what
+# decides which models the Lody composer can offer (docs/LODY-MODELS.md). This
+# shim used to pass `false` to hold codex at the image's version; it no longer
+# does, and the value is stated explicitly rather than left to the default so
+# the intent is legible and a vendor default flip cannot silently reverse it.
 #
 # WHY A CONFIG OVERRIDE AND NOT AN ENVIRONMENT VARIABLE: codex has no
-# environment variable for this. DISABLE_AUTOUPDATER belongs to Claude Code and
-# codex ignores it. The setting is a config key, so `-c key=value` is the only
-# per-process way to set it. Checked against @openai/codex@0.147.0, the pinned
-# version: `codex doctor --json` reports `"check for update on startup":
-# "true"` by default and `"false"` with this flag.
+# environment variable for this. The setting is a config key, so `-c key=value`
+# is the only per-process way to set it. Checked against @openai/codex@0.147.0:
+# `codex doctor --json` reports `"check for update on startup": "true"` by
+# default, and honours either value passed this way.
+#
+# WHAT AN UPDATE DOES: `npm install -g @openai/codex` into NPM_CONFIG_PREFIX,
+# which is /opt/blitz/npm — rewritten in place, and /usr/local/bin sits ahead of
+# that prefix on PATH, so the updated binary is what this shim execs rather than
+# something that shadows it.
 #
 # WHY THE FLAG GOES FIRST: codex accepts `-c` more than once and the last one
-# wins, so a caller that really wants the check keeps the last word. The
+# wins, so a caller that really wants a different value keeps the last word. The
 # recipe path already passes its own `-c model_reasoning_effort=…` this way.
 #
 # NOTHING HERE IS FATAL. The flag is an ordinary argument and codex ignores a
 # config key it does not know, so a future version that drops the key still
 # starts.
 
-exec /opt/blitz/npm/bin/codex -c check_for_update_on_startup=false "$@"
+exec /opt/blitz/npm/bin/codex -c check_for_update_on_startup=true "$@"

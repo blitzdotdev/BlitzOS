@@ -118,28 +118,34 @@ and the vendored static list was never consulted.
   per runtime mount, i.e. once per load of the Lody surface.** A member who
   reloads the tab after an update gets the new list.
 
-### The one thing that is actually off: the *automatic* updater
+### What was blocking it (removed 2026-09-01)
 
-`DISABLE_AUTOUPDATER=1` is set in four places — `packages/box/Dockerfile:168`
-(image-wide ENV), the PATH shim `rootfs/usr/local/bin/claude:27`,
-`rootfs/etc/profile.d/blitz-npm.sh:23`, and
-`broker/internal/vendor/vendor.go:104`, which strips any inbound value and
-force-appends `=1` (asserted by `roaming_test.go:363`).
+`DISABLE_AUTOUPDATER=1` had been set in four places — the image-wide `ENV` in
+`packages/box/Dockerfile`, the PATH shim `rootfs/usr/local/bin/claude`,
+`rootfs/etc/profile.d/blitz-npm.sh`, and `broker/internal/vendor/vendor.go`,
+which stripped any inbound value and force-appended `=1` (asserted by a test in
+`roaming_test.go`). Four sites because they are four different process-spawn
+paths: s6 daemons inherit the image ENV, login shells rebuild from
+`/etc/profile`, the shim covers any invocation, and the broker constructs the
+child environment from scratch rather than inheriting it.
 
-That flag gates the **background** update check only. The explicit `claude
-update` subcommand ignores it: the run above was made with
-`DISABLE_AUTOUPDATER=1` live in the environment and updated anyway. So today
-nothing updates on its own, and nothing will until something runs `update`.
+The flag gated the **background** update check only — the explicit `claude
+update` subcommand ignored it, which is why the run above worked with the flag
+live in the environment.
+
+All four are gone, `codex`'s shim now passes
+`-c check_for_update_on_startup=true`, and `@anthropic-ai/claude-code` is
+installed `@latest` at build time rather than pinned. Nothing holds a CLI
+version anymore.
 
 ## 5. Path forward
 
-**Decided 2026-09-01: keep the vendor's own auto-update path** — unset
-`DISABLE_AUTOUPDATER` and let Claude Code update itself, rather than driving it
-from an s6 oneshot. The four sites in §4 have to move together, and
-`vendor.go:104` plus its `roaming_test.go:363` assertion are a deliberate
-decision being reversed, not dead code.
+**Done 2026-09-01: the vendor's own auto-update path.** The flag is removed
+from all four sites, codex's startup check is on, and the claude build pin is
+`@latest`. An s6 oneshot driving `claude update` was considered and rejected as
+redundant once the vendor updater is simply left alone.
 
-The shadow-copy fear those comments cite is already handled independently:
+The shadow-copy fear the old comments cited is handled independently:
 `rootfs/etc/profile.d/blitz-npm.sh` force-moves `/usr/local/bin` to the FRONT of
 PATH on every login shell, ahead of `/opt/blitz/npm/bin` (verified: a box login
 shell gets `/usr/local/bin:/opt/blitz/npm/bin:…`). So a second copy in the npm
@@ -148,14 +154,19 @@ prefix cannot shadow the shim, and the native installer's `~/.local/bin` /
 the flag goes** — they are the justification the next agent will read, and they
 will be wrong.
 
-Still worth doing alongside:
+Still outstanding:
 
-1. **Bump the pin and rebake** (`packages/box/Dockerfile:36` and
-   `packages/broker/Dockerfile:12`, then `docs/BOX-IMAGE.md`). Still correct for
-   the *baked* floor, so a fresh box is not one update behind on first boot —
-   but it should stop being the mechanism by which a new model arrives.
+1. **Rebake canary** per `docs/BOX-IMAGE.md` so existing fleets pick up the
+   unpinned image; the running boxes update themselves either way, but a fresh
+   box should not start a version behind.
+2. **`@latest` costs this layer its reproducibility.** Two builds a week apart
+   ship different CLIs. That is the deliberate trade — the pin never held a
+   version in practice, because the first self-update moved it — but it means
+   the box image is no longer bit-reproducible from the Dockerfile alone.
+   `codex` and `lody` stay pinned; the `lody` patches are guarded by a sha256
+   of the published bundle and would fail the build if it floated.
 
-With the pin no longer deciding which models exist, these four
+With no pin deciding which models exist, these four
 `2.1.228` assertions need re-basing on a range or a probe rather than a
 literal: `packages/webapp/test/lody-acp-authentication.test.ts`,
 `packages/box/guest-tests/test/remote-control-service.test.ts`,
