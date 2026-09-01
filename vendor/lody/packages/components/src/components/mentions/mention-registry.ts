@@ -162,6 +162,14 @@ export type MentionCategory = {
   /** Optional actionable empty state supplied by the category. */
   emptyState?: MentionCategoryEmptyState;
   /**
+   * Claims a search that carries no `<namespace>:` prefix, scoping the menu to
+   * this category alone. A directory drill-down writes a bare path (`@src/`),
+   * and only one source can answer a path — without this the menu falls back to
+   * the aggregate level and answers a directory listing with slash commands and
+   * issues beside the files.
+   */
+  ownsBareSearch?: (search: string) => boolean;
+  /**
    * Candidates for a term inside this category. Lazy on purpose: ranking the
    * file index is the expensive one, and a query aimed at another category
    * must not pay for it. `limit` is passed down to the source so the aggregate
@@ -252,6 +260,19 @@ export function selectMentionMenuView(
 
   if (!search) {
     return { level: 'categories', categories: [...categories] };
+  }
+
+  // A drill-down that is not `<ns>:` still belongs to one category — a path
+  // belongs to files. Asked of the categories rather than named here, so the
+  // selector learns nothing about any individual source.
+  const owner = categories.find((entry) => entry.ownsBareSearch?.(search));
+  if (owner) {
+    return {
+      level: 'category',
+      category: owner,
+      term: search,
+      candidates: owner.getCandidates(search),
+    };
   }
 
   const limit = options?.aggregateLimitPerCategory ?? AGGREGATE_LIMIT_PER_CATEGORY;
@@ -356,6 +377,15 @@ export function toFileCandidate(item: PathSuggestion): MentionCandidate {
     iconPath: item.path,
     mono: true,
   };
+}
+
+/**
+ * Whether a bare `@` search is a path, and therefore the file category's alone.
+ * The separator IS the whole test: a directory drill-down writes `@src/`, and
+ * every keystroke after it (`@src/comp`) is still inside that path.
+ */
+export function isMentionPathSearch(search: string): boolean {
+  return search.includes('/');
 }
 
 export function buildFileCandidates(
@@ -656,6 +686,7 @@ export function useMentionCategories(sources: MentionCategorySources): MentionCa
         icon: 'file',
         ...sourceCategoryFields('file', file),
         notice: file.notice,
+        ownsBareSearch: isMentionPathSearch,
         getCandidates: (term, limit) => buildFileCandidates(file.index, term, file.fuse, limit),
       });
     }
