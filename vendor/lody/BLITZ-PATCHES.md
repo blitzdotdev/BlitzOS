@@ -80,17 +80,19 @@ git diff --stat <upstream-sha> $(git rev-parse HEAD:vendor/lody) -- . \
   ':!UPSTREAM.md' ':!BLITZ-PATCHES.md'
 ```
 
-Expected after seam patch 7: exactly THIRTEEN files — the three above with six
+Expected after seam patch 8: exactly FOURTEEN files — the three above with six
 added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2,
 `lib/electron-session-file-sender.ts` from seam patch 3,
 `components/sessions/session-chat-interface.tsx` +
 `components/sessions/session-detail.tsx` from seam patch 4,
 `components/sessions/session-tab-bar.tsx` from seam patch 5, which also adds
-hunks to `session-detail.tsx`, and seam patch 7's five new ones:
+hunks to `session-detail.tsx`, seam patch 7's five new ones:
 `lib/session-github-state.ts`, `components/chat/chat-landing.tsx`,
 `components/chat/unified-project-selector.tsx`,
 `components/sessions/session-chat-input-area.tsx` and
-`components/sessions/session-conversation-diff-panel.tsx`.
+`components/sessions/session-conversation-diff-panel.tsx`, and seam patch 8's
+one new one: `hooks/use-chat-landing-file-draft.ts`, which also adds hunks to
+`session-chat-input-area.tsx`.
 
 ### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
 
@@ -645,6 +647,99 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
 - The four groups and their row ids are restated in `v1-scope.ts`, so a merge
   that drops a hunk fails `packages/webapp/test/lody-v1-scope.test.tsx` with the
   surface it let back in.
+
+### 8. The cloud-token guard must not preempt the local transport (COMPB-1, 2026-09-01)
+
+**One idea, five hunks in two files, and it is a bug in upstream's own local
+build.** Seam patch 3 opened the local fast path to a non-Electron bridge, and
+`packages/webapp/test/lody-attachments.test.ts` proves the channel behind it
+carries bytes. It still never runs: at all three attachment entry points a
+`if (!workspaceId || !authToken)` bail stands IN FRONT of the local handoff, and
+that handoff needs no cloud token at all. A BlitzOS box holds none, so every `+`
+attachment fails with "Missing workspace or auth token" before a single MKCOL or
+PUT is issued.
+
+The field report is the canary QA sweep's COMPB-1, reproduced twice in a real
+browser, with BUG-CA-01 (no MKCOL or PUT ever issued) and
+BUG-CA-02 ("Retry upload" is inert, because retry re-enters the same guard)
+downstream of it. The verifier proved the far end works by calling
+`localProjects.sendSessionFileLocal` by hand on the same page: dufs answered
+MKCOL 201 and PUT 201.
+
+**This is not a BlitzOS opinion.** `apps/electron` composes `local` explicitly
+and the root `AGENTS.md` says the OSS desktop entry "must not make authenticated
+product-cloud requests". A local-only Electron build therefore has no
+`authToken` either, and loses the one control the local transport was written to
+serve. Open upstream as "a missing cloud token disables the local file
+handoff"; the sketch is `plans/evidence/lody-attachment-guard-pr.md`. **Drop
+this patch when it merges.**
+
+#### The hunks
+
+Line numbers are the vendored tree's BEFORE this patch. For
+`session-chat-input-area.tsx` they are seam patch 7's numbers, which sit five
+below `f3474894` for that file.
+
+`packages/components/src/components/sessions/session-chat-input-area.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 1116 | `if (canSendFileLocally && session.machineId) {` in `startFileUpload`, with its comment block | MOVES that block above the guard at 1100 and adds `workspaceId &&` to its condition — the guard still owns the cloud path below it |
+| 2 | 1100 | `if (!workspaceId || !authToken) {` in `startFileUpload` | unchanged text, now reached only after the local path declined |
+| 3 | 919 | `if (!workspaceId || !authToken) {` in `startUpload` (images) | becomes `if (!workspaceId || (!authToken && !canSendFileLocally)) {` |
+| 4 | 965 | `const uploaded = await uploadSessionImage({` | throws `imageUploadMissingAuthLabel` first when there is no token, so a tokenless image lands in the `catch` upstream already wrote |
+
+`packages/components/src/hooks/use-chat-landing-file-draft.ts`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 5 | 157 | `if (canSendFileLocally && machineId) {` in `startUpload`, with its comment block | the same move as hunk 1, above the guard at 143, gaining `workspaceId &&` |
+
+**Hunk 4 is why the image path needed no new fallback.** Upstream already
+degrades a failed image upload to a pending FILE attachment over the local
+transport (`session-chat-input-area.tsx:997-1056`, toast
+`sessions.imageStoredAsLocalFile`). A missing token is exactly "there is no
+cloud upload to attempt", so hunks 3 and 4 route it into that same `catch`
+rather than write a second fallback beside it. The one behaviour change inside
+it: `reason_code` reads `upload_error` instead of `missing_auth` on that path,
+and renderer telemetry is hard-disabled in a local build anyway.
+
+**One entry point is deliberately NOT patched, and it is the remaining gap.**
+`hooks/use-chat-landing-image-draft.ts:138` carries the same guard, and there is
+nothing to move in front of it: that hook has no `canSendFileLocally`, no
+handoff and no degrade-to-file fallback — an image on the LANDING has only the
+cloud path upstream. Giving it one would mean adding a fallback upstream does
+not have, across two sibling hooks, which is a product opinion rather than this
+patch's one idea. So on a box an image staged on the landing still fails, while
+the same image staged inside a session becomes a file attachment (hunks 3-4),
+and any non-image file works on both. Fixing it is a follow-up, and it belongs
+in `packages/webapp/src/lody/` or in an upstream PR of its own.
+
+**Upstream behaviour with a token present is unchanged, and that is checkable
+rather than asserted.** Hunks 1 and 5 move a block whose only reachable
+predecessor was the guard, so with `authToken` set the order of operations is
+byte-identical: guard passes, local path runs first, cloud path second. Hunk 3
+adds a disjunct that is `false` whenever `authToken` is set, so the guard's
+condition is unchanged there. Hunk 4's throw is unreachable with a token, since
+the guard above it already returned when `authToken` was absent AND no local
+transport was available. Every hunk can only make the local path reachable where
+it was not; none of them can make the cloud path unreachable.
+
+`packages/webapp/test/lody-attachment-guard.test.tsx` drives the real vendored
+landing hook over a stub `window.ipc` for all three cases — no token with the
+bridge, no token without it, and a token WITH the bridge — and pins the composer
+half at the source, because `SessionChatInputArea` needs a runtime and a daemon.
+
+#### Merge conflict drill
+
+- If upstream reorders or rewords either guard, re-apply by putting the local
+  handoff in front of it. The rule is one sentence: **nothing that needs a cloud
+  token may run before a path that does not.**
+- If upstream widens the guard to name the local transport itself — a
+  `canSendFileLocally ||` arm, or a capability — drop these hunks and keep
+  upstream's.
+- If the image degrade-to-file fallback is removed upstream, hunks 3 and 4 go
+  with it; the file hunks stand alone.
 
 ## Patches to the published npm artifact (NOT to this tree)
 
