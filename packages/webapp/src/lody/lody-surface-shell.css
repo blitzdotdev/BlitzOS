@@ -81,6 +81,30 @@
   font: 13px/1.5 var(--font-ui);
 }
 
+/* The starting / did-not-start message (`agent-config-gate.tsx`) is the only
+   notice with more than one line, so its two parts are styled here rather than
+   given a block of their own. */
+.lody-surface__notice p {
+  margin: 0;
+}
+
+.lody-surface__notice-title {
+  margin-bottom: 4px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.lody-surface__notice-action {
+  margin-top: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
 /* The signed-out banner (`agent-auth-notice.tsx`). It is a BAND above the chat,
    not a pane: `.lody-surface > *` hands every child `flex: 1 1 auto`, which
    would give a three-line notice half the surface. */

@@ -28,6 +28,23 @@ import {
 import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
 
 /**
+ * How long a boot may take before the gate stops calling itself slow.
+ *
+ * NOT A POLICY NUMBER. It is the vendored provider's own
+ * `META_FIRST_SYNC_TIMEOUT_MS` (`providers/create-workspace-runtime.ts:207`, a
+ * module-private `120_000`), which is the longest a legitimate first boot can
+ * take: the runtime this gate waits on cannot be published later than its own
+ * first-sync wait allows. Restated rather than imported because the seam does
+ * not export it. Before it elapses "starting" is the truth; after it, the boot
+ * is not slow, it is over.
+ *
+ * It gates the WORDING and the reload button, never the children — a deadline
+ * that opened the gate would put the composer back in the window this whole
+ * file exists to close.
+ */
+export const SURFACE_BOOT_DEADLINE_MS = 120_000;
+
+/**
  * Runs the agent-config bootstrap once the runtime is live, and HOLDS THE CHAT
  * SURFACE BACK until the daemon has the rows (plans/LODY-RUNTIME-DESIGN.md §12).
  *
@@ -53,11 +70,35 @@ import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "
  *
  * `bootstrapLodyAgentConfigs` now pushes before it resolves, so awaiting it here
  * closes both. The cost is first-mount latency on the chat surface, measured in
- * one room round trip; the rail is NOT gated, so the surface is never blank.
+ * one room round trip.
  *
  * IT OPENS ON FAILURE. A bootstrap that throws still lets the member through to
  * whatever configs the daemon already has: blanking the surface forever would
  * be a worse failure than the one being prevented.
+ *
+ * AND IT NEVER RENDERS NOTHING (the fresh-box finding, 2026-09-01). The version
+ * that returned `null` while shut reasoned that "the rail is NOT gated, so the
+ * surface is never blank" — but the rail is not the surface. The rail is a
+ * PORTAL raised in `SessionSurface` ABOVE this gate, so on a box whose daemon
+ * had not finished starting the member got a live rail over a completely empty
+ * content area: no landing composer, no tab strip, no message, forever.
+ * Reproduced against canary on a real Chromium by stalling `/lody/sync` alone —
+ * `/lody/platform` is answered by the bridge, so the capability probe reads
+ * `present`, `SessionSurface` mounts, the rail draws, and every one of the
+ * gate's two awaits below is left hanging with nothing to log and no fallback.
+ *
+ * Two hangs reach it and neither is an error anyone can catch:
+ *
+ * - `runtimeAtom` never gets a runtime, because their `RuntimeProvider` boots
+ *   once and does not retry. `run` returns at its first line for good.
+ * - `openFlockDoc` or `flockRowPutIfAbsent` never settles. A REJECTION is fine
+ *   — the `catch` below opens the gate — but a promise that never answers is
+ *   not a rejection.
+ *
+ * So the shut state is a rendered state now: it says the surface is starting,
+ * and past {@link SURFACE_BOOT_DEADLINE_MS} it says so is no longer true and
+ * offers the reload the member would otherwise have had to guess at. What it
+ * must never be again is empty.
  */
 export function LodyAgentConfigGate(props: {
   store: LodyAtomStore;
@@ -67,6 +108,7 @@ export function LodyAgentConfigGate(props: {
 }) {
   const { store, machineId, endpoints } = props;
   const [ready, setReady] = useState(false);
+  const [stalled, setStalled] = useState(false);
   // KEYED ON THE BOX, NOT ON THE OBJECT (wave 3, ADJ2).
   //
   // `endpoints` is a fresh literal on every render of the shell — `CloudApp`
@@ -165,5 +207,58 @@ export function LodyAgentConfigGate(props: {
       unsubscribe();
     };
   }, [store, machineId, projectUrl]);
-  return ready ? props.children : null;
+
+  // The deadline runs only while the gate is shut, and it is torn down the
+  // moment it opens: a surface that is already live has nothing to report.
+  useEffect(() => {
+    if (ready) return undefined;
+    const timer = setTimeout(() => {
+      // The one line the next round of this bug gets to read. Neither hang
+      // raises anything, so without it the console of a blank surface is
+      // indistinguishable from the console of a healthy one.
+      console.warn("lody: the session surface did not finish starting", {
+        machineId,
+        afterMs: SURFACE_BOOT_DEADLINE_MS,
+      });
+      setStalled(true);
+    }, SURFACE_BOOT_DEADLINE_MS);
+    return () => clearTimeout(timer);
+  }, [machineId, ready]);
+
+  if (ready) return props.children;
+  return <LodySurfaceStarting stalled={stalled} />;
+}
+
+/**
+ * What the content area says while the gate is shut.
+ *
+ * It fills the surface rather than banding it, because while the gate is shut
+ * it IS the surface: `.lody-surface > *` gives every child the pane's height,
+ * which is the treatment `.lody-surface__notice` already carries for the
+ * unavailable-sessions message beside it.
+ */
+function LodySurfaceStarting({ stalled }: { stalled: boolean }) {
+  if (!stalled) {
+    return (
+      <div className="lody-surface__notice" role="status">
+        Starting sessions on this workspace…
+      </div>
+    );
+  }
+  return (
+    <div className="lody-surface__notice" role="alert">
+      <p className="lody-surface__notice-title">Sessions did not finish starting</p>
+      <p>
+        This workspace is running, but its session daemon has not answered yet. Reload
+        to start it again.
+      </p>
+      <button
+        type="button"
+        className="lody-surface__notice-action"
+        onClick={() => window.location.reload()}
+      >
+        Reload
+      </button>
+    </div>
+  );
 }
