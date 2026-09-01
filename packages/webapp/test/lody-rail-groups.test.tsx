@@ -362,9 +362,15 @@ describe("the repo heading's affordances (RAIL-3, RAIL-4)", () => {
   it("records every repository it discovers, in the order it found them", async () => {
     const mount = await mountRail({ sessions: [WORKTREE_SESSION, OTHER_REPO_SESSION] });
 
+    // SAFETY: upstream declares `atom<readonly string[], [readonly string[]],
+    // void>` (`atoms/sidebar-state.ts:102`). The vendor type seam erases every
+    // `@lody/*` export, so the element type is restated here, exactly as
+    // `SessionRailSidebar` restates it on its own read.
+    const saved = mount.store.get(repoOrderAtom) as readonly string[];
+
     // Discovery is APPEND-ONLY, and it is what gives a drag something to
     // reorder: `repoOrderAtom` starts empty on a fresh box.
-    expect([...mount.store.get(repoOrderAtom)]).toEqual([REPO, OTHER_REPO]);
+    expect([...saved]).toEqual([REPO, OTHER_REPO]);
 
     await mount.unmount();
   });
