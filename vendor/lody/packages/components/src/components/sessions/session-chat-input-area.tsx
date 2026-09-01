@@ -916,7 +916,11 @@ export const SessionChatInputArea = memo(
 
     const startUpload = useCallback(
       async (targetSessionId: SessionId, localId: string, file: File) => {
-        if (!workspaceId || !authToken) {
+        // Without a token there is no cloud upload to attempt — but the local
+        // transport can still take the bytes, and the `catch` below already
+        // degrades an image to a pending file over it. So fail here only when
+        // that path is unavailable too.
+        if (!workspaceId || (!authToken && !canSendFileLocally)) {
           capturePostHogEvent(postHog, 'session/image_upload_failed', {
             channel: 'web',
             entrypoint: 'session_chat',
@@ -962,6 +966,12 @@ export const SessionChatInputArea = memo(
         const uploadStartedAtMs = getPerformanceNowMs();
 
         try {
+          if (!authToken) {
+            // The guard above let this through because the local transport can
+            // serve it. Take the degrade-to-file path in the `catch`, which is
+            // where an unavailable image upload is already handled.
+            throw new Error(imageUploadMissingAuthLabel);
+          }
           const uploaded = await uploadSessionImage({
             workspaceId,
             sessionId: targetSessionId,
@@ -1097,23 +1107,17 @@ export const SessionChatInputArea = memo(
 
     const startFileUpload = useCallback(
       async (targetSessionId: SessionId, localId: string, file: File) => {
-        if (!workspaceId || !authToken) {
-          updatePendingFile(targetSessionId, localId, (entry) => ({
-            ...entry,
-            status: 'failed',
-            progress: 0,
-            error: fileUploadMissingAuthLabel,
-          }));
-          return;
-        }
-
         // Desktop local-transport fast path: hand bytes straight to the local CLI
         // (zero relay round trip). The CLI stores the blob and returns a
         // transport:'local' block, which we drop into `uploaded` exactly like a
         // cloud upload — the block then rides the outgoing message via
         // toFileInputBlock. No progress bar: the handoff completes in one step.
         // On any failure we fall through to the cloud path below.
-        if (canSendFileLocally && session.machineId) {
+        //
+        // It runs BEFORE the cloud-credential guard, because the handoff needs no
+        // cloud token: a local-only composition has none, and would otherwise fail
+        // every attachment at a check for credentials it never uses.
+        if (canSendFileLocally && workspaceId && session.machineId) {
           try {
             const outcome = await sendSessionFileToLocalRuntime({
               workspaceId,
@@ -1135,6 +1139,16 @@ export const SessionChatInputArea = memo(
           } catch {
             // Local handoff threw; fall back to the cloud upload path.
           }
+        }
+
+        if (!workspaceId || !authToken) {
+          updatePendingFile(targetSessionId, localId, (entry) => ({
+            ...entry,
+            status: 'failed',
+            progress: 0,
+            error: fileUploadMissingAuthLabel,
+          }));
+          return;
         }
 
         const abort = new AbortController();

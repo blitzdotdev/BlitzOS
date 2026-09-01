@@ -140,21 +140,15 @@ export function useChatLandingFileDraft(args: {
 
   const startUpload = useCallback(
     async (localId: string, file: File, sessionId: SessionId) => {
-      if (!workspaceId || !authToken) {
-        updatePendingFile(localId, (entry) => ({
-          ...entry,
-          status: 'failed',
-          progress: 0,
-          error: fileUploadMissingAuthLabel,
-        }));
-        return;
-      }
-
       // Desktop local-transport fast path: hand bytes straight to the local CLI
       // (zero relay round trip). The CLI returns a transport:'local' block that
       // drops into `uploaded` exactly like a cloud upload. On any failure we fall
       // through to the cloud path below.
-      if (canSendFileLocally && machineId) {
+      //
+      // It runs BEFORE the cloud-credential guard, because the handoff needs no
+      // cloud token: a local-only composition has none, and would otherwise fail
+      // every attachment at a check for credentials it never uses.
+      if (canSendFileLocally && workspaceId && machineId) {
         try {
           const outcome = await sendSessionFileToLocalRuntime({
             workspaceId,
@@ -176,6 +170,16 @@ export function useChatLandingFileDraft(args: {
         } catch {
           // Local handoff threw; fall back to the cloud upload path.
         }
+      }
+
+      if (!workspaceId || !authToken) {
+        updatePendingFile(localId, (entry) => ({
+          ...entry,
+          status: 'failed',
+          progress: 0,
+          error: fileUploadMissingAuthLabel,
+        }));
+        return;
       }
 
       const abort = new AbortController();
