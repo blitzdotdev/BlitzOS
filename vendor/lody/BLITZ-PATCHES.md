@@ -1027,7 +1027,7 @@ are `ui/mention/mention-trigger.ts`, `ui/mention/mention-root.tsx`,
 
 ### 12. A landing image has no offline fallback (COMPB-1 remainder, 2026-09-01)
 
-**One idea, four hunks in three files, and it finishes seam patch 8.** Patch 8
+**One idea, five hunks in three files, and it finishes seam patch 8.** Patch 8
 put the local transport in front of the cloud-token guard everywhere a local
 handoff already existed, and named the one place none did: the landing image
 draft. So on a box a file attaches from the landing, an image attaches from
