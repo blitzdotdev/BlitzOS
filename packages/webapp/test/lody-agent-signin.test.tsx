@@ -23,7 +23,7 @@
  * phase-3 exit tests skip in CI, and that is how these three reached canary.
  */
 import { act, useEffect } from "react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { I18nextProvider } from "react-i18next";
 import { RouterProvider } from "@tanstack/react-router";
@@ -37,7 +37,7 @@ import { useMachineAcpAuthentication } from "@lody/components/hooks/use-machine-
 import type { JsonValue } from "@blitzos/schema";
 import { AUTH_NOTICE_POLL_MS, LodyAgentAuthNotice } from "../src/lody/agent-auth-notice";
 import { sessionNeedsAgentSignIn } from "../src/lody/session-auth-recovery";
-import { LodyAgentConfigGate } from "../src/lody/agent-config-gate";
+import { LodyAgentConfigGate, SURFACE_BOOT_DEADLINE_MS } from "../src/lody/agent-config-gate";
 import { BLITZ_CLAUDE_CONFIG_ID, bootstrapLodyAgentConfigs } from "../src/lody/agent-configs";
 import { initLodyI18n } from "../src/lody/i18n";
 import type { LodyAtomStore, LodyWorkspaceRuntime } from "../src/lody/runtime";
@@ -384,7 +384,7 @@ describe("the gate holds the chat surface until the bootstrap settles", () => {
     } as unknown as Partial<LodyWorkspaceRuntime>);
   }
 
-  it("renders nothing until the rows are on the daemon, then renders the surface", async () => {
+  it("holds the surface back until the rows are on the daemon, then renders it", async () => {
     let release = (): void => undefined;
     const gate = new Promise<void>((resolve) => {
       release = () => resolve();
@@ -401,8 +401,10 @@ describe("the gate holds the chat surface until the bootstrap settles", () => {
     try {
       // The window the canary finding lived in: phase 3 rendered the composer
       // here, and a prompt sent now dispatched against a config the daemon
-      // could not resolve.
-      expect(mounted.container.textContent).toBe("");
+      // could not resolve. It is still shut — and it now SAYS so, which is the
+      // fresh-box finding below.
+      expect(mounted.container.textContent).not.toContain("chat surface");
+      expect(mounted.container.textContent).toContain("Starting sessions");
       await act(async () => {
         release();
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -412,6 +414,99 @@ describe("the gate holds the chat surface until the bootstrap settles", () => {
     } finally {
       await mounted.unmount();
     }
+  });
+
+  /**
+   * THE FRESH-BOX BLANK SURFACE (canary, workspace `silver-falcon`, 2026-09-01).
+   *
+   * Reported as "/chat is completely empty": a live vendored rail — New session,
+   * a Terminals section, a Claude row — over a content area with nothing in it
+   * at all. Reproduced against canary in a real Chromium by stalling
+   * `/lody/sync` and nothing else: `/lody/platform` is answered by the box
+   * BRIDGE, so the capability probe reads `present`, `SessionSurface` mounts,
+   * the rail portal draws above this gate, and the gate's awaits hang below it.
+   *
+   * The two groups pin the two hangs. Neither is a rejection, so neither
+   * reaches the `catch` that opens the gate on failure, and the old `null`
+   * return made both of them look like a broken product.
+   */
+  describe("a boot that never finishes is a message, never an empty pane", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** The runtime never arrives: their `RuntimeProvider` boots once and does
+     * not retry, so on a box whose daemon is still starting `runtimeAtom` stays
+     * `null` and `run` returns at its first line for good. This is the shape the
+     * user's screenshot was in. */
+    it("says the surface is starting while the runtime has not arrived", async () => {
+      const store = createStore();
+      store.set(runtimeAtom, null);
+      const mounted = await render(
+        <JotaiProvider store={store}>
+          <LodyAgentConfigGate store={store} machineId={MACHINE_ID} endpoints={endpoints}>
+            <div>chat surface</div>
+          </LodyAgentConfigGate>
+        </JotaiProvider>,
+      );
+      try {
+        expect(mounted.container.textContent).toContain("Starting sessions");
+        expect(mounted.container.querySelector("button")).toBeNull();
+      } finally {
+        await mounted.unmount();
+      }
+    });
+
+    it("offers a reload once the boot has outlived the vendored first-sync wait", async () => {
+      const store = createStore();
+      store.set(runtimeAtom, null);
+      const mounted = await render(
+        <JotaiProvider store={store}>
+          <LodyAgentConfigGate store={store} machineId={MACHINE_ID} endpoints={endpoints}>
+            <div>chat surface</div>
+          </LodyAgentConfigGate>
+        </JotaiProvider>,
+      );
+      try {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SURFACE_BOOT_DEADLINE_MS);
+        });
+        expect(mounted.container.textContent).toContain("did not finish starting");
+        expect(mounted.container.querySelector("button")?.textContent).toBe("Reload");
+        // The deadline reports; it never opens the gate. Opening it would put
+        // the composer back in the window this file's second group closed.
+        expect(mounted.container.textContent).not.toContain("chat surface");
+      } finally {
+        await mounted.unmount();
+      }
+    });
+
+    /** The second hang: the runtime is there and `openFlockDoc` never answers.
+     * A REJECTION is fine — the gate's own `catch` opens on it — but a promise
+     * that never settles is not a rejection. */
+    it("offers a reload when the bootstrap itself never settles", async () => {
+      const store = createStore();
+      store.set(runtimeAtom, gateRuntime(new Promise<void>(() => undefined)));
+      const mounted = await render(
+        <JotaiProvider store={store}>
+          <LodyAgentConfigGate store={store} machineId={MACHINE_ID} endpoints={endpoints}>
+            <div>chat surface</div>
+          </LodyAgentConfigGate>
+        </JotaiProvider>,
+      );
+      try {
+        expect(mounted.container.textContent).toContain("Starting sessions");
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SURFACE_BOOT_DEADLINE_MS);
+        });
+        expect(mounted.container.querySelector("button")?.textContent).toBe("Reload");
+      } finally {
+        await mounted.unmount();
+      }
+    });
   });
 
   it("hands the surface a runtime that defaults a projectless session to /workspace", async () => {
