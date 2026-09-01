@@ -354,7 +354,9 @@ vendor/lody/BLITZ-PATCHES.md  # every deliberate divergence, file + reason
    directories that do not exist yet. `local-project/add` CANNOT carry
    `githubRepoFullName`: the daemon derives it from the clone's remote and the
    browser copies it onto the session's `ProjectRef`. Both in
-   `LODY-RUNTIME-DESIGN.md` §10.2, §10.7.)*
+   `LODY-RUNTIME-DESIGN.md` §10.2, §10.7. A browser-side sweep registers the same
+   repositories at surface mount, for the window before the registrar's first
+   pass and for a box whose image predates it — `LODY-RUNTIME-DESIGN.md` §19.2.)*
 5. Port 7444 stays reserved and unused. Do not bind the daemon to it: boxes in
    the field still run the old actor there, and the reserved-port fixture pins
    the set on all three sides.

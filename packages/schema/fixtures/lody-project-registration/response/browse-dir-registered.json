@@ -1,0 +1,31 @@
+{
+    "ok": true,
+    "type": "local-project/browse-dir",
+    "result": {
+        "path": "/tmp/lpb/ws",
+        "parentPath": "/tmp/lpb",
+        "entries": [
+            {
+                "name": "alpha",
+                "absolutePath": "/tmp/lpb/ws/alpha",
+                "isSymlink": false,
+                "hidden": false,
+                "hints": {
+                    "git": true
+                },
+                "registeredProjectId": "local-project-239e3bb91c78f129f7975b13"
+            },
+            {
+                "name": "beta",
+                "absolutePath": "/tmp/lpb/ws/beta",
+                "isSymlink": false,
+                "hidden": false,
+                "hints": {
+                    "git": true
+                }
+            }
+        ],
+        "truncated": true,
+        "nextCursor": "2"
+    }
+}

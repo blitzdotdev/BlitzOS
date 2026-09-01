@@ -68,6 +68,13 @@ describe("blitz-lody-projects registration", () => {
   ): Recorded[] {
     const seen: Recorded[] = [];
     const server: Server = createHttpServer((incoming, response) => {
+      // A registrar killed mid-pass takes its socket with it, and the reply
+      // below then writes to a closed pipe. EPIPE on a request nobody is
+      // waiting for is not a test failure — but unhandled it is an uncaught
+      // exception, which fails the whole FILE and, because vitest attributes
+      // one to whichever file is running, some other file too.
+      incoming.on("error", () => undefined);
+      response.on("error", () => undefined);
       let body = "";
       incoming.on("data", (chunk) => (body += String(chunk)));
       incoming.on("end", () => {
@@ -212,6 +219,80 @@ describe("blitz-lody-projects registration", () => {
     expect(output).toContain("path_invalid");
     expect(output).toContain(`registered ${join(workspaceRoot, "beta")}`);
   });
+
+  /**
+   * The registrar in its REAL mode — the loop, not `BLITZ_LODY_PROJECTS_ONCE`.
+   *
+   * `awaitLine` resolves when a line the registrar has printed contains `needle`,
+   * so the caller can create a clone mid-flight and wait for the pass that finds
+   * it. Nothing here sleeps and nothing polls a clock: the process's own output
+   * is the signal. Killed by the caller, and by `cleanup` if the test throws.
+   */
+  function watchRegistrar(
+    dataDir: string,
+    workspaceRoot: string,
+    intervalMs: number,
+  ): { kill: () => Promise<void>; awaitLine: (needle: string) => Promise<void> } {
+    const child = spawn(process.execPath, [REGISTRAR], {
+      env: {
+        ...process.env,
+        LODY_PLATFORM: "local",
+        LODY_DATA_DIR: dataDir,
+        BLITZ_WORKSPACE_ROOT: workspaceRoot,
+        BLITZ_LODY_PROJECTS_INTERVAL_MS: String(intervalMs),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    cleanup.push(() => child.kill("SIGKILL"));
+
+    let output = "";
+    const waiters: { needle: string; resolve: () => void }[] = [];
+    const onChunk = (chunk: unknown): void => {
+      output += String(chunk);
+      for (const waiter of waiters.splice(0)) {
+        if (output.includes(waiter.needle)) waiter.resolve();
+        else waiters.push(waiter);
+      }
+    };
+    child.stdout?.on("data", onChunk);
+    child.stderr?.on("data", onChunk);
+    return {
+      // SIGTERM, which the registrar handles with `process.exit(0)`, and awaited
+      // so the pass in flight is over before the test's stand-in server closes.
+      kill: () =>
+        new Promise((resolve) => {
+          child.once("exit", () => resolve());
+          child.kill("SIGTERM");
+        }),
+      awaitLine: (needle) =>
+        new Promise((resolve) => {
+          if (output.includes(needle)) resolve();
+          else waiters.push({ needle, resolve });
+        }),
+    };
+  }
+
+  it("registers a repository cloned after it started, with no restart", async () => {
+    const { dataDir, socketPath } = makeDataDir();
+    const workspaceRoot = makeWorkspace(["alpha"]);
+    serveProjectControl(socketPath, (request) =>
+      (request.body as { type: string }).type === "local-project/list"
+        ? fixture("response/list-empty.json")
+        : fixture("response/add.json"),
+    );
+
+    const watch = watchRegistrar(dataDir, workspaceRoot, 25);
+    await watch.awaitLine(`registered ${join(workspaceRoot, "alpha")}`);
+
+    // The member clones a repo on day three. Nothing restarts, nothing is asked:
+    // the next pass finds it, which is the whole reason this service is a longrun
+    // and not a oneshot.
+    mkdirSync(join(workspaceRoot, "later"), { recursive: true });
+    writeFileSync(join(workspaceRoot, "later", ".git"), "gitdir: /elsewhere\n");
+    await watch.awaitLine(`registered ${join(workspaceRoot, "later")}`);
+
+    await watch.kill();
+  }, 20_000);
 
   it("does nothing at all before the daemon has written its catalog", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "lp-"));

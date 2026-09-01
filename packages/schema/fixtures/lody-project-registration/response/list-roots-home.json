@@ -1,0 +1,9 @@
+{
+    "ok": true,
+    "type": "local-project/list-roots",
+    "result": {
+        "platform": "linux",
+        "pathSeparator": "/",
+        "homeDir": "/var/lib/blitz/home"
+    }
+}

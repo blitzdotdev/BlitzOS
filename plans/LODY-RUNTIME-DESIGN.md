@@ -2318,3 +2318,78 @@ image, and playwright-core drives it over CDP. `getComputedStyle` and
 in jsdom — which is why every harness in this repo agreed with itself and with
 nothing a member ever saw.
 
+
+## 19. The project picker, and the two things it could not see (2026-08-31)
+
+Two defects reported from canary against `main` at `d02fe308`, both about
+picking a project: the "Add a local project" folder browser opened on
+`/var/lib/blitz/home`, and the composer's project list did not show every git
+repository under `/workspace`. They are unrelated causes with one shape — the
+renderer asking the box a question and getting an answer meant for a desktop.
+
+### 19.1 The folder browser opens where `os.homedir()` points
+
+`useRemoteDirectoryPicker` browses to `listRoots().homeDir` the moment a machine
+is chosen (`use-remote-directory-picker.ts:241`). That field is the ONLY reader
+of `local-project/list-roots` in the whole renderer, and the daemon fills it from
+`os.homedir()` (`local-project-control-service.ts:298`). On a box `HOME` is
+`/var/lib/blitz/home` — set by the `lody-daemon` s6 run script — so the browser
+opened on the daemon's own state directory. Measured against the live canary
+daemon: the answer is `{platform:'linux', pathSeparator:'/',
+homeDir:'/var/lib/blitz/home'}`, and that directory holds `go` and nothing else
+a member would recognise.
+
+The daemon's answer is not wrong and must not be changed. `HOME` is where it
+keeps `LODY_DATA_DIR`, its `.lody` skills path and its agent credentials; moving
+it would move all three, and a box-side change needs an image bake to reach
+anybody. What is wrong is only which directory a BOX should open a project
+picker at, which is a fact about the box.
+
+So `withBoxBrowseRoot` (`webapp/src/lody/local-bridge.ts`) answers `/workspace`
+on the way back through the `localProjects.control` channel — the seam that
+already turns Electron's IPC into box calls. The request reaches the daemon
+unchanged, every other `local-project/*` response passes through untouched, and
+there is no vendor edit.
+
+### 19.2 The picker reads a field only our mirror writes
+
+The registrar was the suspect and was innocent. Measured on a live box:
+`local-project/list` answered with all 19 git repositories under `/workspace`,
+worktree checkouts included — `discoverRepositories` tests `.git` for EXISTENCE,
+so a `.git` file registers exactly like a `.git` directory, and the service is a
+30 s longrun, not a oneshot, so a clone made on day three is registered without a
+restart. Both properties now have guest tests; the second one is why the poll
+interval takes `BLITZ_LODY_PROJECTS_INTERVAL_MS`.
+
+The gap is one level up. `buildVisibleLocalProjectIndex`
+(`lib/visible-local-project-index.ts:69`) builds the picker's list from
+`machineMeta.localProjects` and NOTHING else — not the Flock, not
+`local-project/list`. `local-project/add` writes only the Flock row
+(`local-project-meta.ts:82`). So on a box the one thing that puts a registered
+repository in front of the member is `mirrorLocalProjectsToMachineMeta`, which
+§10.1 added for the archive path and which turns out to carry the picker too.
+
+It ran once per runtime and wrote the rows it had just read as the WHOLE field.
+`syncOnce` is best-effort, so a room mid-exchange published a subset — and the
+subset replaced whatever the previous mount had published. That is the reported
+defect: a picker missing repositories, with no way back but a reload.
+
+Two changes, both webapp-side and both live on deploy:
+
+- The mirror MERGES the field's current value under the Flock's rows, so a short
+  read is a no-op instead of a deletion. It cannot resurrect a removed project:
+  `removeMachineLocalProject` (`local-project-meta.ts:129`) deletes the whole
+  legacy field, not one key, once the Flock row is gone.
+- `registerWorkspaceRepositories` sweeps `/workspace` at surface mount, through
+  the daemon's own `local-project/browse-dir` listing, and registers every entry
+  hinted `git` that carries no `registeredProjectId`. It is the same registration
+  the box does, driven at the moment the member is about to pick a project —
+  which covers the window before the registrar's first successful pass (it skips
+  every pass until the daemon writes `workspace-catalog.json`) and covers a box
+  whose image predates the registrar entirely.
+
+`browse-dir` and `list-roots` are now BlitzOS-authored payloads, so both have
+captures in `fixtures/lody-project-registration/` and assertions in the browser
+conformance test. The `browse-dir` pair is also where the worktree evidence lives
+at the daemon boundary: `alpha` has a `.git` directory, `beta` a `.git` file, and
+the daemon hints `git: true` for both.

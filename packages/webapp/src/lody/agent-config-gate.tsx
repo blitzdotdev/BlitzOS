@@ -19,6 +19,7 @@ import { bootstrapLodyAgentConfigs, refreshLodyAcpCapabilities } from "./agent-c
 import {
   mirrorLocalProjectsToMachineMeta,
   publishBoxReposAsWorkspaceRepos,
+  registerWorkspaceRepositories,
 } from "./local-projects.js";
 import {
   applyDefaultSessionProject,
@@ -113,11 +114,24 @@ export function LodyAgentConfigGate(props: {
         // The gate opens HERE, not at the end: everything below is about what
         // the composer offers, not about whether a send can resolve its config.
         open();
+        // Every `/workspace` repository the box has not registered yet, before
+        // the mirror below publishes the set to the picker. The box's own
+        // registrar is the durable half and needs a box image to change; this
+        // is the half a deploy can fix, and the half that runs at the moment the
+        // member is about to pick a project. See `local-projects.ts`.
+        await registerWorkspaceRepositories(
+          endpointsRef.current,
+          machineId,
+          runtime.workspaceId,
+          endpoints.filesRoot,
+        );
         // Before anything can be archived: the daemon's archive path reads the
         // legacy `machineMeta.localProjects` field and the box's registrar only
         // ever writes the Flock row, so without this mirror a worktree session
         // archives into nothing and leaves the member's uncommitted work on
-        // disk. See `local-projects.ts` for the upstream anchor.
+        // disk. It is ALSO the only field the composer's project picker reads,
+        // so this is what puts the repos registered above on that list. See
+        // `local-projects.ts` for both upstream anchors.
         await mirrorLocalProjectsToMachineMeta(runtime, machineId);
         // And before a worktree session can be created at all: the landing
         // drops `githubRepoFullName` from a session's ProjectRef unless the

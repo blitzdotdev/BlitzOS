@@ -13,6 +13,7 @@ payloads:
 |---|---|---|
 | box (node) | `packages/box/rootfs/usr/local/libexec/blitz-lody-projects` | `local-project/list` and `local-project/add`, once per pass, over the daemon's unix control socket |
 | browser | `packages/webapp/src/lody/local-bridge.ts` (`projectResult`) and `rpc-client.ts` (`sendProjectControl`) | every `local-project/*` and `worktree/*` request the vendored renderer asks for, through `/lody/project` |
+| browser | `packages/webapp/src/lody/local-projects.ts` (`registerWorkspaceRepositories`) | `local-project/browse-dir` and `local-project/add`, once per surface mount: the same registration the box does, driven from the tab |
 | daemon (node) | `lody@0.88.1`, not in this tree | reads both and answers |
 
 That is a payload crossing a runtime boundary with a BlitzOS author on two
@@ -28,7 +29,8 @@ with it, and with each other, across an upstream merge.
 ## Provenance
 
 Every file under `response/` was **captured from a real `lody@0.88.1` daemon**
-on 2026-08-30, running the box's own patched bundle
+on 2026-08-30 (`browse-dir-*`, `list-roots-home` on 2026-08-31), running the
+box's own patched bundle
 (`packages/box/patches/lody-local-platform.mjs`) in local platform mode, against
 a scratch clone whose `origin` is a GitHub HTTPS URL. The ids are the ones that
 daemon minted; nothing is hand-written.
@@ -63,6 +65,29 @@ daemon minted; nothing is hand-written.
   process IS the machine), so `local-bridge.ts` resolves it from `/lody/platform`
   and injects it. Served by the browser conformance test so the recorded ids
   compare against the fixtures.
+- `request/list-roots.json` / `response/list-roots-home.json` — **the browse-root
+  evidence.** The daemon answers `homeDir` from `os.homedir()`, and on a box that
+  is `/var/lib/blitz/home` — the `HOME` its s6 service sets. The "Add a local
+  project" folder browser opens there
+  (`use-remote-directory-picker.ts:241` is the field's only reader), which is a
+  directory holding none of the member's repositories. `withBoxBrowseRoot` in
+  `local-bridge.ts` answers `/workspace` instead, on the way back through the
+  seam; the daemon's own answer is left alone, because `HOME` is also where it
+  keeps its data dir and its agent credentials.
+- `request/browse-dir.json` / `request/browse-dir-page2.json` — what the
+  browser-side sweep sends: the workspace root, then the cursor the previous
+  page handed back.
+- `response/browse-dir-page1.json` / `-page2.json` — **the worktree evidence.**
+  `alpha` carries a `.git` DIRECTORY and `beta` a `.git` FILE (`gitdir: …`, what
+  a git worktree checkout has); the daemon hints `git: true` for BOTH, because
+  the hint is `.git` existing and not `.git` being a directory
+  (`local-project-control-service.ts:352`). `notes` is a plain directory and
+  carries no hints; the `.hidden` directory beside them is not in either page,
+  because `showHidden` defaults off. Page 1 is `truncated` with a `nextCursor`,
+  page 2 is not — the pair is what pins the sweep's paging.
+- `response/browse-dir-registered.json` — the same first page after `alpha` has
+  been added. `registeredProjectId` is what the sweep skips on, so a repo the
+  box registrar reached first costs no second `local-project/add`.
 - `response/git-state-github-remote.json` — the answer §6.4 depends on:
   `githubRepoFullName` derived from the clone's `origin`, the branch list the
   landing's branch picker renders, and the working-tree flags the dirty badge
@@ -73,3 +98,4 @@ daemon minted; nothing is hand-written.
 - Box: `packages/box/guest-tests/test/lody-projects-registration.test.ts`
   (runs the real registrar against a stand-in daemon socket)
 - Browser: `packages/webapp/test/lody-project-control-frames.test.ts`
+  (frames, the sweep, and the browse-root override)

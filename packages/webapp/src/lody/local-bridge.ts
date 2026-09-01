@@ -26,6 +26,7 @@
  * can assert the set is empty.
  */
 import { isJsonArray, isJsonNumber, isJsonObject, isJsonString, type JsonValue } from "@blitzos/schema";
+import { FILES_DAV_ROOT } from "../resolver.js";
 import { LocalLoroDataPlaneClientMessageSchema } from "@lody/shared/local-loro-data-plane";
 import { LocalMachineRpcRequestSchema } from "@lody/shared/local-machine-rpc";
 import { LocalProjectControlRequestSchema, LocalSessionControlRequestSchema } from "@lody/shared/message-schemas";
@@ -55,6 +56,7 @@ import type {
   LodyIpcSendPayload,
   LodyMachineRpcRequest,
   LodyProjectControlRequest,
+  LodyProjectControlResponse,
   LodySendSessionFileLocalInput,
   LodySessionControlMessage,
   LodySessionControlPush,
@@ -62,6 +64,39 @@ import type {
 
 /** Rejection code for any channel outside the allowlist. */
 export const UNSUPPORTED_CHANNEL = "lody_ipc_channel_unsupported";
+
+/**
+ * WHERE THE "Add a local project" FOLDER BROWSER OPENS.
+ *
+ * `useRemoteDirectoryPicker` browses to `listRoots().homeDir` the moment a
+ * machine is chosen (`use-remote-directory-picker.ts:241`), and that is the ONLY
+ * reader of the field in the whole renderer. The daemon answers it with
+ * `os.homedir()` (`local-project-control-service.ts:298`), which on a box is
+ * `/var/lib/blitz/home` — the s6 service's `HOME`
+ * (`rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run`). So the picker opened on the
+ * daemon's state directory, which holds one folder and none of the member's
+ * repositories, and the member had to type a path to get anywhere.
+ *
+ * The daemon's answer is CORRECT and must stay correct: `HOME` is where it keeps
+ * its data dir, its `.lody` skills path (`:1284`, `:1322`) and its agent
+ * credentials, and moving it would move all three
+ * (plans/LODY-RUNTIME-DESIGN.md §2.3). What is wrong is only which directory a
+ * BOX should open a project picker at, and that is a fact about the box, not
+ * about the daemon — so it is answered here, on the way back through the seam
+ * that already turns Electron's IPC into box calls.
+ *
+ * Every other `local-project/*` response passes through untouched.
+ */
+export function withBoxBrowseRoot(
+  request: LodyProjectControlRequest,
+  response: LodyProjectControlResponse,
+  workspaceRoot: string,
+): LodyProjectControlResponse {
+  if (request.type !== "local-project/list-roots") return response;
+  if (!response.ok || response.type !== "local-project/list-roots") return response;
+  if (!isJsonObject(response.result)) return response;
+  return { ...response, result: { ...response.result, homeDir: workspaceRoot } };
+}
 
 type IpcBridge = NonNullable<Window["ipc"]>;
 
@@ -340,7 +375,11 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
         // SAFETY: as above — the request union's schema accepted it, so the
         // `type` discriminant this side reads is present.
         const request = parsed.data as LodyProjectControlRequest;
-        return await sendProjectControl(endpoints, request);
+        return withBoxBrowseRoot(
+          request,
+          await sendProjectControl(endpoints, request),
+          endpoints.filesRoot ?? FILES_DAV_ROOT,
+        );
       }
 
       // The positional `localProjects.*` helpers. Electron's service builds a
