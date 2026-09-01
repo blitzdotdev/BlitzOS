@@ -23,12 +23,21 @@ export type DriveScope = 'mine' | 'shared';
  * across a reload, a deep link and the back button, with no server round trip
  * and no cross-member leakage.
  *
- * Three states, three spellings, no redundancy:
+ * Four states, four spellings, no redundancy:
  *
  * - `null` — the panes own the view. `/workspaces/:id`.
  * - `'landing'` — the chat landing, which is the create surface, with no
  *   session selected. `/workspaces/:id/chat`.
  * - `{ sessionId }` — that session's detail page. `/workspaces/:id/chat/:id`.
+ * - `'archive'` — the archived-session list, with its restore and its permanent
+ *   delete. `/workspaces/:id/chat/archive`.
+ *
+ * THE ARCHIVE IS AN ADDRESS FOR THE REASON THE OTHER THREE ARE, plus one more.
+ * The surface's own router cannot hold it alone: `mirror` reads the resolved
+ * address back and a page that names no session reads as the landing, so a
+ * surface-only archive would be pushed back to `/chat` on the navigation that
+ * opened it. `archive` is a reserved segment exactly as `shared` and `terminal`
+ * are — `workspaceChatPath` never emits a session id that spells it.
  *
  * A SHARED session carries one more field, and it is the OWNER's membership:
  * `{ sessionId, sharedFrom }` at `/workspaces/:id/chat/shared/:membershipId/:id`
@@ -60,6 +69,7 @@ export type DriveScope = 'mine' | 'shared';
 export type ChatAddress =
   | null
   | 'landing'
+  | 'archive'
   | ChatSessionAddress
   | ChatTerminalAddress;
 
@@ -74,13 +84,19 @@ export type ChatTerminalAddress = { terminalId: string; sessionId?: string };
 /** Which arm of the union this is. `sharedFrom` lives on one of them only, so a
  * plain property read does not compile against the union. */
 export function isChatTerminalAddress(chat: ChatAddress): chat is ChatTerminalAddress {
-  return chat !== null && chat !== 'landing' && 'terminalId' in chat;
+  return chat !== null && chat !== 'landing' && chat !== 'archive' && 'terminalId' in chat;
+}
+
+/** The two arms that name a PAGE rather than a session. Both are string
+ * literals, so every `chat.sessionId` read narrows off this one predicate. */
+export function isChatPageAddress(chat: ChatAddress): chat is 'landing' | 'archive' {
+  return chat === 'landing' || chat === 'archive';
 }
 
 /** The OWNER's membership id when the address names a session another member
  * shared, and `undefined` for every other arm. */
 export function chatSharedFrom(chat: ChatAddress): string | undefined {
-  if (chat === null || chat === 'landing' || isChatTerminalAddress(chat)) return undefined;
+  if (chat === null || isChatPageAddress(chat) || isChatTerminalAddress(chat)) return undefined;
   return chat.sharedFrom;
 }
 
@@ -191,6 +207,21 @@ export function parseAppRoute(pathname: string): AppRoute {
       return HOME;
     }
   }
+  // `archive` is a reserved segment, read before the general pattern below for
+  // the reason `terminal` is: `/chat/archive` is the archived-session list,
+  // never a session whose id literally spells `archive`.
+  const archive = pathname.match(/^\/workspaces\/([^/]+)\/chat\/archive\/?$/u);
+  if (archive) {
+    try {
+      return {
+        workspaceId: decodeURIComponent(archive[1]!),
+        page: 'webApp',
+        chat: 'archive',
+      };
+    } catch {
+      return HOME;
+    }
+  }
   const match = pathname.match(/^\/workspaces\/([^/]+)(?:\/chat(?:\/([^/]+))?)?\/?$/u);
   if (!match) return HOME;
   try {
@@ -219,6 +250,11 @@ export function workspacePath(workspaceId: string): string {
 export function workspaceChatPath(workspaceId: string, sessionId?: string): string {
   const base = `${workspacePath(workspaceId)}/chat`;
   return sessionId === undefined ? base : `${base}/${encodeURIComponent(sessionId)}`;
+}
+
+/** The archived-session list, with its restore and its permanent delete. */
+export function workspaceChatArchivePath(workspaceId: string): string {
+  return `${workspacePath(workspaceId)}/chat/archive`;
 }
 
 /** One workspace tab, in whichever host draws the strip. With no `sessionId`

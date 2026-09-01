@@ -1003,10 +1003,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // converges instead of looping.
   useEffect(() => {
     if (lodyApi === null || !lodyRail.visible) return;
-    if (lodyRail.sessionId === lodyApi.activeSessionId()) return;
+    // THE ARCHIVE IS ASKED FIRST, and it has to be. It names no session, so
+    // `activeSessionId()` answers `null` there exactly as it does on the
+    // landing: comparing session ids alone would leave the surface on the
+    // archive after the address moved back to `/chat`, and would never take it
+    // there in the first place.
+    if (lodyRail.archive) {
+      if (!lodyApi.isArchiveOpen()) lodyApi.openArchive();
+      return;
+    }
+    if (lodyRail.sessionId === lodyApi.activeSessionId() && !lodyApi.isArchiveOpen()) return;
     if (lodyRail.sessionId === null) lodyApi.openLanding();
     else lodyApi.openSession(lodyRail.sessionId);
-  }, [lodyApi, lodyRail.sessionId, lodyRail.visible]);
+  }, [lodyApi, lodyRail.archive, lodyRail.sessionId, lodyRail.visible]);
   // "+ NEW SESSION" IS TWO THINGS, and the address is only one of them.
   //
   // Moving the address to the landing does nothing when the landing is already
@@ -1936,6 +1945,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               onCloseTerminal={closeTtydSession}
               onOpenSession={lodyRail.openSession}
               onOpenLanding={openFreshLanding}
+              onOpenArchive={lodyRail.openArchive}
               terminalsAction={(
                 <NewTabControl
                   variant="icon"

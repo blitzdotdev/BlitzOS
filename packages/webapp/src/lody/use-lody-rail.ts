@@ -42,7 +42,9 @@ import { useCallback, useEffect, useState } from "react";
 import type { AppRoute, ChatAddress } from "../sessions-page-state.js";
 import {
   chatSharedFrom,
+  isChatPageAddress,
   isChatTerminalAddress,
+  workspaceChatArchivePath,
   workspaceChatPath,
   workspaceChatTerminalPath,
   workspacePath,
@@ -64,8 +66,10 @@ export interface LodyRailState {
   /** `true` while the chat surface should cover the panes. */
   visible: boolean;
   /** The session the address names on the grantee's OWN box, or `null` on the
-   * landing, on the panes, or while a shared session is open. */
+   * landing, on the archive, on the panes, or while a shared session is open. */
   sessionId: string | null;
+  /** `true` while the address names the archived-session list. */
+  archive: boolean;
   /** The address the whole chat surface is at, shared or not. Read by
    * `useSharedSessions` to decide which owner's box to mount. */
   chat: ChatAddress;
@@ -76,6 +80,9 @@ export interface LodyRailState {
   railHost: HTMLElement | null;
   openLanding: () => void;
   openSession: (sessionId: string) => void;
+  /** The archived-session list: upstream's own page, reached from the rail
+   * footer's Archive entry (seam patch 13). */
+  openArchive: () => void;
   /** One session another member shared, on that member's machine. */
   openSharedSession: (ownerMembershipId: string, sessionId: string) => void;
   /** The workspace tab the address selects in the strip, or `null` when a
@@ -162,6 +169,10 @@ export function useLodyRail(
     (sessionId: string) => go(workspaceChatPath(activeWorkspaceId, sessionId), { sessionId }),
     [activeWorkspaceId, go],
   );
+  const openArchive = useCallback(
+    () => go(workspaceChatArchivePath(activeWorkspaceId), "archive"),
+    [activeWorkspaceId, go],
+  );
   const openSharedSession = useCallback(
     (ownerMembershipId: string, sessionId: string) =>
       go(workspaceSharedChatPath(activeWorkspaceId, ownerMembershipId, sessionId), {
@@ -176,7 +187,7 @@ export function useLodyRail(
       // while a session is on screen becomes a tab of that session's strip; one
       // opened from the landing becomes a tab of the landing's.
       const sessionId =
-        chat === null || chat === "landing"
+        chat === null || isChatPageAddress(chat)
           ? undefined
           : isChatTerminalAddress(chat)
             ? chat.sessionId
@@ -220,10 +231,18 @@ export function useLodyRail(
         if ((chat.sessionId ?? null) === sessionId) return;
       } else if (chatSharedFrom(chat) !== undefined) return;
       if (sessionId === null) {
+        // THE ARCHIVE IS STICKY AGAINST A NULL REPORT, and it has to be. The
+        // archive page names no session, so the surface resolves it as `null` —
+        // the same value the landing reports — and without this the navigation
+        // that OPENED the archive would push the address straight back to
+        // `/chat`, which would then push the surface back to the landing.
+        if (chat === "archive") return;
         if (chat !== "landing") openLanding();
         return;
       }
-      if (chat === "landing" || chat.sessionId !== sessionId) openSession(sessionId);
+      // A session report from the archive is a row click on that page, which is
+      // a navigation away from it: the address follows.
+      if (isChatPageAddress(chat) || chat.sessionId !== sessionId) openSession(sessionId);
     },
     [chat, openLanding, openSession],
   );
@@ -291,7 +310,7 @@ export function useLodyRail(
     // A terminal address still names its HOST page, so the surface opens the
     // session whose strip the tab belongs to — or the landing, when it has none.
     sessionId:
-      chat === null || chat === "landing"
+      chat === null || isChatPageAddress(chat)
         ? null
         : isChatTerminalAddress(chat)
           ? chat.sessionId ?? null
@@ -302,8 +321,10 @@ export function useLodyRail(
     chat,
     onVendorHost: available ? setRailHost : undefined,
     railHost,
+    archive: chat === "archive",
     openLanding,
     openSession,
+    openArchive,
     openSharedSession,
     openTerminal,
     closeTerminal,
