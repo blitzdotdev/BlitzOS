@@ -60,6 +60,7 @@ import {
 } from "../src/lody/surface-tabs.js";
 import type { WebAppTabModel } from "../src/WebAppHeader.js";
 import { installLodyDomStubs } from "./lody-dom-stubs.js";
+import { expectLandingHeading } from "./lody-landing-heading.js";
 import { render, settle } from "./dom.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -488,7 +489,7 @@ describe("the chat landing route, mounted for real", () => {
       const view = await mountChatRoute(value);
       // The composer's own words, so this is the landing and not merely a
       // non-empty div: "renders BLANK — no landing, no draft chat UI".
-      expect(view.container.textContent ?? "").toContain("Let's ship something");
+      expectLandingHeading(view.container.textContent, "the landing drew itself");
       await view.unmount();
     }
   }, 120_000);
@@ -496,7 +497,7 @@ describe("the chat landing route, mounted for real", () => {
   it("draws the landing beside the strip, not instead of it", async () => {
     const view = await mountChatRoute(binding());
     expect(view.container.querySelector("#viewer-tab-blitz-tab\\:7")).not.toBeNull();
-    expect(view.container.textContent ?? "").toContain("Let's ship something");
+    expectLandingHeading(view.container.textContent, "the landing is beside the strip");
     await view.unmount();
   }, 120_000);
 
@@ -508,7 +509,7 @@ describe("the chat landing route, mounted for real", () => {
     expect(landing?.className).toContain("hidden");
     // The landing holds the member's unsent draft, so it is hidden and never
     // unmounted — the same rule the terminals get.
-    expect(landing?.textContent ?? "").toContain("Let's ship something");
+    expectLandingHeading(landing?.textContent, "the hidden landing is still mounted");
     await view.unmount();
   }, 120_000);
 });
