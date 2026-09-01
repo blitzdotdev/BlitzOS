@@ -111,8 +111,21 @@ function statusFromWire(workspace: WorkspaceView): RestWorkspaceStatus {
   return workspace.phase;
 }
 
-export function workspaceFromWire(workspace: WorkspaceView): V2WorkspaceRecord | null {
-  if (workspace.phase === "destroying" || workspace.phase === "destroyed") return null;
+/**
+ * A workspace as the rail reads it.
+ *
+ * There is deliberately no terminal-phase filter here. `WorkspaceView.phase`
+ * is NOT the workspace's own lifecycle — `core/workspace-records.ts` projects
+ * it from the REQUESTING member's machine, so a machine-type change, a stop
+ * and a recreate all report `destroying` while the workspace row is untouched.
+ * Dropping those records hid a live workspace from the rail for the length of
+ * the operation and read as "my workspace was deleted".
+ *
+ * A genuinely deleted workspace never arrives to be filtered: the list query
+ * is `WHERE w.org_id = ?1 AND w.deleted_at IS NULL`, and the store learns
+ * about deletion from its own `workspace_deleted` action.
+ */
+export function workspaceFromWire(workspace: WorkspaceView): V2WorkspaceRecord {
   return {
     id: workspace.id,
     // The workspace names its creator, so this no longer has to be inferred
@@ -167,17 +180,12 @@ export class ApiAdapter {
 
   public async listWorkspaces(): Promise<V2WorkspaceRecord[]> {
     const wire = (await this.call(() => this.client.poll())).workspaces;
-    return wire.flatMap((workspace) => {
-      const mapped = workspaceFromWire(workspace);
-      return mapped === null ? [] : [mapped];
-    });
+    return wire.map((workspace) => workspaceFromWire(workspace));
   }
 
   public async createWorkspace(input: CreateWorkspaceRequest): Promise<V2WorkspaceRecord> {
     const response = await this.call(() => this.client.create(input));
-    const mapped = workspaceFromWire(response.workspace);
-    if (mapped === null) throw new ApiError("The created workspace is no longer available.", 409);
-    return mapped;
+    return workspaceFromWire(response.workspace);
   }
 
   public async deleteWorkspace(id: string): Promise<void> {
@@ -188,9 +196,7 @@ export class ApiAdapter {
    * through the same wire adapter and rides the same navigation flow. */
   public async launchRecipe(recipeId: string): Promise<V2WorkspaceRecord> {
     const response = await this.call(() => this.client.launchRecipe(recipeId));
-    const mapped = workspaceFromWire(response.workspace);
-    if (mapped === null) throw new ApiError("The launched workspace is no longer available.", 409);
-    return mapped;
+    return workspaceFromWire(response.workspace);
   }
 
   public listMachineTypes(): Promise<ListMachineTypesResponse> {
