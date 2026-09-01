@@ -4,6 +4,7 @@ import { boxHostname, buildBootstrapScript } from "../core/bootstrap.js";
 import { buildUserData } from "../core/cloud-init.js";
 import { AwsProvider } from "../core/compute/aws.js";
 import { HetznerProvider } from "../core/compute/hetzner.js";
+import { HETZNER_USER_DATA_MAX_BYTES } from "../core/compute/hetzner-config.js";
 import {
   appRequest,
   appWithProviders,
@@ -451,9 +452,9 @@ describe("production VM bootstrap", () => {
     // Origin refresh happens on every poll, before the update gate.
     const refresh = userData.indexOf('mv "$origin_tmp" "$ORIGIN_PATH"');
     const gate = userData.indexOf('[ "$update_requested" = true ] || exit 0');
-    const pull = userData.indexOf('docker pull "$next_ref"', gate);
+    const pull = userData.indexOf('docker pull "$next_image"', gate);
     const remove = userData.indexOf("docker rm -f blitz-box", pull);
-    const startNew = userData.indexOf('if start_box "$next_ref"; then', remove);
+    const startNew = userData.indexOf('if start_box "$next_image"; then', remove);
     const rollback = userData.indexOf('start_box "$current_image"', startNew);
     expect(refresh).toBeGreaterThan(-1);
     expect(gate).toBeGreaterThan(refresh);
@@ -550,19 +551,26 @@ write_files:
     expect(userData).toContain(`readonly BOX_IMAGE_TAG='${BOX_IMAGE_TAG}'`);
     expect(userData).toContain(`readonly BOX_IMAGE_SHA256='${BOX_IMAGE_SHA256}'`);
     expect(userData).toContain('curl --fail --location --retry 10 --retry-all-errors');
-    expect(userData).toContain('verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"');
-    expect(userData).toContain('gunzip -c "$image_archive" | docker load');
-    expect(userData).toContain('"$BOX_IMAGE_TAG"');
     expect(userData).not.toContain('docker pull "$BOX_IMAGE_REF"');
+    // A non-manifest archive takes the installer's `fetch` action, and the
+    // three variables are handed to it in the order it names them.
+    expect(userData).toContain('*) box_image_action=fetch ;;');
+    expect(userData).toContain(
+      '/usr/local/sbin/blitz-box-image "$box_image_action" "$BOX_IMAGE_REF" "$BOX_IMAGE_TAG" "$BOX_IMAGE_SHA256"',
+    );
 
-    const download = userData.indexOf('download "$BOX_IMAGE_REF" "$image_archive"');
-    const checksum = userData.indexOf('verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"');
-    const load = userData.indexOf('gunzip -c "$image_archive" | docker load');
-    const run = userData.indexOf("docker run", load);
+    // Inside the fetch branch: download, then verify, then load — and the
+    // load is the shared helper, so the archive can only reach docker after
+    // its digest matched. (`load_archive` is defined above its callers, which
+    // is why the ordering is asserted on the call, not on the gunzip.)
+    const download = userData.indexOf('download "$url" "$archive"');
+    const checksum = userData.indexOf('verify_sha256 "$archive" "${4:?}"', download);
+    const load = userData.indexOf('load_archive "$3"', checksum);
     expect(download).toBeGreaterThan(-1);
     expect(checksum).toBeGreaterThan(download);
     expect(load).toBeGreaterThan(checksum);
-    expect(run).toBeGreaterThan(load);
+    expect(userData).toContain('gunzip -c "$archive" | docker load');
+    expect(userData.indexOf("docker run", load)).toBeGreaterThan(load);
   });
 
   it("keys archive image setup only to image availability on the current daemon", () => {
@@ -576,51 +584,22 @@ write_files:
       BOX_IMAGE_SHA256,
     );
 
-    const inspectGuard = userData.indexOf(
-      'if ! docker image inspect "$BOX_IMAGE_TAG" >/dev/null 2>&1; then',
-    );
-    const download = userData.indexOf('download "$BOX_IMAGE_REF" "$image_archive"');
-    const load = userData.indexOf('gunzip -c "$image_archive" | docker load');
-    const guardEnd = userData.indexOf("\nfi\n", load);
-    const provenPresent = userData.indexOf(
-      'docker image inspect "$BOX_IMAGE_TAG" >/dev/null',
-      guardEnd + 1,
-    );
-    const run = userData.indexOf("docker run", provenPresent);
-
-    expect(inspectGuard).toBeGreaterThan(-1);
-    expect(download).toBeGreaterThan(inspectGuard);
+    // The skip lives in the installer now, and it asks the daemon and nothing
+    // else: an image the store already holds costs no bytes off the network.
+    // This is what makes a golden snapshot fast.
+    const skip = userData.indexOf('if docker image inspect "${3:?}" >/dev/null 2>&1; then exit 0; fi');
+    const download = userData.indexOf('download "$url" "$archive"', skip);
+    const load = userData.indexOf('load_archive "$3"', download);
+    expect(skip).toBeGreaterThan(-1);
+    expect(download).toBeGreaterThan(skip);
     expect(load).toBeGreaterThan(download);
-    expect(guardEnd).toBeGreaterThan(load);
-    expect(provenPresent).toBeGreaterThan(guardEnd);
-    expect(run).toBeGreaterThan(provenPresent);
-    expect(userData.slice(inspectGuard, provenPresent)).not.toMatch(
-      /(?:if|elif)[^\n]*\/var\/lib\/blitz/u,
-    );
-  });
+    expect(userData.slice(skip, load)).not.toMatch(/(?:if|elif)[^\n]*\/var\/lib\/blitz/u);
 
-  it("keys registry image setup only to image availability on the current daemon", () => {
-    const userData = registryUserData();
-
-    const inspectGuard = userData.indexOf(
-      'if ! docker image inspect "$BOX_IMAGE_REF" >/dev/null 2>&1; then',
-    );
-    const pull = userData.indexOf('retry docker pull "$BOX_IMAGE_REF"');
-    const guardEnd = userData.indexOf("\nfi\n", pull);
-    const provenPresent = userData.indexOf(
-      'docker image inspect "$BOX_IMAGE_REF" >/dev/null',
-      guardEnd + 1,
-    );
+    // The bootstrap proves the tag is present before it runs anything.
+    const provenPresent = userData.indexOf('docker image inspect "$BOX_IMAGE_TAG" >/dev/null\nbox_image=');
     const run = userData.indexOf("docker run", provenPresent);
-
-    expect(inspectGuard).toBeGreaterThan(-1);
-    expect(pull).toBeGreaterThan(inspectGuard);
-    expect(guardEnd).toBeGreaterThan(pull);
-    expect(provenPresent).toBeGreaterThan(guardEnd);
+    expect(provenPresent).toBeGreaterThan(load);
     expect(run).toBeGreaterThan(provenPresent);
-    expect(userData.slice(inspectGuard, provenPresent)).not.toMatch(
-      /(?:if|elif)[^\n]*\/var\/lib\/blitz/u,
-    );
   });
 
   it("validates multipart manifest parts, total digest, and image tag before loading", () => {
@@ -634,17 +613,20 @@ write_files:
       BOX_IMAGE_SHA256,
     );
 
-    expect(userData).toContain('download "$BOX_IMAGE_REF" "$manifest_path"');
+    expect(userData).toContain('*/manifest.json) box_image_action=install ;;');
+    expect(userData).toContain('download "$url" "$tmp/manifest.json"');
     expect(userData).toContain('value.get("parts")');
     expect(userData).toContain('value.get("totalSha256")');
     expect(userData).toContain('value.get("imageTag")');
-    expect(userData).toContain('download "$manifest_base/$part_name" "$part_path"');
-    expect(userData).toContain('verify_sha256 "$part_path" "$part_sha256"');
-    expect(userData).toContain('cat "$part_path" >>"$image_archive"');
-    expect(userData).toContain('verify_sha256 "$image_archive" "$manifest_total_sha256"');
-    expect(userData).toContain('verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"');
-    expect(userData).toContain('[ "$manifest_image_tag" = "$BOX_IMAGE_TAG" ]');
-    expect(userData).toContain('gunzip -c "$image_archive" | docker load');
+    expect(userData).toContain('download "${url%/*}/$part_name" "$tmp/$part_name"');
+    expect(userData).toContain('verify_sha256 "$tmp/$part_name" "$part_sha256"');
+    expect(userData).toContain('cat "$tmp/$part_name" >>"$archive"');
+    expect(userData).toContain('verify_sha256 "$archive" "$manifest_total"');
+    // The caller's own pinned digest is checked on top of the manifest's, so
+    // a swapped manifest cannot redirect a boot to another image.
+    expect(userData).toContain('[ -z "${4:-}" ] || verify_sha256 "$archive" "$4"');
+    expect(userData).toContain('[ "$manifest_tag" = "${3:?}" ] || exit 13');
+    expect(userData).toContain('gunzip -c "$archive" | docker load');
     expect(userData).not.toContain('docker pull "$BOX_IMAGE_REF"');
   });
 
@@ -1058,5 +1040,45 @@ write_files:
         "blitz-purpose": "workspace",
       },
     });
+  });
+});
+
+// Cloud-init user-data on Hetzner is a hard 32 KiB, uncompressed (AWS gzips
+// and has room to spare, so Hetzner is the binding constraint for every
+// emitted byte). The script is what it is: this pins that a realistic create
+// keeps a working margin, so the next feature that wants to emit bash finds
+// out here rather than as a 413 on a real create.
+describe("the emitted bootstrap fits the cloud-init budget", () => {
+  const manifest = {
+    boxImageSha256: "a".repeat(64),
+    boxImageRef: "https://r2.example/box-image/manifest.json",
+    boxImageTag: "blitz-box:2026-08-31",
+    phoneHomeUrl: "https://cp.example/workspaces/workspace/phone-home/token",
+    sshPublicKey: "ssh-ed25519 AAAAcaller",
+  };
+
+  /** The most expensive shape a real create emits: the manifest install path
+   * (canary), a hostname, repos to clone and usage capture. */
+  const heaviest = {
+    ...manifest,
+    boxHostname: "a-workspace-with-a-long-enough-name",
+    repos: ["blitzdotdev/BlitzOS", "blitzdotdev/another-repo"],
+    usageCapture: true,
+  };
+
+  it("leaves a working margin under the Hetzner cap", () => {
+    const bytes = new TextEncoder().encode(buildBootstrapScript(heaviest)).byteLength;
+    // 2 KiB is the floor this change accepted, not a target to spend down.
+    // The way to buy real headroom back is to stop shipping the host scripts
+    // in user-data at all and extract them from the box image, which is the
+    // direction plans/MEMBER-MACHINES.md records.
+    expect(bytes).toBeLessThan(HETZNER_USER_DATA_MAX_BYTES - 2 * 1024);
+  });
+
+  it("emits the host installer once, whichever mode the deployment pins", () => {
+    for (const options of [manifest, { ...manifest, boxImageRef: "ghcr.io/o/box:v3", boxImageTag: "", boxImageSha256: "" }]) {
+      const script = buildBootstrapScript(options);
+      expect(script.split("cat >/usr/local/sbin/blitz-box-image <<").length - 1).toBe(1);
+    }
   });
 });
