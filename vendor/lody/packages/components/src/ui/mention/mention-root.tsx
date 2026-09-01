@@ -199,13 +199,15 @@ interface MentionContextValue {
    */
   onMentionInsert: (request: MentionInsertRequest) => void;
   /**
-   * Pop the text between the trigger and the caret back to the bare trigger,
-   * undoing one drill-down step. Returns false when there is no trigger to pop
-   * back to. The caller decides *when* this applies (Backspace on a namespace
-   * prefix, the menu's Back button); the transaction itself lives here because
-   * it has to interleave the controlled value commit with caret restoration.
+   * Rewrite the text between the trigger and the caret to `nextSearch`, undoing
+   * one drill-down step; the default pops all the way back to the bare trigger.
+   * Returns false when there is no trigger to pop back to. The caller decides
+   * *when* this applies and *where* it lands (Backspace on a namespace prefix,
+   * ArrowLeft on one path level, the menu's Back button); the transaction itself
+   * lives here because it has to interleave the controlled value commit with
+   * caret restoration.
    */
-  onNavigateBack: () => boolean;
+  onNavigateBack: (nextSearch?: string) => boolean;
   onMentionsRemove: (mentionsToRemove: Mention[]) => void;
   onMentionClick?: (mention: Mention) => void;
   getMentionChip?: MentionChipResolver;
@@ -665,25 +667,30 @@ const MentionRoot = React.forwardRef<RootElement, MentionRootProps>((props, forw
     [filterStore, inputValue, setInputValue, setMentions, setOpen, setValue]
   );
 
-  const onNavigateBack = React.useCallback(() => {
-    const input = inputRef.current;
-    if (!input) return false;
-    const caretPosition = input.selectionStart ?? input.value.length;
-    const triggerIndex = input.value.lastIndexOf(trigger, caretPosition);
-    if (triggerIndex === -1) return false;
+  const onNavigateBack = React.useCallback(
+    (nextSearch = '') => {
+      const input = inputRef.current;
+      if (!input) return false;
+      const caretPosition = input.selectionStart ?? input.value.length;
+      const triggerIndex = input.value.lastIndexOf(trigger, caretPosition);
+      if (triggerIndex === -1) return false;
 
-    const caret = triggerIndex + trigger.length;
-    const nextValue = input.value.slice(0, caret) + input.value.slice(caretPosition);
-    setInputValue(nextValue);
-    // Same reason as `onMentionAdd`: MentionInput restores the caret once it has
-    // rendered this exact value, because touching the DOM selection here races
-    // the controlled value commit.
-    setPendingSelection({ start: caret, end: caret, expectedValue: nextValue });
-    filterStore.search = '';
-    setHighlightedItem(null);
-    requestAnimationFrame(() => onItemsFilter());
-    return true;
-  }, [filterStore, onItemsFilter, setInputValue, trigger]);
+      const searchStart = triggerIndex + trigger.length;
+      const caret = searchStart + nextSearch.length;
+      const nextValue =
+        input.value.slice(0, searchStart) + nextSearch + input.value.slice(caretPosition);
+      setInputValue(nextValue);
+      // Same reason as `onMentionAdd`: MentionInput restores the caret once it has
+      // rendered this exact value, because touching the DOM selection here races
+      // the controlled value commit.
+      setPendingSelection({ start: caret, end: caret, expectedValue: nextValue });
+      filterStore.search = nextSearch;
+      setHighlightedItem(null);
+      requestAnimationFrame(() => onItemsFilter());
+      return true;
+    },
+    [filterStore, onItemsFilter, setInputValue, trigger]
+  );
 
   const onMentionsRemove = React.useCallback(
     (mentionsToRemove: Mention[]) => {
