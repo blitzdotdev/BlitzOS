@@ -58,7 +58,7 @@ import {
   workspaceTabIdFromSurfaceTabId,
   type SurfaceTabsBinding,
 } from "../src/lody/surface-tabs.js";
-import type { WebAppTabModel } from "../src/WebAppHeader.js";
+import type { WebAppTabModel } from "../src/SessionTypeIcon.js";
 import { installLodyDomStubs } from "./lody-dom-stubs.js";
 import { expectLandingHeading } from "./lody-landing-heading.js";
 import { render, settle } from "./dom.js";

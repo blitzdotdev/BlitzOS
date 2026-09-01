@@ -14,10 +14,6 @@ import { isPathAtOrBelow } from './files';
 /** Panes render in this order, left to right. */
 export const PANE_REGIONS: readonly WorkspaceRegion[] = ['main', 'side'];
 
-export function otherRegion(region: WorkspaceRegion): WorkspaceRegion {
-  return region === 'main' ? 'side' : 'main';
-}
-
 export function regionTabs(tabs: WorkspaceTabs, region: WorkspaceRegion): WorkspaceTab[] {
   return tabs.tabs.filter((tab) => tabRegion(tab) === region);
 }
@@ -166,56 +162,15 @@ export function togglePanelTab(
   return showPanelTab(tabs, panel);
 }
 
-/** Moves a tab into `region`, landing before `beforeId` when the drop named an
- * insertion point and at the end of that column otherwise. */
-export function moveTab(
-  tabs: WorkspaceTabs,
-  id: number,
-  region: WorkspaceRegion,
-  beforeId: number | null,
-): WorkspaceTabs {
-  const moving = findTab(tabs, id);
-  if (moving === null) return tabs;
-  const from = tabRegion(moving);
-  const entries = tabs.tabs.filter((tab) => tab.id !== id);
-  const anchor = beforeId === null ? -1 : entries.findIndex((tab) => tab.id === beforeId);
-  entries.splice(anchor < 0 ? appendIndex(entries, region) : anchor, 0, withRegion(moving, region));
-  const next: WorkspaceTabs = { ...tabs, tabs: entries };
-  if (from === 'main' && tabs.activeId === id) next.activeId = null;
-  if (from === 'side' && tabs.sideActiveId === id) delete next.sideActiveId;
-  if (region === 'main') next.activeId = id;
-  else next.sideActiveId = id;
-  return normalizedWorkspaceTabs(next);
-}
-
-/** An edge drop claims a whole column. Dropping a tab on the edge of the pane
- * it already owns pushes its neighbours to the other column instead — the
- * dragged tab keeps the half the landing rectangle showed. */
-export function splitTab(
-  tabs: WorkspaceTabs,
-  id: number,
-  region: WorkspaceRegion,
-): WorkspaceTabs {
-  const moving = findTab(tabs, id);
-  if (moving === null) return tabs;
-  if (tabRegion(moving) !== region) return moveTab(tabs, id, region, null);
-  const away = otherRegion(region);
-  if (regionTabs(tabs, away).length > 0) return moveTab(tabs, id, region, null);
-  const entries = tabs.tabs.map(
-    (tab) => (tab.id === id ? tab : withRegion(tab, away)),
-  );
-  const displaced = entries.filter((tab) => tab.id !== id);
-  const keptActive = regionActiveId(tabs, region);
-  const movedActive = displaced.some((tab) => tab.id === keptActive)
-    ? keptActive ?? undefined
-    : displaced.at(-1)?.id;
-  const next: WorkspaceTabs = { ...tabs, tabs: entries };
-  if (region === 'main') {
-    next.activeId = id;
-    if (movedActive !== undefined) next.sideActiveId = movedActive;
-  } else {
-    next.sideActiveId = id;
-    next.activeId = movedActive ?? null;
-  }
-  return normalizedWorkspaceTabs(next);
-}
+/*
+ * `moveTab` and `splitTab` were here, and they are deleted with the native tab
+ * strip (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2 — the deletion").
+ *
+ * Their only caller was the pane drag-and-drop, whose only handle was a
+ * draggable tab button in that strip: no strip, no drag, no writer. What
+ * survives is the PLACEMENT half of the split — `paneRegions`, `tabRegion` and
+ * `withRegion` — so a document that already holds a `region: 'side'` tab still
+ * draws it in the second column, exactly as §5.3 promised a rollback. What is
+ * gone is the ability to MOVE a tab between the columns, which nothing could
+ * reach anyway.
+ */

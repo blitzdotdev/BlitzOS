@@ -111,6 +111,9 @@ export interface SessionRailSidebarProps {
   /** `true` while the surface is the visible pane. */
   surfaceVisible: boolean;
   onSelectTerminal: (tabId: string) => void;
+  /** Close one terminal tab from its rail row. See `TerminalRows`: it is the
+   * deleted native strip's close, moved here so every layout has one. */
+  onCloseTerminal?: (tabId: string) => void;
   onSelectSession: (sessionId: string) => void;
   /** "+ New session": their `home` nav entry, relabelled. */
   onOpenLanding: () => void;
@@ -177,13 +180,28 @@ function orderedRepoFullNames(present: string[], order: readonly string[]): stri
   return ordered;
 }
 
-/** Today's rail rows, kept byte-for-byte: same classes, same glyphs, same
- * click. They are tabs, so they are drawn by us and not by `SessionList`. */
+/**
+ * Today's rail rows: same classes, same glyphs, same click.
+ *
+ * THE CLOSE BUTTON IS NEW, and it is the deleted strip's close moved rather
+ * than a second one added. `closeTtydSession` reached the UI through exactly one
+ * affordance — the `×` on the active cell of the native tab strip
+ * (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2") — so on a layout the session strip
+ * does not draw for (mobile, and a box with no session plane) deleting that
+ * strip would leave a member able to open a terminal and never close it, with
+ * its tmux session alive on the box for as long as the box is.
+ *
+ * It sits in the row's trailing slot, which the rail has always drawn and always
+ * left empty, so no row grows. A row is a `div` rather than a `button` because a
+ * button inside a button is not valid HTML; the label keeps its own `button`, so
+ * the click target and the keyboard path are unchanged.
+ */
 function TerminalRows(props: {
   terminals: DriveRailSession[];
   activeTerminalId: string;
   active: boolean;
   onSelect: (tabId: string) => void;
+  onClose?: (tabId: string) => void;
 }) {
   return (
     <>
@@ -193,23 +211,38 @@ function TerminalRows(props: {
           (session.id === props.activeTerminalId ||
             (props.activeTerminalId === "" && index === 0));
         return (
-          <button
+          <div
             className={`shell-s${selected ? " shell-s--on" : ""}`}
-            type="button"
             key={session.id}
+            data-session-id={session.id}
             aria-current={selected ? "page" : undefined}
-            onClick={() => props.onSelect(session.id)}
           >
-            <span className="shell-g">
-              <SessionTypeIcon
-                type={session.agent}
-                className="shell-g__glyph"
-                filePath={session.filePath}
-              />
+            <button
+              className="shell-s__open"
+              type="button"
+              onClick={() => props.onSelect(session.id)}
+            >
+              <span className="shell-g">
+                <SessionTypeIcon
+                  type={session.agent}
+                  className="shell-g__glyph"
+                  filePath={session.filePath}
+                />
+              </span>
+              <span className="shell-s__t">{session.label}</span>
+            </button>
+            <span className="shell-s__a">
+              {props.onClose && (
+                <button
+                  className="shell-s__close"
+                  type="button"
+                  aria-label={`Close ${session.label}`}
+                  title={`Close ${session.label}`}
+                  onClick={() => props.onClose?.(session.id)}
+                >×</button>
+              )}
             </span>
-            <span className="shell-s__t">{session.label}</span>
-            <span className="shell-s__a" />
-          </button>
+          </div>
         );
       })}
     </>
@@ -521,6 +554,9 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
             activeTerminalId={props.activeTerminalId}
             active={terminalsHighlighted}
             onSelect={props.onSelectTerminal}
+            {...(props.onCloseTerminal === undefined
+              ? {}
+              : { onClose: props.onCloseTerminal })}
           />
         )}
       </div>

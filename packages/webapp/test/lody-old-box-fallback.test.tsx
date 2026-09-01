@@ -263,14 +263,14 @@ describe("the capability probe", () => {
 });
 
 /**
- * The pane column, with nothing in it but its strips.
+ * The pane column, with nothing in it.
  *
- * Every prop below is required and none of them is what is under test: with no
- * rendered session and no fallback, `WorkPanes` draws its strips and the drop
- * plumbing and nothing else, which is exactly the thing §4.6 of
- * plans/LODY-TERMINAL-TABS.md moves.
+ * Every prop below is required and none of them is what is under test. Since
+ * the native strip was deleted (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2") the
+ * column draws NO tab strip in any column of §6's table, which is what the
+ * cases below assert: an old image does not get one back.
  */
-function workPanesProps(tabStrips: boolean): WorkPanesProps {
+function workPanesProps(sessionsPending: boolean): WorkPanesProps {
   return {
     // SAFETY: no rendered session means no surface asks the client for
     // anything; stating a whole `ControlPlaneClient` would say nothing here.
@@ -280,17 +280,12 @@ function workPanesProps(tabStrips: boolean): WorkPanesProps {
     renderedSessions: [],
     surfaceRegion: () => "main",
     paneActiveId: () => null,
-    paneTabModels: () => [{ id: "12", label: "bash", agent: "terminal", pending: false }],
     paneFallback: () => null,
     sidePaneWidth: 320,
     paneResizing: false,
-    tabDrag: null,
-    splitEnabled: true,
-    tabStrips,
+    sessionsPending,
     mobile: false,
     drawerOpen: false,
-    tabsLoaded: true,
-    workspaceWaking: false,
     canEditWorkspaceLayout: true,
     activeWorkspace: undefined,
     activeWorkspaceId: "ws-1",
@@ -307,14 +302,6 @@ function workPanesProps(tabStrips: boolean): WorkPanesProps {
     pendingRequestsError: null,
     connectionsFocus: null,
     onOpenDrawer: () => undefined,
-    onSelectSession: () => undefined,
-    onCloseSession: () => undefined,
-    onRenameSession: () => undefined,
-    onSpawnSession: () => undefined,
-    onTabDragStart: () => undefined,
-    onTabDragEnd: () => undefined,
-    onTabDragOver: () => undefined,
-    onTabDrop: () => undefined,
     onOpenPreview: () => false,
     onOpenPreviewLink: () => false,
     onResolveRequest: async () => undefined,
@@ -330,8 +317,6 @@ interface Mounted {
   seen: { rail: LodyRailState | null };
   /** How many times the 3.5 MB surface module was imported. */
   surfaceImports: () => number;
-  /** How many times the flag-off tab set was seeded into a fresh workspace. */
-  legacyDefaults: () => number;
 }
 
 /**
@@ -345,7 +330,6 @@ interface Mounted {
 async function mountFallback(options: {
   fetchImpl: typeof fetch;
   path: string;
-  tabCount: number;
 }): Promise<Mounted & { view: Awaited<ReturnType<typeof render>> }> {
   vi.resetModules();
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
@@ -361,7 +345,6 @@ async function mountFallback(options: {
   window.history.replaceState({}, "", options.path);
 
   const seen: Mounted["seen"] = { rail: null };
-  let legacyDefaults = 0;
   // The rail draws its list region from the first render, which is what makes
   // the region mount before the member ever asks for a session.
   const railHost = document.createElement("div");
@@ -371,16 +354,17 @@ async function mountFallback(options: {
   function Host() {
     const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname));
     const capability = useLodySessionsCapability(ENDPOINTS.lodyPlatformUrl, options.fetchImpl);
-    const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, options.tabCount, {
+    const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, {
       capability,
-      onLegacyDefaultTabs: () => {
-        legacyDefaults += 1;
-      },
+      // `CloudApp`'s `surfaceTabsEnabled`. A box with no session plane never
+      // draws the strip, so its workspace root is NOT normalised into the chat
+      // plane — it keeps the panes, and the rail's notice says why.
+      surfaceHostsTabs: capability === "present",
     });
     seen.rail = rail;
     return (
       <>
-      <WorkPanes {...workPanesProps(!rail.available)} />
+      <WorkPanes {...workPanesProps(capability === "probing")} />
       <LodySessionsRegion
         endpoints={ENDPOINTS}
         sessions={capability}
@@ -401,7 +385,7 @@ async function mountFallback(options: {
 
   const view = await render(<Host />);
   await settle();
-  return { seen, surfaceImports: () => imports, legacyDefaults: () => legacyDefaults, view };
+  return { seen, surfaceImports: () => imports, view };
 }
 
 describe("a workspace whose box serves no session daemon", () => {
@@ -410,7 +394,6 @@ describe("a workspace whose box serves no session daemon", () => {
     const mounted = await mountFallback({
       fetchImpl: answering(403),
       path: "/workspaces/ws-1",
-      tabCount: 2,
     });
     // `onVendorHost` absent IS the legacy rail: `SessionRail` draws the New tab
     // bar and one row per managed tab exactly when it is.
@@ -422,21 +405,26 @@ describe("a workspace whose box serves no session daemon", () => {
     // surface keeps the native pane strip, because that strip is the only tab
     // control it has.
     expect(mounted.seen.rail?.available).toBe(false);
-    expect(mounted.view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    // AND IT DOES NOT GET THE NATIVE STRIP BACK. §4.6 kept the pane strip for
+    // exactly this box; "PR 2" deleted the strip outright, so the honest answer
+    // for a machine that cannot run the surface is the rail's notice below and
+    // not a tab strip nothing else in the product still draws.
+    expect(mounted.view.container.querySelector(".webapp-pane-strip")).toBeNull();
+    expect(mounted.view.container.querySelector(".webapp-tabstrip")).toBeNull();
     await mounted.view.unmount();
   });
 
-  it("seeds the flag-off tabs into a fresh workspace instead of a landing", async () => {
+  it("leaves a fresh workspace on the panes and seeds no legacy tabs", async () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     const mounted = await mountFallback({
       fetchImpl: answering(403),
       path: "/workspaces/ws-1",
-      tabCount: 0,
     });
-    // §0.4's other half. The address stays on the panes: a chat landing this
-    // box cannot serve is a worse place to strand a member than a terminal.
+    // The address stays put: a chat landing this box cannot serve is not
+    // somewhere to send anybody. `terminalFirstWorkspaceTabs()` used to be
+    // written in here and is deleted with the strip — it seeded exactly the
+    // tabs only that strip could draw.
     expect(window.location.pathname).toBe("/workspaces/ws-1");
-    expect(mounted.legacyDefaults()).toBe(1);
     await mounted.view.unmount();
   });
 
@@ -445,7 +433,6 @@ describe("a workspace whose box serves no session daemon", () => {
     const mounted = await mountFallback({
       fetchImpl: refusing(noMachineRefusal()),
       path: "/workspaces/ws-1",
-      tabCount: 2,
     });
     // The rail behaves identically for both structural absences — that is what
     // `lodySessionsUnavailable` is for, and it is why a fourth reading needed no
@@ -454,7 +441,7 @@ describe("a workspace whose box serves no session daemon", () => {
     expect(mounted.seen.rail?.visible).toBe(false);
     expect(mounted.seen.rail?.available).toBe(false);
     expect(mounted.surfaceImports()).toBe(0);
-    expect(mounted.view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    expect(mounted.view.container.querySelector(".webapp-pane-strip")).toBeNull();
     await mounted.view.unmount();
   });
 
@@ -463,7 +450,6 @@ describe("a workspace whose box serves no session daemon", () => {
     const mounted = await mountFallback({
       fetchImpl: answering(403),
       path: "/workspaces/ws-1/chat/s-1",
-      tabCount: 1,
     });
     // The address survives — a reload on a recreated machine finds it again —
     // but nothing believes a chat is on screen, so the panes stay visible.
@@ -476,12 +462,10 @@ describe("a workspace whose box serves no session daemon", () => {
     const mounted = await mountFallback({
       fetchImpl: answering(200),
       path: "/workspaces/ws-1/chat",
-      tabCount: 1,
     });
     expect(mounted.seen.rail?.onVendorHost).not.toBeUndefined();
     expect(mounted.seen.rail?.visible).toBe(true);
     expect(mounted.surfaceImports()).toBe(1);
-    expect(mounted.legacyDefaults()).toBe(0);
     // The other half of §4.6: on a box that serves the surface the terminals
     // are tabs of Lody's strip, so the native one is not drawn at all.
     expect(mounted.seen.rail?.available).toBe(true);
@@ -495,7 +479,6 @@ describe("a workspace whose box serves no session daemon", () => {
     const mounted = await mountFallback({
       fetchImpl: pending,
       path: "/workspaces/ws-1/chat",
-      tabCount: 1,
     });
     // The vendored ZONE is kept, so a good box does not flicker from legacy to
     // vendored; the CHUNK is not, because one round trip is far cheaper than
@@ -516,6 +499,7 @@ describe("the rail's notice", () => {
         livePorts={[]}
         previewLinks={[]}
         onSelectSession={() => undefined}
+        onCloseSession={() => undefined}
         onSpawnSession={() => undefined}
         onOpenPreview={() => undefined}
         onOpenPreviewLink={() => undefined}

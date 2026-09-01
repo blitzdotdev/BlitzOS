@@ -51,11 +51,20 @@ const ENDPOINTS = {
   lodyPlatformUrl: "https://box.invalid/webapp/7445/lody/platform",
 } satisfies BoxEndpoints;
 
-/** The box answered `/lody/platform`, which is every case below: what is under
- * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`). */
+/**
+ * The box answered `/lody/platform`, which is every case below: what is under
+ * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`).
+ *
+ * `surfaceHostsTabs: false` — the layout where THE PANES OWN THE VIEW, which is
+ * the whole subject of this file. Where the session strip draws the tabs there
+ * is no pane address to hand the view back to: the workspace root normalises
+ * into the chat plane, because the native strip that used to serve it is deleted
+ * (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"). Mobile and a box with no session
+ * plane are what is left, and they are what these cases describe.
+ */
 const SESSIONS_PRESENT = {
   capability: "present",
-  onLegacyDefaultTabs: () => {},
+  surfaceHostsTabs: false,
 } satisfies LodyRailSessions;
 
 interface MountResult {
@@ -105,7 +114,6 @@ async function mountRegion(options: { path: string; tabCount: number }): Promise
       setRoute,
       route.workspaceId ?? "",
       true,
-      options.tabCount,
       SESSIONS_PRESENT,
     );
     seen.rail = rail;

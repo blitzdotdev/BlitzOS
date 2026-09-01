@@ -95,6 +95,9 @@ export interface LodyRailBinding {
   terminals: DriveRailSession[];
   activeTerminalId: string;
   onSelectTerminal: (tabId: string) => void;
+  /** Close one terminal tab from its rail row — the deleted native strip's
+   * close, moved (`SessionRailSidebar`'s `TerminalRows`). */
+  onCloseTerminal?: (tabId: string) => void;
   /**
    * THE SHELL'S OWN NAVIGATORS, and the reason they exist rather than the
    * surface routing itself.
@@ -484,6 +487,9 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             activeSessionId={activeSessionId}
             surfaceVisible={props.hidden !== true}
             onSelectTerminal={rail.onSelectTerminal}
+            {...(rail.onCloseTerminal === undefined
+              ? {}
+              : { onCloseTerminal: rail.onCloseTerminal })}
             onSelectSession={rail.onOpenSession ?? openSession}
             onOpenLanding={rail.onOpenLanding ?? openLanding}
             {...(rail.terminalsAction === undefined
