@@ -15,6 +15,7 @@ import { ArrowUp, Loader2 } from 'lucide-react';
 import { Button } from '@/ui/button';
 import type { AcpSessionSelectOption } from '@/components/shared/acp-session-select';
 import { useSessionAgentRole } from '@/hooks/use-session-agent-role';
+import { useAppCapability } from '@/lib/app-platform';
 import { buildAgentRoleFormValueFromRunConfig } from '@/lib/agent-role-form';
 import { doesAgentRolePinPermissionMode } from '@/lib/composer-agent-roles';
 import { resolvePermissionModeFace } from '@/lib/permission-mode-face';
@@ -370,6 +371,14 @@ export function getSessionChatInputAreaShellClassName({
 
 export interface SessionChatInputAreaProps {
   session: SessionMeta;
+  /**
+   * Drop the run-config menu's Agent Role row.
+   *
+   * For a host whose workspace catalog carries no Roles and no writer for one:
+   * with an empty list the row does not disappear, it renders a "New role"
+   * entry that opens an editor whose save has nowhere to land.
+   */
+  hideAgentRoles?: boolean;
   sessionLocalProjectRootPath: string | null;
   isMachineRemoved: boolean;
   isAgentBusy: boolean;
@@ -458,6 +467,7 @@ export const SessionChatInputArea = memo(
   forwardRef<SessionChatInputAreaHandle, SessionChatInputAreaProps>(function SessionChatInputArea(
     {
       session,
+      hideAgentRoles = false,
       sessionLocalProjectRootPath,
       isMachineRemoved,
       canStopAgent = false,
@@ -1923,7 +1933,15 @@ export const SessionChatInputArea = memo(
         }),
       [effectiveWorkspaceId, localMachineId, session, sessionLocalProjectRootPath]
     );
-    const repoFullName = useMemo(() => resolveSessionRepoFullName(session), [session]);
+    // `@issue`, `@pr` and the `#123` hydrator all key off this name, and all
+    // three resolve against the GitHub App. A platform without the
+    // `githubIntegration` capability has no App, so a local clone's remote must
+    // not enable them.
+    const githubIntegrationAvailable = useAppCapability('githubIntegration');
+    const repoFullName = useMemo(
+      () => (githubIntegrationAvailable ? resolveSessionRepoFullName(session) : ''),
+      [githubIntegrationAvailable, session]
+    );
     const codeCollabRequestedRole = useCodeCollabRequestedRole();
     // Code Collab files live in the worktree owned by the top-level (parent)
     // session; child-session tabs share that same workspace. Look the space up
@@ -2165,7 +2183,7 @@ export const SessionChatInputArea = memo(
         configOptionValues={configOptionValues}
         onConfigOptionChange={onConfigOptionChange}
         fallbackAgent={{ cliType: session.cliType, agentType: session.agentType }}
-        agentRoles={agentRolesProp}
+        agentRoles={hideAgentRoles ? undefined : agentRolesProp}
       />
     ) : null;
     const desktopAgentMachineIds = useMemo(
@@ -2198,7 +2216,7 @@ export const SessionChatInputArea = memo(
           onConfigOptionChange={onConfigOptionChange}
           modeOptions={modeOptions}
           selectedModeId={selectedModeId}
-          agentRoles={agentRolesProp}
+          agentRoles={hideAgentRoles ? undefined : agentRolesProp}
         />
         {sessionAgentRolePinsPermissionMode ? null : (
           <DesktopPermissionModeButton

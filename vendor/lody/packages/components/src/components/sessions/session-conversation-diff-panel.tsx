@@ -45,6 +45,7 @@ import { useSessionAllChangesDiffData } from './use-session-all-changes-diff-dat
 import { useSessionConversationDiffData } from './use-session-conversation-diff-data';
 import { useGitHubReviewComments } from '@/hooks/use-github-review-comments';
 import { withGitHubOperationTokenRetry, withGitHubTokenRetry } from '@/lib/github-token';
+import { useAppCapability } from '@/lib/app-platform';
 import { getPullRequestNumber, getSessionGitHubState } from '@/lib/session-github-state';
 import { SessionFileDiffNoticeCard } from './session-file-diff-notice-card';
 import { DiffFileHeaderActions } from '@/ui/diff-viewer/diff-file-header-actions';
@@ -428,9 +429,14 @@ function SessionConversationDiffPanelImpl({
   const { cacheKey, normalizedPaths, resolvedByPath, isDiffUnavailable } = isBaseMode
     ? allChangesDiffData
     : conversationDiffData;
+  // `commentsEnabled` and `prLinked` below are the only way a review comment can
+  // be drafted, and both post to the GitHub App. Without the capability there is
+  // no App, so the repo a local clone names must not open the draft.
+  const githubIntegrationAvailable = useAppCapability('githubIntegration');
   const { repoFullName, latestPr } = useMemo(
-    () => getSessionGitHubState(session ?? null, workspaceSession ?? null),
-    [session, workspaceSession]
+    () =>
+      getSessionGitHubState(session ?? null, workspaceSession ?? null, githubIntegrationAvailable),
+    [githubIntegrationAvailable, session, workspaceSession]
   );
   const latestPrNumber = getPullRequestNumber(latestPr);
   const githubReviewComments = useGitHubReviewComments({

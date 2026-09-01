@@ -212,6 +212,7 @@ import {
   getPullRequestRepoFullName,
   getSessionGitHubState,
 } from '@/lib/session-github-state';
+import { useAppCapability } from '@/lib/app-platform';
 import {
   resolveMachineDotlodyPath,
   resolveSessionWorkspacePath,
@@ -693,6 +694,10 @@ const SessionDetail = ({
   urlBrowser,
   onMobileBack,
   readOnly = false,
+  hideCloudMenuItems = false,
+  hideNotificationPrompt = false,
+  hideAgentRoles = false,
+  keyboardShortcutsAvailable = true,
   surfaceTabs = EMPTY_SURFACE_TABS,
   activeSurfaceTabId = null,
   onSurfaceTabSelect,
@@ -709,6 +714,25 @@ const SessionDetail = ({
   /** Follow the session without driving it. Passed to every chat surface this
    * page mounts; see `SessionChatInterfaceProps.readOnly`. */
   readOnly?: boolean;
+  /** Passed to every chat surface this page mounts; see
+   * `SessionChatInterfaceProps.hideCloudMenuItems`. */
+  hideCloudMenuItems?: boolean;
+  /** Passed to every chat surface this page mounts; see
+   * `SessionChatInterfaceProps.hideNotificationPrompt`. */
+  hideNotificationPrompt?: boolean;
+  /** Passed to every chat surface this page mounts; see
+   * `SessionChatInterfaceProps.hideAgentRoles`. */
+  hideAgentRoles?: boolean;
+  /**
+   * Whether the host answers keyboard commands at all.
+   *
+   * This page registers `session.focusInput`, and the composer reads that
+   * registration to draw a ⌘L discovery chip. A host that never calls
+   * `commands.attach(window)` has no dispatcher, so the chip advertises a chord
+   * that does nothing. On by default, so every upstream call site keeps the
+   * registration and the chip.
+   */
+  keyboardShortcutsAvailable?: boolean;
   /** Host-contributed tabs, drawn after the session tabs. Empty by default, so
    * the strip and the surfaces are exactly what they were without them. */
   surfaceTabs?: readonly SessionSurfaceTab[];
@@ -1685,9 +1709,11 @@ const SessionDetail = ({
     return 'idle';
   }, [activeSession, activeSessionLiveStatus]);
   useTabStatus(tabStatus);
+  const githubIntegrationAvailable = useAppCapability('githubIntegration');
   const { latestPr, repoFullName, canShowGitHubActions } = useMemo(
-    () => getSessionGitHubState(activeTabSession, workspaceOwnerSession),
-    [activeTabSession, workspaceOwnerSession]
+    () =>
+      getSessionGitHubState(activeTabSession, workspaceOwnerSession, githubIntegrationAvailable),
+    [activeTabSession, githubIntegrationAvailable, workspaceOwnerSession]
   );
   const latestPrNumber = getPullRequestNumber(latestPr);
   const latestPrRepoFullName = getPullRequestRepoFullName(latestPr) ?? repoFullName;
@@ -3869,6 +3895,11 @@ const SessionDetail = ({
     run: handleOpenSearch,
   });
 
+  // The composer draws its ⌘L discovery chip from this registration
+  // (`chat-composer.tsx` reads `commands.getKeybindingsFor('session.focusInput')`),
+  // so a host with no keyboard dispatcher must not make it. Passing the flag as
+  // `useCommand`'s second argument keeps this to one changed line in a file the
+  // seam pin reads line by line.
   useCommand({
     id: 'session.focusInput',
     title: t('commands.session.focusInput', 'Focus Current Input'),
@@ -3876,7 +3907,7 @@ const SessionDetail = ({
     keybindings: getCommandKeybindings('session.focusInput'),
     when: () => Boolean(chatRefsMap.current.get(activeTabSessionId)),
     run: handleFocusActiveInput,
-  });
+  }, keyboardShortcutsAvailable);
 
   useCommand({
     id: 'session.saveCurrentFile',
@@ -5721,6 +5752,9 @@ const SessionDetail = ({
       className: 'h-full',
       hideHeader: true,
       readOnly,
+      hideCloudMenuItems,
+      hideNotificationPrompt,
+      hideAgentRoles,
       syncEnabled: isActive || pendingForkSourceId !== undefined,
       isVisible,
       onFileDiffClick: handleOpenFileDiffForChat,

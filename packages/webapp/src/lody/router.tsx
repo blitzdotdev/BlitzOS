@@ -53,6 +53,12 @@ import { useWorkspaceContextAtoms } from "@lody/components/hooks/use-workspace-c
 import { WorkspaceRouteTargetProvider } from "@lody/components/providers/workspace-route-target";
 import { TerminalTabsHost } from "./TerminalTabsStrip.js";
 import { useSurfaceTabs } from "./surface-tabs.js";
+import { lodyV1SuppressionProps } from "./v1-scope.js";
+
+/** Seam patch 7's props, built once from `LODY_V1_SCOPE`. A constant per module
+ * load, not per render: the scope is a build-time decision, and rebuilding the
+ * object every render would re-run every memo that depends on it. */
+const V1 = lodyV1SuppressionProps();
 
 /** Every address their components navigate to that we render as nothing.
  *
@@ -69,19 +75,43 @@ const STUB_PATHS = [
 
 const WORKSPACE_STUB_PATHS = ["archive"] as const;
 
+/** Every settings page upstream declares, stubbed.
+ *
+ * X8 WAS A LATENT THROW. This list held the thirteen addresses
+ * `use-open-settings.ts` navigates to on mobile, and upstream declares TWENTY
+ * pages under `routes/$workspaceName/_auth/settings/`. `router.navigate({ to })`
+ * throws on an address the tree does not hold, so the seven that were missing —
+ * `agent-config`, `agent-roles`, `devices`, `general`, `mcp`, `my-machines`,
+ * `stats` — were one upstream `<Link>` away from crashing the surface.
+ *
+ * The list is now upstream's own directory listing, so it cannot drift the
+ * unsafe way: adding a page upstream and not here is the only remaining gap, and
+ * `packages/webapp/test/lody-v1-scope-sources.test.ts` compares the two.
+ *
+ * NONE OF THEM RENDERS ANYTHING, AND THAT IS THE DECISION. BlitzOS serves its
+ * own settings from its own chrome; the vendored affordances that pointed here
+ * are deleted rather than wired up (see `v1-scope.ts`). What is left is an
+ * address that resolves, which is what stops the throw. */
 const SETTINGS_STUB_PATHS = [
   "about",
   "account",
+  "agent-config",
+  "agent-roles",
   "agents",
   "ai-usage",
   "appearance",
   "billing",
+  "devices",
+  "general",
   "github",
   "keyboard-shortcuts",
   "machines",
+  "mcp",
+  "my-machines",
   "people",
   "preferences",
   "projects",
+  "stats",
   "workspace",
 ] as const;
 
@@ -174,6 +204,13 @@ function ChatRoute() {
       preSelectedRepo={search.repo}
       resetDraftKey={search.resetDraftKey}
       onSelectionUrlSync={onSelectionUrlSync}
+      // Seam patch 7. `hideProductHints` takes the whole hint band, which in a
+      // browser always resolves `download-client` and tells a BlitzOS member to
+      // install the Lody desktop app (S7), beside a Report-a-bug button that
+      // uploads to Lody cloud (S8), a Discord link (S10) and a Go-to-settings
+      // button that flips an atom nothing renders (S9).
+      hideProductHints={V1.hideProductHints}
+      hideAgentRoles={V1.hideAgentRoles}
     />
   );
   // No shell around this mount contributes tabs — a headless render, a router
@@ -231,6 +268,16 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           // state it already has for an offline machine instead of accepting a
           // click and answering with an error toast.
           sideChatRequiresAssistantTurn
+          // Seam patch 7. `hideCloudMenuItems` takes the header menu's "Change
+          // owner" (IC83), "Share with team" (IC84) and "Copy URL" (IC88);
+          // `hideNotificationPrompt` takes the OneSignal prompt (IC60);
+          // `keyboardShortcutsAvailable` stops `session.focusInput` registering,
+          // which is what the composer's ⌘L chip reads (C100) for a chord no
+          // dispatcher answers (C102).
+          hideCloudMenuItems={V1.hideCloudMenuItems}
+          hideNotificationPrompt={V1.hideNotificationPrompt}
+          hideAgentRoles={V1.hideAgentRoles}
+          keyboardShortcutsAvailable={V1.keyboardShortcutsAvailable}
           {...hostTabs}
         />
       </AppThemeShell>

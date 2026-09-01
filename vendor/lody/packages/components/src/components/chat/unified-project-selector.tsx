@@ -18,6 +18,7 @@ import { useConvexErrorMessage } from '@/hooks/use-convex-error-message';
 import { useVisibleLocalProjects } from '@/hooks/use-visible-local-projects';
 import { CachedAvatarImg } from '@/components/cached-avatar-img';
 import { getSessionSharingDescription, ProjectShareDialog } from '@/components/session-sharing';
+import { useAppCapability } from '@/lib/app-platform';
 import { getGitHubOwnerAvatarUrl } from '@/lib/github-avatar';
 import {
   resolveLocalProjectSharingState,
@@ -396,6 +397,10 @@ export function UnifiedProjectSelectorView({
   renderLimit,
 }: UnifiedProjectSelectorViewProps) {
   const { t } = useTranslation();
+  // "Connect more GitHub projects" opens the GitHub App install flow. A platform
+  // that declares no `githubIntegration` has no flow to open, and the entry then
+  // sits under a repo list that is empty for exactly that reason.
+  const githubIntegrationAvailable = useAppCapability('githubIntegration');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [pendingProjectShare, setPendingProjectShare] = useState<UnifiedProjectOption | null>(null);
@@ -632,10 +637,12 @@ export function UnifiedProjectSelectorView({
             <FolderPlus className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span>{t('chat.contextSwitch.addProject', 'Add a local project')}</span>
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={onConnectGitRepo}>
-            <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span>{t('repos.connectMore', 'Connect more GitHub projects')}</span>
-          </DropdownMenuItem>
+          {githubIntegrationAvailable ? (
+            <DropdownMenuItem onSelect={onConnectGitRepo}>
+              <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span>{t('repos.connectMore', 'Connect more GitHub projects')}</span>
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
       {selectedPrivateSharing ? (

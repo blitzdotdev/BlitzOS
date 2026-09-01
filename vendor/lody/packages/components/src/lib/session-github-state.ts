@@ -73,14 +73,31 @@ export const resolveWorkspaceOwnerSession = (
   workspaceSession?: SessionMeta | null
 ): SessionMeta | null => workspaceSession ?? session ?? null;
 
+/**
+ * The GitHub identity and PR state a Session surface renders from.
+ *
+ * `gitHubIntegrationAvailable` is the `githubIntegration` platform capability,
+ * and it defaults to `true` so every existing caller keeps today's behaviour.
+ * Pass the capability where the answer decides what the user SEES: a local clone
+ * carries a GitHub remote whether or not the app can reach the GitHub App, and
+ * without this the repo name alone turns on "Create PR", the PR panel, the PR
+ * badge and the `@issue`/`@pr` mention categories on a platform that has no
+ * token to serve any of them.
+ */
 export const getSessionGitHubState = (
   session: SessionMeta | null | undefined,
-  workspaceSession?: SessionMeta | null
+  workspaceSession?: SessionMeta | null,
+  gitHubIntegrationAvailable = true
 ): SessionGitHubState => {
   const sourceSession = resolveWorkspaceOwnerSession(session, workspaceSession);
-  const repoFullName =
-    (resolveProjectGitHubRepo(sourceSession?.project) ?? sourceSession?.repoFullName)?.trim() ?? '';
-  const latestPr = getLatestPullRequest(sourceSession);
+  const repoFullName = !gitHubIntegrationAvailable
+    ? ''
+    : ((resolveProjectGitHubRepo(sourceSession?.project) ?? sourceSession?.repoFullName)?.trim() ??
+      '');
+  // Null with the capability off, not merely unused: `latestPr` is what the diff
+  // panel turns into a PR number, and a review-comment fetch keyed on a number
+  // with no repo is a request that can only fail.
+  const latestPr = gitHubIntegrationAvailable ? getLatestPullRequest(sourceSession) : null;
   const latestPrState = latestPr?.url
     ? (sourceSession?.pullRequestState?.[latestPr.url] ?? null)
     : null;
