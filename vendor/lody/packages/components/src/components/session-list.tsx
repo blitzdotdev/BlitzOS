@@ -83,6 +83,7 @@ import {
   SessionPrIcon,
   SessionRowAuthorAvatar,
   SessionRowLeadingSlot,
+  SessionRowWorktreeIndicator,
   SidebarRowArchiveButton,
   SidebarRowEndSlot,
   SessionMergeablePill,
@@ -811,6 +812,7 @@ const SessionGroupSection = memo(function SessionGroupSection({
               prStatus !== 'merged' &&
               prStatus !== 'closed';
             const showMergeablePill = isMergeable && !isSelected;
+            const showWorktreeIcon = session.isWorktree === true;
             const canArchive = typeof onArchiveSession === 'function';
             const showInlineArchive = canArchive && !isMobile;
             const isChatSession = group.kind === 'chat';
@@ -1001,7 +1003,7 @@ const SessionGroupSection = memo(function SessionGroupSection({
                             className="text-xs text-muted-foreground"
                           />
                         </span>
-                      ) : hasPr || hasChanges || showMergeablePill || isMobile ? (
+                      ) : hasPr || hasChanges || showMergeablePill || showWorktreeIcon || isMobile ? (
                         <span
                           className={cn(
                             'flex select-none items-center gap-1.5 text-[11px] tabular-nums text-sidebar-foreground-muted/80',
@@ -1022,6 +1024,7 @@ const SessionGroupSection = memo(function SessionGroupSection({
                               <span className="text-code-removed">-{session.deletedLines}</span>
                             </span>
                           ) : null}
+                          <SessionRowWorktreeIndicator isWorktree={showWorktreeIcon} />
                           {hasPr ? (
                             <SessionPrIcon prStatus={prStatus} prCiState={session.prCiState} />
                           ) : null}

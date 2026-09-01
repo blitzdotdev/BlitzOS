@@ -21,10 +21,7 @@ import {
   publishBoxReposAsWorkspaceRepos,
   registerWorkspaceRepositories,
 } from "./local-projects.js";
-import {
-  applyDefaultSessionProject,
-  createDefaultSessionProjectResolver,
-} from "./workdir-default.js";
+import { applyDefaultSessionProject, createSessionProjectDefaults } from "./workdir-default.js";
 import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
 
 /**
@@ -128,7 +125,7 @@ export function LodyAgentConfigGate(props: {
     const open = (): void => {
       if (!cancelled) setReady(true);
     };
-    const resolveDefaultProject = createDefaultSessionProjectResolver(
+    const sessionProjectDefaults = createSessionProjectDefaults(
       endpoints,
       machineId,
       endpoints.filesRoot,
@@ -145,7 +142,7 @@ export function LodyAgentConfigGate(props: {
       // This re-enters through the subscription with the decorated runtime,
       // which `applyDefaultSessionProject` returns unchanged — so the bootstrap
       // below runs once, on the runtime the composer will actually write with.
-      const withDefaults = applyDefaultSessionProject(runtime, resolveDefaultProject);
+      const withDefaults = applyDefaultSessionProject(runtime, sessionProjectDefaults);
       if (withDefaults !== runtime) {
         store.set(runtimeAtom, withDefaults);
         return;

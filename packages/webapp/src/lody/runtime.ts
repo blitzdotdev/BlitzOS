@@ -40,7 +40,7 @@ import type { LodyHttpPlaneEndpoints } from "./rpc-client.js";
 import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
 import {
   applyDefaultSessionProject,
-  createDefaultSessionProjectResolver,
+  createSessionProjectDefaults,
 } from "./workdir-default.js";
 import type { LodySessionDocState } from "./wire-types.js";
 
@@ -270,14 +270,14 @@ export async function createLodyRuntime(options: {
     platformUrl: endpoints.platformUrl,
   };
   if (endpoints.fetchImpl !== undefined) planeEndpoints.fetchImpl = endpoints.fetchImpl;
-  const resolveDefaultProject = createDefaultSessionProjectResolver(
+  const sessionProjectDefaults = createSessionProjectDefaults(
     planeEndpoints,
     snapshot.machineId,
     endpoints.filesRoot,
   );
   // `dispose` below still runs on the original, which is the object holding the
   // repo and the transports.
-  const runtimeWithDefaults = applyDefaultSessionProject(runtime, resolveDefaultProject);
+  const runtimeWithDefaults = applyDefaultSessionProject(runtime, sessionProjectDefaults);
 
   return {
     runtime: runtimeWithDefaults,

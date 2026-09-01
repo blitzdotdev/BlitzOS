@@ -31,11 +31,12 @@
  * their scroll region, and §0's bias rule settles it: theirs wins, ours goes.
  * Terminals then reads last, below Chats.
  */
-import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { useAtomValue } from "jotai";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useAtomValue, useSetAtom } from "jotai";
 import { LoroSidebar } from "@lody/components/components/loro-sidebar";
 import { SessionList } from "@lody/components/components/session-list";
 import { SidebarSectionHeader } from "@lody/components/components/sidebar-row-shared";
+import { repoOrderAtom, setRepoOrderAtom } from "@lody/components/atoms/sidebar-state";
 import { activeWorkspaceRuntimeAtom } from "@lody/components/atoms/runtime";
 import { userAtom } from "@lody/components/atoms";
 import { useVisibleSessionMetas } from "@lody/components/hooks/use-visible-session-metas";
@@ -82,8 +83,14 @@ interface LodySessionRowActions {
   onArchiveSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, nextTitle: string) => Promise<void> | void;
   onTogglePinSession: (sessionId: string, nextPinned: boolean) => void;
-  onNavigateToNewSession: () => void;
   onShareSessionWithTeam?: (sessionId: string) => void;
+}
+
+/** One repo drag, as `SessionList` reports it (`SessionListRepoMove`,
+ * `session-list.tsx:159`). Only the reordered list is read here — the indices
+ * and the two names describe the same move. */
+interface LodyRepoMove {
+  nextRepos: { repoFullName: string }[];
 }
 
 export interface SessionRailSidebarProps {
@@ -150,6 +157,22 @@ function stableRepoFullNames(rows: LodySessionRow[]): string[] {
     if (name === "" || seen.has(name)) continue;
     seen.add(name);
     ordered.push(name);
+  }
+  return ordered;
+}
+
+/** The saved order first, then whatever the member has not dragged yet —
+ * upstream's `repos` memo (`loro-app-sidebar.tsx:2235`), which is the reading
+ * `repoOrderAtom` is written for. */
+function orderedRepoFullNames(present: string[], order: readonly string[]): string[] {
+  const remaining = new Set(present);
+  const ordered: string[] = [];
+  for (const repoFullName of order) {
+    if (!remaining.delete(repoFullName)) continue;
+    ordered.push(repoFullName);
+  }
+  for (const repoFullName of present) {
+    if (remaining.has(repoFullName)) ordered.push(repoFullName);
   }
   return ordered;
 }
@@ -307,13 +330,21 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
     [shareableRows],
   );
   const [collapsedRepos, setCollapsedRepos] = useState<Record<string, boolean>>({});
+  // THE MEMBER'S OWN ORDER, in the store upstream already keeps it in
+  // (`atoms/sidebar-state.ts:102`): one localStorage key per workspace, keyed on
+  // `currentWorkspaceIdAtom`, which `SessionSurface` publishes. Nothing new is
+  // persisted for RAIL-3 — the rail simply reads and writes the order the
+  // vendored sidebar has always had.
+  const repoOrder = useAtomValue<readonly string[]>(repoOrderAtom);
+  const setRepoOrder = useSetAtom(setRepoOrderAtom);
+  const repoFullNames = useMemo(() => stableRepoFullNames(worktrees), [worktrees]);
   const repos = useMemo(
     () =>
-      stableRepoFullNames(worktrees).map((repoFullName) => ({
+      orderedRepoFullNames(repoFullNames, repoOrder).map((repoFullName) => ({
         repoFullName,
         collapsed: collapsedRepos[repoFullName] ?? false,
       })),
-    [collapsedRepos, worktrees],
+    [collapsedRepos, repoFullNames, repoOrder],
   );
   const toggleRepo = useCallback((repoFullName: string) => {
     setCollapsedRepos((current) => ({
@@ -321,6 +352,31 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       [repoFullName]: !(current[repoFullName] ?? false),
     }));
   }, []);
+  // APPEND-ONLY, and the reason is upstream's (`loro-app-sidebar.tsx:2265`): a
+  // repo drops out of the list whenever its last session is archived or the
+  // mirror is mid-sync, and removing it here would lose its saved position and
+  // let two neighbours swap every time one flickers.
+  const repoOrderRef = useRef(repoOrder);
+  repoOrderRef.current = repoOrder;
+  useEffect(() => {
+    if (isLoading || repoFullNames.length === 0) return;
+    const known = new Set(repoOrderRef.current);
+    const added = repoFullNames.filter((repoFullName) => !known.has(repoFullName));
+    if (added.length === 0) return;
+    setRepoOrder([...repoOrderRef.current, ...added]);
+  }, [isLoading, repoFullNames, setRepoOrder]);
+  const moveRepo = useCallback(
+    (move: LodyRepoMove) => {
+      // A drag reorders only the repos on screen. The ones that are not — a repo
+      // whose sessions are all archived — keep their entries after the visible
+      // ones so they come back where the member left them.
+      const visible = move.nextRepos.map((repo) => repo.repoFullName);
+      const onScreen = new Set(visible);
+      const offScreen = repoOrderRef.current.filter((repoFullName) => !onScreen.has(repoFullName));
+      setRepoOrder([...visible, ...offScreen]);
+    },
+    [setRepoOrder],
+  );
 
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [worktreesCollapsed, setWorktreesCollapsed] = useState(false);
@@ -350,13 +406,12 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       onTogglePinSession: (sessionId: string, nextPinned: boolean) => {
         void setSessionPinned(sessionId, nextPinned);
       },
-      onNavigateToNewSession: () => onOpenLanding(),
     };
     // Absent, not undefined: their row draws the Share entry only when the
     // callback is present (`session-list.tsx:891`).
     if (onShareSession !== undefined) actions.onShareSessionWithTeam = onShareSession;
     return actions;
-  }, [archiveSession, onOpenLanding, onSelectSession, onShareSession, selectedSessionId, setSessionPinned, updateSessionTitle]);
+  }, [archiveSession, onSelectSession, onShareSession, selectedSessionId, setSessionPinned, updateSessionTitle]);
 
   const sessionListProps = useMemo(
     () => ({
@@ -365,8 +420,23 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       repos: worktreesCollapsed ? [] : repos,
       isLoading: worktreesCollapsed ? false : isLoading,
       onToggleRepoCollapsed: toggleRepo,
+      // RAIL-4. `onNew` is what draws the hover "+" in a group header
+      // (`session-list.tsx:595`), and upstream's own sidebar never passes it, so
+      // the affordance the QA sweep looked for had nothing to render it. It
+      // opens the landing rather than pre-selecting the repo: the landing's
+      // project picker is the only place a BlitzOS session picks a clone, and
+      // upstream's repo pre-selection addresses a `github` context this
+      // composition does not serve.
+      onNew: () => onOpenLanding(),
+      // RAIL-3. The drag handle renders only when a reorder can be persisted
+      // (`session-list.tsx:1410`), so passing the handler IS the affordance.
+      onMoveRepo: moveRepo,
+      // A repo header still navigates on click, which is upstream's own wiring
+      // for this list (`loro-app-sidebar.tsx:2643`); its chevron button carries
+      // the collapse.
+      onNavigateToNewSession: () => onOpenLanding(),
     }),
-    [isLoading, repos, rowActions, toggleRepo, worktrees, worktreesCollapsed],
+    [isLoading, moveRepo, onOpenLanding, repos, rowActions, toggleRepo, worktrees, worktreesCollapsed],
   );
 
   // An EMPTY Lody section renders nothing at all, header included, and that is
@@ -390,13 +460,27 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
 
   const afterSessionListContent = (
     <>
+      {/* RAIL-2: NO `onNavigateToNewSession` HERE, which is upstream's own
+          shape for this list (`loro-app-sidebar.tsx:2576`). The group header
+          runs `onNavigateToNewSession` when it has one and `handleToggleGroup`
+          only when it does not (`session-list.tsx:700`), and the "Chats" header
+          draws its chevron as decoration rather than as a button — so a rail
+          that passed both gave the section a chevron that could not collapse it
+          and a click that left for the landing instead. */}
       {showChats && (
         <SessionList
           {...rowActions}
           className={chatsCollapsed ? "mb-1" : "mb-3"}
-          sessions={chatsCollapsed ? [] : chats}
+          // THE FULL LIST, COLLAPSED OR NOT, and that is the other half of
+          // RAIL-2. `buildGroups` derives the Chats group FROM its sessions and
+          // marks it `collapsed` from this flag (`session-list.tsx:381`), then
+          // draws the header and skips the rows. Handing it an empty array
+          // instead deletes the group — so the heading that had just been
+          // collapsed disappeared with its own rows, and nothing was left to
+          // click to bring them back.
+          sessions={chats}
           repos={[]}
-          isLoading={chatsCollapsed ? false : isLoading}
+          isLoading={isLoading}
           chatsCollapsed={chatsCollapsed}
           onToggleChatsCollapsed={() => setChatsCollapsed((collapsed) => !collapsed)}
         />

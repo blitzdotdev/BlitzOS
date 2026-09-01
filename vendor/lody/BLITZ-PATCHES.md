@@ -741,6 +741,62 @@ half at the source, because `SessionChatInputArea` needs a runtime and a daemon.
 - If the image degrade-to-file fallback is removed upstream, hunks 3 and 4 go
   with it; the file hunks stand alone.
 
+### 9. `SessionList` rows lost the worktree glyph (WT-TERM-2, 2026-09-01)
+
+**One idea, four hunks in one file, all additive.** `SessionRowWorktreeIndicator`
+(`sidebar-row-shared.tsx:269`) exists, is exported, and is rendered by exactly
+two callers: `loro-app-sidebar.tsx:719`, which draws upstream's own Local
+Projects rows, and `sidebar-updated-session-list.tsx:922`. `SessionList` — the
+component that draws the Chats and GitHub Worktrees rows, and the ONLY session
+row a BlitzOS rail has — never renders it, although its rows already carry
+`isWorktree` (`session-list-rows.ts:339` sets it from the session meta). So on a
+box the glyph can never appear: the QA sweep found 0 `[aria-label="Worktree"]`
+nodes on every load, hovered and unhovered, over three worktree-backed sessions.
+
+The data is upstream's, the placement is upstream's, and the omission reads as an
+oversight rather than a decision: upstream's own comment on the indicator says
+"only LOCAL-project rows pass a truthy `isWorktree`", which is exactly what a
+BlitzOS session is. Open upstream as "the worktree glyph is missing from
+`SessionList` rows". **Drop this patch when it merges.**
+
+#### The hunks
+
+Line numbers are the vendored tree's BEFORE this patch.
+
+`packages/components/src/components/session-list.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 85 | `SessionRowLeadingSlot,` in the `@/components/sidebar-row-shared` import list | adds `SessionRowWorktreeIndicator,` |
+| 2 | 813 | `const showMergeablePill = isMergeable && !isSelected;` | adds `const showWorktreeIcon = session.isWorktree === true;` beside it — the same name and the same expression as `loro-app-sidebar.tsx:596` |
+| 3 | 1004 | `) : hasPr \|\| hasChanges \|\| showMergeablePill \|\| isMobile ? (` | gains `\|\| showWorktreeIcon`, so a worktree session with no PR and no diff still renders the metric cluster |
+| 4 | 1025 | `{hasPr ? (` inside that cluster | renders `<SessionRowWorktreeIndicator isWorktree={showWorktreeIcon} />` immediately before the PR icon |
+
+**Placement is copied, not chosen.** `loro-app-sidebar.tsx:717-721` puts the
+glyph to the LEFT of the PR icon and to the RIGHT of the line diff, so a
+worktree row reads `[diff][worktree][PR]`; hunk 4 lands it in the same position
+inside `SessionList`'s cluster. The component itself renders `null` for a falsy
+`isWorktree`, so hunk 4 alone changes nothing for a non-worktree row and hunk 3
+is what makes the cluster reachable for the rows that were previously empty.
+
+**The chat branch is deliberately NOT patched.** A `group.kind === 'chat'` row
+takes the time-only branch above (`:997`) and keeps it. A BlitzOS worktree
+session belongs under its repository heading, not under Chats, and the seam that
+puts it there is `packages/webapp/src/lody/workdir-default.ts` §2b — patching
+both would paper over that grouping bug instead of showing it.
+
+`packages/webapp/test/lody-rail-groups.test.tsx` drives the real vendored
+`SessionList`, through the real `SessionRailSidebar`, over a worktree row and a
+plain row — and pins this section by name, so deleting the hunks without
+retiring the declaration fails.
+
+#### Merge conflict drill
+
+- If upstream adds the glyph itself, drop all four hunks and keep upstream's.
+- If the end slot's rest cluster is restructured, re-apply by the one rule: a
+  row whose `isWorktree` is true renders `SessionRowWorktreeIndicator`, next to
+  the PR icon.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.
