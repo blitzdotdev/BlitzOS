@@ -18,6 +18,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -33,6 +34,7 @@ const (
 	terminalAddress        = "127.0.0.1:7443"
 	terminalHost           = "localhost:7443"
 	terminalOrigin         = "http://localhost:7443"
+	terminalKillPath       = "/terminal/kill"
 	lodyBridgeSocketPath   = "/var/lib/blitz/lody-bridge.sock"
 	lodySyncPath           = "/lody/sync"
 	lodyRPCPath            = "/lody/rpc"
@@ -147,6 +149,7 @@ type gateway struct {
 	connectionsFocusPath   string
 	agentCredentialPath    string
 	discover               func() ([]portInfo, error)
+	killTerminal           func(sessionType, sessionKey string) error
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
 	authRequired           bool
@@ -301,6 +304,7 @@ func main() {
 		connectionsFocusPath:   connectionsFocusPath,
 		agentCredentialPath:    agentCredentialPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
+		killTerminal:           killTerminalSession,
 		transport:              http.DefaultTransport,
 	}
 	server := &http.Server{
@@ -407,6 +411,11 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		g.serveTerminal(response, request)
 		return
 	}
+	if request.URL.Path == terminalKillPath {
+		removeWebAppTokenHeader(request.Header)
+		g.serveTerminalKill(response, request, identity)
+		return
+	}
 	if _, isLody := lodyPaths[request.URL.Path]; isLody {
 		removeWebAppTokenHeader(request.Header)
 		g.serveLody(response, request, identity, strings.TrimPrefix(request.URL.Path, "/lody"))
@@ -501,6 +510,73 @@ func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Requ
 		proxyRequest.Out.Header.Set("Origin", terminalOrigin)
 	}
 	proxy.ServeHTTP(response, request)
+}
+
+// terminalTarget names one terminal tab the way ttyd is handed it: the session
+// type and the tab's own key. `/terminal/ws` sends the pair as `arg` values and
+// this door sends the same pair, so both describe the same tmux session.
+type terminalTarget struct {
+	Type string `json:"type"`
+	Key  string `json:"key"`
+}
+
+// serveTerminalKill ends the tmux session behind ONE terminal tab, and it is
+// the only thing on the box that ends one. A closed websocket never does:
+// a reload, a navigation and a dropped tunnel all reconnect to the session they
+// left, which is the whole re-attach contract (plans/LODY-TERMINAL-TABS.md
+// §4.4). So the webApp calls this on an explicit tab close and nowhere else.
+func (g *gateway) serveTerminalKill(response http.ResponseWriter, request *http.Request, identity webAppIdentity) {
+	response.Header().Set("Cache-Control", "no-store")
+	if request.Method == http.MethodOptions {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", "POST, OPTIONS")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// An observer watches a tab; ending the workspace's own process is not
+	// watching.
+	if identity.Role == "viewer" {
+		deny(response, request, http.StatusForbidden, "a viewer never ends a terminal session", roleDetail(identity))
+		return
+	}
+	target := terminalTarget{}
+	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, 4<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&target); err != nil || requireJSONEOF(decoder) != nil ||
+		target.Type == "" || target.Key == "" {
+		http.Error(response, "invalid terminal target", http.StatusBadRequest)
+		return
+	}
+	if err := g.killTerminal(target.Type, target.Key); err != nil {
+		log.Printf("terminal kill failed: %v", err)
+		http.Error(response, "terminal kill failed", http.StatusBadGateway)
+		return
+	}
+	response.WriteHeader(http.StatusNoContent)
+}
+
+// blitzTermPath is the one place a tmux session NAME is decided. The close door
+// hands blitz-term the same session type and key ttyd hands it, so the naming
+// rule is never written twice.
+const blitzTermPath = "/usr/local/libexec/blitz-term"
+
+// killTerminalSession runs the same script ttyd runs, in the mode that ends the
+// session instead of attaching it. The gateway and ttyd run as the same user
+// with the same HOME, so this reaches the same tmux server the tabs live on.
+// The two values are argv, never a shell word, and blitz-term refuses a session
+// type or key it does not recognize.
+func killTerminalSession(sessionType, sessionKey string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, blitzTermPath, sessionType, sessionKey, "kill").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("blitz-term kill %s %s: %w: %s",
+			sessionType, sessionKey, err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 // unixSocketTransport dials one unix socket whatever address the proxy asks

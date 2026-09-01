@@ -112,6 +112,7 @@ import {
   newestPreviewLinks,
   previewLinkLabel,
 } from './preview';
+import { killTerminalSession } from './terminal-kill';
 import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
 import { CreateOrgPage } from './components/CreateOrgPage';
@@ -1349,6 +1350,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     ({ workspace_id }) => workspace_id === activeWorkspaceId,
   );
   const closeTtydSessionNow = (id: string) => {
+    // The one place a terminal tab is CLOSED, from either strip. The tmux
+    // session outlives its websocket by design — that is what a reload, a
+    // workspace switch and a lost tunnel all re-attach to — so this is also
+    // the one place that ends one, and nothing on an unmount may do it.
+    const closing = ttydSessions.find((entry) => String(entry.id) === id);
+    if (closing !== undefined && isManagedWorkspaceTab(closing) && activeFilesBase !== null) {
+      void killTerminalSession(activeFilesBase, { type: closing.type, key: id });
+    }
     updateWorkspaceTabs((tabs) => {
       const tab = tabs.tabs.find((entry) => String(entry.id) === id);
       return tab === undefined ? tabs : closePaneTab(tabs, tab.id);
