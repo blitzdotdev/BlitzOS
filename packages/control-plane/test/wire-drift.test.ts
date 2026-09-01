@@ -68,6 +68,8 @@ const boxConfigResponse: SharedShape<
   schema.BoxConfigResponse
 > = {
   boxImageRef: "ghcr.io/blitzdotdev/blitz-box:v2",
+  // Empty is what a registry pin sends: the ref carries its own digest there.
+  boxImageSha256: "",
   controlPlaneOrigin: "https://cp.example",
   updateRequested: true,
 };
