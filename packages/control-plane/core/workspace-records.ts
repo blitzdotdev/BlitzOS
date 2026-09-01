@@ -14,6 +14,16 @@ import type {
 } from "./wire.js";
 import type { ComputeCredentialSource } from "./compute/types.js";
 
+/**
+ * Which plane asked for a machine.
+ *
+ * An agent acts as its own member, so membership cannot distinguish a person
+ * from the agent on their box — it is the same membership. Provenance can, and
+ * it is the whole basis of the rule that an agent may destroy only what the
+ * agent plane made (`assertMachinePlaneMayDestroy`).
+ */
+export type CreatedByPlane = "session" | "machine";
+
 /** The workspace row after MEMBER-MACHINES: configuration only. Every VM
  * column moved to `machines`, the sharing ACL moved to `workspace_members`,
  * and the plaintext environment moved to `workspace_credentials`. */
@@ -62,6 +72,9 @@ export interface MachineRow {
   box_image_reported: string | null;
   disk_used_percent: number | null;
   disk_reported_at: number | null;
+  /** The plane that asked for this machine: a person's session, or an agent's
+   * box credential. An agent may destroy only what the agent plane made. */
+  created_by_plane: CreatedByPlane;
   error: string | null;
   created_at: number;
   updated_at: number;

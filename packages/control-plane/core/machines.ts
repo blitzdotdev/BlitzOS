@@ -3,7 +3,7 @@ import { buildUserData, type BootShaping } from "./cloud-init.js";
 import { revokeMachineLeasesQuery } from "./connections/leases.js";
 import { hashSecret, randomToken } from "./crypto.js";
 import { first, rows, transaction, type Db, type Query } from "./db.js";
-import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "./http.js";
+import { HttpError, isRecord, isSshPublicKey, readJson, requiredString, type JsonValue } from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
 import type { CreateVmInput, VmProvider } from "./compute/types.js";
@@ -19,6 +19,7 @@ import {
   machineView,
   workspaceById,
   type MachineRow,
+  type CreatedByPlane,
   type WorkspaceRow,
 } from "./workspace-records.js";
 import {
@@ -135,6 +136,10 @@ export interface ProvisionMachineInput {
   /** An existing machine row to bring back up, instead of inserting one. */
   machineId?: string;
   recipe?: RecipeBootstrap;
+  /** The plane that asked for this machine. Written on the INSERT and, for a
+   * machine coming back from `destroyed`, re-stamped by the provision route —
+   * see `provenanceForProvision`. */
+  createdByPlane?: CreatedByPlane;
 }
 
 /**
@@ -174,8 +179,9 @@ export async function provisionMachine(
     const inserted = await rows(runtime.db, {
       q: `INSERT INTO machines
           (id, workspace_id, membership_id, state, machine_type_id,
-           compute_credential_source, volume_id, created_at, updated_at)
-          SELECT ?1, ?2, ?3, 'provisioning', ?4, ?5, ?6, ?7, ?7
+           compute_credential_source, volume_id, created_at, updated_at,
+           created_by_plane)
+          SELECT ?1, ?2, ?3, 'provisioning', ?4, ?5, ?6, ?7, ?7, ?9
           WHERE (
             SELECT COUNT(*) FROM machines m
             JOIN workspaces w ON w.id = m.workspace_id
@@ -191,6 +197,7 @@ export async function provisionMachine(
         input.volumeId ?? null,
         now,
         orgId,
+        input.createdByPlane ?? "session",
       ],
     });
     if (inserted.length !== 1) {
@@ -493,6 +500,88 @@ function parseSetMachineType(value: JsonValue): SetMachineTypeRequest {
   return { machineTypeId: requiredString(value.machineTypeId, "machineTypeId", 256) };
 }
 
+/**
+ * The public key to put in the machine's `authorized_key`, if the caller sent
+ * one. Same validation the workspace-create field used before it was deleted —
+ * this is now the ONLY way a key reaches a machine.
+ *
+ * An absent key is not an empty key: it leaves whatever the volume already
+ * carries in place (see `core/bootstrap.ts`), so a plain `provision` never
+ * silently locks a member out of their own disk.
+ */
+function parseMachineKey(value: JsonValue): string | undefined {
+  if (value === null) return undefined;
+  if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
+  if (value.sshPublicKey === undefined || value.sshPublicKey === null) return undefined;
+  const key = requiredString(value.sshPublicKey, "sshPublicKey").trim();
+  if (key === "") return undefined;
+  if (!isSshPublicKey(key)) throw new HttpError(400, "sshPublicKey must be an SSH public key");
+  return key;
+}
+
+/** An optional JSON body. These verbs took none until the key arrived, and a
+ * caller that still sends nothing must keep working. */
+async function optionalBody(request: Request): Promise<JsonValue> {
+  if (request.body === null) return null;
+  const text = await request.text();
+  if (text.trim() === "") return null;
+  try {
+    // SAFETY: JSON.parse returns a JsonValue by construction; the parse failure is caught below.
+    return JSON.parse(text) as JsonValue;
+  } catch {
+    throw new HttpError(400, "request body must be JSON");
+  }
+}
+
+/**
+ * What provenance a provision writes.
+ *
+ * `destroyed` means the VM AND its volume are already gone (`destroyMachine`
+ * passes `keepVolume: false` on that path), so nothing of the previous owner
+ * survives and the caller is genuinely making a new machine: it is stamped
+ * with the caller's plane.
+ *
+ * `stopped` is the opposite — the volume, and the member's work on it, is
+ * still there. Provisioning that is RESUMING somebody's machine, not creating
+ * one, so provenance is left exactly as it was. Without this distinction an
+ * agent could stop a person's machine, provision it to re-stamp it as its own,
+ * and then destroy it with the disk; the rule below would wave it through.
+ */
+function provenanceForProvision(
+  machine: MachineRow,
+  principal: Principal,
+): CreatedByPlane | undefined {
+  return machine.state === "destroyed" ? principal.plane : undefined;
+}
+
+/**
+ * An agent may destroy only what the agent plane created.
+ *
+ * An agent authenticates as its own member, so every ownership check below
+ * says yes to whatever that person may do — including destroying the machine
+ * they are working on. Membership cannot separate the two, because it is the
+ * same membership; `machines.created_by_plane` can, and this is the one place
+ * it is read.
+ *
+ * A person at a browser is never judged by this: `plane` is `"session"` for a
+ * cookie, an operator token and a signed OAuth state alike, so the product's
+ * own delete and recreate buttons behave exactly as they always have, on every
+ * machine.
+ */
+function assertMachinePlaneMayDestroy(
+  principal: Principal,
+  machine: MachineRow,
+  verb: "destroy" | "recreate",
+): void {
+  if (principal.plane === "session") return;
+  if (machine.created_by_plane === "session") {
+    throw new HttpError(
+      403,
+      `an agent may not ${verb} this machine: a person created it`,
+    );
+  }
+}
+
 /** The location a provider places this machine type's volume in, or null when
  * it cannot say. A cross-location change needs a volume move, which is
  * deferred (plan §5), so a null on either side is treated as unknown and the
@@ -565,17 +654,28 @@ export function addMachineRoutes(
    * `auto_provision` off lands here on first open. */
   router.post("/machines/:machineId/provision", async (context) => {
     const runtime = runtimeFactory(context);
-    const { workspace, machine } = await target(context, runtime, "own");
+    const { workspace, machine, principal } = await target(context, runtime, "own");
     if (machine.vm_id !== null) throw new HttpError(409, "machine already has a VM");
     if (!LIVE_STATES.includes(machine.state) && machine.state !== "destroyed") {
       throw new HttpError(409, `machine is ${machine.state}`);
     }
-    const provisioned = await provisionMachine(runtime, reprovisionInput(
+    const sshPublicKey = parseMachineKey(await optionalBody(context.req.raw));
+    const provenance = provenanceForProvision(machine, principal);
+    const input = reprovisionInput(
       workspace,
       machine,
       machine.machine_type_id,
       new URL(context.req.url).origin,
-    ));
+    );
+    if (sshPublicKey !== undefined) input.sshPublicKey = sshPublicKey;
+    if (provenance !== undefined) {
+      input.createdByPlane = provenance;
+      await rows(runtime.db, {
+        q: "UPDATE machines SET created_by_plane = ?1, updated_at = ?2 WHERE id = ?3",
+        v: [provenance, Date.now(), machine.id],
+      });
+    }
+    const provisioned = await provisionMachine(runtime, input);
     return context.json<MachineResponse>({ machine: machineView(provisioned) });
   });
 
@@ -618,15 +718,21 @@ export function addMachineRoutes(
    * on that machine. */
   router.post("/machines/:machineId/recreate", async (context) => {
     const runtime = runtimeFactory(context);
-    const { workspace, machine } = await target(context, runtime, "admin");
+    const { workspace, machine, principal } = await target(context, runtime, "admin");
+    assertMachinePlaneMayDestroy(principal, machine, "recreate");
     if (machine.state === "destroying") throw new HttpError(409, "machine is destroying");
+    const sshPublicKey = parseMachineKey(await optionalBody(context.req.raw));
     const stopped = await destroyMachine(runtime, machine, { keepRow: true });
-    const recreated = await provisionMachine(runtime, reprovisionInput(
+    // Provenance is deliberately NOT touched here: a recreate replaces the VM
+    // on the same volume, so it is the same machine and the same owner.
+    const input = reprovisionInput(
       workspace,
       stopped,
       machine.machine_type_id,
       new URL(context.req.url).origin,
-    ));
+    );
+    if (sshPublicKey !== undefined) input.sshPublicKey = sshPublicKey;
+    const recreated = await provisionMachine(runtime, input);
     return context.json<MachineResponse>({ machine: machineView(recreated) });
   });
 
@@ -677,7 +783,8 @@ export function addMachineRoutes(
 
   router.delete("/machines/:machineId", async (context) => {
     const runtime = runtimeFactory(context);
-    const { machine } = await target(context, runtime, "admin");
+    const { machine, principal } = await target(context, runtime, "admin");
+    assertMachinePlaneMayDestroy(principal, machine, "destroy");
     if (machine.state === "destroyed") {
       return context.json<MachineResponse>({ machine: machineView(machine) });
     }

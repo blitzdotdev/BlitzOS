@@ -180,20 +180,27 @@ curl -sS -H "$auth" "$ORIGIN/workspaces"            # ids, names, phases
 curl -sS -H "$auth" "$ORIGIN/workspaces/<id>"       # .members[].machine.id, .ssh
 ```
 
-Bring a machine up, then poll until it is ready:
+Make a keypair, and bring the machine up with your public key on it:
 
 ```sh
-curl -sS -X POST -H "$auth" "$ORIGIN/machines/<machineId>/provision"   # or /start
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/qa -C "agent@$(hostname)"
+curl -sS -X POST -H "$auth" -H 'Content-Type: application/json' \
+  -d "{\"sshPublicKey\":\"$(cat ~/.ssh/qa.pub)\"}" \
+  "$ORIGIN/machines/<machineId>/provision"
+```
+
+`sshPublicKey` is optional on `provision` and `recreate`, and it is the only
+way a key reaches a machine. Leave it out and the machine keeps whatever key
+it already had — an absent key never erases one.
+
+Poll until the machine answers, then read where to go from the same document:
+
+```sh
 until [ "$(curl -sS -H "$auth" "$ORIGIN/workspaces/<id>" | jq -r .phase)" = ready ]; do
   sleep 5
 done
-```
-
-`ready` means the VM answers. Read where to go from the same document:
-
-```sh
 curl -sS -H "$auth" "$ORIGIN/workspaces/<id>" | jq .ssh   # {host, port, user, hostPublicKey}
-ssh -p <port> <user>@<host>
+ssh -i ~/.ssh/qa -p <port> <user>@<host>
 ```
 
 Put the machine away when you are done — a running VM costs real money:
@@ -209,13 +216,14 @@ the machines inside them. Anything else answers 401 to this credential.
 
 Two things to know before you use it:
 
-- **Your SSH key is not installed by `provision` or `recreate`.** A key can
-  only be supplied when the workspace is created. A machine you re-provision
-  comes back with an empty `authorized_key`, so ask the user to create the
-  workspace with your public key, or to add it another way.
-- **Destroying a machine revokes that machine's credential.** Destroy the
-  machine this box runs on and this box's token stops working immediately.
-  Nothing prevents you from doing it; check the id you are about to delete.
+- **You can only destroy machines you created.** `DELETE /machines/<id>` and
+  `POST /machines/<id>/recreate` are refused with 403 on any machine a person
+  made in the browser — including the one this box runs on. A machine becomes
+  yours when you `provision` it after it has been destroyed, which is the
+  point where nothing of theirs is left on it. Start and stop are always
+  allowed; they lose nothing.
+- **Put a machine away when you are done.** A running VM costs real money, and
+  nothing reclaims it for you.
 
 ## Installing packages
 

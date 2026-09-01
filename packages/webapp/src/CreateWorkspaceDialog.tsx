@@ -148,13 +148,11 @@ export function CreateWorkspaceDialog({
     if (selectedMachineType === '') return;
     const data = new FormData(event.currentTarget);
     const name = String(data.get('name') ?? '').trim();
-    const sshPublicKey = String(data.get('sshPublicKey') ?? '').trim();
     submitted.current = true;
     const input: CreateWorkspaceDialogInput = {
       machineTypeId: selectedMachineType,
     };
     if (name) input.name = name;
-    if (sshPublicKey) input.sshPublicKey = sshPublicKey;
     if (repos.length > 0) input.repos = repos;
     if (agentRuleId !== null) input.agentRuleId = agentRuleId;
     if (cloneFromWorkspaceId !== null) input.cloneFromWorkspaceId = cloneFromWorkspaceId;
@@ -382,20 +380,6 @@ export function CreateWorkspaceDialog({
               onChange={setRepos}
             />
           </section>}
-
-          <section className="blueprint-selection blueprint-setup-script">
-            <div className="cfg-section-head">
-              <h2 className="cfg-title">SSH public key (optional)</h2>
-              <p className="cfg-desc">Optional. Without a key the workspace is webapp-only. Recreate the workspace to add one later.</p>
-            </div>
-            <textarea
-              name="sshPublicKey"
-              aria-label="SSH public key (optional)"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-          </section>
 
           <details className="blueprint-advanced">
             <summary>Advanced</summary>

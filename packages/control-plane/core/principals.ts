@@ -2,6 +2,20 @@ import { DUMMY_HASH, hashSecret, matchesStoredHash, randomToken } from "./crypto
 import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
 
+/**
+ * Which plane a request authenticated on.
+ *
+ * `"machine"` is an agent inside a box, holding the box credential;
+ * `"session"` is a person — a browser cookie, an operator token, a signed
+ * OAuth state. It is NOT a second identity: an agent acts as its own member,
+ * and every ownership and role check reads `membershipId` exactly as before.
+ *
+ * It exists because membership cannot tell a person from the agent on their
+ * box — it is the same membership — and one rule has to: an agent may destroy
+ * only the machines the agent plane created.
+ */
+export type PrincipalPlane = "session" | "machine";
+
 export interface Principal {
   id: string;
   unixName: string;
@@ -10,6 +24,7 @@ export interface Principal {
   orgId: string | null;
   role: "admin" | "member" | null;
   platformOperator: boolean;
+  plane: PrincipalPlane;
 }
 
 export interface PrincipalSource {
@@ -72,6 +87,7 @@ export async function findSessionPrincipal(
     orgId: row.org_id,
     role: row.role,
     platformOperator: row.platform_operator === 1,
+    plane: "session",
   };
 }
 
@@ -108,6 +124,7 @@ export async function findStatePrincipal(
     orgId: row.org_id,
     role: row.role,
     platformOperator: row.platform_operator === 1,
+    plane: "session",
   };
 }
 

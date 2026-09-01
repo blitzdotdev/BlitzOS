@@ -64,6 +64,7 @@ const expected = [
   "identity/routes.ts",
   "index.ts",
   "janitors.ts",
+  "machine-plane.ts",
   "machine-stats.ts",
   "machines.ts",
   "oauth.ts",
@@ -134,6 +135,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(109);
+    expect(expected).toHaveLength(110);
   });
 });

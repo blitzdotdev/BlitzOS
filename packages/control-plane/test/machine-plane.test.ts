@@ -29,6 +29,16 @@ function asBox(token: string, method = "GET"): RequestInit {
   return { method, headers: { Authorization: `Bearer ${token}` } };
 }
 
+/** The plane recorded against a machine — the whole basis of the destroy rule,
+ * so it is read from the row rather than inferred from a refusal. */
+async function planeOf(machineId: string): Promise<string | undefined> {
+  const row = await env.DB
+    .prepare("SELECT created_by_plane FROM machines WHERE id = ?1")
+    .bind(machineId)
+    .first<{ created_by_plane: string }>();
+  return row?.created_by_plane;
+}
+
 describe("machine plane: the allowlist", () => {
   beforeEach(resetDatabase);
 
@@ -153,7 +163,7 @@ describe("machine plane: authentication", () => {
     expect(await one.json<CreateWorkspaceResponse>()).toHaveProperty("workspace.ssh");
   });
 
-  it("drives another machine's whole lifecycle as its member", async () => {
+  it("starts and stops a person's machine, but never destroys one", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     // The real shape: the agent's box lives in one workspace and drives the
@@ -163,37 +173,147 @@ describe("machine plane: authentication", () => {
     const token = await boxTokenFor(app, providers, home.id);
     const machineId = await machineIdFor(target.id);
 
+    // Start and stop lose nothing, so they are open on a person's machine.
     const stopped = await appRequest(app, `/machines/${machineId}/stop`, asBox(token, "POST"));
     expect(stopped.status).toBe(200);
     expect((await stopped.json<MachineResponse>()).machine.state).toBe("stopped");
 
     expect((await appRequest(app, `/machines/${machineId}/start`, asBox(token, "POST"))).status)
       .toBe(200);
+
+    // Destroying does lose something, and a person created this one.
+    expect((await appRequest(app, `/machines/${machineId}/recreate`, asBox(token, "POST"))).status)
+      .toBe(403);
+    expect((await appRequest(app, `/machines/${machineId}`, asBox(token, "DELETE"))).status)
+      .toBe(403);
+  });
+
+  it("gives an agent full lifecycle over a machine the agent plane created", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const home = await createWorkspace(app, cookie);
+    const target = await createWorkspace(app, cookie);
+    const token = await boxTokenFor(app, providers, home.id);
+    const machineId = await machineIdFor(target.id);
+
+    // A person destroys their machine from the browser: the VM and its volume
+    // both go, so nothing of theirs is left on it.
+    expect((await appRequest(app, `/machines/${machineId}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    })).status).toBe(200);
+
+    // The agent provisions it. That is genuinely creating a machine, so the
+    // provenance becomes the agent's.
+    const provisioned = await appRequest(
+      app,
+      `/machines/${machineId}/provision`,
+      asBox(token, "POST"),
+    );
+    expect(provisioned.status).toBe(200);
+
+    // ...and now it may recreate and destroy what it made.
     expect((await appRequest(app, `/machines/${machineId}/recreate`, asBox(token, "POST"))).status)
       .toBe(200);
-
     const destroyed = await appRequest(app, `/machines/${machineId}`, asBox(token, "DELETE"));
     expect(destroyed.status).toBe(200);
     expect((await destroyed.json<MachineResponse>()).machine.state).toBe("destroyed");
   });
 
-  it("lets an agent destroy its own machine, and dies with it", async () => {
+  it("does not let a provision launder a person's stopped machine", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const home = await createWorkspace(app, cookie);
+    const target = await createWorkspace(app, cookie);
+    const token = await boxTokenFor(app, providers, home.id);
+    const machineId = await machineIdFor(target.id);
+
+    // Stop keeps the volume, so the person's work is still on it. Provisioning
+    // that is RESUMING their machine, not creating one — provenance must not
+    // move, or an agent could stop-provision-destroy its way through somebody
+    // else's disk.
+    expect((await appRequest(app, `/machines/${machineId}/stop`, asBox(token, "POST"))).status)
+      .toBe(200);
+    expect((await appRequest(app, `/machines/${machineId}/provision`, asBox(token, "POST"))).status)
+      .toBe(200);
+
+    expect((await appRequest(app, `/machines/${machineId}`, asBox(token, "DELETE"))).status)
+      .toBe(403);
+  });
+
+  it("preserves provenance across a recreate", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const home = await createWorkspace(app, cookie);
+    const target = await createWorkspace(app, cookie);
+    const token = await boxTokenFor(app, providers, home.id);
+    const machineId = await machineIdFor(target.id);
+
+    await appRequest(app, `/machines/${machineId}`, { method: "DELETE", headers: { Cookie: cookie } });
+    await appRequest(app, `/machines/${machineId}/provision`, asBox(token, "POST"));
+    expect(await planeOf(machineId)).toBe("machine");
+
+    expect((await appRequest(app, `/machines/${machineId}/recreate`, asBox(token, "POST"))).status)
+      .toBe(200);
+    // A recreate replaces the VM on the same volume: same machine, same owner.
+    expect(await planeOf(machineId)).toBe("machine");
+  });
+
+  it("accepts an SSH key on provision and recreate, and only a valid one", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const home = await createWorkspace(app, cookie);
+    const target = await createWorkspace(app, cookie);
+    const token = await boxTokenFor(app, providers, home.id);
+    const machineId = await machineIdFor(target.id);
+    const key = "ssh-ed25519 AAAAC3Nzaagentkey agent@box";
+
+    await appRequest(app, `/machines/${machineId}`, { method: "DELETE", headers: { Cookie: cookie } });
+    const provisioned = await appRequest(app, `/machines/${machineId}/provision`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ sshPublicKey: ` \t${key}\n ` }),
+    });
+    expect(provisioned.status).toBe(200);
+    // Trimmed, and handed to the provider as the machine's authorized key.
+    expect(providers.sshPublicKeys.get(machineId)).toBe(key);
+
+    const recreated = await appRequest(app, `/machines/${machineId}/recreate`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ sshPublicKey: key }),
+    });
+    expect(recreated.status).toBe(200);
+
+    const refused = await appRequest(app, `/machines/${machineId}/recreate`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ sshPublicKey: "not-a-key" }),
+    });
+    expect(refused.status).toBe(400);
+    expect(await refused.text()).toContain("sshPublicKey must be an SSH public key");
+  });
+
+  it("refuses to let an agent destroy its own machine: a person created it", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const workspace = await createWorkspace(app, cookie);
     const token = await boxTokenFor(app, providers, workspace.id);
     const machineId = await machineIdFor(workspace.id);
 
-    // This is the accepted model, stated as a test rather than left implicit:
-    // the credential is the member's, so an agent may destroy any machine its
-    // member may — its own box's included.
-    const destroyed = await appRequest(app, `/machines/${machineId}`, asBox(token, "DELETE"));
-    expect(destroyed.status).toBe(200);
+    // The agent's own box was created from a browser, so it is a person's
+    // machine and the agent may not take it away — not even from itself.
+    for (const [path, method] of [
+      [`/machines/${machineId}`, "DELETE"],
+      [`/machines/${machineId}/recreate`, "POST"],
+    ] as const) {
+      const refused = await appRequest(app, path, asBox(token, method));
+      expect(refused.status, `${method} ${path}`).toBe(403);
+      expect(await refused.text()).toContain("a person created it");
+    }
 
-    // And it is self-limiting. Destroying a machine drops its token family, so
-    // the credential that asked stops working on the way out. An agent cannot
-    // keep operating on a box it has just deleted.
-    expect((await appRequest(app, "/workspaces", asBox(token))).status).toBe(401);
+    // Still very much alive.
+    expect((await appRequest(app, "/workspaces", asBox(token))).status).toBe(200);
   });
 
   it("refuses a bearer that is not a live machine credential", async () => {

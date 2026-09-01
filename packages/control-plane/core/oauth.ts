@@ -305,6 +305,7 @@ export function machinePrincipal(
     orgId: membership?.orgId ?? null,
     role: membership?.role ?? null,
     platformOperator: box.platformOperator,
+    plane: "machine",
   };
 }
 
