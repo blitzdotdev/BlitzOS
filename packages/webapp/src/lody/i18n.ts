@@ -16,7 +16,7 @@ import en from "../../../../vendor/lody/locales/en.json";
  * NOT a translation layer and not a place to restyle their copy. Each entry is
  * one string the vendored bundle gets WRONG on a box, kept here rather than in
  * `vendor/lody/locales/en.json` so it is not a vendor edit — and pinned from
- * both sides by `packages/webapp/test/lody-panel-fixes.test.ts`, which asserts
+ * both sides by `packages/webapp/test/lody-panel-fixes.test.tsx`, which asserts
  * that the vendored string still has the defect. An upstream fix therefore
  * fails a test and this entry is deleted, instead of silently overriding a
  * string that no longer needs it.
