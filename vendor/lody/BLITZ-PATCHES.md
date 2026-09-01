@@ -909,6 +909,121 @@ ones (`hooks/use-code-collab-session-file-provider.ts`,
   3, 4, 5, 11 and the two viewer/controller hunks with them, and answer the new
   gate from `v1-scope.ts`.
 
+### 11. The composer's mention chips and the file drill-down (composer-a sweep, 2026-09-01)
+
+**Two defects, eight hunks in five files, none of them BlitzOS-specific.** The
+composer-a QA lane drove the `@` composer on a real box and confirmed both rows.
+Every hunk here is an upstream bug fix — no host flag, no BlitzOS prop — so this
+whole section is one upstream PR and **drops when it merges.**
+
+| Row | Severity | What a member meets today |
+|---|---|---|
+| BUG-CA-05 | minor | A committed chip (`@README.md `) answers no click. The QA lane read `elementFromPoint` and found the `z-10` textarea over the highlight mirror, and concluded the pointer never reached the chip. It does: `MentionInput`'s own `onClick` hit-tests the click point against the mirror's rects (`isPointInsideMentionHighlight`) and calls `onMentionClick`. What is missing is the OTHER half — nothing happens to the range itself, so the click has no visible outcome for any kind except `pasted_text`, whose composer handler opens a preview. |
+| BUG-CA-06 | minor | The `@` file drill-down leaves the Files category. Descending into a directory writes a bare path (`@.github/`), which carries no `<namespace>:` prefix, so `selectMentionMenuView` falls back to the AGGREGATE level and answers a directory listing across every source — the lane measured 8 rows, 4 real entries plus `/design-sync`, `/cloudflare-email-service`, `/update-config` and `/turnstile-spin`. ArrowLeft then closes the whole menu instead of going up a level: `tryNavigateBack` only pops a `<namespace>:` prefix, so the key falls through to a plain caret move, and `onMentionUpdate` reads a `/` after the caret as interfering text and closes. |
+
+**One rule fixes the listing, and it belongs to the product layer.** A bare
+search that carries a `/` is a path, and only the file source can answer a path.
+`MentionCategory` gains `ownsBareSearch`, the file category is the one caller,
+and the selector stays neutral — it asks the categories rather than naming one.
+
+**"Up one level" is one helper, shared by three callers.** `mention-trigger.ts`
+already owns the `<ns>:` grammar; it gains
+`getMentionDrillDownParent`, which answers `<ns>:` → bare trigger and
+`src/components/` → `src/` → bare trigger, and answers `null` for anything that
+is not a completed drill-down level. `MentionRoot.onNavigateBack` takes the
+destination search instead of always writing the bare trigger, so ArrowLeft and
+the menu's own Back button move by the same rule.
+
+**Backspace is deliberately unchanged.** `isMentionNavigationPrefix` stays what
+it is, so inside a path Backspace still deletes one character at a time — the
+behaviour `ui/mention/AGENTS.md` states and `mention-navigation.test.tsx`
+("leaves Backspace alone inside a path drill-down") pins. This patch therefore
+supersedes ONE sentence of that vendor doc: ArrowLeft no longer shares
+Backspace's namespace-only rule. The doc file itself is left untouched so the
+merge surface stays at five source files.
+
+#### The hunks
+
+Line numbers are the vendored tree's BEFORE this patch. Hunks 5-8 are purely
+additive; hunks 1-4 rewrite a line each, and none of the five files is covered by
+`packages/webapp/test/upstream-baseline/`, so this patch declares no new anchor
+in `lody-surface-tabs.test.tsx`.
+
+`packages/components/src/ui/mention/mention-trigger.ts`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 5 | 54 | the closing `}` of `isMentionNavigationPrefix` | appends `getMentionDrillDownParent` and its private `getPathDrillDownParent`, beside the grammar they extend |
+
+`packages/components/src/ui/mention/mention-root.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 208 | `  onNavigateBack: () => boolean;` | takes an optional destination search, defaulting to the bare trigger |
+| 2 | 676 | `    const nextValue = input.value.slice(0, caret) + input.value.slice(caretPosition);` | writes that destination into the trigger span, puts the caret after it, and seeds `filterStore.search` with it |
+
+`packages/components/src/ui/mention/mention-input.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 3 | 17 | `import { findTriggerCandidates, isMentionNavigationPrefix } from './mention-trigger';` | also imports `getMentionDrillDownParent` |
+| 4 | 698 | `          if (tryNavigateBack()) event.preventDefault();` inside `case 'ArrowLeft'` | calls `tryNavigateUp()` instead — one level, not the whole prefix. `case 'Backspace'` keeps `tryNavigateBack()` |
+| 6 | 636 | the closing `}` of `tryNavigateBack` | adds `tryNavigateUp` beside it |
+| 7 | 461 | `      if (!context.onMentionClick) return;` | the chip hit-test no longer needs a handler to run, and a hit SELECTS the range before the optional handler is called — BUG-CA-05 |
+
+`packages/components/src/components/mentions/mention-registry.ts`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 8a | 171 | `  getCandidates: (term: string, limit?: number) => MentionCandidate[];` | declares `ownsBareSearch?: (search: string) => boolean` above it |
+| 8b | 253 | `  if (!search) {` in `selectMentionMenuView` | after the empty-search branch, a category that claims the bare search answers it at the `category` level |
+| 8c | 659 | `        getCandidates: (term, limit) => buildFileCandidates(...)` in the file category | passes `ownsBareSearch: isMentionPathSearch`, the exported one-line predicate this patch adds |
+
+`packages/components/src/components/mentions/mention-two-level-menu.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 8d | 502 | `    if (onNavigateBack()) inputRef.current?.focus();` | pops ONE level, by the same helper ArrowLeft uses, and falls back to the bare trigger when there is no level above |
+
+**Why selecting the range is the right answer for BUG-CA-05.** A committed
+mention is already atomic to every other input path: `onBeforeInput` deletes the
+whole range on Backspace, and horizontal arrows step OVER it rather than into it.
+A caret dropped in the middle of a chip is therefore a position no edit can use.
+The chip mirror also already paints a selected range
+(`CHIP_SELECTED_CLASS_NAME`, `mention-highlighter.tsx:123`) — an affordance a
+click could not reach until now, only a drag. Text editing is untouched: the
+range is selected only when the click point is inside a painted chip rect, and a
+click that lands anywhere else, or that ends a drag-selection, returns exactly
+where it did before.
+
+**What this patch does NOT do.** It does not open the referenced file or session
+(feature-matrix row C38 asserts that, and no such callback exists at any level
+between the session surface and `CombinedMentionTextarea`). Chip click stays a
+composer-local gesture, and `chat-composer.tsx`'s `handleMentionClick` keeps
+answering `pasted_text` alone.
+
+`packages/webapp/test/lody-composer-mentions.test.tsx` drives the real vendored
+`Mention` primitive and the real registry over both rows, and pins this section
+by name, so deleting the hunks without retiring the declaration fails.
+
+Verify this divergence by diffing OUR subtree against the upstream commit it was
+imported from, exactly as seam patch 1 describes. **Expected after seam patch 11:
+five more files than seam patch 10's twenty — TWENTY-FIVE.** The five new ones
+are `ui/mention/mention-trigger.ts`, `ui/mention/mention-root.tsx`,
+`ui/mention/mention-input.tsx`, `components/mentions/mention-registry.ts` and
+`components/mentions/mention-two-level-menu.tsx`.
+
+#### Merge conflict drill
+
+- If upstream scopes a path drill-down to the file source itself, drop hunks 8a,
+  8b and 8c and keep upstream's rule.
+- If upstream gives `onNavigateBack` a destination of its own, or generalises the
+  drill-down grammar past `<ns>:`, drop hunks 1, 2, 5, 6 and 8d and re-express
+  ArrowLeft against the new grammar. The one invariant to keep: Backspace walks a
+  path one character at a time; ArrowLeft moves a level.
+- If upstream gives a chip click an action of its own, drop hunk 7 rather than
+  merge the two — two things happening on one click is not the fix.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.
