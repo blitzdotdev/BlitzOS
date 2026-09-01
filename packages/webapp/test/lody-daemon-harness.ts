@@ -70,6 +70,7 @@ export const LODY_BUNDLE = "/opt/blitz/npm/lib/node_modules/lody";
 const PATCH_SCRIPTS = [
   join(repoRoot(), "packages/box/patches/lody-local-platform.mjs"),
   join(repoRoot(), "packages/box/patches/lody-acp-auth-queue.mjs"),
+  join(repoRoot(), "packages/box/patches/lody-code-collab-worktree-root.mjs"),
 ];
 const BRIDGE_SCRIPT = join(repoRoot(), "packages/box/rootfs/usr/local/libexec/blitz-lody-bridge");
 const REPO_NODE_MODULES = join(repoRoot(), "node_modules");

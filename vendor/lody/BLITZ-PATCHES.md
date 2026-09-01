@@ -486,14 +486,15 @@ obligation at every version bump**.
 |---|---|---|---|
 | `packages/box/patches/lody-local-platform.mjs` | `lody/dist/index.js` | 4× `resolvePlatformKind("cloud")` | `lody@0.88.1` on npm is the CLOUD build: its Vite config inlines the platform as a literal, so the local composition root is unreachable and the daemon blocks on a device-authorization login. The patch restores the `LODY_PLATFORM` env read. Without it a box cannot start the daemon at all. |
 | `packages/box/patches/lody-acp-auth-queue.mjs` | `lody/dist/index.js` | the `extractQueueKey` switch tail in `MessageProcessor` | Every `machine/*` message falls to `extractQueueKey`'s `default: return null`, and `ConcurrentQueue` maps `null` onto ONE serial chain (`__default__`). `machine/acp-authenticate` with `action: 'start'` runs `claude auth login --claudeai`, which blocks on stdin until the member pastes the code back — so the `submit-code` carrying that code queues behind the login waiting for it, and so does `cancel`. The patch gives a `start` its own per-agent chain. Without it an interactive agent sign-in can never be completed, only timed out after 285 s. |
+| `packages/box/patches/lody-code-collab-worktree-root.mjs` | `lody/dist/index.js` | the `project?.kind === "local"` branch of `resolveCodeCollabWorkspaceRoot` | That branch answers with the local project's ROOT PATH and never reads `project.useWorktree` or `meta.isWorktree`, so once no live `Session` object is left the whole Code Collab surface of a worktree session — All Changes, the Files tab, every file chip — resolves to the `/workspace/<repo>` clone instead of the worktree. The clone is clean by design, so the panel renders an empty SUCCESS ("No changes yet.") rather than an error. The patch answers with the worktree when the session is a worktree session and the worktree exists. Without it the side panel of every BlitzOS worktree session is silently empty. |
 
 Applied in that order. **The order is not cosmetic:** `lody-local-platform`
 guards on a sha256 of `dist/index.js` AS PUBLISHED, so nothing may rewrite the
-file before it runs. `lody-acp-auth-queue` therefore guards on the installed
-package's version plus its own anchor at exactly one occurrence — a file hash can
-only ever pin the first patch in a chain. Both are idempotent: re-running either
-on an already-patched bundle reports it and exits 0, which is what lets
-`packages/webapp/test/lody-daemon-harness.ts` copy a real box's bundle and
+file before it runs. The other two therefore guard on the installed package's
+version plus their own anchor at exactly one occurrence — a file hash can
+only ever pin the first patch in a chain. All three are idempotent: re-running
+any of them on an already-patched bundle reports it and exits 0, which is what
+lets `packages/webapp/test/lody-daemon-harness.ts` copy a real box's bundle and
 re-apply the image build's patches to the copy.
 
 The queue patch is strictly NARROWING. The only message that changes chains is
@@ -518,6 +519,18 @@ version read from the installed `package.json`, and its anchor at exactly one
 occurrence. Re-auditing it means confirming that `extractQueueKey` still sends
 unnamed types to one shared chain — if a bump fixes that upstream, DELETE the
 patch instead of updating it.
+
+`lody-code-collab-worktree-root.mjs` is guarded the same two ways. Re-auditing it
+means confirming that the local-project branch of `resolveCodeCollabWorkspaceRoot`
+(`apps/cli/src/lib/message-handler.ts:6238`) still ignores `useWorktree` and
+`isWorktree`, which their own terminal resolver reads
+(`apps/cli/src/lib/terminal-workdir-resolver.ts:97`). The patch is strictly
+ADDITIVE: it inserts one branch in front of the existing return, and takes it
+only when the session is a worktree session AND `WorktreeManager.hasWorktree`
+finds the worktree on disk. Every other session, and a worktree session whose
+worktree is gone, keeps the answer it has today.
+`packages/webapp/test/lody-worktree-session.test.ts` measures both directions
+against a real daemon.
 
 Re-auditing means: confirm the anchor still selects the platform, confirm the
 count, run `LODY_PLATFORM=local lody start` and see "Starting in local platform

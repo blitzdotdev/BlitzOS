@@ -114,7 +114,8 @@ one verified pair, both pinned in `vendor/lody/UPSTREAM.md`: bump them together.
   `vendor/lody/BLITZ-PATCHES.md`, each with an upstream-PR sketch. Declare a new
   vendor edit there first, or do not make it.
 - The daemon patches in `packages/box/patches/` (`lody-local-platform.mjs`,
-  cloud→local platform; `lody-acp-auth-queue.mjs`, the ACP-auth queue chain) are
+  cloud→local platform; `lody-acp-auth-queue.mjs`, the ACP-auth queue chain;
+  `lody-code-collab-worktree-root.mjs`, Code Collab's worktree root) are
   guarded against the published bundle (sha256; version + anchor count) and must
   be re-verified on every daemon bump.
 - Upstream merges follow the runbook `docs/LODY-MERGE.md`. Where Lody upstream

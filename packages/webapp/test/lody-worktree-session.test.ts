@@ -31,6 +31,7 @@ import { join } from "node:path";
 
 import { createStore } from "jotai";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { JsonObject } from "@blitzos/schema";
 import { WebSocket as NodeWebSocket } from "ws";
 import {
   getMachineFlockDocId,
@@ -41,7 +42,7 @@ import {
   getServerNow,
 } from "@lody/shared";
 import { BLITZ_CLAUDE_CONFIG_ID } from "../src/lody/agent-configs.js";
-import { sendProjectControl, sendSessionControl } from "../src/lody/rpc-client.js";
+import { sendMachineRpc, sendProjectControl, sendSessionControl } from "../src/lody/rpc-client.js";
 import { fetchLodyPlatformSnapshot, type LodyPlatformSnapshot } from "../src/lody/platform-snapshot.js";
 import {
   createLodyRuntime,
@@ -78,6 +79,25 @@ const NON_LAUNCHING_BINARY = "/bin/false";
  * 12 legal characters make the expected branch names literal. */
 const WORKTREE_SESSION_ID = "wtprobe00001";
 const ARCHIVE_SESSION_ID = "wtarchive001";
+/** The session whose All Changes panel is read. */
+const CHANGES_SESSION_ID = "wtchanges001";
+/** A local project session that is NOT a worktree, the control for it. */
+const DIRECT_SESSION_ID = "wtdirect0001";
+
+/**
+ * One entry of a `code-collab/get-file-index` answer, as the side panel reads it.
+ *
+ * `CodeCollabV2FileIndexValue` is bare `true` for an unchanged file and an
+ * object carrying `change` for a changed one (`shared/src/code-collab.ts:1030`).
+ */
+type FileIndexValue = true | { readonly kind?: string; readonly change?: unknown };
+
+/** The All Changes row for one path, or `undefined` when the panel would draw
+ * none. */
+function changeOf(fileIndex: Record<string, FileIndexValue>, path: string): unknown {
+  const value = fileIndex[path];
+  return value === undefined || value === true ? undefined : value.change;
+}
 
 const PROBE_IDENTITY = {
   GIT_AUTHOR_NAME: "probe",
@@ -136,14 +156,16 @@ interface ProjectRow {
   rootPath: string;
 }
 
+/** `read` may be synchronous (a directory probe) or asynchronous (one RPC);
+ * `await` on a plain value is the same tick either way. */
 async function until<T>(
   what: string,
-  read: () => T | undefined,
+  read: () => T | undefined | Promise<T | undefined>,
   timeoutMs = 30_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const value = read();
+    const value = await read();
     if (value !== undefined) return value;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -200,6 +222,35 @@ describe.skipIf(!lodyDaemonAvailable())("phase 5: worktree sessions against a re
     }
     return join(reposRoot, owner, "worktrees", sessionId);
   };
+
+  /**
+   * One Code Collab v2 call, polled until the session document has reached the
+   * daemon.
+   *
+   * `session_not_found` is the only answer that means "not yet"; every other
+   * code is a real result to assert on. Read the same way
+   * `lody-session-workdir.test.ts` reads it: a refusal is
+   * `{ status: 'error', code }` (`CodeCollabV2ErrorSchema`).
+   */
+  const codeCollab = (sessionId: string, method: string, params: JsonObject) =>
+    until(`the daemon to answer ${method} for ${sessionId}`, async () => {
+      const response = await sendMachineRpc(endpoints(), {
+        machineId: snapshot.machineId,
+        workspaceId: snapshot.workspace.workspaceId,
+        method,
+        params,
+        timeoutMs: 30_000,
+      });
+      if (!response.ok) return undefined;
+      // SAFETY: every Code Collab v2 response is either an ok member or
+      // `CodeCollabV2ErrorSchema`, whose discriminant is `status: 'error'`.
+      const answer = response.result as unknown as {
+        code?: string;
+        status?: string;
+        fileIndex?: Record<string, FileIndexValue>;
+      };
+      return answer.code === "session_not_found" ? undefined : answer;
+    });
 
   const projectRef = (): LodyProjectRef => ({
     kind: "local",
@@ -365,6 +416,127 @@ describe.skipIf(!lodyDaemonAvailable())("phase 5: worktree sessions against a re
     expect(git(clonePath, "rev-parse", "HEAD")).toBe(headBefore);
     expect(git(clonePath, "rev-parse", "--abbrev-ref", "HEAD")).toBe(branchBefore);
     expect(git(clonePath, "status", "--porcelain")).toBe("");
+  }, 120_000);
+
+  /**
+   * ALL CHANGES READS THE WORKTREE, NOT THE CLONE.
+   *
+   * Reported from the first real worktree dogfood on canary (session
+   * `5317b6e0`): the rail row and the composer's worktree bar both showed
+   * "+152 -115" and a turn's file chip showed "AGENTS.md +44 -34", while the All
+   * Changes side panel said "No changes yet."
+   *
+   * TWO DOORS, and only one of them knows about the worktree. The rail and the
+   * bar read `SessionMeta.diffStats`, which turn post-processing computes inside
+   * the LIVE session's own working directory. The panel reads
+   * `code-collab/get-file-index`, whose root comes from
+   * `resolveCodeCollabWorkspaceRoot` (`vendor/lody/apps/cli/src/lib/message-handler.ts:6238`)
+   * — and once no `Session` object is live any more, that resolver takes the
+   * `project?.kind === 'local'` branch and answers with the CLONE's root path.
+   * `project.useWorktree` and `meta.isWorktree` are never consulted, so the
+   * panel diffs `/workspace/<repo>`, which the plan guarantees is clean. That is
+   * an empty SUCCESS, not a refusal, which is why the member sees the empty
+   * state and no error.
+   *
+   * The daemon's own terminal resolver gets this right one file away
+   * (`lib/terminal-workdir-resolver.ts:97`), and `packages/box/patches/lody-code-collab-worktree-root.mjs`
+   * gives the Code Collab resolver the same two lines.
+   *
+   * NO TURN IS PAID FOR HERE. The panel resolves from the session document
+   * alone, so writing into the worktree by hand is the same input a turn would
+   * have left behind — and it is the state a member is in whenever the agent
+   * has stopped, which is when the panel is read.
+   *
+   * MEASURED, before the patch, by polling this same call every three seconds
+   * after the same edit:
+   *
+   *     t=0s  keys=AGENTS.md,README.md   <- the worktree, from the live Session
+   *     t=3s  keys=README.md             <- the clone, from the document
+   *     ...   keys=README.md             (for as long as anyone looks)
+   *
+   * which is why the wait below is part of the test and not padding: the
+   * document path is the one under test, and it is the one a member reads.
+   */
+  it("serves All Changes for a worktree session from the worktree, not the clone", async () => {
+    await createWorktreeSession(CHANGES_SESSION_ID);
+    const path = worktreePath(CHANGES_SESSION_ID);
+
+    // What a turn leaves behind: one tracked file edited, one file added.
+    writeFileSync(join(path, "README.md"), "# wt-probe\n\nedited by the agent\n");
+    writeFileSync(join(path, "AGENTS.md"), "rules the agent wrote\n");
+
+    // NO LIVE SESSION. `/bin/false` fails the agent launch about a second after
+    // `session/create` answers, and the resolver prefers a live `Session` over
+    // the document for as long as one exists — so this waits that window out
+    // rather than measuring it. Ten seconds is three times the longest gap
+    // measured here.
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+
+    // A session whose agent died leaves a settled-rejected pending entry behind
+    // it for a moment, and the resolver reports that as `session_initializing` —
+    // which the RPC error map folds into `workspace_root_unavailable`. It is a
+    // window, not an answer, so it is polled through rather than asserted on.
+    const index = await until(
+      "an ok file index for the worktree session",
+      async () => {
+        const answer = await codeCollab(CHANGES_SESSION_ID, "code-collab/get-file-index", {
+          sessionId: CHANGES_SESSION_ID,
+        });
+        return answer.code === undefined ? answer : undefined;
+      },
+      30_000,
+    );
+    expect(index.status).toBe("ok");
+
+    // `buildCodeCollabFileIndexState` folds All Changes INTO the file index: an
+    // unchanged file is bare `true`, and a changed one carries its `change`
+    // (`shared/src/code-collab.ts:1081`). So these two entries ARE the rows the
+    // side panel draws.
+    const fileIndex = index.fileIndex ?? {};
+    expect(Object.keys(fileIndex)).toContain("AGENTS.md");
+    expect(changeOf(fileIndex, "AGENTS.md")).toBeDefined();
+    expect(changeOf(fileIndex, "README.md")).toBeDefined();
+
+    // AND THE CLONE IS STILL CLEAN, which is what makes the assertion above a
+    // statement about WHICH directory answered. Nothing the panel showed could
+    // have come from `/workspace/<repo>`.
+    expect(git(clonePath, "status", "--porcelain")).toBe("");
+  }, 120_000);
+
+  /**
+   * The other half of the same rule: a local project session that is NOT a
+   * worktree still reads its own clone.
+   *
+   * This is the session shape `workdir-default.ts` §2 gives every plain chat —
+   * a `local` `ProjectRef` with no `useWorktree` — and the shape the daemon
+   * answered correctly before the patch. It needs no `session/create`: with no
+   * live session the resolver reads the document alone, which is exactly the
+   * path under test.
+   */
+  it("still serves a NON-worktree local project session from the project root", async () => {
+    writeFileSync(join(clonePath, "CLONE_ONLY.md"), "only in the clone\n");
+    await startLodySession(handle.runtime, {
+      sessionId: DIRECT_SESSION_ID,
+      machineId: snapshot.machineId,
+      userId: snapshot.userId,
+      agentConfigId: BLITZ_CLAUDE_CONFIG_ID,
+      agentType: "claude",
+      prompt: "(probe: no turn is dispatched)",
+      project: { kind: "local", localProjectId: projects[0]!.localProjectId },
+    });
+
+    const index = await codeCollab(DIRECT_SESSION_ID, "code-collab/get-file-index", {
+      sessionId: DIRECT_SESSION_ID,
+    });
+    // Removed before the assertions, so a failure here does not leave the clone
+    // dirty for the archive test below.
+    rmSync(join(clonePath, "CLONE_ONLY.md"));
+
+    expect(index.code).toBeUndefined();
+    const fileIndex = index.fileIndex ?? {};
+    expect(Object.keys(fileIndex)).toContain("CLONE_ONLY.md");
+    // The worktree's own files are NOT what this session sees.
+    expect(Object.keys(fileIndex)).not.toContain("AGENTS.md");
   }, 120_000);
 
   it("keeps a dirty worktree when the project is removed, and reports it as dirty", async () => {
