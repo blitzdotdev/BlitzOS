@@ -1,11 +1,12 @@
 /**
  * What directory a session's agent works in, decided on our side.
  *
- * TWO DEFAULTS, ONE SUBJECT. The first is the worktree pill's initial value for
+ * THREE PARTS, ONE SUBJECT. The first is the worktree pill's initial value for
  * a REPO-BACKED session (`seedWorktreeWorkdirDefault`). The second is the
  * working directory of a PLAIN CHAT — a session started with no repo picked —
  * which upstream leaves in the daemon's own chat-storage directory and which
- * this module moves to the box's `/workspace`.
+ * this module moves to the box's `/workspace`. The third is the same default,
+ * given on OPEN to a session that was created before the second existed.
  *
  * ---------------------------------------------------------------------------
  * 1. The worktree pill's default, seeded rather than forced
@@ -27,6 +28,7 @@
  */
 import { FILES_DAV_ROOT } from "../resolver.js";
 import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from "@blitzos/schema";
+import { getSessionRoomId } from "@lody/shared";
 import { sendProjectControl, type LodyHttpPlaneEndpoints } from "./rpc-client.js";
 import type { LodyWorkspaceRuntime, LodyWorkspaceWriter } from "./runtime.js";
 import type { LodyProjectRef } from "./session.js";
@@ -256,4 +258,138 @@ async function withDefaultProject(
   const project = await resolveProject();
   if (project === null) return meta;
   return { ...meta, project: { ...project } };
+}
+
+/**
+ * 3. A SESSION CREATED BEFORE §2 GETS THE SAME DEFAULT WHEN IT IS OPENED.
+ *
+ * The decorator above reaches sessions being CREATED and nothing else. A member
+ * whose sessions predate it still opens each one onto "Session has no local
+ * project or GitHub repository workspace", with no Files tab and no All Changes
+ * — reported from canary against a box that already ran the fix. "Start a new
+ * chat" is not a repair, so the same `ProjectRef` is attached the first time
+ * such a session is opened.
+ *
+ * A PATCH ON META, WHICH CREATION COULD NOT USE. §2 writes `project` INSIDE the
+ * accept unit because the daemon's dispatch watcher reads that meta with the
+ * session's first turn, and a follow-up patch would race it. Here the first turn
+ * is long over and there is no dispatch to race, so `upsertDocMeta` on the
+ * session room is exactly right — the same field, read by the same daemon paths
+ * (`message-handler.ts:6238` for the side panel,
+ * `session-execution-service.ts:3312` for the next turn's workdir).
+ *
+ * WHAT IT CANNOT REPAIR: a RUNNING agent's working directory. The daemon fixes
+ * a Session's workdir when the process starts (`session/session.ts:131`), and
+ * both the next turn and the side panel prefer a live Session over the document
+ * (`message-handler.ts:6179` answers from `sessionManager.getSession` before it
+ * ever reads meta). So a session whose ACP process is still alive keeps the
+ * chats directory until that process goes: the GC recycles it after 20 minutes
+ * idle (`session-gc-manager.ts:164`), and a daemon restart ends it at once.
+ * After that the restore path rebuilds the session from meta
+ * (`session-execution-service.ts:3312`) and picks up `/workspace`. The panel,
+ * the chips and All Changes are what the report is about, and for a session
+ * nobody is mid-turn in they are fixed immediately.
+ */
+
+/** What one backfill attempt decided. The last two are RETRYABLE: the document
+ * may still arrive, and the daemon may still provision its workspace. */
+export type SessionProjectBackfillOutcome =
+  | "attached"
+  | "not-a-plain-chat"
+  | "meta-unavailable"
+  | "registration-refused";
+
+/**
+ * Whether this session's meta is a plain chat's — the only kind §2 would have
+ * given the default project to.
+ *
+ * Three fields, because the create path writes each of them from a different
+ * input and none implies the others (`use-session-actions.ts:159` for
+ * `repoFullName`, `:163` for `project`, `:166` for `isWorktree`). `project` is
+ * the one that decides the daemon's workdir, `repoFullName` is how a
+ * repo-backed session that has not picked a project yet says so, and
+ * `isWorktree` is what the rail and the archive path read. Any of the three
+ * means this session is not a chat working in `/workspace`, and overwriting it
+ * would move somebody's worktree session into the wrong directory.
+ */
+function isPlainChatMeta(meta: JsonObject): boolean {
+  return (
+    meta.project === undefined && meta.repoFullName === undefined && meta.isWorktree !== true
+  );
+}
+
+/**
+ * Gives one already-existing session the default project, or explains why not.
+ *
+ * `createdAt` IS THE PROOF THAT THE DOCUMENT HAS SYNCED, and the guard the whole
+ * function rests on. A room the repo has opened but not yet filled answers an
+ * empty meta, and an empty meta is indistinguishable from a plain chat's — so a
+ * WORKTREE session read one tick early would be handed `/workspace` over its
+ * own project. `createdAt` and `project` are written by ONE patch
+ * (`session-bootstrap.ts:81`), so a meta that carries the first cannot be
+ * missing the second.
+ */
+export async function backfillDefaultSessionProject(
+  runtime: LodyWorkspaceRuntime,
+  sessionId: string,
+  resolveProject: () => Promise<LodyProjectRef | null>,
+): Promise<SessionProjectBackfillOutcome> {
+  const roomId = getSessionRoomId(sessionId);
+  // The same call `startLodySession` makes before it writes: the patch below
+  // needs somewhere to converge, and on the local plane this is one router
+  // lookup (`create-workspace-runtime.ts:3533`).
+  await runtime.ensureDocStream(roomId);
+  const snapshot = await runtime.repo.getDocMeta(roomId);
+  if (snapshot === undefined || snapshot.deleted || snapshot.meta.createdAt === undefined) {
+    return "meta-unavailable";
+  }
+  if (!isPlainChatMeta(snapshot.meta)) return "not-a-plain-chat";
+  const project = await resolveProject();
+  // Unchanged on a refusal, for §2's reason: a `localProjectId` the daemon
+  // cannot resolve FAILS the session's next turn.
+  if (project === null) return "registration-refused";
+  await runtime.writer.upsertDocMeta(roomId, { project: { ...project } });
+  return "attached";
+}
+
+export type SessionProjectBackfill = (
+  runtime: LodyWorkspaceRuntime,
+  sessionId: string,
+) => Promise<SessionProjectBackfillOutcome>;
+
+/**
+ * `backfillDefaultSessionProject`, made safe to call on every open.
+ *
+ * Attempts on DIFFERENT sessions are independent; attempts on the same session
+ * are not. One session can be opened twice at once — a second rail click, or a
+ * meta event arriving while the first attempt is still in flight — and that must
+ * read once and write once, so an in-flight attempt is shared and a settled one
+ * is remembered.
+ *
+ * Only a SETTLED decision is remembered, which is the same rule
+ * `createDefaultSessionProjectResolver` follows one level down: a document that
+ * had not synced yet will sync, and a daemon that refused the registration will
+ * provision its workspace, so remembering either would leave the session broken
+ * for the lifetime of the tab.
+ */
+export function createSessionProjectBackfiller(
+  resolveProject: () => Promise<LodyProjectRef | null>,
+): SessionProjectBackfill {
+  const settled = new Map<string, SessionProjectBackfillOutcome>();
+  const inFlight = new Map<string, Promise<SessionProjectBackfillOutcome>>();
+  return async (runtime, sessionId) => {
+    const decided = settled.get(sessionId);
+    if (decided !== undefined) return decided;
+    const running = inFlight.get(sessionId);
+    if (running !== undefined) return await running;
+    const attempt = backfillDefaultSessionProject(runtime, sessionId, resolveProject).finally(
+      () => {
+        inFlight.delete(sessionId);
+      },
+    );
+    inFlight.set(sessionId, attempt);
+    const outcome = await attempt;
+    if (outcome === "attached" || outcome === "not-a-plain-chat") settled.set(sessionId, outcome);
+    return outcome;
+  };
 }
