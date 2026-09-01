@@ -27,8 +27,6 @@
   user-select: none;
 }
 
-.shell-strip { --strip-tile: 35px; }
-
 .shell-strip__sep {
   width: 20px;
   flex: none;
@@ -56,10 +54,11 @@
 .shell-wtile {
   position: relative;
   display: grid;
-  /* Same footprint as the org mark at the top of the strip (user ruling
-     2026-08-29). */
-  width: var(--strip-tile);
-  height: var(--strip-tile);
+  /* 35px is the strip's tile footprint (user ruling 2026-08-29). It was a
+     `--strip-tile` custom property while the org mark had to match it; the
+     tile is the only thing this size now, so it says so directly. */
+  width: 35px;
+  height: 35px;
   flex: none;
   place-items: center;
   border: 0;
@@ -149,8 +148,6 @@
    tall oval. inset: 0 against the button's padding box cannot. */
 .shell-av__photo { position: absolute; inset: 0; display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 
-/* The org popover reuses the shell's menu skin; only the anchor changes,
-   because the strip is 48px wide and it opens beside it. */
 /* --------------------------------------------------------------- column 2 */
 .session-rail {
   display: flex;

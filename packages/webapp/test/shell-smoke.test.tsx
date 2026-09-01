@@ -566,7 +566,18 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    const rows = view.container.querySelectorAll('section[aria-label="Organizations"] article');
+    // Where it sits, before what it does. The section is inside the Profile
+    // panel, it is a `.cfg-section` beside another one so the settings system
+    // draws its one divider, and its title is the `cfg-` heading rather than a
+    // seventh treatment (settings-surface.css anchors 2 and 4).
+    const profile = view.container.querySelector('section[aria-label="Profile"]');
+    const organizations = profile?.querySelector('section[aria-label="Organizations"]');
+    expect(organizations).not.toBeNull();
+    expect(organizations?.classList.contains("cfg-section")).toBe(true);
+    expect(organizations?.querySelector(".cfg-title")?.textContent).toBe("Organizations");
+    expect(organizations?.previousElementSibling?.classList.contains("cfg-section")).toBe(true);
+
+    const rows = organizations!.querySelectorAll("article");
     expect([...rows].map((row) => row.querySelector("h3")?.textContent)).toEqual(["Example", "Side"]);
     expect(rows[0]?.textContent).toContain("current");
 

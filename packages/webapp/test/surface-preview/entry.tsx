@@ -82,17 +82,13 @@ function RailHead() {
   );
 }
 
-/** Column one, from `shell/WorkspaceStrip.tsx:134`. Only the tiles the rail needs to sit
- * beside something real; every class is `strip-rail.css`'s. */
+/** Column one, from `shell/WorkspaceStrip.tsx`. Only the tiles the rail needs to sit
+ * beside something real; every class is `strip-rail.css`'s. Workspace tiles are
+ * the first thing in the strip: the org mark that used to sit above them, and
+ * the divider under it, are deleted (org switching is Settings → Profile). */
 function Strip() {
   return (
     <aside className="shell-strip">
-      <div className="shell-strip__orgwrap">
-        <button className="shell-orgmark" type="button">
-          BZ
-        </button>
-      </div>
-      <span className="shell-strip__sep" />
       <div className="shell-strip__tiles">
         <button className="shell-wtile shell-wtile--on" type="button">
           ZS
