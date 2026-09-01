@@ -133,25 +133,29 @@ nothing updates on its own, and nothing will until something runs `update`.
 
 ## 5. Path forward
 
-Ranked, given the goal "new models reach existing boxes without a rebake":
+**Decided 2026-09-01: keep the vendor's own auto-update path** — unset
+`DISABLE_AUTOUPDATER` and let Claude Code update itself, rather than driving it
+from an s6 oneshot. The four sites in §4 have to move together, and
+`vendor.go:104` plus its `roaming_test.go:363` assertion are a deliberate
+decision being reversed, not dead code.
 
-1. **A controlled update hook (recommended).** Keep `DISABLE_AUTOUPDATER=1` and
-   add an s6 oneshot (beside `init-state` / `rules`) that runs `claude update`
-   at boot, and/or on a timer. It runs as the same uid into the same global
-   prefix, so it keeps the in-place property measured above and cannot produce
-   a member-prefix shadow. It is observable, loggable, and revertible with one
-   `npm i -g @anthropic-ai/claude-code@<pin>`. Unlike unsetting the flag, it
-   never swaps the binary underneath a session mid-turn.
-2. **Unset `DISABLE_AUTOUPDATER`.** Same outcome with less code, but it hands
-   the timing to the vendor, re-opens the shadow-copy path if the installer's
-   method detection ever resolves to `native` instead of `global`, and means
-   all four sites above have to move together.
-3. **Bump the pin and rebake** (`packages/box/Dockerfile:36` and
+The shadow-copy fear those comments cite is already handled independently:
+`rootfs/etc/profile.d/blitz-npm.sh` force-moves `/usr/local/bin` to the FRONT of
+PATH on every login shell, ahead of `/opt/blitz/npm/bin` (verified: a box login
+shell gets `/usr/local/bin:/opt/blitz/npm/bin:…`). So a second copy in the npm
+prefix cannot shadow the shim, and the native installer's `~/.local/bin` /
+`~/.claude/local` are not on the box PATH at all. **Rewrite those comments when
+the flag goes** — they are the justification the next agent will read, and they
+will be wrong.
+
+Still worth doing alongside:
+
+1. **Bump the pin and rebake** (`packages/box/Dockerfile:36` and
    `packages/broker/Dockerfile:12`, then `docs/BOX-IMAGE.md`). Still correct for
    the *baked* floor, so a fresh box is not one update behind on first boot —
    but it should stop being the mechanism by which a new model arrives.
 
-Whichever is chosen, the pin stops deciding which models exist, so these four
+With the pin no longer deciding which models exist, these four
 `2.1.228` assertions need re-basing on a range or a probe rather than a
 literal: `packages/webapp/test/lody-acp-authentication.test.ts`,
 `packages/box/guest-tests/test/remote-control-service.test.ts`,
