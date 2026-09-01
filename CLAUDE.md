@@ -43,14 +43,16 @@ npm test              # control-plane, box guest tests, ui, guest node:test,
   not actually enforced today (latent-bug candidates). Grep for the marker.
 - `TODO(house-canon):` markers flag direct fetch/console sites awaiting
   migration to the canon helpers.
-- 7 files exceed the 700-line warn: `core/bootstrap.ts`, `core/compute/aws.ts`,
-  `core/workspaces.ts`,
+- 8 files exceed the 700-line warn: `core/bootstrap.ts`, `core/compute/aws.ts`,
+  `core/machines.ts`, `core/workspaces.ts`,
   `control-plane/scripts/lib/worker-source.mjs`, `webapp/src/CloudApp.tsx`,
   `webapp/src/api.ts`, `webapp/src/terminal-touch-controller.ts`. Split on
   touch, never big-bang. (`core/files/sync.ts` left the list 2026-08-21 when
   its transfer plumbing split into `core/files/dav.ts`. `core/bootstrap.ts`
   and `webapp/src/api.ts` were already over the line when this list said four;
-  the count is corrected here, not grown.)
+  `core/machines.ts` was over it when the list said seven. The count is
+  corrected here, not grown — `lint:gate` on an untouched `main` prints all
+  eight.)
 
 ## Cross-runtime contracts (fixtures are the source of truth)
 
@@ -262,7 +264,7 @@ deployment credential alone (`plans/SUBSCRIPTION-COMPUTE.md`).
    payload without fixtures is a finding.
 6. Max-lines: the warn list printed by `lint:gate` should not grow.
 7. Reference counts for comparison (2026-08-29): anti-slop 74
-   (31/27/12/4), blitz-house 0, max-lines warnings 7. These are the numbers
+   (31/27/12/4), blitz-house 0, max-lines warnings 8. These are the numbers
    a sweep compares against, so lower them in the same change that removes
    findings — a stale reference hides the next regression.
 
