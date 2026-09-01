@@ -305,11 +305,6 @@
   opacity: .5;
 }
 
-.cfg-danger-action:disabled {
-  cursor: not-allowed;
-  opacity: .5;
-}
-
 /* ----------------------------------------------------------------- footer */
 
 /* A settings dialog's footer. It carries the surface-wide verbs, which is why
