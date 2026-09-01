@@ -13,6 +13,7 @@
  * | `agentRolesAndMcp` | C55-C57, C86-C89, C91 | Nothing writes the workspace Agent Role or MCP catalog rows, so both pickers are empty by construction. |
  * | `keyboardShortcuts` | X1-X5, C24, C100, C102, C103, T27 | We mount neither `commands.attach(window)` nor `CommandPalette`, so no chord is answered. |
  * | `cloudSurfaces` | S7-S10, IC60, IC83, IC84, IC88 | Each one advertises Lody's cloud, Lody's Discord, Lody's desktop app or a settings screen we do not serve. |
+ * | `languageService` | SP26 | A box runs no language service, so Go to Definition and Find References answer "Host language service does not support this file" for every identifier in every file. |
  *
  * HOW A FLAG REACHES THE VENDORED RENDERER. Two ways, and which one applies is
  * a property of the flag, not a preference:
@@ -50,6 +51,11 @@ export interface LodyV1Scope {
    * Download-the-client, Report-a-bug, Discord and Go-to-settings buttons.
    */
   readonly cloudSurfaces: boolean;
+  /**
+   * The editor's two LSP entry points (1 row). HIDDEN, not deleted: a box that
+   * grows a language service flips this and the actions come back.
+   */
+  readonly languageService: boolean;
 }
 
 /**
@@ -64,6 +70,7 @@ export const LODY_V1_SCOPE = {
   agentRolesAndMcp: false,
   keyboardShortcuts: false,
   cloudSurfaces: false,
+  languageService: false,
 } as const satisfies LodyV1Scope;
 
 /**
@@ -92,6 +99,7 @@ export interface LodyV1SuppressionProps {
   readonly hideProductHints: boolean;
   readonly hideAgentRoles: boolean;
   readonly keyboardShortcutsAvailable: boolean;
+  readonly hideLanguageServiceActions: boolean;
 }
 
 export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
@@ -100,4 +108,5 @@ export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
   hideProductHints: !LODY_V1_SCOPE.cloudSurfaces,
   hideAgentRoles: !LODY_V1_SCOPE.agentRolesAndMcp,
   keyboardShortcutsAvailable: LODY_V1_SCOPE.keyboardShortcuts,
+  hideLanguageServiceActions: !LODY_V1_SCOPE.languageService,
 });
