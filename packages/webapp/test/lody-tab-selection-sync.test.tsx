@@ -52,6 +52,7 @@ import type { AppRoute } from "../src/sessions-page-state.js";
 import type { LodySessionsCapability } from "../src/lody/box-capability.js";
 import type { LodyRailSessions, LodyRailState } from "../src/lody/use-lody-rail.js";
 import type { SurfaceTabsBinding } from "../src/lody/surface-tabs.js";
+import { expectLandingHeading } from "./lody-landing-heading.js";
 import { render, settle } from "./dom.js";
 
 afterEach(() => {
@@ -354,7 +355,7 @@ describe("+ New session, from the landing", () => {
     expect(api, "the surface published its api").not.toBeNull();
     // The surface opens on the landing, so this is the state the button was
     // dead in.
-    expect(view.container.textContent ?? "").toContain("Let's ship something");
+    expectLandingHeading(view.container.textContent, "the surface opens on the landing");
 
     // What the button is FOR: a composer with nothing in it. The prompt is a
     // controlled textarea, so it is driven the way the browser drives it — and
@@ -399,7 +400,7 @@ describe("+ New session, from the landing", () => {
     expect(composer()?.value, "and so does the next one").toBe("");
 
     // Still the landing, not a blank pane.
-    expect(view.container.textContent ?? "").toContain("Let's ship something");
+    expectLandingHeading(view.container.textContent, "still the landing, not a blank pane");
     await view.unmount();
   }, 180_000);
 });
