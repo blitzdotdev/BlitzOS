@@ -177,7 +177,7 @@ export function addWorkspaceSettingsRoutes(
     const updated = await workspaceById(runtime.db, workspace.id);
     if (updated === null) throw new Error("workspace disappeared during update");
     return context.json<CreateWorkspaceResponse>({
-      workspace: await projectWorkspace(runtime.db, principal, updated),
+      workspace: await projectWorkspace(runtime, principal, updated),
     });
   });
 
