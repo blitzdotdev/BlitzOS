@@ -304,9 +304,9 @@ describe("SP26-LSP: Go to Definition and Find References are off for v1", () => 
   });
 });
 
-describe("seam patch 9 is declared where a merge agent reads it", () => {
+describe("seam patch 10 is declared where a merge agent reads it", () => {
   it("has a numbered entry naming every vendored file it touches", () => {
-    expect(patches).toContain("### 9. The side panel's file surfaces");
+    expect(patches).toContain("### 10. The side panel's file surfaces");
     for (const file of [
       "components/sessions/session-detail.tsx",
       "hooks/use-code-collab-session-file-provider.ts",
@@ -315,14 +315,14 @@ describe("seam patch 9 is declared where a merge agent reads it", () => {
       "components/sessions/session-monaco-text-viewer.tsx",
       "lib/session-monaco-editor-controller.ts",
     ]) {
-      expect(patches, `seam patch 9 declares ${file}`).toContain(file);
+      expect(patches, `seam patch 10 declares ${file}`).toContain(file);
     }
   });
 
   it("moves the file count the merge drill checks against", () => {
     // Seam patch 1's verification step names the expected number of diverged
     // files. Five new ones is a number, and a stale one hides the next patch.
-    expect(patches).toContain("NINETEEN files");
+    expect(patches).toContain("TWENTY files");
   });
 
   it("records that BUG-3 needed no vendored hunk", () => {
