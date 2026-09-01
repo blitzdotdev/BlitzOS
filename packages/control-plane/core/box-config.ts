@@ -139,6 +139,7 @@ export function addBoxConfigRoutes(
     if (row === null) throw new HttpError(404, "machine not found");
     const response: BoxConfigResponse = {
       boxImageRef: runtime.vars.boxImageRef,
+      boxImageSha256: runtime.vars.boxImageSha256,
       // The configured public origin when the deployment has one; otherwise
       // the origin this request arrived on. The fallback keeps a fresh
       // self-host working before APP_URL is filled in, but only the

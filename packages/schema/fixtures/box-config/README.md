@@ -11,7 +11,11 @@ consumer and the update-result producer. This corpus pins both directions.
 with whether the host consumer must accept it (`accepts`). The accept rule:
 a JSON object whose `boxImageRef` is one image-reference token
 (`[A-Za-z0-9][A-Za-z0-9._/:@-]*` — a registry ref or the R2 tarball https
-URL), whose `controlPlaneOrigin` is exactly an http(s) origin (scheme, host,
+URL), whose `boxImageSha256` is a 64-character SHA-256 digest or empty (empty
+under a registry pin, where the ref carries its own digest; it is what makes
+the host's verification as strong as the first boot's, because the digest the
+MANIFEST declares is self-certifying), whose `controlPlaneOrigin` is exactly
+an http(s) origin (scheme, host,
 optional port, nothing after — the host writes it verbatim into
 `/var/lib/blitz/origin`, which the box gateway compares against the browser
 Origin header), and whose `updateRequested` is a boolean. Unknown extra keys

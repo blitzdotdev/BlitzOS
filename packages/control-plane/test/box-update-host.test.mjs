@@ -250,7 +250,13 @@ function manifestAssets({ imageTag, parts = 2, corruptPart = null, missingPart =
   // `payload` is what docker load actually receives: the updater pipes the
   // reassembled archive through gunzip, so asserting on it proves the parts
   // were concatenated in manifest order and decompressed whole.
-  return { assets, ref: "/box-image/manifest.json", archive, payload };
+  return {
+    assets,
+    ref: "/box-image/manifest.json",
+    archive,
+    payload,
+    totalSha256: digest(archive),
+  };
 }
 
 function digest(bytes) {
@@ -299,9 +305,12 @@ async function runUpdater(
   };
 }
 
-/** The steady-state box-config: this plane's own origin, update requested. */
-function configFor(boxImageRef, planeOrigin) {
-  return { boxImageRef, controlPlaneOrigin: planeOrigin, updateRequested: true };
+/** The steady-state box-config: this plane's own origin, update requested.
+ * `boxImageSha256` is the deployment's pinned digest of the whole archive;
+ * empty is what a registry pin sends, and the manifest tests below pass the
+ * real one. */
+function configFor(boxImageRef, planeOrigin, boxImageSha256 = "") {
+  return { boxImageRef, boxImageSha256, controlPlaneOrigin: planeOrigin, updateRequested: true };
 }
 
 function readOptional(file) {
@@ -336,7 +345,12 @@ test("a poll with no update requested refreshes the origin and touches no contai
   const moved = "https://blitzos.example";
   await withHost(
     {},
-    () => ({ boxImageRef: NEXT_REF, controlPlaneOrigin: moved, updateRequested: false }),
+    () => ({
+      boxImageRef: NEXT_REF,
+      boxImageSha256: "",
+      controlPlaneOrigin: moved,
+      updateRequested: false,
+    }),
     async (root, plane, run) => {
       const result = await run();
       assert.equal(result.status, 0, result.report);
@@ -528,7 +542,7 @@ test("a manifest ref downloads, verifies, loads and replaces the container", asy
   const image = manifestAssets({ imageTag: MANIFEST_TAG });
   await withHost(
     { loadProduces: MANIFEST_TAG },
-    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin),
+    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin, image.totalSha256),
     async (root, plane, run) => {
       const result = await run();
       assert.equal(result.status, 0, result.report);
@@ -564,7 +578,7 @@ test("a part that fails its digest is never loaded and leaves the container runn
   const image = manifestAssets({ imageTag: MANIFEST_TAG, corruptPart: "part-1" });
   await withHost(
     { loadProduces: MANIFEST_TAG },
-    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin),
+    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin, image.totalSha256),
     async (root, plane, run) => {
       const result = await run();
       assert.equal(result.status, 0, result.report);
@@ -595,7 +609,7 @@ test("a part that does not download reports download-failed and touches nothing"
   const image = manifestAssets({ imageTag: MANIFEST_TAG, missingPart: "part-0" });
   await withHost(
     { loadProduces: MANIFEST_TAG },
-    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin),
+    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin, image.totalSha256),
     async (root, plane, run) => {
       const result = await run();
       assert.equal(result.status, 0, result.report);
@@ -620,7 +634,7 @@ test("an archive docker load refuses reports load-failed and leaves the containe
   const image = manifestAssets({ imageTag: MANIFEST_TAG });
   await withHost(
     { refuseLoad: true },
-    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin),
+    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin, image.totalSha256),
     async (root, plane, run) => {
       const result = await run();
       assert.equal(result.status, 0, result.report);
@@ -647,7 +661,7 @@ test("a manifest whose tag already runs reports up-to-date without downloading p
   const image = manifestAssets({ imageTag: MANIFEST_TAG });
   await withHost(
     { runningRef: MANIFEST_TAG },
-    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin),
+    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin, image.totalSha256),
     async (root, plane, run) => {
       const result = await run();
       assert.equal(result.status, 0, result.report);
@@ -675,7 +689,7 @@ test("an image already in the local store is not downloaded again", async () => 
   const image = manifestAssets({ imageTag: MANIFEST_TAG, missingPart: "part-0" });
   await withHost(
     { storedImages: [MANIFEST_TAG] },
-    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin),
+    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin, image.totalSha256),
     async (root, plane, run) => {
       const result = await run();
       assert.equal(result.status, 0, result.report);
@@ -751,5 +765,39 @@ test("a refresh token the control plane rejects leaves the credential alone", as
       assert.equal(credential(root).refresh_token, "revoked-refresh-token");
     },
     { token: { access: "live-access-token", refresh: "box-refresh-token" } },
+  );
+});
+
+// The digest the MANIFEST declares is self-certifying: whoever serves the
+// manifest serves the digest beside it. The control plane pins its own copy,
+// which arrives over a different connection, and the host checks both. This is
+// what makes the updater's verification as strong as the first boot's.
+test("an archive that does not match the control plane's pinned digest is refused", async () => {
+  const image = manifestAssets({ imageTag: MANIFEST_TAG });
+  await withHost(
+    { loadProduces: MANIFEST_TAG },
+    // A manifest that is internally consistent — every part digest and the
+    // total agree — and still is not the image this deployment pinned.
+    (planeOrigin) => configFor(`${planeOrigin}${image.ref}`, planeOrigin, "c".repeat(64)),
+    async (root, plane, run) => {
+      const result = await run();
+      assert.equal(result.status, 0, result.report);
+      assert.ok(
+        !result.dockerCalls.includes("load"),
+        `an unpinned archive reached docker load: ${result.dockerCalls.join(" | ")}`,
+      );
+      assert.ok(!result.dockerCalls.includes("rm -f blitz-box"));
+      assert.equal(result.image, RUNNING_REF);
+      assert.equal(
+        plane.reports[0].body,
+        JSON.stringify({
+          ref: `${plane.origin}${image.ref}`,
+          outcome: "digest-mismatch",
+          tag: RUNNING_REF,
+        }),
+      );
+      assert.ok(root);
+    },
+    { assets: image.assets },
   );
 });

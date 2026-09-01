@@ -135,11 +135,12 @@ test("embedded box-config parser matches every config fixture", (context) => {
       });
       if (fixture.accepts) {
         assert.equal(result.status, 0, `${name}: ${result.stderr}`);
-        const { boxImageRef, controlPlaneOrigin, updateRequested } = fixture.response;
+        const { boxImageRef, boxImageSha256, controlPlaneOrigin, updateRequested } =
+          fixture.response;
         assert.equal(
           result.stdout,
-          `${boxImageRef}\t${controlPlaneOrigin}\t${updateRequested}\n`,
-          `${name}: parsed TSV mismatch`,
+          `${boxImageRef}\n${boxImageSha256.toLowerCase()}\n${controlPlaneOrigin}\n${updateRequested}\n`,
+          `${name}: parsed field mismatch`,
         );
       } else {
         assert.notEqual(result.status, 0, `${name} unexpectedly passed`);

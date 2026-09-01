@@ -18,10 +18,20 @@
  * `controlPlaneOrigin` is the one origin the box gateway should trust; the
  * host rewrites `/var/lib/blitz/origin` on every poll when it differs, which
  * needs no restart because the gateway re-reads the file per request.
- * `updateRequested` is the per-workspace flag; image updates are request-gated
- * because replacing the container kills every process inside it. */
+ * `updateRequested` is the per-machine flag; image updates are request-gated
+ * because replacing the container kills every process inside it.
+ *
+ * `boxImageSha256` is the digest of the whole image archive, and it is what
+ * makes the host's verification as strong as the first boot's. Without it the
+ * updater could only check the archive against the digest the MANIFEST
+ * declares, which is self-certifying: whoever serves the manifest serves the
+ * digest beside it. This one arrives from the control plane instead, over a
+ * separate connection, exactly as the bootstrap's baked-in `BOX_IMAGE_SHA256`
+ * does. Empty under a registry pin, where the ref carries its own digest and
+ * docker checks it. */
 export interface BoxConfigResponse {
   boxImageRef: string;
+  boxImageSha256: string;
   controlPlaneOrigin: string;
   updateRequested: boolean;
 }

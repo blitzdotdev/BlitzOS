@@ -1,6 +1,7 @@
 {
   "response": {
     "boxImageRef": "ghcr.io/blitzdotdev/blitz-box:v2",
+    "boxImageSha256": "",
     "controlPlaneOrigin": "https://cp.example/app",
     "updateRequested": false
   },

@@ -23,11 +23,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  BOX_IMAGE_INSTALLER,
-  BOX_IMAGE_SETUP_HELPERS,
-  boxImageSetupScript,
-} from "../dist/core/bootstrap.js";
+import { boxImageSetupPreamble, boxImageSetupScript } from "../dist/core/bootstrap.js";
 
 const API = "https://api.hetzner.cloud/v1";
 const POLL_INTERVAL_MS = 5_000;
@@ -108,9 +104,9 @@ export BOX_IMAGE_SHA256=${JSON.stringify(image.boxImageSha256)}
 # broken bake costs two minutes instead of thirty.
 trap 'echo "bake: FAILED at line $LINENO"; shutdown -h now' ERR
 
-# The emitted image setup calls these. Without them the setup dies on a
-# "retry: command not found", and set -e stops the builder where it stands.
-${BOX_IMAGE_SETUP_HELPERS}${BOX_IMAGE_INSTALLER}
+# Whatever the emitted image setup calls, for the mode it runs in. Without it
+# the setup dies on a "command not found" and set -e stops the builder.
+${boxImageSetupPreamble(image)}
 apt-get update
 apt-get install -y docker.io curl
 systemctl enable --now docker

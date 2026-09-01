@@ -1,7 +1,8 @@
 {
   "response": {
     "controlPlaneOrigin": "https://cp.example",
-    "updateRequested": false
+    "updateRequested": false,
+    "boxImageSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   },
   "accepts": false
 }

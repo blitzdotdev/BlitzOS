@@ -102,6 +102,7 @@ describe("box-config control-plane conformance", () => {
 
   it("pins the shared box-config fixture corpus", () => {
     expect(fixtures<ConfigFixture>("config-").map(([name]) => name)).toEqual([
+      "config-bad-image-sha256.json",
       "config-image-ref-with-space.json",
       "config-missing-image-ref.json",
       "config-non-boolean-update-requested.json",
@@ -140,6 +141,9 @@ describe("box-config control-plane conformance", () => {
     const body = await response.json<BoxConfigResponse>();
     expect(body).toEqual({
       boxImageRef: env.BOX_IMAGE_REF,
+      // The digest the deployment pins, so the host's check is as strong as
+      // the first boot's rather than trusting the manifest about itself.
+      boxImageSha256: env.BOX_IMAGE_SHA256,
       // No APP_URL binding on this request, so the fallback answers with the
       // origin the poll arrived on.
       controlPlaneOrigin: "https://cp.example",

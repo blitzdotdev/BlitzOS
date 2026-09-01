@@ -85,14 +85,14 @@ export function recipeInvocationEnvFile(recipe: RecipeBootstrap): string {
  * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
  * without a recipe or usage capture emits byte-identical output. */
 /**
- * The shell helpers `boxImageSetupScript` calls. Emitting that setup without
- * these gives `retry: command not found`, and under `set -e` the script dies
- * where it stands. The golden-image bake hit exactly that on its first real
- * run: the builder never powered off, and the bake waited 30 minutes for a
- * shutdown that could not come.
+ * The retry helper the REGISTRY branch of `boxImageSetupScript` calls.
+ * Emitting that setup without it gives `retry: command not found`, and under
+ * `set -e` the script dies where it stands. The golden-image bake hit exactly
+ * that on its first real run: the builder never powered off, and the bake
+ * waited 30 minutes for a shutdown that could not come.
  *
- * `buildBootstrapScript` emits these in its own preamble. Any other caller
- * that embeds the setup has to emit them first.
+ * Emit `boxImageSetupPreamble` rather than reaching for this directly; it is
+ * exported because the bake's own tests pin the bytes.
  */
 export const BOX_IMAGE_SETUP_HELPERS = `retry() {
   local attempt=1
@@ -247,6 +247,23 @@ load_archive "$manifest_tag"
 BOX_IMAGE_INSTALL
 chmod 0755 /usr/local/sbin/blitz-box-image
 `;
+
+/**
+ * Everything that must be emitted before `boxImageSetupScript`, for the mode
+ * it is about to run in. `buildBootstrapScript` and the golden-image bake both
+ * call this, so neither can drift into emitting a helper the other does not.
+ *
+ * The tarball branch never calls `retry` and the registry branch never calls
+ * the installer, and every byte here is cloud-init user-data against a hard
+ * 32 KiB Hetzner cap — so each mode emits only what it runs. The installer
+ * stays in BOTH, because the host updater reaches for it whenever the control
+ * plane hands it a manifest ref, which can happen on a box whose deployment
+ * later moves from a registry pin to an R2 one.
+ */
+export function boxImageSetupPreamble(options: BoxImageRef): string {
+  const helpers = options.boxImageRef.startsWith("https://") ? "" : BOX_IMAGE_SETUP_HELPERS;
+  return `${helpers}${BOX_IMAGE_INSTALLER}`;
+}
 
 /** The three variables that name one box image build. */
 export interface BoxImageRef {
@@ -511,7 +528,7 @@ touch "$BOOTSTRAP_LOG"
 chmod 0600 "$BOOTSTRAP_LOG"
 exec >>"$BOOTSTRAP_LOG" 2>&1
 
-${BOX_IMAGE_SETUP_HELPERS}${BOX_IMAGE_INSTALLER}
+${boxImageSetupPreamble(options)}
 fail() {
   bootstrap_error="$*"
   echo "blitz bootstrap failed: $*"
@@ -938,18 +955,28 @@ with open(sys.argv[1], encoding="utf-8") as config_file:
 if not isinstance(value, dict):
     raise ValueError("box-config must be an object")
 ref = value.get("boxImageRef")
+sha256 = value.get("boxImageSha256")
 origin = value.get("controlPlaneOrigin")
 update_requested = value.get("updateRequested")
 if not isinstance(ref, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*", ref) is None:
     raise ValueError("box-config boxImageRef is invalid")
+if not isinstance(sha256, str) or re.fullmatch(r"([a-fA-F0-9]{64})?", sha256) is None:
+    raise ValueError("box-config boxImageSha256 must be a SHA-256 digest or empty")
 if not isinstance(origin, str) or re.fullmatch(r"https?://[A-Za-z0-9.-]+(:[0-9]+)?", origin) is None:
     raise ValueError("box-config controlPlaneOrigin is not an origin")
 if not isinstance(update_requested, bool):
     raise ValueError("box-config updateRequested must be a boolean")
-print(f"{ref}\t{origin}\t{'true' if update_requested else 'false'}")
+print(f"{ref}\n{sha256.lower()}\n{origin}\n{'true' if update_requested else 'false'}")
 BOX_CONFIG_PARSER
 ) || { log "poll rejected: box-config response failed validation"; exit 0; }
-IFS=$'\t' read -r next_ref next_origin update_requested <<<"$parsed"
+# One field per line, read with mapfile rather than read -r over a TSV:
+# boxImageSha256 is empty under a registry pin, and TAB is IFS whitespace, so
+# read would collapse the empty column and shift every field after it.
+mapfile -t config_fields <<<"$parsed"
+next_ref=${"${config_fields[0]}"}
+next_sha256=${"${config_fields[1]}"}
+next_origin=${"${config_fields[2]}"}
+update_requested=${"${config_fields[3]}"}
 
 # No restart needed: the gateway re-reads this file per request.
 if [ "$next_origin" != "$current_origin" ]; then
@@ -1037,8 +1064,8 @@ log "update start: [$current_image] -> [$next_image]"
 # Install FIRST: a failed install must leave the old container running.
 if [ "$manifest_mode" = true ]; then
   install_status=0
-  /usr/local/sbin/blitz-box-image install "$next_ref" "$next_image" >>"$UPDATE_LOG" 2>&1 ||
-    install_status=$?
+  /usr/local/sbin/blitz-box-image install "$next_ref" "$next_image" "$next_sha256" \
+    >>"$UPDATE_LOG" 2>&1 || install_status=$?
   if [ "$install_status" != 0 ]; then
     case "$install_status" in
       11) install_outcome=digest-mismatch ;;

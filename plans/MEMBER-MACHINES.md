@@ -402,6 +402,17 @@ verified before the running container is touched, so every acquire failure
 (`pull-failed`, `download-failed`, `digest-mismatch`, `load-failed`) leaves the
 workspace exactly as it was. A new image that will not start rolls back.
 
+**Two digests, and why both.** The manifest declares the archive's
+`totalSha256`, but that is self-certifying: whoever serves the manifest serves
+the digest beside it, so on its own it proves only that the parts were
+reassembled correctly. `box-config` therefore carries `boxImageSha256`, the
+deployment's own pin, which reaches the host over a different connection from
+a different origin. The updater passes it to the installer as the same
+optional fourth argument the first boot uses, so an archive that is internally
+consistent and still not the image this deployment pinned is refused. That is
+what makes the updater's verification as strong as the bootstrap's, which has
+always had its digest baked in.
+
 **Answering "is an update available".** Under a manifest pin the ref is
 byte-identical across rebakes while the tag inside it moves, so comparing refs
 would read every box as current forever. The comparison is on the CONCRETE
@@ -441,7 +452,7 @@ the file keeps it fresh for every other reader on the machine as a side effect.
 **The size budget, and the way out of it.** All of this rides in cloud-init
 user-data, which Hetzner caps at a hard 32 KiB
 (`HETZNER_USER_DATA_MAX_BYTES`; AWS gzips and has room to spare). A heavy
-manifest-mode create was 25.4 KiB before this work and is 30.1 KiB after.
+manifest-mode create was 25.4 KiB before this work and is 30.4 KiB after.
 `test/bootstrap.test.ts` pins a 2 KiB floor so the next feature that wants to
 emit bash finds out there rather than as a 413 on a real create.
 
