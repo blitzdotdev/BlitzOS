@@ -97,6 +97,22 @@ describe("the preview loads the product's stylesheets and no others", () => {
       expect(product, `${leaf} is drawn by ${files.join(", ")}`).toContain(leaf);
     }
   });
+
+  it("renders no class the product deleted", () => {
+    // The other direction of the same property, and the one that decayed: the
+    // strip's org mark left `WorkspaceStrip.tsx` and `strip-rail.css` together,
+    // and the preview kept drawing it for a while as an unstyled button the
+    // product cannot produce. A deleted class has no owner to check it against,
+    // so it is named here instead.
+    const preview = [
+      previewEntry,
+      previewBody,
+      read(here, "surface-preview", "region.tsx"),
+    ].join("\n");
+    for (const className of ["shell-orgmark", "shell-strip__orgwrap", "shell-strip__menu"]) {
+      expect(preview, `${className} is deleted`).not.toContain(className);
+    }
+  });
 });
 
 /** Every top-level selector in a stylesheet, parentheses respected. */

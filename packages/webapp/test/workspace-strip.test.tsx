@@ -198,6 +198,14 @@ describe("workspace strip", () => {
     const view = await render(strip());
     expect(view.container.querySelector('button[aria-label="Organization: Acme"]')).toBeNull();
     expect(view.container.querySelector('[role="menu"][aria-label="Organizations"]')).toBeNull();
+    // By class as well as by label: the classes are what a hand-written strip
+    // (the design preview's, say) reaches for, and they have no CSS any more.
+    expect(view.container.querySelector(".shell-orgmark")).toBeNull();
+    expect(view.container.querySelector(".shell-strip__orgwrap")).toBeNull();
+    // The strip opens on the workspace tiles; nothing precedes them.
+    const aside = view.container.querySelector(".shell-strip");
+    expect(aside?.querySelector(".shell-strip__tiles")?.previousElementSibling)
+      .toBe(aside?.querySelector(".shell-strip__close"));
     // One separator remains (above the account edge), not the org divider.
     expect(view.container.querySelectorAll(".shell-strip__sep").length).toBe(1);
     await view.unmount();
