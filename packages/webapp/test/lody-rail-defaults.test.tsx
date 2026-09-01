@@ -29,18 +29,28 @@ async function loadStorage(flag: boolean) {
 }
 
 /** The box answered `/lody/platform`, which is every case below: what is under
- * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`). */
+ * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`).
+ *
+ * `surfaceHostsTabs` is `CloudApp`'s `surfaceTabsEnabled`: the session strip
+ * draws this workspace's tabs. It is what decides whether the workspace ROOT is
+ * normalised into the chat plane, and the cases below set it both ways. */
 const SESSIONS_PRESENT = {
   capability: "present",
   surfaceHostsTabs: true,
+} satisfies LodyRailSessions;
+
+/** The same box, on a layout that cannot draw the strip — mobile. */
+const SESSIONS_PRESENT_NO_STRIP = {
+  capability: "present",
+  surfaceHostsTabs: false,
 } satisfies LodyRailSessions;
 
 /** Mounts the hook with a route it also owns, the way `CloudApp` does. */
 async function mountRail(options: {
   flag: boolean;
   path: string;
-  tabCount: number;
   tabsLoaded?: boolean;
+  surfaceHostsTabs?: boolean;
 }) {
   vi.resetModules();
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", options.flag ? "true" : "false");
@@ -56,7 +66,7 @@ async function mountRail(options: {
       setRoute,
       route.workspaceId ?? "",
       options.tabsLoaded ?? true,
-      SESSIONS_PRESENT,
+      options.surfaceHostsTabs === false ? SESSIONS_PRESENT_NO_STRIP : SESSIONS_PRESENT,
     );
     seen.rail = rail;
     seen.route = route;
@@ -109,7 +119,6 @@ describe("useLodyRail", () => {
     const { seen, view } = await mountRail({
       flag: false,
       path: "/workspaces/ws-1",
-      tabCount: 0,
     });
     expect(seen.rail?.visible).toBe(false);
     expect(seen.rail?.onVendorHost).toBeUndefined();
@@ -122,7 +131,6 @@ describe("useLodyRail", () => {
     const { seen, view } = await mountRail({
       flag: true,
       path: "/workspaces/ws-1",
-      tabCount: 0,
     });
     expect(window.location.pathname).toBe("/workspaces/ws-1/chat");
     expect(seen.rail?.visible).toBe(true);
@@ -133,11 +141,31 @@ describe("useLodyRail", () => {
     await view.unmount();
   });
 
-  it("leaves a workspace that already has tabs on the panes", async () => {
+  it("sends a workspace that already HAS tabs to the landing too", async () => {
+    // THIS IS THE REFRESH REPORT, and the assertion is the inverse of the one
+    // that stood here. §0.4 ran once per workspace and only for a document with
+    // ZERO tabs, so a returning member with tabs stayed on `/workspaces/:id` —
+    // where the panes drew the native strip — for good. That strip is deleted
+    // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"), so the root address has no tab
+    // control and is not somewhere anybody may be left.
+    const before = window.history.length;
     const { seen, view } = await mountRail({
       flag: true,
       path: "/workspaces/ws-1",
-      tabCount: 2,
+    });
+    expect(window.location.pathname).toBe("/workspaces/ws-1/chat");
+    expect(seen.rail?.visible).toBe(true);
+    expect(window.history.length, "a correction replaces").toBe(before);
+    await view.unmount();
+  });
+
+  it("leaves the root alone on a layout that draws no strip", async () => {
+    // Mobile, and a box with no session plane. There is no strip to send them
+    // to, so the panes keep the view and the rail is the tab list.
+    const { seen, view } = await mountRail({
+      flag: true,
+      path: "/workspaces/ws-1",
+      surfaceHostsTabs: false,
     });
     expect(window.location.pathname).toBe("/workspaces/ws-1");
     expect(seen.rail?.visible).toBe(false);
@@ -148,7 +176,6 @@ describe("useLodyRail", () => {
     const { seen, view } = await mountRail({
       flag: true,
       path: "/workspaces/ws-1",
-      tabCount: 0,
       tabsLoaded: false,
     });
     // Nothing is known yet, so nothing is decided: a workspace whose tabs are
@@ -159,10 +186,13 @@ describe("useLodyRail", () => {
   });
 
   it("navigates, mirrors and closes without fighting itself", async () => {
+    // On the layout where `closeChat` still MEANS something: the panes are the
+    // tab host there, so handing the view back is not immediately undone by the
+    // root normalisation.
     const { seen, view } = await mountRail({
       flag: true,
       path: "/workspaces/ws-1",
-      tabCount: 1,
+      surfaceHostsTabs: false,
     });
     await act(async () => seen.rail?.openSession("s-1"));
     expect(window.location.pathname).toBe("/workspaces/ws-1/chat/s-1");

@@ -214,6 +214,7 @@ function TerminalRows(props: {
           <div
             className={`shell-s${selected ? " shell-s--on" : ""}`}
             key={session.id}
+            data-session-id={session.id}
             aria-current={selected ? "page" : undefined}
           >
             <button

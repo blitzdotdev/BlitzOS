@@ -155,13 +155,24 @@ describe("a session tab click leaves the terminal tab", () => {
   });
 
   it("is inert on every address that names no terminal", async () => {
-    for (const path of ["/workspaces/ws-1", "/workspaces/ws-1/chat", "/workspaces/ws-1/chat/s-1"]) {
+    for (const path of ["/workspaces/ws-1/chat", "/workspaces/ws-1/chat/s-1"]) {
       const mounted = await mountWiring(path);
       await act(async () => mounted.seen.binding?.onDeselect());
       await settle();
       expect(window.location.pathname, `${path} is unchanged`).toBe(path);
       await mounted.view.unmount();
     }
+    // The workspace ROOT left that list with the native tab strip
+    // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"): where the session strip draws
+    // the tabs it is normalised into the chat plane, because it has no tab
+    // control of its own any more. `onDeselect` is still inert — the move is the
+    // normalisation, and it happens once.
+    const root = await mountWiring("/workspaces/ws-1");
+    expect(window.location.pathname).toBe("/workspaces/ws-1/chat");
+    await act(async () => root.seen.binding?.onDeselect());
+    await settle();
+    expect(window.location.pathname).toBe("/workspaces/ws-1/chat");
+    await root.view.unmount();
   });
 
   it("is the exact inverse of openTerminal, in both hosts", async () => {

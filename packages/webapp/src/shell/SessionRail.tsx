@@ -220,6 +220,7 @@ export function SessionRail({
             <div
               className={`shell-s${active ? ' shell-s--on' : ''}`}
               key={session.id}
+              data-session-id={session.id}
               aria-current={active ? 'page' : undefined}
             >
               <button
