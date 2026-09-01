@@ -19,10 +19,13 @@
  *    the CRDT and the daemon never sees them — so they are ours, drawn with our
  *    `.shell-s` markup and `SessionTypeIcon` glyphs, under their section header
  *    so the three headings match.
- * 3. The SUPPRESSION. `hideHeader` and `hideFooter` are the props phase 4 added
- *    at declared seam #4 (`vendor/lody/BLITZ-PATCHES.md`); the header they hide
- *    is the workspace switcher `div.shell-rhead` already serves, and the footer
- *    is settings/help/archive, which BlitzOS serves from its own chrome.
+ * 3. The SUPPRESSION. `hideHeader` is the prop phase 4 added at declared seam #2
+ *    (`vendor/lody/BLITZ-PATCHES.md`); the header it hides is the workspace
+ *    switcher `div.shell-rhead` already serves. The footer used to go with it,
+ *    and seam #13 is why it no longer does: settings and help are BlitzOS's own
+ *    chrome, but the ARCHIVE entry beside them is upstream's only affordance
+ *    that leads to the archive page. `footerItems` keeps that one and drops the
+ *    rest, so nothing about the entry point is ours.
  *
  * SECTION ORDER IS UPSTREAM'S, NOT THE PLAN'S SKETCH. §8 draws Chats above
  * GitHub Worktrees; `LoroSidebar` renders `sessionListProps` before
@@ -56,6 +59,10 @@ import type { SharedSessionRow } from "./shared-sessions.js";
  * value for the drag sash's sake. Keep the two in step.
  */
 const RAIL_WIDTH = 252;
+
+/** The one footer utility this rail keeps (seam patch 13). A module constant, so
+ * the array identity does not change per render and re-memo the sidebar. */
+const FOOTER_ITEMS = ["archive"] as const;
 
 /** One row as `buildSessionListRows` returns it, narrowed to what this file
  * reads. Their `SessionListRow` cannot be imported as a type across the vendor
@@ -106,8 +113,13 @@ export interface SessionRailSidebarProps {
    * still means "the first one", which is what the panes themselves show.
    */
   activeTerminalId: string;
-  /** The chat session the surface is showing, or `null` on the landing. */
+  /** The chat session the surface is showing, or `null` on the landing and on
+   * the archive. */
   activeSessionId: string | null;
+  /** `true` while the archive page is the surface's address. It is a separate
+   * signal from `activeSessionId` because the archive names no session, so the
+   * two states would otherwise both read as "the landing". */
+  archiveActive?: boolean;
   /** `true` while the surface is the visible pane. */
   surfaceVisible: boolean;
   onSelectTerminal: (tabId: string) => void;
@@ -117,6 +129,8 @@ export interface SessionRailSidebarProps {
   onSelectSession: (sessionId: string) => void;
   /** "+ New session": their `home` nav entry, relabelled. */
   onOpenLanding: () => void;
+  /** The footer's Archive entry, which is upstream's own (seam patch 13). */
+  onOpenArchive?: () => void;
   /** The `+ New tab` control, rendered in the Terminals section header so the
    * Claude / Codex / terminal entries keep a home in the rail. */
   terminalsAction?: ReactNode;
@@ -339,7 +353,8 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
     [allActiveSessions, onlineMachineIds, sessions, user?.id, workspaceId],
   );
 
-  const { onSelectSession, onOpenLanding, onShareSession, onSelectSharedSession } = props;
+  const { onSelectSession, onOpenLanding, onOpenArchive, onShareSession, onSelectSharedSession } =
+    props;
   const sharedSessions = props.sharedSessions ?? [];
   // Every row is private and every row is the caller's own — the rail lists the
   // sessions on the caller's box, because that is the only daemon this runtime
@@ -417,6 +432,17 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
   const [sharedCollapsed, setSharedCollapsed] = useState(false);
 
   const selectedSessionId = props.surfaceVisible ? props.activeSessionId : null;
+  // THE ARCHIVE OUTRANKS "New session". Both are nav entries and the archive
+  // names no session, so without this the footer's Archive entry would be dark
+  // while the archive page is on screen and the "New session" row would be lit
+  // instead — the rail would name a page the member is not looking at.
+  const activeNav = !props.surfaceVisible
+    ? null
+    : props.archiveActive === true
+      ? "archive"
+      : props.activeSessionId === null
+        ? "home"
+        : null;
   // THE RAIL FOLLOWS THE ADDRESS (plans/LODY-TERMINAL-TABS.md wave 3, ADJ1).
   //
   // It used to follow `!surfaceVisible`, which is the pre-terminal-tabs rule:
@@ -570,7 +596,11 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       // these override rather than stack.
       className="rounded-none border-x-0 shadow-none"
       hideHeader
-      hideFooter
+      // Seam patch 13. The footer's Settings and Help are surfaces BlitzOS
+      // serves from its own chrome, and its mobile filter popover controls
+      // organize modes this rail does not have. Archive is the one entry that
+      // stays, because it is the only way upstream offers into the archive page.
+      footerItems={FOOTER_ITEMS}
       workspaceName=""
       userEmail=""
       workspaces={[]}
@@ -582,8 +612,9 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       // literally the same action — go to the chat landing, which is the
       // create surface — and reusing it keeps the affordance theirs.
       labels={{ home: "New session" }}
-      activeNav={props.surfaceVisible && props.activeSessionId === null ? "home" : null}
+      activeNav={activeNav}
       onHomeClicked={onOpenLanding}
+      {...(onOpenArchive === undefined ? {} : { onArchiveClicked: onOpenArchive })}
       {...(topContent === null ? {} : { topContent })}
       sessionListProps={sessionListProps}
       afterSessionListContent={afterSessionListContent}

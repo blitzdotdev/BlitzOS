@@ -60,11 +60,12 @@ describe("the v1 scope constant", () => {
       hideAgentRoles: true,
       keyboardShortcutsAvailable: false,
       hideLanguageServiceActions: true,
+      hideTeamScope: true,
     });
   });
 });
 
-describe("router.tsx hands the suppression to both mounted components", () => {
+describe("router.tsx hands the suppression to all three mounted components", () => {
   const router = ourSource("router.tsx");
 
   it("passes every prop `lodyV1SuppressionProps` returns", () => {
@@ -85,6 +86,16 @@ describe("router.tsx hands the suppression to both mounted components", () => {
     const landing = router.slice(start, router.indexOf("<SessionDetail"));
     expect(landing).toContain("hideProductHints={V1.hideProductHints}");
     expect(landing).toContain("hideAgentRoles={V1.hideAgentRoles}");
+  });
+
+  it("gives ArchiveView the team-scope suppression, and no prop for the PR badge", () => {
+    const start = router.indexOf("<ArchiveView");
+    expect(start, "router.tsx mounts ArchiveView").toBeGreaterThan(-1);
+    const archive = router.slice(start, router.indexOf("</AppThemeShell>", start));
+    expect(archive).toContain("hideTeamScope={V1.hideTeamScope}");
+    // The badge is upstream's own capability gate, so there is deliberately no
+    // second prop here. A prop appearing would mean the gate was re-invented.
+    expect(archive).not.toContain("hidePullRequest");
   });
 
   it("gives SessionDetail the menu, prompt, Role and keyboard suppressions", () => {
@@ -261,5 +272,44 @@ describe("seam patch 7 is declared where a merge agent reads it", () => {
         "useAppCapability('githubIntegration')",
       );
     }
+  });
+});
+
+describe("seam patches 13 and 14 are declared where a merge agent reads them", () => {
+  const patches = read(join(repoRoot, "vendor/lody/BLITZ-PATCHES.md"));
+
+  it("names the footer seam and the file it touches", () => {
+    expect(patches).toContain("### 13. `LoroSidebar`'s footer, one entry at a time");
+    expect(patches).toContain("components/loro-sidebar.tsx");
+    // The prop the vendored file must carry, and the value our rail passes.
+    expect(read(join(vendorSrc, "components/loro-sidebar.tsx"))).toContain(
+      "footerItems?: readonly LoroSidebarFooterItem[];",
+    );
+    const rail = ourSource("SessionRailSidebar.tsx");
+    expect(rail, "the rail keeps exactly the Archive entry").toContain(
+      'const FOOTER_ITEMS = ["archive"] as const;',
+    );
+    expect(rail, "the rail no longer hides the whole footer").not.toContain("hideFooter");
+  });
+
+  it("names the archive seam and both files it touches", () => {
+    expect(patches).toContain("### 14. The archive page's v1 scope cuts");
+    for (const file of [
+      "components/archive/archive-view.tsx",
+      "components/archive/web-archive-screen.tsx",
+    ]) {
+      expect(patches, `seam patch 14 declares ${file}`).toContain(file);
+      expect(read(join(vendorSrc, file)), `${file} declares hideTeamScope`).toContain(
+        "hideTeamScope?: boolean;",
+      );
+    }
+  });
+
+  it("gates the archive row's PR badge on the capability upstream already has", () => {
+    // Same mechanism as seam patch 7's GitHub half, and the same reason: the
+    // capability exists, the local set is empty, and this row never asked.
+    expect(read(join(vendorSrc, "components/archive/archive-view.tsx"))).toContain(
+      "useAppCapability('githubIntegration')",
+    );
   });
 });

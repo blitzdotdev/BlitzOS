@@ -7,9 +7,10 @@
  * `routeTree.gen.ts` that only exists inside their app builds, and the tree's
  * roots are cloud surfaces we do not mount: `__root.tsx` builds the Convex/
  * better-auth stack, and `$workspaceName/_auth.tsx` runs the organization and
- * session guards. What we want out of that tree is exactly two leaves — the
- * chat landing and the session detail — so this file declares those two with
- * their real components and stubs every other address their code navigates to.
+ * session guards. What we want out of that tree is exactly three leaves — the
+ * chat landing, the session detail and the archive — so this file declares those
+ * three with their real components and stubs every other address their code
+ * navigates to.
  *
  * ROUTE IDS ARE UPSTREAM'S, DELIBERATELY. `_auth` is reproduced as a PATHLESS
  * layout route so a leaf's id is `/$workspaceName/_auth/chat`, byte-for-byte
@@ -21,9 +22,9 @@
  * working. Matching the ids keeps that class of failure out of the tree.
  *
  * THE STUBS ARE NOT OPTIONAL. `router.navigate({ to })` throws on an address
- * the tree does not contain, and their components navigate to fourteen settings
- * pages, the archive, the task pages and `/workspace/create` from menus a
- * member can reach at any time. The list is generated, not guessed:
+ * the tree does not contain, and their components navigate to twenty settings
+ * pages, the task pages and `/workspace/create` from menus a member can reach at
+ * any time. The list is generated, not guessed:
  *
  *     cd vendor/lody/packages/components/src
  *     grep -rho "to: '/[^']*'" components hooks lib routes | sort -u
@@ -48,6 +49,7 @@ import { isJsonNumber, isJsonString, type JsonValue } from "@blitzos/schema";
 import { ChatLanding } from "@lody/components/components/chat/chat-landing";
 import { parseChatLandingSearch } from "@lody/components/components/chat/chat-landing-derived";
 import SessionDetail from "@lody/components/components/sessions/session-detail";
+import { ArchiveView } from "@lody/components/components/archive/archive-view";
 import { AppThemeShell } from "@lody/components/components/app-theme-shell";
 import { useWorkspaceContextAtoms } from "@lody/components/hooks/use-workspace-context-atoms";
 import { WorkspaceRouteTargetProvider } from "@lody/components/providers/workspace-route-target";
@@ -62,18 +64,16 @@ const V1 = lodyV1SuppressionProps();
 
 /** Every address their components navigate to that we render as nothing.
  *
- * Phase 4 gives some of these real destinations (the archive and the settings
- * pages are products in their own right). Until then a click lands on a blank
- * surface rather than throwing, and the surface is never the one a member is
- * looking at — the rail owns what is visible. */
+ * The archive left this list when it got its own page; the settings pages have
+ * their own reason below. A click on one of these lands on a blank surface
+ * rather than throwing, and the surface is never the one a member is looking at
+ * — the rail owns what is visible. */
 const STUB_PATHS = [
   "/",
   "login",
   "complete-email",
   "workspace/create",
 ] as const;
-
-const WORKSPACE_STUB_PATHS = ["archive"] as const;
 
 /** Every settings page upstream declares, stubbed.
  *
@@ -290,6 +290,33 @@ function sessionDetailRouteComponent(readOnly: boolean) {
   };
 }
 
+/**
+ * Their `routes/$workspaceName/_auth/archive.tsx`, minus the lazy boundary.
+ *
+ * The route file wraps `ArchiveView` in `RouteSuspense` and a `lazy()`, because
+ * upstream splits it out of an app bundle a member loads on sign-in. This whole
+ * surface is already one lazy chunk (`LodySessionsRegion`), so a second boundary
+ * inside it would buy a spinner and nothing else.
+ *
+ * `AppThemeShell` is the session page's own wrapper, and the archive needs it
+ * for the same reason: the page paints `bg-background`, which resolves from the
+ * theme variables that shell publishes.
+ */
+function ArchiveRoute() {
+  return (
+    <AppThemeShell>
+      <ArchiveView
+        // Seam patch 14. `hideTeamScope` takes the My Tasks / All Tasks control
+        // (T25): a local workspace has exactly one member, so both entries list
+        // the same sessions. The row's pull-request badge is NOT a prop — it
+        // answers `useAppCapability('githubIntegration')`, which the local
+        // platform already declines.
+        hideTeamScope={V1.hideTeamScope}
+      />
+    </AppThemeShell>
+  );
+}
+
 export interface LodySessionDetailSearch {
   tab?: string;
   pr?: number;
@@ -331,6 +358,7 @@ export function parseSessionDetailSearch(
 
 export const LODY_CHAT_ROUTE = "/$workspaceName/_auth/chat";
 export const LODY_SESSION_ROUTE = "/$workspaceName/_auth/sessions/$sessionId";
+export const LODY_ARCHIVE_ROUTE = "/$workspaceName/_auth/archive";
 
 /** The router type, stated on our side: `createRouter` is generic over the
  * route tree and the vendor seam erases the component types, so naming the
@@ -441,9 +469,13 @@ export function createLodySessionRouter(
     createRoute({ getParentRoute: () => settingsRoute, path, component: EmptyRoute }),
   );
 
-  const workspaceStubs = WORKSPACE_STUB_PATHS.map((path) =>
-    createRoute({ getParentRoute: () => authRoute, path, component: EmptyRoute }),
-  );
+  // The archive is a real page, not a stub: it is the only surface that lists
+  // an archived session, and the only one that can restore or delete one.
+  const archiveRoute = createRoute({
+    getParentRoute: () => authRoute,
+    path: "archive",
+    component: ArchiveRoute,
+  });
 
   // `local/$machineId/$localProjectId` is their local-project page. Phase 5
   // gives it a destination; until then it is an address, not a screen.
@@ -462,7 +494,7 @@ export function createLodySessionRouter(
         tasksRoute.addChildren([tasksIndexRoute, taskDetailRoute]),
         settingsRoute.addChildren([settingsIndexRoute, ...settingsStubs]),
         localProjectRoute,
-        ...workspaceStubs,
+        archiveRoute,
       ]),
     ]),
   ]);
@@ -490,4 +522,13 @@ export function createLodySessionRouter(
 export function activeSessionIdFromPathname(pathname: string): string | null {
   const match = /^\/[^/]+\/sessions\/([^/?#]+)/u.exec(pathname);
   return match?.[1] ?? null;
+}
+
+/** Whether the router's current address is the archive page.
+ *
+ * Read off the location for the reason `activeSessionIdFromPathname` is: both
+ * answers are wanted from a `router.subscribe('onResolved')` callback, where no
+ * React context is available. */
+export function isArchivePathname(pathname: string): boolean {
+  return /^\/[^/]+\/archive\/?(?:[?#]|$)/u.test(pathname);
 }

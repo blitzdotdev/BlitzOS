@@ -12,7 +12,7 @@
  * | `gitHubIntegration` | R16, C17-C19, C65, C72, IC67, IC72, IC96-IC101, SP43, SP44, SP57-SP61, WT15 | BlitzOS connects no GitHub App, so every PR flow fails past the button. |
  * | `agentRolesAndMcp` | C55-C57, C86-C89, C91 | Nothing writes the workspace Agent Role or MCP catalog rows, so both pickers are empty by construction. |
  * | `keyboardShortcuts` | X1-X5, C24, C100, C102, C103, T27 | We mount neither `commands.attach(window)` nor `CommandPalette`, so no chord is answered. |
- * | `cloudSurfaces` | S7-S10, IC60, IC83, IC84, IC88 | Each one advertises Lody's cloud, Lody's Discord, Lody's desktop app or a settings screen we do not serve. |
+ * | `cloudSurfaces` | S7-S10, IC60, IC83, IC84, IC88, T25 | Each one advertises Lody's cloud, Lody's Discord, Lody's desktop app, a settings screen we do not serve, or a team scope a one-member workspace cannot switch. |
  * | `languageService` | SP26 | A box runs no language service, so Go to Definition and Find References answer "Host language service does not support this file" for every identifier in every file. |
  *
  * HOW A FLAG REACHES THE VENDORED RENDERER. Two ways, and which one applies is
@@ -45,10 +45,11 @@ export interface LodyV1Scope {
   /** The command palette, the global dispatcher and the ⌘L hint chip (9 rows). HIDDEN. */
   readonly keyboardShortcuts: boolean;
   /**
-   * Lody-cloud and wrong-product surfaces (9 rows). DELETED for v1: the header
+   * Lody-cloud and wrong-product surfaces (10 rows). DELETED for v1: the header
    * menu's "Change owner", "Share with team" and "Copy URL", the notification
-   * permission prompt, and the no-machine / no-agent hint band with its
-   * Download-the-client, Report-a-bug, Discord and Go-to-settings buttons.
+   * permission prompt, the no-machine / no-agent hint band with its
+   * Download-the-client, Report-a-bug, Discord and Go-to-settings buttons, and
+   * the archive page's My Tasks / All Tasks scope control.
    */
   readonly cloudSurfaces: boolean;
   /**
@@ -89,9 +90,10 @@ export const lodyExtraCapabilities = (): readonly LodyPlatformCapability[] =>
   LODY_V1_SCOPE.gitHubIntegration ? (["githubIntegration"] as const) : [];
 
 /**
- * The suppression props `router.tsx` passes to `ChatLanding` and `SessionDetail`
- * (seam patch 7). Built here so the two mounts cannot disagree, and so a test
- * reads the same object the surface does.
+ * The suppression props `router.tsx` passes to the three components it mounts:
+ * `ChatLanding`, `SessionDetail` and `ArchiveView` (seam patches 7, 10 and 14).
+ * Built here so the mounts cannot disagree, and so a test reads the same object
+ * the surface does.
  */
 export interface LodyV1SuppressionProps {
   readonly hideCloudMenuItems: boolean;
@@ -100,6 +102,14 @@ export interface LodyV1SuppressionProps {
   readonly hideAgentRoles: boolean;
   readonly keyboardShortcutsAvailable: boolean;
   readonly hideLanguageServiceActions: boolean;
+  /**
+   * The archive page's My Tasks / All Tasks control (T25, seam patch 14).
+   *
+   * NOT the PR badge on the same page: that answers upstream's own
+   * `githubIntegration` capability, which the local platform already declines,
+   * so there is no prop for it and nothing here to flip.
+   */
+  readonly hideTeamScope: boolean;
 }
 
 export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
@@ -109,4 +119,5 @@ export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
   hideAgentRoles: !LODY_V1_SCOPE.agentRolesAndMcp,
   keyboardShortcutsAvailable: LODY_V1_SCOPE.keyboardShortcuts,
   hideLanguageServiceActions: !LODY_V1_SCOPE.languageService,
+  hideTeamScope: !LODY_V1_SCOPE.cloudSurfaces,
 });

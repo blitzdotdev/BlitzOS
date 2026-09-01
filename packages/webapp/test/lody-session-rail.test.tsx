@@ -195,19 +195,20 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     ).toEqual([]);
   }, 90_000);
 
-  it("suppresses their header and footer through the props seam #4 added", () => {
+  it("suppresses their header and all of the footer but Archive (seams #2 and #13)", () => {
     // §0.3: `div.shell-rhead` stays native, so their workspace switcher must
     // not render — it is the one control that would duplicate it.
     expect(railHost.querySelector("[data-workspace-switcher-trigger]")).toBeNull();
     expect(railHost.querySelector("[data-workspace-identity]")).toBeNull();
-    // The footer rail is settings / help / archive, all of which BlitzOS serves
-    // from its own chrome.
-    for (const label of ["Settings", "Help", "Archive"]) {
-      expect(
-        railButtons().some((button) => button.getAttribute("aria-label") === label),
-        label,
-      ).toBe(false);
+    // A footer entry names itself in an `sr-only` span, so the label is the
+    // button's text (`IconButton`, `loro-sidebar.tsx:527`).
+    // Settings and Help are surfaces BlitzOS serves from its own chrome.
+    for (const label of [/^Settings$/u, /^Help$/u]) {
+      expect(railButton(label) === undefined, String(label)).toBe(true);
     }
+    // Archive is upstream's only affordance that leads to the archive page, so
+    // hiding it left the page unreachable. Seam patch 13 keeps exactly this one.
+    expect(railButton(/^Archive$/u), "the footer's Archive entry").toBeDefined();
   });
 
   it("offers + New session, and it asks the shell for the landing", async () => {

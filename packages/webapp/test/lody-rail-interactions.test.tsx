@@ -136,6 +136,7 @@ async function mountRegion(options: { path: string; tabCount: number }): Promise
         }}
         onOpenSession={rail.openSession}
         onOpenLanding={rail.openLanding}
+        onOpenArchive={rail.openArchive}
       />
     );
   }
@@ -232,3 +233,73 @@ describe("the rail's other two directions, unchanged", () => {
     await mounted.view.unmount();
   });
 });
+
+/**
+ * THE ARCHIVE IS AN ADDRESS, and these are the two failures that make it one.
+ *
+ * The archive page names no session, so the surface resolves it exactly as it
+ * resolves the landing: `null`. Two things follow, and both would be silent:
+ * `mirror(null)` would read the page the member just opened as a departure from
+ * it and push the address to `/chat`, and the effect that drives the surface
+ * FROM the address would then push the surface back to the landing. The member
+ * would see the archive for one frame.
+ */
+describe("the archive address", () => {
+  it("opens from the rail's footer entry, and reveals the surface", async () => {
+    const mounted = await mountRegion({ path: "/workspaces/ws-1", tabCount: 1 });
+    expect(mounted.seen.rail?.visible).toBe(false);
+
+    await act(async () => mounted.surface.rail?.onOpenArchive?.());
+    await settle();
+
+    expect(window.location.pathname).toBe("/workspaces/ws-1/chat/archive");
+    expect(mounted.seen.rail?.archive).toBe(true);
+    expect(mounted.seen.rail?.sessionId, "the archive names no session").toBeNull();
+    expect(mounted.seen.rail?.visible).toBe(true);
+    expect(mounted.surface.hidden).toBe(false);
+    await mounted.view.unmount();
+  });
+
+  it("hands the rail the SHELL's archive navigator, like the other two", async () => {
+    const mounted = await mountRegion({ path: "/workspaces/ws-1", tabCount: 1 });
+    expect(mounted.surface.rail?.onOpenArchive).toBe(mounted.seen.rail?.openArchive);
+    await mounted.view.unmount();
+  });
+
+  it("survives the surface reporting no session, which is what the page reports", async () => {
+    const mounted = await mountRegion({ path: "/workspaces/ws-1/chat/archive", tabCount: 1 });
+    expect(mounted.seen.rail?.archive).toBe(true);
+
+    // `onActiveSessionChange` fires on every resolved navigation, and the
+    // archive resolves to `null`. Without the guard this is the line that took
+    // the member back to the landing.
+    await act(async () => mounted.seen.rail?.mirror(null));
+    await settle();
+
+    expect(window.location.pathname).toBe("/workspaces/ws-1/chat/archive");
+    expect(mounted.seen.rail?.archive).toBe(true);
+    await mounted.view.unmount();
+  });
+
+  it("still follows the surface to a session, which is a row click on that page", async () => {
+    const mounted = await mountRegion({ path: "/workspaces/ws-1/chat/archive", tabCount: 1 });
+    await act(async () => mounted.seen.rail?.mirror("s-9"));
+    await settle();
+
+    expect(window.location.pathname).toBe("/workspaces/ws-1/chat/s-9");
+    expect(mounted.seen.rail?.archive).toBe(false);
+    expect(mounted.seen.rail?.sessionId).toBe("s-9");
+    await mounted.view.unmount();
+  });
+
+  it("is a reserved segment, never a session whose id spells `archive`", async () => {
+    // `workspaceChatPath` never emits `/chat/archive` for a session, and the
+    // parser reads the reserved branch first — the same rule `shared` and
+    // `terminal` follow.
+    const mounted = await mountRegion({ path: "/workspaces/ws-1/chat/archive", tabCount: 0 });
+    expect(mounted.seen.rail?.sessionId).toBeNull();
+    expect(mounted.seen.rail?.terminalId).toBeNull();
+    await mounted.view.unmount();
+  });
+});
+

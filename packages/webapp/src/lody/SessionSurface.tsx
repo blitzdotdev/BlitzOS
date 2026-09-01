@@ -65,6 +65,7 @@ import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
 import {
   activeSessionIdFromPathname,
   createLodySessionRouter,
+  isArchivePathname,
   type LodyRouter,
   type LodySessionRouterOptions,
 } from "./router.js";
@@ -118,6 +119,9 @@ export interface LodyRailBinding {
   onOpenLanding?: () => void;
   /** The `+ New tab` control, rendered in the Terminals section header. */
   terminalsAction?: ReactNode;
+  /** The rail footer's Archive entry (seam patch 13). Absent, the portal falls
+   * back to the surface's own router, exactly as `onOpenSession` does. */
+  onOpenArchive?: () => void;
   /** Right-click Share on a session row. Absent leaves the row's menu exactly
    * as phase 4 shipped it (plans/LODY-SHARING.md §8). */
   onShareSession?: (sessionId: string) => void;
@@ -144,8 +148,15 @@ export interface LodySessionSurfaceApi {
    * member gets an empty composer instead of the one they left.
    */
   openLanding: (options?: { resetDraft?: boolean }) => void;
-  /** The session the surface is currently showing, or `null` on the landing. */
+  /** The session the surface is currently showing, or `null` on the landing and
+   * on the archive. */
   activeSessionId: () => string | null;
+  /** Show the archived-session list. */
+  openArchive: () => void;
+  /** `true` while the archive page is the surface's address. Asked BESIDE
+   * `activeSessionId`, because the archive names no session and would otherwise
+   * be indistinguishable from the landing. */
+  isArchiveOpen: () => boolean;
   /** Every `window.ipc` channel the vendored renderer asked for that the bridge
    * does not serve (design-doc risk 10). Empty is the healthy answer, and the
    * phase-3 exit test asserts it after a full round trip: an upstream call site
@@ -404,6 +415,11 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     [router, slug],
   );
 
+  const openArchive = useCallback(() => {
+    if (router === null || slug === null) return;
+    void router.navigate({ to: "/$workspaceName/archive", params: { workspaceName: slug } });
+  }, [router, slug]);
+
   const onApiReadyRef = useRef(onApiReady);
   onApiReadyRef.current = onApiReady;
   useEffect(() => {
@@ -411,12 +427,14 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     const api: LodySessionSurfaceApi = {
       openSession,
       openLanding,
+      openArchive,
       activeSessionId: () => activeSessionIdFromPathname(router.state.location.pathname),
+      isArchiveOpen: () => isArchivePathname(router.state.location.pathname),
       unsupportedIpcChannels: () => bridge.unsupportedChannels(),
     };
     onApiReadyRef.current?.(api);
     return () => onApiReadyRef.current?.(null);
-  }, [router, slug, bridge, openSession, openLanding]);
+  }, [router, slug, bridge, openSession, openLanding, openArchive]);
 
   // The rail's own copy of the address. `onActiveSessionChange` tells `CloudApp`
   // (which drives routing and persistence); this drives the highlight inside the
@@ -430,6 +448,20 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     ),
     () => (router === null ? null : activeSessionIdFromPathname(router.state.location.pathname)),
     () => null,
+  );
+
+  // The rail's own copy of the OTHER half of the address, out of the same
+  // subscription and for the same reason: the footer's Archive entry draws its
+  // active state from it, and a prop round-trip through `CloudApp` would render
+  // one frame late on every click.
+  const archiveOpen = useSyncExternalStore(
+    useCallback(
+      (notify: () => void) =>
+        router === null ? () => undefined : router.subscribe("onResolved", notify),
+      [router],
+    ),
+    () => (router === null ? false : isArchivePathname(router.state.location.pathname)),
+    () => false,
   );
 
   // A SESSION CREATED BEFORE THE DEFAULT PROJECT EXISTED IS REPAIRED ON OPEN
@@ -485,6 +517,7 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             terminals={rail.terminals}
             activeTerminalId={rail.activeTerminalId}
             activeSessionId={activeSessionId}
+            archiveActive={archiveOpen}
             surfaceVisible={props.hidden !== true}
             onSelectTerminal={rail.onSelectTerminal}
             {...(rail.onCloseTerminal === undefined
@@ -492,6 +525,7 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
               : { onCloseTerminal: rail.onCloseTerminal })}
             onSelectSession={rail.onOpenSession ?? openSession}
             onOpenLanding={rail.onOpenLanding ?? openLanding}
+            onOpenArchive={rail.onOpenArchive ?? openArchive}
             {...(rail.terminalsAction === undefined
               ? {}
               : { terminalsAction: rail.terminalsAction })}

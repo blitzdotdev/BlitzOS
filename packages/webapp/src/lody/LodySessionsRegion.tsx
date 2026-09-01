@@ -73,6 +73,9 @@ export interface LodySessionsRegionProps {
    * `LodyRailBinding` in `SessionSurface.tsx`. */
   onOpenSession?: (sessionId: string) => void;
   onOpenLanding?: () => void;
+  /** The rail footer's Archive entry: the archived-session list, with its
+   * restore and its permanent delete. */
+  onOpenArchive?: () => void;
   /** The `+ New tab` control for the Terminals section header. */
   terminalsAction?: ReactNode;
   /** Right-click Share on a session row (plans/LODY-SHARING.md §8). */
@@ -150,6 +153,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   if (props.onCloseTerminal !== undefined) rail.onCloseTerminal = props.onCloseTerminal;
   if (props.onOpenSession !== undefined) rail.onOpenSession = props.onOpenSession;
   if (props.onOpenLanding !== undefined) rail.onOpenLanding = props.onOpenLanding;
+  if (props.onOpenArchive !== undefined) rail.onOpenArchive = props.onOpenArchive;
   if (props.terminalsAction !== undefined) rail.terminalsAction = props.terminalsAction;
   if (props.onShareSession !== undefined) rail.onShareSession = props.onShareSession;
   if (props.sharedSessions !== undefined) rail.sharedSessions = props.sharedSessions;

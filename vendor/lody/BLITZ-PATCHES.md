@@ -1127,6 +1127,103 @@ were already diverged by seam patches 7 and 8.
 - Hunk 5's reorder is not the idea; if upstream moves those calls, keep whatever
   order it chooses and pass the argument from wherever the predicate is legible.
 
+### 13. `LoroSidebar`'s footer, one entry at a time (archive page, 2026-09-01)
+
+**One optional prop, four guards, one file — and it is seam patch 2 admitting it
+was too coarse.** Seam patch 2 gave the sidebar `hideFooter`, because BlitzOS
+serves settings and help from its own chrome. The footer also carries the
+ARCHIVE entry, which is upstream's only affordance that leads to the archive
+page, so hiding the footer hid the one thing the host wanted to keep. The rail
+had a page it could not reach.
+
+`hideFooter` cannot express "keep one of them": it is a boolean over the whole
+rail. So the item list becomes the prop, and `hideFooter` keeps its meaning as
+the shorter spelling for "none of them".
+
+| # | File | Line (at `fe94a920`) | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/components/src/components/loro-sidebar.tsx` | 65 | after `export type LoroSidebarNavKey` | declares `LoroSidebarFooterItem` and `LORO_SIDEBAR_FOOTER_ITEMS`, the default |
+| 2 | same | 183 | after `hideFooter?: boolean;` in `LoroSidebarProps` | declares `footerItems?: readonly LoroSidebarFooterItem[]` |
+| 3 | same | 650 | after `hideFooter = false,` in the destructuring | defaults it to every item |
+| 4 | same | 1237 | the `Settings` `IconButton` | wraps it in `{footerItems.includes('settings') ? ( … ) : null}` |
+| 5 | same | 1241 | the Help `DropdownMenu` | the same term for `'help'` |
+| 6 | same | 1267 | the `Archive` `IconButton` | the same term for `'archive'` |
+| 7 | same | 1272 | `{isMobile ? (` on `SidebarFilterPopover` | adds `&& footerItems.includes('filter')` |
+
+Strictly additive: with the prop absent every item is in the list and the footer
+renders byte-for-byte what it rendered before. No upstream call site passes it.
+
+**What BlitzOS passes.** `packages/webapp/src/lody/SessionRailSidebar.tsx` drops
+`hideFooter` and passes `footerItems={["archive"]}`, so the rail shows the
+Archive entry and nothing else. The mobile filter popover stays hidden, which is
+what seam patch 2's own note already said the host owns.
+
+**Merge conflict drill.** If the footer block is restructured, re-apply by
+wrapping whatever renders in each item's place; every guard is one term and
+carries no logic. If upstream grows its own per-item suppression, delete these
+hunks and pass the new prop from `SessionRailSidebar.tsx`.
+
+### 14. The archive page's v1 scope cuts (archive page, 2026-09-01)
+
+**Seam patch 7's two mechanisms, applied to the page seam patch 13 made
+reachable.** The archive page ships two surfaces the v1 scope hides everywhere
+else, and both are the same defect they are on the session page: a control that
+renders and cannot work.
+
+| Surface | Row area | What renders without this patch |
+|---|---|---|
+| The row's pull-request badge | the GitHub group (R16, C17-C19, IC96-IC101) | A BlitzOS worktree session carries `pullRequests`, so the archived row draws a PR status glyph that links to github.com through an App that is not connected. |
+| The My Tasks / All Tasks scope control | T25 | A local workspace has exactly one member, so both entries list the same sessions. The rail already pins `scope: "my"` and seam patch 2 hides the mobile filter popover — the archive page was the one surface still offering the switch. |
+
+**TWO MECHANISMS, THE SAME CHOICE SEAM PATCH 7 MADE.**
+
+1. **The PR badge reuses upstream's own gate.** `useAppCapability('githubIntegration')`
+   is the check `session-detail.tsx` and five other files already make; the
+   archive row simply never asked. **This half is a bug fix, not a BlitzOS
+   opinion: open it upstream as-is, and there is no prop to drop when it merges.**
+2. **The scope control is a new optional prop**, because upstream has no
+   capability for "this workspace has one member" and inventing one would be a
+   bigger claim than the suppression.
+
+| # | File | Line (at `fe94a920`) | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/components/src/components/archive/archive-view.tsx` | 27 | the `@/lib/utils` import | imports `useAppCapability` |
+| 2 | same | 317 | `function getArchivedSessionItemViewModel(` | adds a third parameter, `gitHubIntegrationAvailable = true`, and the doc comment that says when to pass it |
+| 3 | same | 327 | `const pullRequests = session.pullRequests ?? [];` | answers the flag: an empty list with it off, which zeroes `prUrl`, `prStatusMeta`, `PrIcon` and `prTooltipLabel` together |
+| 4 | same | 403 | the `DesktopArchivedSessionItem` destructuring | reads the capability and passes it |
+| 5 | same | 620 | the `MobileArchivedSessionItem` destructuring | the same |
+| 6 | same | 1003 | `export function ArchiveView()` | declares `ArchiveViewProps` with `hideTeamScope?: boolean`, defaulted `false` |
+| 7 | same | 1013 | `const [archiveScope, setArchiveScope] = useAtom(archiveScopeAtom);` | renames the stored value and pins the ANSWER to `'my'` with the prop on — the atom is still written, so turning the prop off restores the member's own last choice |
+| 8 | same | 1456 | `{isMobile ? (` on the toolbar's scope dropdown | adds `&& !hideTeamScope` |
+| 9 | same | 1718 | `<WebArchiveScreen archiveScope={archiveScope}` | forwards `hideTeamScope` |
+| 10 | `packages/components/src/components/archive/web-archive-screen.tsx` | 22 | `archiveScope: ArchiveScope;` in `WebArchiveScreenProps` | declares `hideTeamScope?: boolean` |
+| 11 | same | 37 | `archiveScope,` in the destructuring | defaults it to `false` |
+| 12 | same | 126 | the `div.ml-2` that holds the scope `DropdownMenu` | wraps it in `{hideTeamScope ? null : ( … )}` |
+
+Hunk 3 is why the rest is small, and it is hunk 2 of seam patch 7 in a second
+place: every PR value the row draws is downstream of that one list.
+
+Our side is the same constant seam patch 7 reads,
+`packages/webapp/src/lody/v1-scope.ts`: `hideTeamScope` joins
+`lodyV1SuppressionProps()` under the `cloudSurfaces` flag, and `router.tsx`
+passes it to `<ArchiveView>` exactly as it passes the other five.
+
+`packages/webapp/test/lody-archive-page.test.tsx` asserts both cuts from both
+sides — dark with the suppression, present without it — and
+`packages/webapp/test/lody-v1-scope-sources.test.ts` pins this section by name.
+
+Verify this divergence by diffing OUR subtree against the upstream commit it was
+imported from, exactly as seam patch 1 describes. **Expected after seam patches
+13 and 14: two more files than seam patch 12's twenty-six — TWENTY-EIGHT.** Seam
+patch 13 adds NO file, because `components/loro-sidebar.tsx` is already seam
+patch 2's. The two new ones are seam patch 14's:
+`components/archive/archive-view.tsx` and
+`components/archive/web-archive-screen.tsx`.
+
+**Merge conflict drill.** If upstream adds the capability check itself, drop
+hunks 1-5 and keep upstream's. If upstream gives the archive page a
+single-member answer of its own, drop hunks 6-12 and pass nothing.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.
