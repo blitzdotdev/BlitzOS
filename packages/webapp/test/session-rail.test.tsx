@@ -47,6 +47,36 @@ function rail(overrides: Partial<Parameters<typeof SessionRail>[0]> = {}) {
 }
 
 describe("the session rail", () => {
+  it("carries the close the deleted tab strip used to own", async () => {
+    // THE ONLY CLOSE THERE IS, on this rail. `WebAppHeader`'s `×` was the whole
+    // of `closeTtydSession`'s reach into the UI, and it is deleted
+    // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"). This rail is what a box with
+    // no session plane draws — an old image, or a member with no machine here —
+    // so without a close on the row that member could open a terminal and never
+    // end its tmux session.
+    const onCloseSession = vi.fn();
+    const view = await render(rail({ onCloseSession }));
+    const close = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close bash"]',
+    );
+    expect(close, "every row carries its own close").not.toBeNull();
+    await act(async () => close?.click());
+    expect(onCloseSession).toHaveBeenCalledWith("2");
+    await view.unmount();
+  });
+
+  it("keeps selecting a row a click on the label, not on the close", async () => {
+    const onSelectSession = vi.fn();
+    const onCloseSession = vi.fn();
+    const view = await render(rail({ onSelectSession, onCloseSession }));
+    const open = view.container.querySelectorAll<HTMLButtonElement>(".shell-s__open");
+    expect(open).toHaveLength(2);
+    await act(async () => open[1]?.click());
+    expect(onSelectSession).toHaveBeenCalledWith("2");
+    expect(onCloseSession).not.toHaveBeenCalled();
+    await view.unmount();
+  });
+
   it("renames the two classes §0.3 names and keeps the head untouched", async () => {
     const view = await render(rail());
     expect(view.container.querySelector("aside.session-rail")).not.toBeNull();
@@ -63,11 +93,14 @@ describe("the session rail", () => {
     const onSelectSession = vi.fn();
     const view = await render(rail({ onSelectSession }));
     expect(view.container.querySelector('button[aria-label="New tab"]')).not.toBeNull();
-    const rows = [...view.container.querySelectorAll<HTMLButtonElement>(".session-list .shell-s")];
-    expect(rows.map((row) => row.textContent)).toEqual(["claude · tab 1", "bash"]);
+    const rows = [...view.container.querySelectorAll<HTMLElement>(".session-list .shell-s")];
+    // The LABEL, not the whole row: the row's trailing slot now holds a close
+    // (the deleted tab strip's, moved), so its text is not the tab's name.
+    expect(rows.map((row) => row.querySelector(".shell-s__t")?.textContent))
+      .toEqual(["claude · tab 1", "bash"]);
     // The second row is the active one, and it says so where the shell reads it.
     expect(rows[1]?.className).toContain("shell-s--on");
-    await act(async () => rows[0]?.click());
+    await act(async () => rows[0]?.querySelector<HTMLButtonElement>(".shell-s__open")?.click());
     expect(onSelectSession).toHaveBeenCalledWith("1");
     await view.unmount();
   });

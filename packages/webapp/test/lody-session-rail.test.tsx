@@ -350,8 +350,11 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
   });
 
   it("keeps the terminal tabs exactly as the old rail drew them", async () => {
-    const rows = [...railHost.querySelectorAll<HTMLButtonElement>(".shell-s")];
-    expect(rows.map((row) => row.textContent)).toEqual(["claude · tab 1", "bash"]);
+    const rows = [...railHost.querySelectorAll<HTMLElement>(".shell-s")];
+    // The LABEL, not the whole row: the trailing slot now holds the close the
+    // deleted native tab strip used to own.
+    expect(rows.map((row) => row.querySelector(".shell-s__t")?.textContent))
+      .toEqual(["claude · tab 1", "bash"]);
     // Same glyphs: `SessionTypeIcon` renders an svg into the same gutter span.
     expect(rows[0]?.querySelector(".shell-g .shell-g__glyph")).not.toBeNull();
     // The surface is showing a CONVERSATION, so no terminal row claims to be
@@ -360,7 +363,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     // exactly when its terminal is the tab on screen (wave 3, ADJ1).
     expect(rows.some((row) => row.className.includes("shell-s--on"))).toBe(false);
     await act(async () => {
-      rows[0]?.click();
+      rows[0]?.querySelector<HTMLButtonElement>(".shell-s__open")?.click();
     });
     expect(selectedTerminals).toEqual(["11"]);
     // The `+ New tab` menu keeps a home in the rail, in the Terminals header.
@@ -377,7 +380,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       mounted.root.render(surface(false, "12"));
     });
     await settle();
-    const rows = [...railHost.querySelectorAll<HTMLButtonElement>(".shell-s")];
+    const rows = [...railHost.querySelectorAll<HTMLElement>(".shell-s")];
     expect(rows[1]?.className).toContain("shell-s--on");
     expect(rows[0]?.className).not.toContain("shell-s--on");
     await act(async () => {
@@ -393,7 +396,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       mounted.root.render(surface(true));
     });
     await settle();
-    const rows = [...railHost.querySelectorAll<HTMLButtonElement>(".shell-s")];
+    const rows = [...railHost.querySelectorAll<HTMLElement>(".shell-s")];
     expect(rows[1]?.className).toContain("shell-s--on");
     await act(async () => {
       mounted.root.render(surface(false));

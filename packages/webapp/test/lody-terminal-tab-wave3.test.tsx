@@ -551,6 +551,25 @@ describe("F5 — the mobile breakpoint cannot strand a terminal address", () => 
     await mounted.view.unmount();
   });
 
+  it("keeps the navigation drawer reachable without the deleted header", async () => {
+    // The hamburger was a child of `WebAppHeader` and it is not a tab control:
+    // below the breakpoint the rail rides in an off-canvas drawer and this is
+    // the only thing that opens it on a loaded workspace page. It moved to
+    // `shell/PaneChrome.tsx` rather than going with the strip.
+    const mounted = await mountShell({
+      path: "/workspaces/ws-1",
+      tabs: TERMINAL_TABS,
+      activeId: 7,
+      mobile: true,
+    });
+    expect(
+      mounted.view.container.querySelector('button[aria-label="Open workspace navigation"]'),
+      "mobile keeps a way into the rail",
+    ).not.toBeNull();
+    expect(paneStrips(mounted.view)).toBe(0);
+    await mounted.view.unmount();
+  });
+
   it("replaces rather than pushes, so the back button is not a trap", async () => {
     const mounted = await mountShell({
       path: "/workspaces/ws-1/chat/terminal/9",

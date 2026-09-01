@@ -402,6 +402,8 @@
   width: 100%;
   height: 31px;
   align-items: center;
+  gap: 9px;
+  padding: 0 9px;
   border: 0;
   border-radius: var(--r-item);
   color: var(--soft-ink);
@@ -411,6 +413,9 @@
   cursor: pointer;
 }
 
+/* The row's own geometry stays on `.shell-s` — `lody-blitz-theme.test.ts` pins
+ * it equal to the vendored row's, and the two must read as one list. This is
+ * only the click target inside it. */
 .shell-s__open {
   display: flex;
   min-width: 0;
@@ -418,7 +423,7 @@
   flex: 1;
   align-items: center;
   gap: 9px;
-  padding: 0 9px;
+  padding: 0;
   border: 0;
   color: inherit;
   background: transparent;
