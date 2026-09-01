@@ -141,14 +141,23 @@ function AuthenticationProbe(props: {
 describe("the Lody surface seeds the workspace context its sign-in panel reads", () => {
   /** Mounts the route tree at an address whose leaf renders nothing, so the
    * `$workspaceName` route runs — and with it `useWorkspaceContextAtoms` — with
-   * none of the vendored chat pages loaded. */
+   * none of the vendored pages loaded.
+   *
+   * A SETTINGS STUB, and it used to be the archive. The archive stopped being a
+   * stub when it got its page (`router.tsx`, `ArchiveRoute`), and a leaf that
+   * renders the real `ArchiveView` would need the whole provider stack this
+   * group deliberately does not build. Every settings address is still
+   * `EmptyRoute`, which is the property this helper wants. */
   async function mountRoute(
     store: LodyAtomStore,
     options: { workspaceId?: string },
   ): Promise<{ unmount: () => Promise<void> }> {
     const router = createLodySessionRouter(WORKSPACE_SLUG, options);
     await act(async () => {
-      await router.navigate({ to: "/$workspaceName/archive", params: { workspaceName: WORKSPACE_SLUG } });
+      await router.navigate({
+        to: "/$workspaceName/settings/about",
+        params: { workspaceName: WORKSPACE_SLUG },
+      });
     });
     const mounted = await render(
       <JotaiProvider store={store}>
@@ -206,7 +215,10 @@ describe("the Lody surface seeds the workspace context its sign-in panel reads",
     store.set(runtimeAtom, runtime);
     const router = createLodySessionRouter(WORKSPACE_SLUG, { workspaceId: WORKSPACE_ID });
     await act(async () => {
-      await router.navigate({ to: "/$workspaceName/archive", params: { workspaceName: WORKSPACE_SLUG } });
+      await router.navigate({
+        to: "/$workspaceName/settings/about",
+        params: { workspaceName: WORKSPACE_SLUG },
+      });
     });
     const results: { error: string | null }[] = [];
     const i18n = initLodyI18n();

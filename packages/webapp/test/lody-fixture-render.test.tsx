@@ -112,20 +112,27 @@ describe("vendored Lody leaves", () => {
   });
 
   it("mounts the sidebar the way the product mounts it", async () => {
-    // `hideHeader` / `hideFooter` are declared seam #4: the header they hide is
-    // the workspace switcher `div.shell-rhead` already serves, and the footer is
-    // Settings / Help / Archive, which BlitzOS serves from its own chrome and
-    // which would otherwise draw a `border-t` band across the bottom of the
-    // rail. A harness that leaves them out reviews a sidebar the product does
-    // not render.
+    // `hideHeader` is declared seam #2: the header it hides is the workspace
+    // switcher `div.shell-rhead` already serves. `footerItems` is declared seam
+    // #13 — Settings and Help are BlitzOS's own chrome, and Archive is the one
+    // footer entry the rail keeps, because it is upstream's only way into the
+    // archive page. A harness that leaves them out reviews a sidebar the product
+    // does not render.
     const mounted = await render(<LodyFixtureSurface />);
     cleanup = mounted.unmount;
     await settle();
 
     const text = mounted.container.textContent ?? "";
-    for (const footerEntry of ["Settings", "Archive"]) {
-      expect(text, `the hidden footer's "${footerEntry}" entry`).not.toContain(footerEntry);
+    for (const gone of ["Settings", "Help"]) {
+      expect(text, `the hidden footer's "${gone}" entry`).not.toContain(gone);
     }
+    // Archive stays: it is the one footer entry `footerItems` keeps, and a
+    // footer entry names itself in an `sr-only` span rather than in an
+    // `aria-label` (`IconButton`, `loro-sidebar.tsx:527`).
+    const archive = [...mounted.container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Archive",
+    );
+    expect(archive, "the footer's Archive entry").toBeDefined();
     // The composer sits in the same 46rem column as the stream rows, because
     // `SessionChatInputArea` wraps it in one upstream.
     const columns = mounted.container.querySelectorAll(".max-w-\\[46rem\\]");
