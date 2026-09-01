@@ -190,18 +190,6 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
       : requiredString(value.name, "name", 64);
     if (name !== "") result.name = requiredString(name, "name", 64);
   }
-  if (value.sshPublicKey !== undefined) {
-    const sshPublicKey = isString(value.sshPublicKey)
-      ? value.sshPublicKey.trim()
-      : requiredString(value.sshPublicKey, "sshPublicKey");
-    if (sshPublicKey !== "") {
-      requiredString(sshPublicKey, "sshPublicKey");
-      if (!isSshPublicKey(sshPublicKey)) {
-        throw new HttpError(400, "sshPublicKey must be an SSH public key");
-      }
-      result.sshPublicKey = sshPublicKey;
-    }
-  }
   if (value.volumeId !== undefined) {
     result.volumeId = requiredString(value.volumeId, "volumeId", 256);
   }
@@ -242,16 +230,14 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   return result;
 }
 
-/** The recreate body is optional: an empty POST restores the workspace as it
- * was. Only the SSH key may be supplied, because it belongs to whoever is
- * asking rather than to the row being restored. */
-interface RecreateOverrides {
-  sshPublicKey?: string;
-}
-
-async function readOptionalJson(request: Request): Promise<RecreateOverrides> {
+/** The recreate body is optional and now carries nothing: an empty POST
+ * restores the workspace as it was. It used to accept an SSH key, which was
+ * the last caller of the workspace-level key field; a key reaches a machine
+ * through `POST /machines/:id/provision|recreate` alone. A body is still
+ * tolerated and ignored so a client that sends `{}` keeps working. */
+async function readOptionalJson(request: Request): Promise<void> {
   const raw = await request.text();
-  if (raw.trim() === "") return {};
+  if (raw.trim() === "") return;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -259,13 +245,6 @@ async function readOptionalJson(request: Request): Promise<RecreateOverrides> {
     throw new HttpError(400, "request body must be JSON");
   }
   if (!isRecord(parsed)) throw new HttpError(400, "request body must be an object");
-  if (parsed.sshPublicKey === undefined) return {};
-  const sshPublicKey = requiredString(parsed.sshPublicKey, "sshPublicKey").trim();
-  if (sshPublicKey === "") return {};
-  if (!isSshPublicKey(sshPublicKey)) {
-    throw new HttpError(400, "sshPublicKey must be an SSH public key");
-  }
-  return { sshPublicKey };
 }
 
 function canonicalFieldForLegacyHostKey(
@@ -614,7 +593,6 @@ export async function performWorkspaceCreate(
     machineTypeId: defaultMachineTypeId,
     requestOrigin,
   };
-  if (input.sshPublicKey !== undefined) creatorMachine.sshPublicKey = input.sshPublicKey;
   if (input.userData !== undefined) creatorMachine.userData = input.userData;
   if (input.volumeId !== undefined) creatorMachine.volumeId = input.volumeId;
   if (recipe !== undefined) creatorMachine.recipe = recipe.bootstrap;
@@ -822,14 +800,11 @@ export function addWorkspaceRoutes(
     if (owner?.volume_id == null) {
       throw new HttpError(409, "workspace kept no volume, so it cannot be recreated");
     }
-    // The SSH key is the caller's, not the workspace's: the row never stored
-    // one, and a key from weeks ago may not be the key they hold now.
-    const overrides = await readOptionalJson(context.req.raw);
+    await readOptionalJson(context.req.raw);
     const request: CreateWorkspaceRequest = {
       defaultMachineTypeId: owner.machine_type_id,
       volumeId: owner.volume_id,
     };
-    if (overrides.sshPublicKey !== undefined) request.sshPublicKey = overrides.sshPublicKey;
     if (row.name !== null) request.name = row.name;
     if (row.agent_rule_id !== null) request.agentRuleId = row.agent_rule_id;
     // The tombstone lets go first. A create that fails still leaves the volume

@@ -277,6 +277,74 @@ export async function authenticateBox(
   };
 }
 
+/** The membership a machine's credential resolves to, read at call time. */
+export interface MachineMembership {
+  id: string;
+  orgId: string;
+  role: "admin" | "member";
+}
+
+/**
+ * The one place a `BoxIdentity` plus its membership becomes a `Principal`.
+ *
+ * Both box-plane doors build the acting principal here — `boxCaller` for the
+ * `/workspaces/self/*` routes and `authenticateMachinePrincipal` for the
+ * machine API — so the two can never drift into disagreeing about who a
+ * machine acts as. A machine whose membership no longer resolves keeps its
+ * user identity and loses its org reach, exactly as an ex-member's session does.
+ */
+export function machinePrincipal(
+  box: BoxIdentity,
+  membership: MachineMembership | null,
+): Principal {
+  return {
+    id: box.principalId,
+    unixName: "blitz",
+    harnesses: [],
+    membershipId: membership?.id ?? null,
+    orgId: membership?.orgId ?? null,
+    role: membership?.role ?? null,
+    platformOperator: box.platformOperator,
+    plane: "machine",
+  };
+}
+
+/**
+ * A machine asking on the machine API, on its own behalf.
+ *
+ * This is `blitz-cred`'s identity model applied to the machine routes a
+ * person's browser already uses: the bearer names a machine, the machine names
+ * a membership, and the membership IS the caller. No route learns that a
+ * machine asked — every ownership and role check downstream runs unchanged
+ * against the member's own reach, so an agent reaches exactly what its member
+ * reaches and nothing more. That includes destroying any machine its member
+ * may destroy, its own box's included; the token is the member's, and it is not
+ * pretended to be less.
+ *
+ * Null on any break in that chain (no bearer, unknown token, a broker box with
+ * no membership, a membership that is no longer active), so the caller falls
+ * through to the next authentication source rather than through a hole.
+ */
+export async function authenticateMachinePrincipal(
+  request: Request,
+  db: Db,
+  now = Date.now(),
+): Promise<Principal | null> {
+  const box = await authenticateBox(request, db, now);
+  if (box === null || box.membershipId === null) return null;
+  const membership = await first<{ id: string; org_id: string; role: "admin" | "member" }>(db, {
+    q: `SELECT id, org_id, role FROM memberships
+        WHERE id = ?1 AND status = 'active' LIMIT 1`,
+    v: [box.membershipId],
+  });
+  if (membership === null) return null;
+  return machinePrincipal(box, {
+    id: membership.id,
+    orgId: membership.org_id,
+    role: membership.role,
+  });
+}
+
 export function addOAuthRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,

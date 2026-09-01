@@ -455,7 +455,6 @@ const createWorkspaceRequest: SharedShape<
   }],
   credentials: [{ name: workspaceCredential.name, label: "live", value: "sk_test_only" }],
   cloneFromWorkspaceId: "workspace",
-  sshPublicKey: "ssh-ed25519 AAAAcaller",
   volumeId: volume.id,
   userData: "#cloud-config\n",
   manifest: {

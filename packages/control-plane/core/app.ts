@@ -9,7 +9,8 @@ import { addFilesRoutes } from "./files/routes.js";
 import { addMachineRoutes } from "./machines.js";
 import { addMachineStatsRoutes } from "./machine-stats.js";
 import { addIdentityRoutes } from "./identity/routes.js";
-import { addOAuthRoutes } from "./oauth.js";
+import { machinePlaneAllows } from "./machine-plane.js";
+import { addOAuthRoutes, authenticateMachinePrincipal } from "./oauth.js";
 import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-tokens.js";
 import type { Principal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./compute/microvm.js";
@@ -69,6 +70,16 @@ export function installControlPlaneRoutes(
     // Login (mintSession) already upserts the principal; re-upserting here
     // added a D1 write to every authenticated request.
     if (principal !== null) return principal;
+    // The machine API. The box credential an agent already holds for
+    // `blitz-cred` authenticates as its own member — but only on the routes
+    // `machinePlaneAllows` names, which are machine lifecycle plus the two
+    // workspace reads that find a machine and its SSH details. It is an
+    // authentication path, not a permission: on those routes every ownership
+    // and role check downstream is the member's own, unchanged.
+    if (machinePlaneAllows(context.req.raw.method, new URL(context.req.url).pathname)) {
+      const machine = await authenticateMachinePrincipal(context.req.raw, runtime.db);
+      if (machine !== null) return machine;
+    }
     const operator = await findOperatorTokenPrincipal(context.req.raw, runtime.db);
     if (operator === null) throw new HttpError(401, "unauthorized");
     return operator;

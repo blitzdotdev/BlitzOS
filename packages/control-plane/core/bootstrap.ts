@@ -388,8 +388,15 @@ done' >>/var/lib/blitz/repo-clone.log 2>&1 || true &
   const sshPublicKeyDeclaration = sshPublicKey === undefined
     ? ""
     : `readonly SSH_PUBLIC_KEY=${shellQuote(sshPublicKey)}\n`;
+  // No key supplied PRESERVES whatever the volume already carries, and only
+  // creates the file when it is missing. `/var/lib/blitz` is the mounted
+  // volume by the time this runs, so the truncation this replaced destroyed
+  // the member's own access every time a machine was re-provisioned without a
+  // key — including machines whose key arrived through the retired
+  // workspace-level field, which have no other copy of it. The bind mount
+  // still needs the file to exist, hence the create-if-absent.
   const sshPublicKeyProvisioning = sshPublicKey === undefined
-    ? String.raw`: >/var/lib/blitz/authorized_key
+    ? String.raw`[ -e /var/lib/blitz/authorized_key ] || : >/var/lib/blitz/authorized_key
 chown root:root /var/lib/blitz/authorized_key
 chmod 0644 /var/lib/blitz/authorized_key
 `

@@ -95,6 +95,7 @@ export async function findOperatorTokenPrincipal(
     // The token is a read-only view of the operator's access, not the
     // operator. Minting further tokens stays with the session.
     platformOperator: false,
+    plane: "session",
   };
 }
 

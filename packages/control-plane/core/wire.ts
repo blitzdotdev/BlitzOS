@@ -581,7 +581,6 @@ export interface CreateWorkspaceRequest {
    * one is refused rather than ignored. */
   templateId?: string;
   name?: string;
-  sshPublicKey?: string;
   volumeId?: string;
   userData?: string;
   manifest?: CredentialManifest;

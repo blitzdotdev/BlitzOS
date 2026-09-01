@@ -159,6 +159,72 @@ granted it.
 `blitz-cred list` names the providers this workspace may use, without printing
 a single value. Use it instead of dumping the environment.
 
+## Getting a machine of your own
+
+You can drive machines over the control plane's machine API, using this box's
+own credential. It authenticates as the member who owns this box, so you reach
+exactly what that person reaches — no more, and no less.
+
+There is no wrapper. Read the credential the way this box already stores it:
+
+```sh
+ORIGIN=$(cat /var/lib/blitz/origin)
+TOKEN=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("/var/lib/blitz/box-credential.json","utf8")).access_token)')
+auth="Authorization: Bearer $TOKEN"
+```
+
+Find a workspace and the machine in it:
+
+```sh
+curl -sS -H "$auth" "$ORIGIN/workspaces"            # ids, names, phases
+curl -sS -H "$auth" "$ORIGIN/workspaces/<id>"       # .members[].machine.id, .ssh
+```
+
+Make a keypair, and bring the machine up with your public key on it:
+
+```sh
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/qa -C "agent@$(hostname)"
+curl -sS -X POST -H "$auth" -H 'Content-Type: application/json' \
+  -d "{\"sshPublicKey\":\"$(cat ~/.ssh/qa.pub)\"}" \
+  "$ORIGIN/machines/<machineId>/provision"
+```
+
+`sshPublicKey` is optional on `provision` and `recreate`, and it is the only
+way a key reaches a machine. Leave it out and the machine keeps whatever key
+it already had — an absent key never erases one.
+
+Poll until the machine answers, then read where to go from the same document:
+
+```sh
+until [ "$(curl -sS -H "$auth" "$ORIGIN/workspaces/<id>" | jq -r .phase)" = ready ]; do
+  sleep 5
+done
+curl -sS -H "$auth" "$ORIGIN/workspaces/<id>" | jq .ssh   # {host, port, user, hostPublicKey}
+ssh -i ~/.ssh/qa -p <port> <user>@<host>
+```
+
+Put the machine away when you are done — a running VM costs real money:
+
+```sh
+curl -sS -X POST   -H "$auth" "$ORIGIN/machines/<machineId>/stop"   # keeps the disk
+curl -sS -X DELETE -H "$auth" "$ORIGIN/machines/<machineId>"        # destroys it
+```
+
+The whole API is those six routes plus `GET /machine-types`. Workspace create
+and delete are NOT included: a person makes workspaces in the UI, and you drive
+the machines inside them. Anything else answers 401 to this credential.
+
+Two things to know before you use it:
+
+- **You can only destroy machines you created.** `DELETE /machines/<id>` and
+  `POST /machines/<id>/recreate` are refused with 403 on any machine a person
+  made in the browser — including the one this box runs on. A machine becomes
+  yours when you `provision` it after it has been destroyed, which is the
+  point where nothing of theirs is left on it. Start and stop are always
+  allowed; they lose nothing.
+- **Put a machine away when you are done.** A running VM costs real money, and
+  nothing reclaims it for you.
+
 ## Installing packages
 
 - There is no `sudo`. Anything that needs root (including `apt`) will not work.

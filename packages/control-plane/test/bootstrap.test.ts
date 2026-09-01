@@ -115,7 +115,7 @@ describe("production VM bootstrap", () => {
   });
 
   it.each([undefined, "", " \t\n"])(
-    "omits cloud-init authorization and provisions an empty mounted key file when no public key is provided",
+    "omits cloud-init authorization and PRESERVES an existing mounted key file when no public key is provided",
     (sshPublicKey) => {
       const userData = buildUserData(
         sshPublicKey,
@@ -128,7 +128,13 @@ describe("production VM bootstrap", () => {
 
       expect(userData).not.toContain("ssh_authorized_keys");
       expect(userData).not.toContain("SSH_PUBLIC_KEY");
-      expect(userData).toContain(": >/var/lib/blitz/authorized_key");
+      // Create-if-absent, never truncate. /var/lib/blitz is the mounted
+      // volume by now, so an unconditional `: >` destroyed the member's own
+      // access on every keyless re-provision.
+      expect(userData).toContain(
+        "[ -e /var/lib/blitz/authorized_key ] || : >/var/lib/blitz/authorized_key",
+      );
+      expect(userData).not.toMatch(/^: >\/var\/lib\/blitz\/authorized_key$/mu);
       expect(userData).toContain("chown root:root /var/lib/blitz/authorized_key");
       expect(userData).toContain("chmod 0644 /var/lib/blitz/authorized_key");
       expect(userData).toContain(
