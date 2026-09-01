@@ -35,6 +35,8 @@ export type ShellNavProps = {
   onOpenDrive: () => void;
   onOpenSettings: () => void;
   onSelectSession: (sessionId: string) => void;
+  /** See `SessionRailProps.onCloseSession`. */
+  onCloseSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
   onOpenPreview: (port: number) => void;
   onOpenPreviewLink: (url: string, title: string) => void;
@@ -69,6 +71,7 @@ export function ShellNav({
   onOpenDrive,
   onOpenSettings,
   onSelectSession,
+  onCloseSession,
   onSpawnSession,
   onOpenPreview,
   onOpenPreviewLink,
@@ -104,6 +107,7 @@ export function ShellNav({
             {...(sessionsNeedNewerMachine === undefined ? {} : { sessionsNeedNewerMachine })}
             {...(sessionsNeedMachine === undefined ? {} : { sessionsNeedMachine })}
             onSelectSession={onSelectSession}
+            onCloseSession={onCloseSession}
             onSpawnSession={onSpawnSession}
             onOpenPreview={onOpenPreview}
             onOpenPreviewLink={onOpenPreviewLink}

@@ -608,6 +608,7 @@ describe('SessionRail', () => {
         livePorts={[]}
         previewLinks={[]}
         onSelectSession={() => undefined}
+        onCloseSession={() => undefined}
         onSpawnSession={() => undefined}
         onOpenPreview={() => undefined}
         onOpenPreviewLink={() => undefined}
@@ -639,6 +640,7 @@ describe('SessionRail', () => {
         livePorts={[]}
         previewLinks={[]}
         onSelectSession={() => undefined}
+        onCloseSession={() => undefined}
         onSpawnSession={() => undefined}
         onOpenPreview={() => undefined}
         onOpenPreviewLink={() => undefined}
@@ -665,6 +667,7 @@ describe('SessionRail', () => {
         livePorts={[{ port: 3000, process: 'vite', firstSeenAt: 1 }]}
         previewLinks={[]}
         onSelectSession={() => undefined}
+        onCloseSession={() => undefined}
         onSpawnSession={onSpawnSession}
         onOpenPreview={onOpenPreview}
         onOpenPreviewLink={() => undefined}

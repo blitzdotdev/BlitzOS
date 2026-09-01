@@ -314,6 +314,7 @@ describe('the rail header', () => {
         livePorts={[]}
         previewLinks={[]}
         onSelectSession={() => undefined}
+        onCloseSession={() => undefined}
         onSpawnSession={() => undefined}
         onOpenPreview={() => undefined}
         onOpenPreviewLink={() => undefined}

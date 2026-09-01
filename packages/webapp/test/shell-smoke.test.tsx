@@ -57,18 +57,32 @@ vi.mock("../src/TtydTerminal.js", async () => {
   };
 });
 
-function railSessions(container: HTMLElement): HTMLButtonElement[] {
-  return [...container.querySelectorAll<HTMLButtonElement>(
-    '[aria-label^="Sessions in "] button',
-  )];
+/**
+ * THE RAIL IS THE TAB LIST ON THIS BUILD.
+ *
+ * These cases run with `VITE_BLITZ_LODY_SESSIONS` off, and the native tab strip
+ * they used to drive is deleted (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"). A
+ * member selects a tab with a rail row and closes one with the `×` in that row's
+ * trailing slot. The subjects below did not change — persistence, pane
+ * retention, the rail's own record — only the control that reaches them.
+ *
+ * A ROW IS NO LONGER A BUTTON. It wraps two of them, so the row's own text is
+ * the label plus the close glyph; the label is read from `.shell-s__t`.
+ */
+function railSessions(container: HTMLElement): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>('[aria-label^="Sessions in "] .shell-s')];
 }
 
 function railSessionLabels(container: HTMLElement): string[] {
-  return railSessions(container).map(({ textContent }) => textContent ?? "");
+  return railSessions(container).map(
+    (row) => row.querySelector(".shell-s__t")?.textContent ?? "",
+  );
 }
 
-function railSession(container: HTMLElement, label: string): HTMLButtonElement | undefined {
-  return railSessions(container).find((row) => row.textContent === label);
+function railSession(container: HTMLElement, label: string): HTMLElement | undefined {
+  return railSessions(container).find(
+    (row) => row.querySelector(".shell-s__t")?.textContent === label,
+  );
 }
 
 /* Org switching and creation live on Settings → Profile now that the strip
@@ -372,6 +386,18 @@ beforeEach(() => {
   });
 });
 
+type Rendered = { container: HTMLElement };
+
+const railRow = (view: Rendered, id: string): HTMLButtonElement | null =>
+  view.container.querySelector<HTMLButtonElement>(
+    `.session-list .shell-s[data-session-id="${id}"] .shell-s__open`,
+  );
+
+const railClose = (view: Rendered, id: string): HTMLButtonElement | null =>
+  view.container.querySelector<HTMLButtonElement>(
+    `.session-list .shell-s[data-session-id="${id}"] .shell-s__close`,
+  );
+
 describe("webapp shell smoke", () => {
   it("renders Google login after an unauthenticated /me", async () => {
     const wire = client();
@@ -672,13 +698,9 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    const sessionTabs = [...view.container.querySelectorAll<HTMLButtonElement>(
-      '.webapp-tab-cell [role="tab"]',
-    )];
-    expect(sessionTabs).toHaveLength(1);
-    expect(sessionTabs[0]?.textContent).toContain("Terminal");
-    expect(view.container.querySelector<HTMLButtonElement>('button[aria-label="New session"]')?.disabled)
-      .toBe(false);
+    expect(railSessionLabels(view.container)).toEqual(["Terminal"]);
+    // The rail's `+` is the only spawn affordance left, in both its shapes.
+    expect(view.container.querySelector('button[aria-label="New tab"]')).not.toBeNull();
     expect(view.container.querySelector('[aria-label="Loading workspace"]')).toBeNull();
     expect(serverWorkspaceStates.get("workspace-running")?.tabs).toEqual({
       version: 1,
@@ -743,14 +765,12 @@ describe("webapp shell smoke", () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
     });
 
-    const sessionTabs = [...view.container.querySelectorAll<HTMLButtonElement>(
-      '[aria-label="Workspace sessions"] .webapp-tab-cell [role="tab"]',
-    )];
     // The default tab set is Claude alone in the main pane; Files rides in
     // the side pane. Remote control runs detached with no tab of its own, so
     // there is no default terminal tab any more.
+    const sessionTabs = railSessionLabels(view.container);
     expect(sessionTabs).toHaveLength(1);
-    expect(sessionTabs[0]?.textContent ?? "").toMatch(/claude/i);
+    expect(sessionTabs[0] ?? "").toMatch(/claude/i);
     expect(vi.mocked(wire.putWorkspaceWebAppState)).not.toHaveBeenCalled();
     expect(serverWorkspaceStates.size).toBe(0);
 
@@ -802,9 +822,14 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    const activeTab = view.container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
-    expect(activeTab?.textContent).toBe(":3000");
-    expect(activeTab?.closest<HTMLElement>(".webapp-tab-cell")?.dataset.sessionId).toBe("2");
+    // A preview is not a rail session and there is no strip to name it in, so
+    // what says it is the active tab is the pane that draws it: tab 2's body is
+    // the visible one and tab 1's is hidden behind it.
+    const panes = [...view.container.querySelectorAll<HTMLElement>(".webapp-workspace-session")];
+    const visible = panes.filter((pane) => !pane.hidden);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]?.querySelector("iframe")?.getAttribute("title") ?? "")
+      .toContain("3000");
     await view.unmount();
   });
 
@@ -880,18 +905,14 @@ describe("webapp shell smoke", () => {
     const terminal = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
     expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
 
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
-    )?.click());
+    await act(async () => railRow(view, "2")?.click());
     const claude = view.container.querySelector<HTMLElement>(
       '[data-testid="terminal-session"][data-session-key="2"]',
     )!;
     expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(true);
     expect(claude.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(false);
 
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
-    )?.click());
+    await act(async () => railRow(view, "1")?.click());
     expect(view.container.querySelector('[data-testid="terminal-session"]')).toBe(terminal);
     expect(view.container.querySelector(
       '[data-testid="terminal-session"][data-session-key="2"]',
@@ -919,10 +940,10 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
-    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="2"]')).not.toBeNull();
+    expect(railRow(view, "1")).toBeNull();
+    expect(railRow(view, "2")).not.toBeNull();
     await act(async () => view.container.querySelector<HTMLButtonElement>(
-      ".webapp-new-tab-spawn",
+      'button[aria-label="New tab"]',
     )?.click());
     const actions = [...view.container.querySelectorAll<HTMLButtonElement>(
       ".webapp-agent-menu [role='menuitem']",
@@ -954,7 +975,11 @@ describe("webapp shell smoke", () => {
     await settle();
 
     expect(railSessionLabels(view.container)).toEqual(["Claude", "Terminal"]);
-    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="3"]')).not.toBeNull();
+    // The file tab is still OPEN — it is just not a rail session. Its pane body
+    // is where it lives now that there is no strip to list it in.
+    expect(railRow(view, "3")).toBeNull();
+    expect(view.container.querySelector('.webapp-workspace-session[data-region="main"]'))
+      .not.toBeNull();
 
     await view.unmount();
   });
@@ -974,9 +999,8 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[aria-label="Workspace side pane sessions"] [role="tab"]',
-    )?.click());
+    // The side pane's own strip is deleted with the main one, so the file tab
+    // is simply the side pane's active tab, which is how it was stored.
     const railAgent = railSession(view.container, "Claude");
     expect(railAgent?.getAttribute("aria-current")).toBe("page");
     expect(railSessionLabels(view.container)).toEqual(["Claude"]);
@@ -984,32 +1008,6 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("keeps Rename as the only managed-session context action", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "claude", title: "Release work" },
-      { id: 2, type: "terminal" },
-    ], 1);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const sessionCell = () => view.container.querySelector<HTMLElement>(
-      ".webapp-tab-cell[data-session-id='1']",
-    );
-    await act(async () => sessionCell()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
-    const actions = [...view.container.querySelectorAll<HTMLButtonElement>(
-      ".webapp-session-menu [role='menuitem']",
-    )].map(({ textContent }) => textContent);
-    expect(actions).toEqual(["Rename"]);
-    expect(view.container.querySelector("[aria-label='Archived sessions']")).toBeNull();
-    await view.unmount();
-  });
 
   it("closes the active session tab and removes its workspace-rail record", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
@@ -1030,12 +1028,8 @@ describe("webapp shell smoke", () => {
       '[data-testid="terminal-session"][data-session-key="1"]',
     )!;
     const firstMountId = first.dataset.mountId;
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
-    )?.click());
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
-    )?.click());
+    await act(async () => railRow(view, "2")?.click());
+    await act(async () => railRow(view, "1")?.click());
 
     expect(view.container.querySelector(
       '[data-testid="terminal-session"][data-session-key="1"]',
@@ -1043,13 +1037,14 @@ describe("webapp shell smoke", () => {
     expect(first.dataset.mountId).toBe(firstMountId);
     expect(webAppHarness.mounts).toHaveBeenCalledTimes(2);
 
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Close Terminal"]',
-    )?.click());
+    // THE CLOSE MOVED TO THE ROW. `WebAppHeader`'s `×` was the only one there
+    // was, and it is deleted with the strip; without a replacement a member
+    // could open a terminal and never end its tmux session.
+    await act(async () => railClose(view, "1")?.click());
     expect(first.isConnected).toBe(false);
     expect(webAppHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
     expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
-    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
+    expect(railRow(view, "1")).toBeNull();
     expect(railSessionLabels(view.container)).toEqual(["Claude"]);
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -1110,13 +1105,14 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    // No rail, no split: one strip holding only the session tabs, with the
-    // panel living in the drawer the mobile layout already had.
+    // No rail, no split, and no strip at all: the native one is deleted
+    // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"). What this case is really
+    // about survives — the panels are an off-canvas sheet on mobile, not a
+    // pane — and the session lives in the rail inside the drawer.
     expect(view.container.querySelector('[aria-label="Workspace panels"]')).toBeNull();
-    expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
-    expect([...view.container.querySelectorAll(
-      '[aria-label="Workspace sessions"] .webapp-tab-cell',
-    )]).toHaveLength(1);
+    expect(view.container.querySelector(".webapp-tabstrip")).toBeNull();
+    expect(view.container.querySelector(".webapp-pane-strip")).toBeNull();
+    expect(railSessionLabels(view.container)).toHaveLength(1);
     const drawer = view.container.querySelector('[aria-label="Workspace drawer"]')!;
     const segments = [...drawer.querySelectorAll('[role="tab"]')]
       .map((tab) => tab.textContent);
@@ -1210,87 +1206,30 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
+    // The split is a PLACEMENT now: the per-pane strips are deleted
+    // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"), so what says the side pane
+    // opened is the pane itself, not a second strip.
+    const sidePane = () => view.container.querySelector<HTMLElement>(
+      '.webapp-workspace-session[data-region="side"]',
+    );
+    expect(sidePane()).toBeNull();
     const filesIcon = view.container.querySelector<HTMLButtonElement>(
       '[aria-label="Workspace panels"] button[aria-label="Files"]',
     )!;
     await act(async () => filesIcon.click());
 
-    const sideStrip = view.container.querySelector<HTMLElement>(
-      '[aria-label="Workspace side pane sessions"]',
-    );
-    expect(sideStrip?.querySelector('[role="tab"]')?.textContent).toContain("Files");
+    expect(sidePane()).not.toBeNull();
+    expect(view.container.querySelector(".webapp-panes--split")).not.toBeNull();
     expect(filesIcon.getAttribute("aria-pressed")).toBe("true");
 
     // Clicking the same icon while its tab is in front closes the panel, and
     // the side pane goes with it.
     await act(async () => filesIcon.click());
-    expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
+    expect(sidePane()).toBeNull();
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
       .toEqual([{ id: 1, type: "terminal" }]);
   });
 
-  it("keeps a visited terminal mounted when its tab is dragged into the other pane", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs(
-      "workspace-running",
-      [
-        { id: 1, type: "terminal" },
-        { id: 2, type: "panel", panel: "files", region: "side" },
-        { id: 3, type: "claude" },
-      ],
-      1,
-      2,
-    );
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const terminal = view.container.querySelector<HTMLElement>(
-      '[data-testid="terminal-session"][data-session-key="1"]',
-    )!;
-    const mountId = terminal.dataset.mountId;
-    expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.dataset.region).toBe("main");
-
-    const handle = view.container.querySelector<HTMLElement>(
-      '[aria-label="Workspace sessions"] .webapp-tab-cell[data-session-id="1"] [role="tab"]',
-    )!;
-    const panes = view.container.querySelector<HTMLElement>(".webapp-panes")!;
-    await act(async () => {
-      handle.dispatchEvent(new MouseEvent("dragstart", { bubbles: true }));
-    });
-    await act(async () => {
-      // jsdom reports zero-size boxes, so the pointer resolves to the last
-      // pane and the drop is a plain tab move into it.
-      panes.dispatchEvent(new MouseEvent("dragover", { bubbles: true, clientX: 50 }));
-      panes.dispatchEvent(new MouseEvent("drop", { bubbles: true, clientX: 50 }));
-    });
-
-    const moved = view.container.querySelector<HTMLElement>(
-      '[data-testid="terminal-session"][data-session-key="1"]',
-    );
-    expect(moved).toBe(terminal);
-    expect(moved?.dataset.mountId).toBe(mountId);
-    expect(moved?.closest<HTMLElement>(".webapp-workspace-session")?.dataset.region).toBe("side");
-    expect(webAppHarness.unmounts).not.toHaveBeenCalled();
-    // Two mounts, not a remount: the terminal kept its instance and the tab
-    // the main pane promoted behind it opened for the first time.
-    expect(webAppHarness.mounts).toHaveBeenCalledTimes(2);
-    // Wait out the 150ms save debounce: the move has to reach the shared doc.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    });
-    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs.find(
-      (tab) => tab.id === 1,
-    )).toEqual({ id: 1, type: "terminal", region: "side" });
-
-    await view.unmount();
-  });
 
   it("tears down retained panes when switching workspaces", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");

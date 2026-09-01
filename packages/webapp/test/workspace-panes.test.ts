@@ -5,20 +5,12 @@ import {
   closeFileTabsAtPath,
   closeTab,
   filesHostRegion,
-  moveTab,
   paneRegions,
   regionTabs,
   renameTab,
   showPanelTab,
-  splitTab,
   togglePanelTab,
 } from "../src/workspace-panes.js";
-import {
-  dropSideFor,
-  insertionBeforeId,
-  landingBox,
-  paneDropTarget,
-} from "../src/workspace-drag.js";
 
 function tabs(): WorkspaceTabs {
   return {
@@ -72,43 +64,18 @@ describe("workspace pane model", () => {
     expect(withFile.activeId).toBe(4);
   });
 
-  it("moves a tab between panes and keeps each pane's own selection", () => {
-    const withPanel = togglePanelTab(tabs(), "files");
-    const moved = moveTab(withPanel, 1, "side", 3);
-    expect(regionTabs(moved, "side").map(({ id }) => id)).toEqual([1, 3]);
-    expect(moved.sideActiveId).toBe(1);
-    expect(moved.activeId).toBe(2);
-  });
-
-  it("reorders inside one pane when the drop names an insertion point", () => {
-    const reordered = moveTab(tabs(), 2, "main", 1);
-    expect(reordered.tabs.map(({ id }) => id)).toEqual([2, 1]);
-    expect(reordered.activeId).toBe(2);
-  });
-
-  it("collapses the split when the last tab leaves the side pane", () => {
-    const withPanel = togglePanelTab(tabs(), "files");
-    const collapsed = moveTab(withPanel, 3, "main", null);
-    expect(paneRegions(collapsed)).toEqual(["main"]);
-    expect(collapsed.tabs.at(-1)).toEqual({ id: 3, type: "panel", panel: "files" });
-  });
-
-  it("pushes the neighbours aside when a tab claims the column it is already in", () => {
-    const split = splitTab(tabs(), 1, "main");
-    expect(regionTabs(split, "main").map(({ id }) => id)).toEqual([1]);
-    expect(regionTabs(split, "side").map(({ id }) => id)).toEqual([2]);
-    expect(split.activeId).toBe(1);
-    expect(split.sideActiveId).toBe(2);
-  });
-
-  it("splits a tab out to the right when the drop names the other column", () => {
-    const split = splitTab(tabs(), 2, "side");
-    expect(regionTabs(split, "side").map(({ id }) => id)).toEqual([2]);
-    expect(split.activeId).toBe(1);
-  });
-
   it("promotes the side pane when the main pane empties", () => {
-    const split = splitTab(tabs(), 2, "side");
+    // A document that already holds a side-pane tab still collapses correctly.
+    // Written by hand rather than by `splitTab`, which is deleted with the
+    // strip that was its only caller (plans/LODY-TERMINAL-TABS.md §4.6).
+    const split: WorkspaceTabs = {
+      version: 1,
+      tabs: [{ id: 1, type: "claude" }, { id: 2, type: "terminal", region: "side" }],
+      activeId: 1,
+      sideActiveId: 2,
+      nextId: 3,
+    };
+    expect(paneRegions(split)).toEqual(["main", "side"]);
     const emptied = closeTab(split, 1);
     expect(paneRegions(emptied)).toEqual(["main"]);
     expect(emptied.activeId).toBe(2);
@@ -148,47 +115,5 @@ describe("workspace pane model", () => {
     const active = renameTab(tabs(), 1, "  Deploy shell  ");
     expect(active.tabs[0]).toEqual({ id: 1, type: "claude", title: "Deploy shell" });
     expect(renameTab(active, 1, "   ").tabs[0]).toEqual({ id: 1, type: "claude" });
-  });
-});
-
-describe("workspace tab drag geometry", () => {
-  const strip = { left: 100, width: 200 };
-
-  it("splits on the outer fifth of each edge and inserts in the middle", () => {
-    expect(dropSideFor(strip, 110)).toBe("left");
-    expect(dropSideFor(strip, 140)).toBe("left");
-    expect(dropSideFor(strip, 141)).toBeNull();
-    expect(dropSideFor(strip, 259)).toBeNull();
-    expect(dropSideFor(strip, 260)).toBe("right");
-    expect(dropSideFor(strip, 295)).toBe("right");
-  });
-
-  it("names the column an edge drop points at, never the pane it came from", () => {
-    expect(paneDropTarget("side", "left", [], 0, 1)).toEqual({ kind: "split", region: "main" });
-    expect(paneDropTarget("main", "right", [], 0, 1)).toEqual({ kind: "split", region: "side" });
-  });
-
-  it("puts the insertion bar in front of the first cell the pointer has not passed", () => {
-    const cells = [
-      { id: 1, left: 0, width: 100 },
-      { id: 2, left: 100, width: 100 },
-    ];
-    expect(insertionBeforeId(cells, 10, 9)).toBe(1);
-    expect(insertionBeforeId(cells, 120, 9)).toBe(2);
-    expect(insertionBeforeId(cells, 190, 9)).toBeNull();
-    // The tab being dragged is not its own drop anchor.
-    expect(insertionBeforeId(cells, 10, 1)).toBe(2);
-  });
-
-  it("draws the landing rectangle over the column the drop will use", () => {
-    const container = { left: 0, top: 0, width: 400, height: 300 };
-    const existing = { left: 240, top: 0, width: 160, height: 300 };
-    expect(landingBox({ kind: "tab", region: "side", beforeId: null }, container, existing, 40))
-      .toEqual({ left: 240, top: 40, width: 160, height: 260 });
-    // A column that does not exist yet claims its own half of the container.
-    expect(landingBox({ kind: "split", region: "side" }, container, null, 40))
-      .toEqual({ left: 200, top: 40, width: 200, height: 260 });
-    expect(landingBox({ kind: "split", region: "main" }, container, null, 40))
-      .toEqual({ left: 0, top: 40, width: 200, height: 260 });
   });
 });

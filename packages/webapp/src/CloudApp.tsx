@@ -16,11 +16,8 @@ import {
 } from './api-adapter';
 import type { ControlPlaneClient } from './api';
 import type { CredentialRequestView, FolderAttachmentView } from '@blitzos/schema';
-import {
-  SPAWN_SESSION_LABELS,
-  type WebAppTabModel,
-  type SpawnSessionType,
-} from './WebAppHeader';
+import { SPAWN_SESSION_LABELS, type SpawnSessionType } from './NewTabMenu';
+import type { WebAppTabModel } from './SessionTypeIcon';
 import { FileIcon } from './WebAppIcons';
 import type { DriveRailSession } from './shell/rail-sessions';
 import { workspaceStatusLine } from './shell/workspace-status-line';
@@ -57,6 +54,7 @@ import {
 import { useLodyRail, type LodyRailSessions } from './lody/use-lody-rail';
 import { useTerminalAddressSync } from './lody/use-terminal-address-sync';
 import { useLodySessionsCapability } from './lody/box-capability';
+import { LODY_SESSIONS_ENABLED } from './lody/flag';
 import { useSharedSessions } from './lody/use-shared-sessions';
 import type { LodySessionSurfaceApi } from './lody/SessionSurface';
 import {
@@ -72,7 +70,6 @@ import {
   defaultWorkspaceFiles,
   isManagedWorkspaceTab,
   tabRegion,
-  terminalFirstWorkspaceTabs,
   withPreviewTabPath,
   type StorageNamespace,
   type WorkspaceDrawerSegment,
@@ -85,16 +82,13 @@ import {
   closeFileTabsAtPath,
   closeTab as closePaneTab,
   filesHostRegion,
-  moveTab,
   paneRegions,
   panelTab,
   regionActiveId,
   renameTab,
   showPanelTab,
-  splitTab,
   withRegionActiveId,
 } from './workspace-panes';
-import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
 import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
@@ -936,15 +930,43 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // shell reports what it saw to this signal, so nothing new is asked of the
   // network to answer it (BUG-CV-01, BUG-CV-02).
   const boxGateway = useBoxGatewayHealth();
+  // DOES THE SESSION STRIP DRAW THIS WORKSPACE'S TABS?
+  //
+  // It is `lodySurfaceMounts` — the region's own mount condition, asked here
+  // rather than restated — plus the layout. Since the native strip was deleted
+  // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2") this decides three things at
+  // once: whether the panes yield their tab bodies, whether the workspace ROOT
+  // address is normalised into the chat plane (`useLodyRail`), and whether a
+  // rail click selects a tab in the strip or hands the view to the panes.
+  //
+  // DESKTOP ONLY, which is §5.5's "mobile is not in v1" taken literally: the
+  // vendored strip lives in `DesktopSessionDetailLayout` and `SessionDetail`
+  // draws its own mobile layout below the breakpoint, whose tab sheet seam
+  // patch 5 does not widen. A mobile workspace therefore keeps the panes, and
+  // the rail — in the mobile drawer — is its tab list.
+  //
+  // IT IS NOT `available`. `available` is "the probe has not ruled it out",
+  // which stays true throughout `probing` and for good on a workspace whose box
+  // is not running. Every consequence above is wrong in that window: the panes
+  // would give up their bodies to a host that never mounts, and the root address
+  // would be sent to a landing that may turn out to be unreachable.
+  const surfaceTabsEnabled = lodySurfaceMounts(
+    activeWorkspaceRunning ? activeIngressEntry : null,
+    lodySessions,
+  ) && !mobileWebApp;
+  // THE BOOT WINDOW, NAMED (`shell/PaneChrome.tsx`).
+  //
+  // The probe starts at `probing` on every cold load and can retry for 7.5 s.
+  // The panes used to fill that window with the native strip and then swap it
+  // for the session strip — the "old tabs come back when I refresh" report. The
+  // window now draws a skeleton instead, and a SETTLED answer is never pending:
+  // a box with no session plane is not loading, it has none, and the rail's
+  // notice says so.
+  const sessionPlanePending = LODY_SESSIONS_ENABLED && lodySessions === 'probing';
   const lodyRailSessions = useMemo<LodyRailSessions>(() => ({
     capability: lodySessions,
-    // The fresh workspace held no tabs because the BUILD has sessions on. The
-    // box does not, so it gets the flag-off tab set instead of a chat landing
-    // that cannot exist.
-    onLegacyDefaultTabs: () => {
-      updateWorkspaceTabs((tabs) => tabs.tabs.length === 0 ? terminalFirstWorkspaceTabs() : tabs);
-    },
-  }), [lodySessions, updateWorkspaceTabs]);
+    surfaceHostsTabs: surfaceTabsEnabled,
+  }), [lodySessions, surfaceTabsEnabled]);
   // Lody sessions (plans/LODY-SESSIONS.md §8). The hook owns the rail's portal
   // host, the chat address and the fresh-workspace default; with the flag off,
   // or against a box that serves no daemon, every field is inert and the rail
@@ -954,7 +976,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setRoute,
     activeWorkspaceId,
     tabsLoaded,
-    activeWorkspaceTabs?.tabs.length ?? 0,
     lodyRailSessions,
   );
   const [lodyApi, setLodyApi] = useState<LodySessionSurfaceApi | null>(null);
@@ -1083,15 +1104,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     return null;
   })();
   const canEditWorkspaceLayout = activeWorkspace?.accessRole !== 'viewer';
-  /** Tab models for one column, in the order that column draws them. */
-  const paneTabModels = (region: WorkspaceRegion): WebAppTabModel[] => ttydTabs.filter(
-    (tab, index) => {
-      const session = ttydSessions[index];
-      if (session === undefined) return false;
-      if (!splitEnabled && session.type === 'panel') return false;
-      return surfaceRegion(session) === region;
-    },
-  );
   const ttydActiveSession = ttydSessions.find(
     (session) => String(session.id) === ttydActiveId,
   ) ?? null;
@@ -1114,28 +1126,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const { openTerminal, openSession, openLanding } = lodyRail;
   // WHERE A WORKSPACE TAB IS SELECTED (plans/LODY-TERMINAL-TABS.md §4.1-§4.2).
   //
-  // With the flag on and a box that serves the surface, a terminal is a TAB of
-  // the session strip: selecting one does not hand the view back to the panes,
-  // it moves the address to that tab inside the surface. Everywhere else —
-  // flag off, or a box on a pre-Lody image — it is the panes' own selection and
-  // the chat surface steps aside, exactly as phase 4 shipped it.
-  //
-  // DESKTOP ONLY, and that is §5.5's "mobile is not in v1" taken literally
-  // rather than left implicit. The vendored strip is a desktop component —
-  // mobile draws `MobileSessionTabSheet`, whose kind enum seam patch 5 does not
-  // widen — and the host content rides in `desktopChatSurfaces`. So a mobile
-  // workspace that hid its native strip would have no tab control at all.
-  //
-  // AND ONLY WHILE THE HOST IS REALLY THERE. `lodySurfaceMounts` is the region's
-  // own mount condition, asked here rather than restated: the panes give up
-  // their tab strips (§4.6) and every tab body to the strip, so a render where
-  // the strip does not exist is a workspace with nothing in it. §4.6 named
-  // `available` for this and `available` is "the probe has not ruled it out",
-  // stays true while the probe is unsettled — for good on a workspace whose box
-  // is not running. That is the blank the address change walked into.
-  const surfaceTabsEnabled = lodyRail.available
-    && lodySurfaceMounts(activeWorkspaceRunning ? activeIngressEntry : null, lodySessions)
-    && !mobileWebApp;
+  // Where the session strip draws the tabs, a terminal is a TAB of it:
+  // selecting one moves the ADDRESS to that tab inside the surface. Everywhere
+  // else — a box on a pre-Lody image, a member with no machine, mobile, or the
+  // flag off — it is the panes' own selection and the chat surface steps aside.
+  // `surfaceTabsEnabled` is decided beside the probe that answers it.
   const openTerminalTab = lodyRail.openTerminal;
   const selectWorkspaceTab = useCallback((id: string) => {
     if (surfaceTabsEnabled) openTerminalTab(id);
@@ -1401,25 +1396,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       return next;
     });
   };
-  const {
-    tabDrag,
-    beginTabDrag,
-    trackTabDrag,
-    dropTabDrag,
-    clearTabDrag,
-    dropTargetLabel,
-  } = useWorkspaceTabDrag({
-    panesRef,
-    visibleRegions,
-    enabled: splitEnabled,
-    labelFor: (sessionId) => ttydTabs.find((tab) => tab.id === sessionId)?.label ?? '',
-    onDrop: (id, target) => {
-      setFocusedRegion(target.region);
-      updateWorkspaceTabs((tabs) => (target.kind === 'split'
-        ? splitTab(tabs, id, target.region)
-        : moveTab(tabs, id, target.region, target.beforeId)));
-    },
-  });
+  // `useWorkspaceTabDrag` was here. Its only handle was a draggable tab button
+  // in the native strip, so it went with the strip
+  // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2" — and see `workspace-panes.ts`).
+  //
   // The machine's state AND whether the browser can reach its box (BUG-CV-02).
   // The reachability half costs no request: it is what the shell's own box
   // polls already learned. See `shell/workspace-status-line.ts`.
@@ -1762,6 +1742,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onOpenDrive={() => navigateTo(drivePath())}
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
+      onCloseSession={closeTtydSession}
       onSpawnSession={spawnTtydSession}
       onOpenPreview={(port) => { openPreviewPort(port); }}
       onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
@@ -1952,6 +1933,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               terminals={railSessions}
               activeTerminalId={railTerminalId}
               onSelectTerminal={selectTtydSession}
+              onCloseTerminal={closeTtydSession}
               onOpenSession={lodyRail.openSession}
               onOpenLanding={openFreshLanding}
               terminalsAction={(
@@ -1981,17 +1963,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               renderedSessions={paneSessions}
               surfaceRegion={surfaceRegion}
               paneActiveId={paneActiveId}
-              paneTabModels={paneTabModels}
               paneFallback={paneFallback}
               sidePaneWidth={activeFiles.width}
               paneResizing={paneResizing}
-              tabDrag={tabDrag}
-              splitEnabled={splitEnabled}
-              tabStrips={!surfaceHostsTabs}
+              sessionsPending={sessionPlanePending}
               mobile={mobileWebApp}
               drawerOpen={drawerOpen}
-              tabsLoaded={tabsLoaded}
-              workspaceWaking={workspaceWaking}
               canEditWorkspaceLayout={canEditWorkspaceLayout}
               activeWorkspace={activeWorkspace}
               activeWorkspaceId={activeWorkspaceId}
@@ -2011,19 +1988,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 setFilesDrawerOpen(false);
                 setDrawerOpen(true);
               }}
-              onSelectSession={selectTtydSession}
-              onCloseSession={closeTtydSession}
-              onRenameSession={renameTtydSession}
-              onSpawnSession={spawnTtydSession}
-              onTabDragStart={beginTabDrag}
-              onTabDragEnd={clearTabDrag}
-              onTabDragOver={(event) => {
-                if (tabDrag === null) return;
-                event.preventDefault();
-                if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-                trackTabDrag(event);
-              }}
-              onTabDrop={dropTabDrag}
               onOpenPreview={openPreviewPort}
               onOpenPreviewLink={openPreviewLink}
               onResolveRequest={resolveWorkspaceRequest}
@@ -2252,27 +2216,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
           files={filesSidebar}
         />
-      )}
-
-      {tabDrag !== null && (
-        <>
-          <div
-            className="webapp-pane-ghost"
-            aria-hidden="true"
-            style={{
-              left: `${tabDrag.pointer.x + 14}px`,
-              top: `${tabDrag.pointer.y - 12}px`,
-            }}
-          >{tabDrag.label}</div>
-          <div
-            className="webapp-pane-droptip"
-            role="status"
-            style={{
-              left: `${tabDrag.pointer.x + 16}px`,
-              top: `${tabDrag.pointer.y + 20}px`,
-            }}
-          >{dropTargetLabel(tabDrag.target)}</div>
-        </>
       )}
 
       {shareToDrivePath !== null && activeWorkspace && (
