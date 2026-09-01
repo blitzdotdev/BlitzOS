@@ -732,7 +732,7 @@ export function addWorkspaceRoutes(
       input,
     );
     return context.json<CreateWorkspaceResponse>(
-      { workspace: await projectWorkspace(runtime.db, principal, row) },
+      { workspace: await projectWorkspace(runtime, principal, row) },
       201,
     );
   });
@@ -744,7 +744,7 @@ export function addWorkspaceRoutes(
     }
     const runtime = runtimeFactory(context);
     const all = await workspacesForOrg(runtime.db, principal.orgId);
-    const views = await projectWorkspaces(runtime.db, principal, all);
+    const views = await projectWorkspaces(runtime, principal, all);
     return context.json<PollResponse>({
       // A member sees the workspaces they are in; an org admin sees every one
       // of the organization's, which is the reach they already held.
@@ -784,7 +784,7 @@ export function addWorkspaceRoutes(
       v: [principal.orgId],
     });
     return context.json<PollResponse>({
-      workspaces: await projectWorkspaces(runtime.db, principal, deleted),
+      workspaces: await projectWorkspaces(runtime, principal, deleted),
     });
   });
 
@@ -847,7 +847,7 @@ export function addWorkspaceRoutes(
         request,
       );
       return context.json<CreateWorkspaceResponse>(
-        { workspace: await projectWorkspace(runtime.db, principal, created) },
+        { workspace: await projectWorkspace(runtime, principal, created) },
         201,
       );
     } catch (error) {
@@ -896,7 +896,7 @@ export function addWorkspaceRoutes(
     if (row === null || row.org_id !== principal.orgId || row.deleted_at !== null) {
       throw new HttpError(404, "workspace not found");
     }
-    const view = await projectWorkspace(runtime.db, principal, row);
+    const view = await projectWorkspace(runtime, principal, row);
     if (view.role === null) throw new HttpError(403, "forbidden");
     return context.json<CreateWorkspaceResponse>({ workspace: view });
   });
@@ -1074,7 +1074,7 @@ export function addWorkspaceRoutes(
     await requireWorkspaceAdmin(runtime.db, principal, row);
     if (row.deleted_at !== null) {
       return context.json<CreateWorkspaceResponse>({
-        workspace: await projectWorkspace(runtime.db, principal, row),
+        workspace: await projectWorkspace(runtime, principal, row),
       });
     }
     let pending = false;
@@ -1100,7 +1100,7 @@ export function addWorkspaceRoutes(
     const after = await workspaceById(runtime.db, id);
     if (after === null) throw new Error("workspace disappeared during destroy");
     return context.json<CreateWorkspaceResponse>({
-      workspace: await projectWorkspace(runtime.db, principal, after),
+      workspace: await projectWorkspace(runtime, principal, after),
     });
   });
 

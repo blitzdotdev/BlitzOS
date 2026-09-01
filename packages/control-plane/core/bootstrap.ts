@@ -85,14 +85,14 @@ export function recipeInvocationEnvFile(recipe: RecipeBootstrap): string {
  * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
  * without a recipe or usage capture emits byte-identical output. */
 /**
- * The shell helpers `boxImageSetupScript` calls. Emitting that setup without
- * these gives `retry: command not found`, and under `set -e` the script dies
- * where it stands. The golden-image bake hit exactly that on its first real
- * run: the builder never powered off, and the bake waited 30 minutes for a
- * shutdown that could not come.
+ * The retry helper the REGISTRY branch of `boxImageSetupScript` calls.
+ * Emitting that setup without it gives `retry: command not found`, and under
+ * `set -e` the script dies where it stands. The golden-image bake hit exactly
+ * that on its first real run: the builder never powered off, and the bake
+ * waited 30 minutes for a shutdown that could not come.
  *
- * `buildBootstrapScript` emits these in its own preamble. Any other caller
- * that embeds the setup has to emit them first.
+ * Emit `boxImageSetupPreamble` rather than reaching for this directly; it is
+ * exported because the bake's own tests pin the bytes.
  */
 export const BOX_IMAGE_SETUP_HELPERS = `retry() {
   local attempt=1
@@ -107,6 +107,163 @@ export const BOX_IMAGE_SETUP_HELPERS = `retry() {
   done
 }
 `;
+
+/** `download` and `verify_sha256`, shared verbatim by the bootstrap's own
+ * image setup and by the host updater's manifest branch.
+ *
+ * `verify_sha256` RETURNS non-zero instead of calling `fail`, because that is
+ * the one thing the two callers genuinely disagree about. The bootstrap has
+ * nothing to protect — no container is running yet — so a mismatch is fatal
+ * and it dies where it stands. The updater has a live workspace to protect, so
+ * a mismatch has to become a reported outcome with the old container still
+ * running. Each caller says `|| fail` or `|| report` for itself; the
+ * arithmetic that decides the verdict exists once. */
+export const BOX_IMAGE_DOWNLOAD_HELPERS = `download() {
+  curl --fail --location --retry 10 --retry-all-errors --retry-delay 3 \\
+    --silent --show-error --output "$2" "$1"
+}
+
+verify_sha256() {
+  local path="$1"
+  local expected
+  local actual
+  actual=$(sha256sum "$path" | cut -d ' ' -f 1)
+  expected=$(printf '%s' "$2" | tr 'A-F' 'a-f')
+  [ "$actual" = "$expected" ]
+}
+`;
+
+/** The box-image manifest validator, embedded in Python.
+ *
+ * Reads the manifest at argv[1], writes one `name\\tsha256` line per part to
+ * argv[2], and prints `totalSha256\\timageTag` on stdout. It is the consumer
+ * side of the `box-image manifest` contract
+ * (`packages/schema/fixtures/box-image-manifest/`).
+ *
+ * The bootstrap and the host updater embed these SAME bytes under two heredoc
+ * markers (`PYTHON` and `MANIFEST_PARSER`), because a manifest that two
+ * readers disagree about is two contracts. `test/box-update-conformance.test.mjs`
+ * pins the two copies equal. */
+export const BOX_IMAGE_MANIFEST_PARSER = `import json
+import re
+import sys
+
+manifest_path, parts_path = sys.argv[1:]
+with open(manifest_path, encoding="utf-8") as manifest_file:
+    value = json.load(manifest_file)
+
+parts = value.get("parts")
+total_sha256 = value.get("totalSha256")
+image_tag = value.get("imageTag")
+if not isinstance(parts, list) or not parts:
+    raise ValueError("manifest parts must be a non-empty list")
+if not isinstance(total_sha256, str) or re.fullmatch(r"[a-fA-F0-9]{64}", total_sha256) is None:
+    raise ValueError("manifest totalSha256 must be a SHA-256 digest")
+if not isinstance(image_tag, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*", image_tag) is None:
+    raise ValueError("manifest imageTag is invalid")
+
+with open(parts_path, "w", encoding="utf-8") as parts_file:
+    for part in parts:
+        if not isinstance(part, dict):
+            raise ValueError("manifest part must be an object")
+        name = part.get("name")
+        sha256 = part.get("sha256")
+        if not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None:
+            raise ValueError("manifest part name is invalid")
+        if not isinstance(sha256, str) or re.fullmatch(r"[a-fA-F0-9]{64}", sha256) is None:
+            raise ValueError("manifest part sha256 must be a SHA-256 digest")
+        parts_file.write(f"{name}\\t{sha256.lower()}\\n")
+
+print(f"{total_sha256.lower()}\\t{image_tag}")
+`;
+
+/** The one host script that installs a box image from an R2 manifest.
+ *
+ * Two callers needed this job: the first boot, and the host updater when a
+ * user asks for an update. They were the same pipeline written twice —
+ * download every part, check each digest, concatenate, check the whole, load —
+ * and two copies of a verification pipeline are two chances to verify
+ * differently. Worse, both copies rode in cloud-init user-data, which Hetzner
+ * caps at 32 KiB (`HETZNER_USER_DATA_MAX_BYTES`); the duplicate parser and
+ * helpers alone cost about 1.8 KiB of that budget.
+ *
+ * So it is written to the host once and both callers invoke it. The exit codes
+ * are the interface: the updater turns them into the outcome vocabulary the
+ * box-config contract defines, and the bootstrap just dies.
+ *
+ * `BOX_IMAGE_SETUP_HELPERS` and this must both be emitted before
+ * `boxImageSetupScript` — `buildBootstrapScript` and the golden-image bake
+ * each do so in their own preamble. */
+export const BOX_IMAGE_INSTALLER = String.raw`cat >/usr/local/sbin/blitz-box-image <<'BOX_IMAGE_INSTALL'
+#!/bin/bash
+# resolve <manifest-url>                    print the tag the manifest names
+# install <manifest-url> <tag> [sha256]     multi-part manifest archive
+# fetch   <tarball-url>  <tag> <sha256>     one whole archive
+# A tag already in the store is a no-op. Exit: 10 download, 11 digest,
+# 12 load, 13 the manifest is invalid or names another tag.
+set -Eeuo pipefail
+${BOX_IMAGE_DOWNLOAD_HELPERS}
+load_archive() {
+  gunzip -c "$archive" | docker load || exit 12
+  docker image inspect "$1" >/dev/null 2>&1 || exit 12
+}
+
+action="${"${1:?usage: blitz-box-image <resolve|install|fetch> <url> [tag] [sha256]}"}"
+url="${"${2:?}"}"
+tmp=$(mktemp -d /var/lib/blitz/.box-image.XXXXXX)
+trap 'rm -rf "$tmp"' EXIT
+archive="$tmp/image.tar.gz"
+
+if [ "$action" = fetch ]; then
+  if docker image inspect "${"${3:?}"}" >/dev/null 2>&1; then exit 0; fi
+  download "$url" "$archive" || exit 10
+  verify_sha256 "$archive" "${"${4:?}"}" || exit 11
+  load_archive "$3"
+  exit 0
+fi
+
+download "$url" "$tmp/manifest.json" || exit 10
+python3 - "$tmp/manifest.json" "$tmp/parts.tsv" >"$tmp/meta.tsv" <<'MANIFEST_PARSER' || exit 13
+${BOX_IMAGE_MANIFEST_PARSER}MANIFEST_PARSER
+IFS=$'\t' read -r manifest_total manifest_tag <"$tmp/meta.tsv"
+if [ "$action" = resolve ]; then
+  printf '%s\n' "$manifest_tag"
+  exit 0
+fi
+[ "$manifest_tag" = "${"${3:?}"}" ] || exit 13
+if docker image inspect "$manifest_tag" >/dev/null 2>&1; then exit 0; fi
+: >"$archive"
+while IFS=$'\t' read -r part_name part_sha256; do
+  download "${"${url%/*}"}/$part_name" "$tmp/$part_name" || exit 10
+  verify_sha256 "$tmp/$part_name" "$part_sha256" || exit 11
+  cat "$tmp/$part_name" >>"$archive"
+  rm -f "$tmp/$part_name"
+done <"$tmp/parts.tsv"
+verify_sha256 "$archive" "$manifest_total" || exit 11
+# A caller carrying its own pinned digest checks that too, so a swapped
+# manifest cannot redirect a boot to another image.
+[ -z "${"${4:-}"}" ] || verify_sha256 "$archive" "$4" || exit 11
+load_archive "$manifest_tag"
+BOX_IMAGE_INSTALL
+chmod 0755 /usr/local/sbin/blitz-box-image
+`;
+
+/**
+ * Everything that must be emitted before `boxImageSetupScript`, for the mode
+ * it is about to run in. `buildBootstrapScript` and the golden-image bake both
+ * call this, so neither can drift into emitting a helper the other does not.
+ *
+ * The tarball branch never calls `retry` and the registry branch never calls
+ * the installer, and every byte here is cloud-init user-data against a hard
+ * 32 KiB Hetzner cap — so each mode emits only what it runs. The installer
+ * stays in BOTH, because the host updater reaches for it whenever the control
+ * plane hands it a manifest ref, which can happen on a box whose deployment
+ * later moves from a registry pin to an R2 one.
+ */
+export function boxImageSetupPreamble(options: BoxImageRef): string {
+  const helpers = options.boxImageRef.startsWith("https://") ? "" : BOX_IMAGE_SETUP_HELPERS;
+  return `${helpers}${BOX_IMAGE_INSTALLER}`;
+}
 
 /** The three variables that name one box image build. */
 export interface BoxImageRef {
@@ -137,87 +294,12 @@ export function boxImageSetupScript(options: BoxImageRef): string {
     );
   }
   return isTarball
-    ? String.raw`download() {
-  curl --fail --location --retry 10 --retry-all-errors --retry-delay 3 \
-    --silent --show-error --output "$2" "$1"
-}
-
-verify_sha256() {
-  local path="$1"
-  local expected="$2"
-  local actual
-  actual=$(sha256sum "$path" | cut -d ' ' -f 1)
-  expected=$(printf '%s' "$expected" | tr 'A-F' 'a-f')
-  [ "$actual" = "$expected" ] || fail "SHA-256 mismatch for $path"
-}
-
-if ! docker image inspect "$BOX_IMAGE_TAG" >/dev/null 2>&1; then
-image_tmp_dir=$(mktemp -d /var/lib/blitz/.bootstrap-image.XXXXXX)
-trap 'rm -rf "$image_tmp_dir"' EXIT
-image_archive="$image_tmp_dir/image.tar.gz"
-
-case "$BOX_IMAGE_REF" in
-  */manifest.json)
-    manifest_path="$image_tmp_dir/manifest.json"
-    manifest_parts_path="$image_tmp_dir/parts.tsv"
-    manifest_metadata_path="$image_tmp_dir/metadata.tsv"
-    download "$BOX_IMAGE_REF" "$manifest_path"
-    python3 - "$manifest_path" "$manifest_parts_path" >"$manifest_metadata_path" <<'PYTHON'
-import json
-import re
-import sys
-
-manifest_path, parts_path = sys.argv[1:]
-with open(manifest_path, encoding="utf-8") as manifest_file:
-    value = json.load(manifest_file)
-
-parts = value.get("parts")
-total_sha256 = value.get("totalSha256")
-image_tag = value.get("imageTag")
-if not isinstance(parts, list) or not parts:
-    raise ValueError("manifest parts must be a non-empty list")
-if not isinstance(total_sha256, str) or re.fullmatch(r"[a-fA-F0-9]{64}", total_sha256) is None:
-    raise ValueError("manifest totalSha256 must be a SHA-256 digest")
-if not isinstance(image_tag, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*", image_tag) is None:
-    raise ValueError("manifest imageTag is invalid")
-
-with open(parts_path, "w", encoding="utf-8") as parts_file:
-    for part in parts:
-        if not isinstance(part, dict):
-            raise ValueError("manifest part must be an object")
-        name = part.get("name")
-        sha256 = part.get("sha256")
-        if not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None:
-            raise ValueError("manifest part name is invalid")
-        if not isinstance(sha256, str) or re.fullmatch(r"[a-fA-F0-9]{64}", sha256) is None:
-            raise ValueError("manifest part sha256 must be a SHA-256 digest")
-        parts_file.write(f"{name}\t{sha256.lower()}\n")
-
-print(f"{total_sha256.lower()}\t{image_tag}")
-PYTHON
-    IFS=$'\t' read -r manifest_total_sha256 manifest_image_tag <"$manifest_metadata_path"
-    [ "$manifest_image_tag" = "$BOX_IMAGE_TAG" ] || fail "manifest imageTag does not match BOX_IMAGE_TAG"
-    manifest_base=${"${BOX_IMAGE_REF%/*}"}
-    : >"$image_archive"
-    while IFS=$'\t' read -r part_name part_sha256; do
-      part_path="$image_tmp_dir/$part_name"
-      download "$manifest_base/$part_name" "$part_path"
-      verify_sha256 "$part_path" "$part_sha256"
-      cat "$part_path" >>"$image_archive"
-      rm -f "$part_path"
-    done <"$manifest_parts_path"
-    verify_sha256 "$image_archive" "$manifest_total_sha256"
-    ;;
-  *)
-    download "$BOX_IMAGE_REF" "$image_archive"
-    ;;
+    ? String.raw`case "$BOX_IMAGE_REF" in
+  */manifest.json) box_image_action=install ;;
+  *) box_image_action=fetch ;;
 esac
-
-verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"
-gunzip -c "$image_archive" | docker load
-rm -rf "$image_tmp_dir"
-trap - EXIT
-fi
+/usr/local/sbin/blitz-box-image "$box_image_action" "$BOX_IMAGE_REF" "$BOX_IMAGE_TAG" "$BOX_IMAGE_SHA256" ||
+  fail "box image install failed with exit $?"
 docker image inspect "$BOX_IMAGE_TAG" >/dev/null
 box_image="$BOX_IMAGE_TAG"`
     : String.raw`if ! docker image inspect "$BOX_IMAGE_REF" >/dev/null 2>&1; then
@@ -446,7 +528,7 @@ touch "$BOOTSTRAP_LOG"
 chmod 0600 "$BOOTSTRAP_LOG"
 exec >>"$BOOTSTRAP_LOG" 2>&1
 
-${BOX_IMAGE_SETUP_HELPERS}
+${boxImageSetupPreamble(options)}
 fail() {
   bootstrap_error="$*"
   echo "blitz bootstrap failed: $*"
@@ -768,40 +850,96 @@ set -Eeuo pipefail
 readonly STATE_DIR=/var/lib/blitz
 readonly ORIGIN_PATH="$STATE_DIR/origin"
 readonly CREDENTIAL_PATH="$STATE_DIR/box-credential.json"
+readonly CREDENTIAL_LOCK="$STATE_DIR/box-credential.lock"
 readonly UPDATE_LOG="$STATE_DIR/box-update.log"
 
 log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$UPDATE_LOG"
 }
 
-# A box that has not registered yet has neither file; that is the normal
-# pre-enrollment state, not an error.
 [ -s "$CREDENTIAL_PATH" ] || exit 0
 [ -s "$ORIGIN_PATH" ] || exit 0
 current_origin=$(sed -n '1p' "$ORIGIN_PATH")
 [ -n "$current_origin" ] || exit 0
 
-access_token=$(python3 - "$CREDENTIAL_PATH" <<'CREDENTIAL_READER'
-import json
-import sys
+# One non-empty string field out of the credential file, or a non-zero exit.
+credential_field() {
+  python3 -c 'import json,sys
+v=json.load(open(sys.argv[1]))[sys.argv[2]]
+assert isinstance(v,str) and v
+sys.stdout.write(v)' "$CREDENTIAL_PATH" "$1"
+}
 
-with open(sys.argv[1], encoding="utf-8") as credential_file:
-    value = json.load(credential_file)
-token = value.get("access_token") if isinstance(value, dict) else None
-if not isinstance(token, str) or token == "":
-    raise SystemExit("box credential has no access_token")
-sys.stdout.write(token)
-CREDENTIAL_READER
-) || { log "skip: box credential is unreadable"; exit 0; }
+access_token=$(credential_field access_token) ||
+  { log "skip: box credential is unreadable"; exit 0; }
+
+rotate_credential() {
+  local refresh_token rotated_tmp
+  refresh_token=$(credential_field refresh_token) || return 1
+  rotated_tmp=$(mktemp "$STATE_DIR/.box-credential.XXXXXX")
+  if ! curl --fail --silent --show-error --max-time 30 \
+      --request POST \
+      --data-urlencode "grant_type=refresh_token" \
+      --data-urlencode "refresh_token=$refresh_token" \
+      --output "$rotated_tmp" \
+      "$current_origin/oauth/token"; then
+    rm -f "$rotated_tmp"
+    return 1
+  fi
+  # The token response, narrowed to the three fields the credential file holds.
+  if ! python3 -c 'import json,sys
+p=sys.argv[1];d=json.load(open(p))
+json.dump({k:d[k] for k in ("box_id","access_token","refresh_token")},
+          open(p,"w"),separators=(",",":"))' "$rotated_tmp"
+  then
+    rm -f "$rotated_tmp"
+    return 1
+  fi
+  chown 1000:1000 "$rotated_tmp"
+  chmod 0600 "$rotated_tmp"
+  mv "$rotated_tmp" "$CREDENTIAL_PATH"
+}
+
+# Under the lock the in-container Go client also takes.
+refresh_access_token() {
+  local before="$access_token"
+  (
+    flock --exclusive --timeout 30 9 || exit 1
+    current=$(credential_field access_token) || exit 1
+    [ "$current" = "$before" ] || exit 0
+    rotate_credential || exit 1
+  ) 9>"$CREDENTIAL_LOCK" || { log "credential refresh failed; the next poll retries"; return 1; }
+  access_token=$(credential_field access_token) || return 1
+  [ "$access_token" != "$before" ] || return 1
+  log "credential refresh: the box access token was rotated"
+}
+
+box_curl() {
+  curl --silent --show-error --max-time 30 --write-out '%{http_code}' \
+    --header "Authorization: Bearer $access_token" \
+    --output "$1" "${"${@:2}"}"
+}
+
+# Rotates the credential once if the first attempt is refused.
+authed_curl() {
+  local status
+  status=$(box_curl "$@") || return 1
+  if [ "$status" = 401 ]; then
+    refresh_access_token || return 1
+    status=$(box_curl "$@") || return 1
+  fi
+  case "$status" in
+    2??) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 config_tmp=$(mktemp "$STATE_DIR/.box-config.XXXXXX")
 result_tmp=$(mktemp "$STATE_DIR/.box-update-result.XXXXXX")
 trap 'rm -f "$config_tmp" "$result_tmp"' EXIT
 
-if ! curl --fail --silent --show-error --max-time 30 \
-    --header "Authorization: Bearer $access_token" \
+if ! authed_curl "$config_tmp" \
     --header "Accept: application/json" \
-    --output "$config_tmp" \
     "$current_origin/workspaces/self/box-config"; then
   log "poll failed: $current_origin/workspaces/self/box-config did not answer"
   exit 0
@@ -817,21 +955,30 @@ with open(sys.argv[1], encoding="utf-8") as config_file:
 if not isinstance(value, dict):
     raise ValueError("box-config must be an object")
 ref = value.get("boxImageRef")
+sha256 = value.get("boxImageSha256")
 origin = value.get("controlPlaneOrigin")
 update_requested = value.get("updateRequested")
 if not isinstance(ref, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*", ref) is None:
     raise ValueError("box-config boxImageRef is invalid")
+if not isinstance(sha256, str) or re.fullmatch(r"([a-fA-F0-9]{64})?", sha256) is None:
+    raise ValueError("box-config boxImageSha256 must be a SHA-256 digest or empty")
 if not isinstance(origin, str) or re.fullmatch(r"https?://[A-Za-z0-9.-]+(:[0-9]+)?", origin) is None:
     raise ValueError("box-config controlPlaneOrigin is not an origin")
 if not isinstance(update_requested, bool):
     raise ValueError("box-config updateRequested must be a boolean")
-print(f"{ref}\t{origin}\t{'true' if update_requested else 'false'}")
+print(f"{ref}\n{sha256.lower()}\n{origin}\n{'true' if update_requested else 'false'}")
 BOX_CONFIG_PARSER
 ) || { log "poll rejected: box-config response failed validation"; exit 0; }
-IFS=$'\t' read -r next_ref next_origin update_requested <<<"$parsed"
+# One field per line, read with mapfile rather than read -r over a TSV:
+# boxImageSha256 is empty under a registry pin, and TAB is IFS whitespace, so
+# read would collapse the empty column and shift every field after it.
+mapfile -t config_fields <<<"$parsed"
+next_ref=${"${config_fields[0]}"}
+next_sha256=${"${config_fields[1]}"}
+next_origin=${"${config_fields[2]}"}
+update_requested=${"${config_fields[3]}"}
 
-# Origin refresh, every poll. Safe with no restart: the gateway re-reads the
-# file per request. This closes the stale-origin outage class for new boxes.
+# No restart needed: the gateway re-reads this file per request.
 if [ "$next_origin" != "$current_origin" ]; then
   origin_tmp=$(mktemp "$STATE_DIR/.origin.XXXXXX")
   printf '%s\n' "$next_origin" >"$origin_tmp"
@@ -840,33 +987,38 @@ if [ "$next_origin" != "$current_origin" ]; then
   mv "$origin_tmp" "$ORIGIN_PATH"
   log "origin refreshed: the box gateway now trusts $next_origin"
 fi
+current_origin="$next_origin"
 
 [ "$update_requested" = true ] || exit 0
 
 report_result() {
-  python3 - "$1" "$2" <<'RESULT_WRITER' >"$result_tmp"
+  local ref="$1"
+  local outcome="$2"
+  local running
+  # The image running NOW; empty means none, and the key is omitted.
+  running=$(docker inspect --format '{{.Config.Image}}' blitz-box 2>/dev/null || true)
+  python3 - "$ref" "$outcome" "$running" <<'RESULT_WRITER' >"$result_tmp"
 import json
 import sys
 
-ref, outcome = sys.argv[1:]
-json.dump({"ref": ref, "outcome": outcome}, sys.stdout, separators=(",", ":"))
+ref, outcome, tag = sys.argv[1:]
+body = {"ref": ref, "outcome": outcome}
+if tag:
+    body["tag"] = tag
+json.dump(body, sys.stdout, separators=(",", ":"))
 RESULT_WRITER
-  if curl --fail --silent --show-error --max-time 30 \
+  if authed_curl /dev/null \
       --request POST \
-      --header "Authorization: Bearer $access_token" \
       --header "Content-Type: application/json" \
       --data-binary @"$result_tmp" \
-      --output /dev/null \
-      "$next_origin/workspaces/self/box-update-result"; then
-    log "reported outcome $2 for $1"
+      "$current_origin/workspaces/self/box-update-result"; then
+    log "reported outcome $outcome for $ref"
   else
-    log "outcome report failed for $1 ($2); the update flag stays set until a report lands"
+    log "outcome report failed for $ref ($outcome); the update flag stays set until a report lands"
   fi
 }
 
 start_box() {
-  # blitz-box-run owns the whole start, including refreshing the container env
-  # from the image it is about to run.
   /usr/local/bin/blitz-box-run "$1" >>"$UPDATE_LOG" 2>&1 || return 1
   local deadline=$((SECONDS + 60))
   while (( SECONDS < deadline )); do
@@ -879,31 +1031,59 @@ start_box() {
 }
 
 current_image=$(docker inspect --format '{{.Config.Image}}' blitz-box 2>/dev/null || true)
-if [ "$next_ref" = "$current_image" ]; then
-  log "update requested but the requested ref is already running; clearing the request"
-  report_result "$next_ref" up-to-date
-  exit 0
-fi
+
+# A manifest URL names its image inside itself, so the tag is only known after
+# resolving it — which is why the up-to-date check sits below, not here.
+manifest_mode=false
 case "$next_ref" in
+  https://*/manifest.json)
+    manifest_mode=true
+    next_image=$(/usr/local/sbin/blitz-box-image resolve "$next_ref") || {
+      log "update failed: the manifest did not resolve; the container is untouched"
+      report_result "$next_ref" download-failed
+      exit 0
+    }
+    ;;
   https://*)
-    # Tarball pins ride the bootstrap's manifest download path, which this
-    # updater does not carry. Report it so the flag clears.
-    log "update refused: a tarball ref cannot be pulled in place"
+    log "update refused: an https ref that is not a manifest cannot be installed"
     report_result "$next_ref" unsupported
     exit 0
     ;;
+  *)
+    next_image="$next_ref"
+    ;;
 esac
 
-log "update start: [$current_image] -> [$next_ref]"
-# Pull FIRST: a failed pull must leave the old container running untouched.
-if ! docker pull "$next_ref" >>"$UPDATE_LOG" 2>&1; then
+if [ "$next_image" = "$current_image" ]; then
+  log "update requested but [$next_image] is already running; clearing the request"
+  report_result "$next_ref" up-to-date
+  exit 0
+fi
+
+log "update start: [$current_image] -> [$next_image]"
+# Install FIRST: a failed install must leave the old container running.
+if [ "$manifest_mode" = true ]; then
+  install_status=0
+  /usr/local/sbin/blitz-box-image install "$next_ref" "$next_image" "$next_sha256" \
+    >>"$UPDATE_LOG" 2>&1 || install_status=$?
+  if [ "$install_status" != 0 ]; then
+    case "$install_status" in
+      11) install_outcome=digest-mismatch ;;
+      12) install_outcome=load-failed ;;
+      *) install_outcome=download-failed ;;
+    esac
+    log "update failed: image install exited $install_status; the container is untouched"
+    report_result "$next_ref" "$install_outcome"
+    exit 0
+  fi
+elif ! docker pull "$next_image" >>"$UPDATE_LOG" 2>&1; then
   log "update failed: pull did not complete; the running container is untouched"
   report_result "$next_ref" pull-failed
   exit 0
 fi
 docker rm -f blitz-box >>"$UPDATE_LOG" 2>&1 || true
-if start_box "$next_ref"; then
-  log "update complete: blitz-box now runs [$next_ref]"
+if start_box "$next_image"; then
+  log "update complete: blitz-box now runs [$next_image]"
   report_result "$next_ref" updated
   exit 0
 fi

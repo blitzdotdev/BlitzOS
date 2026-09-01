@@ -5,17 +5,19 @@ import type { BoxIdentity } from "./types.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
 import { machineFor } from "./machines.js";
+import { machineById, machineTarget } from "./machine-access.js";
 import {
   isWorkspaceAdmin,
   isWorkspaceMember,
   workspaceAccess,
 } from "./workspace-access.js";
-import { workspaceById } from "./workspace-records.js";
+import { machineView, workspaceById } from "./workspace-records.js";
 import {
   BOX_UPDATE_OUTCOMES,
   type BoxConfigResponse,
   type BoxUpdateOutcome,
   type BoxUpdateResultRequest,
+  type MachineResponse,
 } from "./wire.js";
 
 // The box-config contract (see wire.ts and packages/schema/fixtures/box-config/):
@@ -51,6 +53,23 @@ export function controlPlaneOriginFromEnv(value: string | null | undefined): str
   }
 }
 
+/** The CONCRETE box image this deployment installs now.
+ *
+ * Two modes, one answer. Under a registry pin (`BOX_IMAGE_REF` is a
+ * `ghcr.io/...` ref) the ref IS the image and `BOX_IMAGE_TAG` is empty. Under
+ * an R2 manifest pin the ref is a `https://.../manifest.json` URL that is
+ * byte-identical across rebakes, and `BOX_IMAGE_TAG` is the tag that actually
+ * moves — so the tag is the only thing worth comparing a machine against.
+ * This is the value the host reports back as `tag`, from the other end of the
+ * same two modes. */
+export function deploymentBoxImage(vars: {
+  boxImageRef: string;
+  boxImageTag: string;
+}): string {
+  const tag = vars.boxImageTag.trim();
+  return tag === "" ? vars.boxImageRef : tag;
+}
+
 function boxUpdateOutcome(value: string): BoxUpdateOutcome {
   const outcome = BOX_UPDATE_OUTCOMES.find((known) => known === value);
   if (outcome === undefined) {
@@ -62,12 +81,20 @@ function boxUpdateOutcome(value: string): BoxUpdateOutcome {
 /** Accepts iff `ref` is one image-reference token and `outcome` is a known
  * verdict. Unknown extra keys are tolerated on purpose: hosts only update by
  * shipping new images, so an older control plane must keep accepting a newer
- * host's report or the update flag would stay set forever. */
+ * host's report or the update flag would stay set forever.
+ *
+ * `tag` is optional for the same reason in the other direction: a host emitted
+ * before the manifest branch reports only `ref`. Present, it must be one image
+ * reference token like `ref` is — it is the image the container now runs. */
 export function parseBoxUpdateResult(value: JsonValue): BoxUpdateResultRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const ref = requiredString(value.ref, "ref", 512);
   if (!IMAGE_REF.test(ref)) throw new HttpError(400, "ref must be an image reference");
-  return { ref, outcome: boxUpdateOutcome(requiredString(value.outcome, "outcome", 64)) };
+  const outcome = boxUpdateOutcome(requiredString(value.outcome, "outcome", 64));
+  if (value.tag === undefined) return { ref, outcome };
+  const tag = requiredString(value.tag, "tag", 512);
+  if (!IMAGE_REF.test(tag)) throw new HttpError(400, "tag must be an image reference");
+  return { ref, outcome, tag };
 }
 
 /** Arm the flag the host's next poll reads. The flag is per MACHINE now: a
@@ -112,6 +139,7 @@ export function addBoxConfigRoutes(
     if (row === null) throw new HttpError(404, "machine not found");
     const response: BoxConfigResponse = {
       boxImageRef: runtime.vars.boxImageRef,
+      boxImageSha256: runtime.vars.boxImageSha256,
       // The configured public origin when the deployment has one; otherwise
       // the origin this request arrived on. The fallback keeps a fresh
       // self-host working before APP_URL is filled in, but only the
@@ -130,11 +158,16 @@ export function addBoxConfigRoutes(
   router.post("/workspaces/self/box-update-result", async (context) => {
     const box = await requireWorkspaceBox(context, runtimeFactory);
     const input = parseBoxUpdateResult(await readJson(context.req.raw, 4 * 1024));
+    // A host that sends no `tag` leaves the stored one alone rather than
+    // nulling it: it predates the field, and what the row already holds — the
+    // image the boot was armed with — stays the best answer available.
     await changed(runtimeFactory(context).db, {
       q: `UPDATE machines
-          SET box_update_requested = 0, box_image_reported = ?1, updated_at = ?2
+          SET box_update_requested = 0, box_image_reported = ?1,
+              box_image_tag_reported = COALESCE(?4, box_image_tag_reported),
+              box_update_outcome = ?5, updated_at = ?2
           WHERE id = ?3 RETURNING id`,
-      v: [input.ref, Date.now(), box.id],
+      v: [input.ref, Date.now(), box.id, input.tag ?? null, input.outcome],
     });
     return context.body(null, 204);
   });
@@ -147,8 +180,43 @@ export function addBoxConfigRoutes(
     return context.body(null, 204);
   });
 
-  // Session-authenticated request path for the UI/API. No webapp UI consumes
-  // it yet; the gate is the same one destroy uses.
+  // The "Update machine" button in the My machine dialog.
+  //
+  // It names ONE machine, and it is registered here rather than in
+  // `core/machines.ts` because the flag and its contract live here — but it
+  // takes the same `/machines/:machineId/<verb>` shape and the same gate as
+  // the lifecycle verbs beside it (`core/machine-access.ts`, scope `own`), so
+  // a member may update their own machine and nobody else's.
+  //
+  // The workspace-level route below is the fan-out an admin asks for
+  // deliberately. This one can never become that by accident, which matters:
+  // replacing a container kills every process inside it, and a user who
+  // clicked a button in their own machine dialog did not ask to restart their
+  // colleagues' work. It answers with the machine, so the dialog can render
+  // the pending flag without waiting for the next poll.
+  router.post("/machines/:machineId/box-update", async (context) => {
+    const principal = await requirePrincipal(context);
+    const runtime = runtimeFactory(context);
+    const { machine } = await machineTarget(
+      runtime.db,
+      principal,
+      context.req.param("machineId"),
+      "own",
+    );
+    if (machine.state === "destroyed" || machine.state === "destroying") {
+      throw new HttpError(409, `machine is ${machine.state}`);
+    }
+    await requestBoxUpdate(runtime.db, machine.id);
+    const updated = await machineById(runtime.db, machine.id);
+    if (updated === null) throw new HttpError(404, "machine not found");
+    return context.json<MachineResponse>({
+      machine: machineView(updated, deploymentBoxImage(runtime.vars)),
+    });
+  });
+
+  // Session-authenticated request path for the UI/API. The webapp uses the
+  // per-machine route above; this one stays the deliberate workspace-wide
+  // fan-out, and the gate is the same one destroy uses.
   router.post("/workspaces/:id/box-update", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);

@@ -1,6 +1,7 @@
-import type { Db } from "./db.js";
 import { rows } from "./db.js";
+import { deploymentBoxImage } from "./box-config.js";
 import type { Principal } from "./principals.js";
+import type { CoreRuntime } from "./runtime.js";
 import { accessFor, legacyRole } from "./workspace-access.js";
 import {
   machinesForWorkspaces,
@@ -31,13 +32,20 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, 
  * now carries its members, their machines, and its credential names. Fetching
  * those per workspace would turn one list into 3N reads on a D1 binding whose
  * cost is per statement, so every child set is loaded once and grouped here.
+ *
+ * Takes the whole runtime rather than its `db`, because a machine view also
+ * needs the deployment's box-image pin (`runtime.vars`) to say whether an
+ * update is available. Threading one more argument through every caller buys
+ * nothing over passing the object the callers already hold.
  */
 export async function projectWorkspaces(
-  db: Db,
+  runtime: CoreRuntime,
   principal: Principal,
   workspaces: readonly WorkspaceRow[],
 ): Promise<WorkspaceView[]> {
   if (workspaces.length === 0) return [];
+  const db = runtime.db;
+  const boxImageTarget = deploymentBoxImage(runtime.vars);
   const ids = workspaces.map(({ id }) => id);
   const placeholders = ids.map((_id, index) => `?${String(index + 1)}`).join(", ");
   const [members, machines, credentials] = await Promise.all([
@@ -72,17 +80,18 @@ export async function projectWorkspaces(
       membershipId: principal.membershipId,
       myRole: stored,
       role: legacyRole(access),
+      boxImageTarget,
     }));
   }
   return views;
 }
 
 export async function projectWorkspace(
-  db: Db,
+  runtime: CoreRuntime,
   principal: Principal,
   workspace: WorkspaceRow,
 ): Promise<WorkspaceView> {
-  const [view] = await projectWorkspaces(db, principal, [workspace]);
+  const [view] = await projectWorkspaces(runtime, principal, [workspace]);
   if (view === undefined) throw new Error("workspace projection produced no view");
   return view;
 }

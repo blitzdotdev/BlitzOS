@@ -1,3 +1,4 @@
+import type { BoxUpdateOutcome } from "./box-config.js";
 import type { WorkspaceEnvironment } from "./environment.js";
 
 export const PHASES = [
@@ -66,6 +67,23 @@ export interface MachineView {
   volumeUsedPercent: number | null;
   membershipId: string;
   error: string | null;
+  /** The CONCRETE box image this machine runs, as its host last reported it
+   * (or as the deployment pinned it when the machine was created). Null means
+   * unknown: a machine created before the host started reporting a tag, which
+   * has not attempted an update since. Never compare `boxImage` to a manifest
+   * URL — under an R2 manifest ref the URL is identical across rebakes while
+   * the tag inside it moves, and the tag is what this field holds. */
+  boxImage: string | null;
+  /** The CONCRETE box image this deployment installs now. Equal to `boxImage`
+   * means up to date; different means an update is available. */
+  boxImageTarget: string;
+  /** An update has been asked for and the host has not reported back yet. The
+   * host polls every five minutes. */
+  boxUpdateRequested: boolean;
+  /** How the host's last update attempt ended, or null if it never made one.
+   * `unsupported` is the honest signal that this host's updater predates the
+   * manifest branch and can never self-update. */
+  boxUpdateOutcome: BoxUpdateOutcome | null;
   createdAt: number;
   updatedAt: number;
 }

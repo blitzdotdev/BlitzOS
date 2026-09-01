@@ -64,6 +64,7 @@ const expected = [
   "identity/routes.ts",
   "index.ts",
   "janitors.ts",
+  "machine-access.ts",
   "machine-stats.ts",
   "machines.ts",
   "oauth.ts",
@@ -112,6 +113,7 @@ const expected = [
   "webapp-proxy.ts",
   "webapp-surface.ts",
   "webapp-tickets.ts",
+  "wire-box-config.ts",
   "wire-machines.ts",
   "wire-sharing.ts",
   "wire.ts",
@@ -134,6 +136,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(109);
+    expect(expected).toHaveLength(111);
   });
 });

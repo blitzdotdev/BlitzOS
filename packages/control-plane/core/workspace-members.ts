@@ -1,3 +1,4 @@
+import { deploymentBoxImage } from "./box-config.js";
 import { first, rows } from "./db.js";
 import {
   HttpError,
@@ -167,7 +168,7 @@ export async function addWorkspaceMember(
     name: member.name,
     avatarUrl: member.avatar_url,
     role: input.role,
-    machine: machine === null || machine.state === "destroyed" ? null : machineView(machine),
+    machine: machine === null || machine.state === "destroyed" ? null : machineView(machine, deploymentBoxImage(runtime.vars)),
   };
 }
 
@@ -242,7 +243,7 @@ export function addWorkspaceMemberRoutes(
         name: member.name,
         avatarUrl: member.avatar_url,
         role: input.role,
-        machine: machine === null || machine.state === "destroyed" ? null : machineView(machine),
+        machine: machine === null || machine.state === "destroyed" ? null : machineView(machine, deploymentBoxImage(runtime.vars)),
       },
     });
   });
@@ -293,7 +294,7 @@ export function addWorkspaceMemberRoutes(
         name: member.name,
         avatarUrl: member.avatar_url,
         role,
-        machine: machineView(machine),
+        machine: machineView(machine, deploymentBoxImage(runtime.vars)),
       },
     }, 201);
   });

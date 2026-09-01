@@ -68,6 +68,8 @@ const boxConfigResponse: SharedShape<
   schema.BoxConfigResponse
 > = {
   boxImageRef: "ghcr.io/blitzdotdev/blitz-box:v2",
+  // Empty is what a registry pin sends: the ref carries its own digest there.
+  boxImageSha256: "",
   controlPlaneOrigin: "https://cp.example",
   updateRequested: true,
 };
@@ -145,16 +147,25 @@ const machine: SharedShape<wire.MachineView, schema.MachineView> = {
   volumeUsedPercent: 62,
   membershipId: "membership",
   error: null,
+  boxImage: "blitz-box:2026-08-01",
+  boxImageTarget: "blitz-box:2026-08-31",
+  boxUpdateRequested: true,
+  boxUpdateOutcome: "digest-mismatch",
   createdAt: 1_700_000_000_000,
   updatedAt: 1_700_000_005_000,
 };
 
 // A machine whose guest has not reported yet answers null, which covers
-// different ground than an integer does.
+// different ground than an integer does. The same is true of its image and
+// its last update verdict: "never reported" is not "up to date", and not
+// "no update was attempted successfully" either.
 const unreportedMachine: SharedShape<wire.MachineView, schema.MachineView> = {
   ...machine,
   id: "machine-unreported",
   volumeUsedPercent: null,
+  boxImage: null,
+  boxUpdateRequested: false,
+  boxUpdateOutcome: null,
 };
 
 const machineStats: SharedShape<

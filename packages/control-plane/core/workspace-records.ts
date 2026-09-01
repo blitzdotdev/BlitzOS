@@ -2,7 +2,9 @@ import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
 import { isMicrovmProviderId } from "./compute/microvm.js";
 import { manifestConnectionNames } from "./connections/manifest.js";
+import { BOX_UPDATE_OUTCOMES } from "./wire.js";
 import type {
+  BoxUpdateOutcome,
   MachineState,
   MachineView,
   Phase,
@@ -60,6 +62,8 @@ export interface MachineRow {
   broker_box_id: string | null;
   box_update_requested: number;
   box_image_reported: string | null;
+  box_image_tag_reported: string | null;
+  box_update_outcome: string | null;
   disk_used_percent: number | null;
   disk_reported_at: number | null;
   error: string | null;
@@ -122,7 +126,21 @@ function volumeUsedPercentForRow(row: MachineRow): number | null {
   return row.volume_id === null ? null : row.disk_used_percent;
 }
 
-export function machineView(row: MachineRow): MachineView {
+/** The host's last update verdict, or null when it never reported one.
+ *
+ * The column is plain TEXT, so a row written by a NEWER control plane than the
+ * one reading it can hold an outcome this build has no name for. Answering
+ * null there is the honest reading: "no verdict I understand" is closer to the
+ * truth than inventing one, and the UI already has to handle a machine that
+ * has never reported. */
+function boxUpdateOutcomeForRow(row: MachineRow): BoxUpdateOutcome | null {
+  return BOX_UPDATE_OUTCOMES.find((known) => known === row.box_update_outcome) ?? null;
+}
+
+/** `boxImageTarget` is the deployment's pin, not a machine fact, so it is
+ * passed in rather than read from the row: the row records what the machine
+ * reports, and comparing the two is what answers "is an update available". */
+export function machineView(row: MachineRow, boxImageTarget: string): MachineView {
   return {
     id: row.id,
     state: row.state,
@@ -131,6 +149,10 @@ export function machineView(row: MachineRow): MachineView {
     volumeUsedPercent: volumeUsedPercentForRow(row),
     membershipId: row.membership_id,
     error: row.error,
+    boxImage: row.box_image_tag_reported,
+    boxImageTarget,
+    boxUpdateRequested: row.box_update_requested === 1,
+    boxUpdateOutcome: boxUpdateOutcomeForRow(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -148,6 +170,8 @@ export interface WorkspaceProjection {
   myRole: WorkspaceMemberRole | null;
   /** The legacy four-value access role the webApp and the ticket both use. */
   role: WorkspaceView["role"];
+  /** The deployment's current box image, for every machine view built here. */
+  boxImageTarget: string;
 }
 
 export function workspaceView(projection: WorkspaceProjection): WorkspaceView {
@@ -170,7 +194,7 @@ export function workspaceView(projection: WorkspaceProjection): WorkspaceView {
       role: member.role,
       machine: machine === undefined || machine.state === "destroyed"
         ? null
-        : machineView(machine),
+        : machineView(machine, projection.boxImageTarget),
     };
   });
   const view: WorkspaceView = {

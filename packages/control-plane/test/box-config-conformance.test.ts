@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { controlPlaneOriginFromEnv } from "../core/box-config.js";
-import type { BoxConfigResponse } from "../core/wire.js";
+import { controlPlaneOriginFromEnv, deploymentBoxImage } from "../core/box-config.js";
+import type { BoxConfigResponse, MachineView, WorkspaceMemberView } from "../core/wire.js";
 import {
   appRequest,
   harness,
@@ -77,13 +77,20 @@ function boxHeaders(box: BoxCredential): Record<string, string> {
   return { Authorization: `Bearer ${box.access_token}` };
 }
 
-async function workspaceUpdateColumns(
-  workspaceId: string,
-): Promise<{ box_update_requested: number; box_image_reported: string | null }> {
+interface UpdateColumns {
+  box_update_requested: number;
+  box_image_reported: string | null;
+  box_image_tag_reported: string | null;
+  box_update_outcome: string | null;
+}
+
+async function workspaceUpdateColumns(workspaceId: string): Promise<UpdateColumns> {
   const row = await env.DB
-    .prepare("SELECT box_update_requested, box_image_reported FROM machines WHERE workspace_id = ?1")
+    .prepare(`SELECT box_update_requested, box_image_reported,
+                     box_image_tag_reported, box_update_outcome
+              FROM machines WHERE workspace_id = ?1`)
     .bind(workspaceId)
-    .first<{ box_update_requested: number; box_image_reported: string | null }>();
+    .first<UpdateColumns>();
   if (row === null) throw new Error("machine row missing");
   return row;
 }
@@ -95,6 +102,7 @@ describe("box-config control-plane conformance", () => {
 
   it("pins the shared box-config fixture corpus", () => {
     expect(fixtures<ConfigFixture>("config-").map(([name]) => name)).toEqual([
+      "config-bad-image-sha256.json",
       "config-image-ref-with-space.json",
       "config-missing-image-ref.json",
       "config-non-boolean-update-requested.json",
@@ -108,8 +116,13 @@ describe("box-config control-plane conformance", () => {
       "result-missing-outcome.json",
       "result-missing-ref.json",
       "result-ref-with-space.json",
+      "result-tag-with-space.json",
       "result-unknown-outcome.json",
+      "result-valid-digest-mismatch.json",
+      "result-valid-download-failed.json",
       "result-valid-extra-key.json",
+      "result-valid-load-failed.json",
+      "result-valid-manifest-tag.json",
       "result-valid-rolled-back.json",
       "result-valid-updated.json",
     ]);
@@ -128,6 +141,9 @@ describe("box-config control-plane conformance", () => {
     const body = await response.json<BoxConfigResponse>();
     expect(body).toEqual({
       boxImageRef: env.BOX_IMAGE_REF,
+      // The digest the deployment pins, so the host's check is as strong as
+      // the first boot's rather than trusting the manifest about itself.
+      boxImageSha256: env.BOX_IMAGE_SHA256,
       // No APP_URL binding on this request, so the fallback answers with the
       // origin the poll arrived on.
       controlPlaneOrigin: "https://cp.example",
@@ -206,7 +222,10 @@ describe("box-config control-plane conformance", () => {
 
     for (const [name, fixture] of fixtures<ResultFixture>("result-")) {
       await env.DB
-        .prepare("UPDATE machines SET box_update_requested = 1, box_image_reported = NULL WHERE workspace_id = ?1")
+        .prepare(`UPDATE machines
+                  SET box_update_requested = 1, box_image_reported = NULL,
+                      box_image_tag_reported = 'seeded-at-boot', box_update_outcome = NULL
+                  WHERE workspace_id = ?1`)
         .bind(workspaceId)
         .run();
       const response = await appRequest(h.app, "/workspaces/self/box-update-result", {
@@ -222,12 +241,111 @@ describe("box-config control-plane conformance", () => {
         // operation on its own.
         expect(columns.box_update_requested, name).toBe(0);
         expect(columns.box_image_reported, name).toBe(fixture.request.ref);
+        expect(columns.box_update_outcome, name).toBe(fixture.request.outcome);
+        // A host that sends no `tag` predates the field, and the value the
+        // row already holds stays the best answer there is — nulling it would
+        // throw away the image the boot was armed with.
+        expect(columns.box_image_tag_reported, name)
+          .toBe(fixture.request.tag ?? "seeded-at-boot");
       } else {
         expect(response.status, name).toBe(400);
         expect(columns.box_update_requested, name).toBe(1);
         expect(columns.box_image_reported, name).toBeNull();
+        expect(columns.box_update_outcome, name).toBeNull();
+        expect(columns.box_image_tag_reported, name).toBe("seeded-at-boot");
       }
     }
+  });
+
+  // The "Update machine" button. It names ONE machine whoever calls it, which
+  // is the whole difference from the workspace route below: a user who clicked
+  // a button in their own machine dialog did not ask to restart a colleague's
+  // work, and an admin pressing it must not accidentally fan out.
+  it("lets a member request an update for their own machine and nobody else's", async () => {
+    const h = harness();
+    const cookie = await operatorSession();
+    const { workspaceId } = await readyWorkspaceBox(h, cookie);
+    const machine = await env.DB
+      .prepare("SELECT id FROM machines WHERE workspace_id = ?1")
+      .bind(workspaceId)
+      .first<{ id: string }>();
+    if (machine === null) throw new Error("machine row missing");
+    const stranger = await sameOrgSession("member-nobody");
+
+    const denied = await appRequest(h.app, `/machines/${machine.id}/box-update`, {
+      method: "POST",
+      headers: { Cookie: stranger.cookie },
+    });
+    expect(denied.status).toBe(403);
+    expect((await workspaceUpdateColumns(workspaceId)).box_update_requested).toBe(0);
+
+    const requested = await appRequest(h.app, `/machines/${machine.id}/box-update`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(requested.status).toBe(200);
+    // It answers with the machine, so the dialog renders the pending flag
+    // without waiting for the next poll.
+    const { machine: view } = await requested.json<{ machine: MachineView }>();
+    expect(view.id).toBe(machine.id);
+    expect(view.boxUpdateRequested).toBe(true);
+    expect((await workspaceUpdateColumns(workspaceId)).box_update_requested).toBe(1);
+
+    const missing = await appRequest(h.app, "/machines/not-a-machine/box-update", {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  // Under an R2 manifest pin the ref never changes between rebakes, so the
+  // machine's own reported TAG is the only thing that can answer the question
+  // the button's label depends on.
+  it("projects the reported image against the deployment's own pin", async () => {
+    const h = harness();
+    const cookie = await operatorSession();
+    const { workspaceId } = await readyWorkspaceBox(h, cookie);
+
+    const beforeReport = await appRequest(h.app, `/workspaces/${workspaceId}`, {
+      headers: { Cookie: cookie },
+    });
+    const before = await beforeReport.json<{ workspace: { members: WorkspaceMemberView[] } }>();
+    const seeded = before.workspace.members[0]?.machine;
+    // A freshly armed boot already knows its image, so "is an update
+    // available" has an answer before any update is ever attempted.
+    expect(seeded?.boxImage).toBe(env.BOX_IMAGE_TAG);
+    expect(seeded?.boxImageTarget).toBe(env.BOX_IMAGE_TAG);
+    expect(seeded?.boxUpdateOutcome).toBeNull();
+
+    await env.DB
+      .prepare("UPDATE machines SET box_image_tag_reported = ?2, box_update_outcome = ?3 WHERE workspace_id = ?1")
+      .bind(workspaceId, "blitz-box:2026-08-01", "unsupported")
+      .run();
+
+    const stale = await appRequest(h.app, `/workspaces/${workspaceId}`, {
+      headers: { Cookie: cookie },
+    });
+    const view = await stale.json<{ workspace: { members: WorkspaceMemberView[] } }>();
+    const machine = view.workspace.members[0]?.machine;
+    expect(machine?.boxImage).toBe("blitz-box:2026-08-01");
+    // The deployment pins a manifest URL, so the concrete image is the tag
+    // inside it — never the URL, which is the same across every rebake.
+    expect(machine?.boxImageTarget).toBe(env.BOX_IMAGE_TAG);
+    expect(machine?.boxImageTarget).not.toBe(env.BOX_IMAGE_REF);
+    // The honest signal for a host whose emitted updater predates the manifest
+    // branch: it reported `unsupported`, and it can never self-update.
+    expect(machine?.boxUpdateOutcome).toBe("unsupported");
+  });
+
+  it("names the tag rather than the ref when the deployment pins a manifest", () => {
+    // Registry mode: the ref IS the image and the tag var is empty.
+    expect(deploymentBoxImage({ boxImageRef: "ghcr.io/o/box:v3", boxImageTag: "" }))
+      .toBe("ghcr.io/o/box:v3");
+    // Manifest mode: the URL is identical across rebakes, the tag is not.
+    expect(deploymentBoxImage({
+      boxImageRef: "https://cp.example/box-image/manifest.json",
+      boxImageTag: "blitz-box:2026-08-31",
+    })).toBe("blitz-box:2026-08-31");
   });
 
   it("gates the session route on canControlWorkspace", async () => {

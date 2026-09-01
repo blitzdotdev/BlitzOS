@@ -1,4 +1,6 @@
 import { boxHostname, type RecipeBootstrap } from "./bootstrap.js";
+import { deploymentBoxImage } from "./box-config.js";
+import { machineById, machineTarget, type MachineTarget } from "./machine-access.js";
 import { buildUserData, type BootShaping } from "./cloud-init.js";
 import { revokeMachineLeasesQuery } from "./connections/leases.js";
 import { hashSecret, randomToken } from "./crypto.js";
@@ -49,10 +51,6 @@ export function providerOperationError(error: unknown): string {
   return detail === "" ? "provider operation failed" : `provider operation failed: ${detail}`;
 }
 
-export async function machineById(db: Db, id: string): Promise<MachineRow | null> {
-  return first<MachineRow>(db, { q: "SELECT * FROM machines WHERE id = ?1 LIMIT 1", v: [id] });
-}
-
 export async function machineFor(
   db: Db,
   workspaceId: string,
@@ -76,14 +74,29 @@ function revokeMachineTokensQuery(machineId: string): Query {
 
 /** Arms a fresh phone-home capability for the next boot. The capability is
  * per machine and re-armed at every VM provision, so a stale URL from a
- * previous incarnation cannot enroll a new one. */
-async function armPhoneHome(db: Db, machineId: string, now: number): Promise<string> {
+ * previous incarnation cannot enroll a new one.
+ *
+ * It also records the box image that boot will install. This is the one moment
+ * the answer is known exactly: the same `runtime.vars` that renders the
+ * user-data a few lines below decides both, so the row cannot claim an image
+ * the boot was never handed. Recording it here is what lets the UI answer "is
+ * an update available" for a machine that has never been asked to update — the
+ * host only reports after an attempt, and without this the answer would stay
+ * unknown until someone made one. The previous incarnation's update verdict is
+ * cleared with it: a fresh VM has attempted nothing. */
+async function armPhoneHome(
+  db: Db,
+  machineId: string,
+  now: number,
+  boxImage: string,
+): Promise<string> {
   const capability = randomToken();
   await rows(db, {
     q: `UPDATE machines
-        SET phone_home_hash = ?1, phone_home_used = 0, updated_at = ?2
+        SET phone_home_hash = ?1, phone_home_used = 0,
+            box_image_tag_reported = ?4, box_update_outcome = NULL, updated_at = ?2
         WHERE id = ?3`,
-    v: [await hashSecret(capability), now, machineId],
+    v: [await hashSecret(capability), now, machineId, boxImage],
   });
   return capability;
 }
@@ -216,7 +229,7 @@ export async function provisionMachine(
     });
   }
 
-  const capability = await armPhoneHome(runtime.db, id, now);
+  const capability = await armPhoneHome(runtime.db, id, now, deploymentBoxImage(runtime.vars));
   // The URL keeps its workspace shape. Every deployed guest holds one it was
   // handed at creation and never updates it, and the route resolves the
   // machine by matching the capability hash, so one route serves both.
@@ -522,43 +535,26 @@ function reprovisionInput(
   return input;
 }
 
-interface MachineTarget {
-  workspace: WorkspaceRow;
-  machine: MachineRow;
-  admin: boolean;
-}
-
 export function addMachineRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
-  /** Resolves the machine a verb names and grades the caller against §3.
-   *
-   * `own` is what a plain member may do to their own machine (stop, start).
-   * Everything else is workspace-admin work, and an org admin passes through
-   * implicit reach. */
+  /** The shared gate in `core/machine-access.ts`, with the principal this
+   * request resolved to carried alongside it. */
   async function target(
     context: CoreContext,
     runtime: CoreRuntime,
     scope: "admin" | "own",
   ): Promise<MachineTarget & { principal: Principal }> {
     const principal = await requirePrincipal(context);
-    const machine = await machineById(runtime.db, context.req.param("machineId"));
-    if (machine === null) throw new HttpError(404, "machine not found");
-    const workspace = await workspaceById(runtime.db, machine.workspace_id);
-    if (workspace === null || workspace.org_id !== principal.orgId) {
-      throw new HttpError(404, "machine not found");
-    }
-    const access = await workspaceAccess(runtime.db, principal, workspace);
-    const admin = isWorkspaceAdmin(access);
-    if (!admin) {
-      if (scope === "admin") throw new HttpError(403, "workspace admin required");
-      if (access.stored !== "member" || machine.membership_id !== principal.membershipId) {
-        throw new HttpError(403, "forbidden");
-      }
-    }
-    return { workspace, machine, admin, principal };
+    const resolved = await machineTarget(
+      runtime.db,
+      principal,
+      context.req.param("machineId"),
+      scope,
+    );
+    return { ...resolved, principal };
   }
 
   /** Brings up a machine that has no VM. A member whose workspace has
@@ -576,7 +572,7 @@ export function addMachineRoutes(
       machine.machine_type_id,
       new URL(context.req.url).origin,
     ));
-    return context.json<MachineResponse>({ machine: machineView(provisioned) });
+    return context.json<MachineResponse>({ machine: machineView(provisioned, deploymentBoxImage(runtime.vars)) });
   });
 
   /** Stop keeps the disk and the machine row. The VM goes, because a stopped
@@ -586,20 +582,20 @@ export function addMachineRoutes(
     const runtime = runtimeFactory(context);
     const { machine } = await target(context, runtime, "own");
     if (machine.state === "stopped") {
-      return context.json<MachineResponse>({ machine: machineView(machine) });
+      return context.json<MachineResponse>({ machine: machineView(machine, deploymentBoxImage(runtime.vars)) });
     }
     if (!LIVE_STATES.includes(machine.state)) {
       throw new HttpError(409, `machine is ${machine.state}`);
     }
     const stopped = await destroyMachine(runtime, machine, { keepRow: true });
-    return context.json<MachineResponse>({ machine: machineView(stopped) });
+    return context.json<MachineResponse>({ machine: machineView(stopped, deploymentBoxImage(runtime.vars)) });
   });
 
   router.post("/machines/:machineId/start", async (context) => {
     const runtime = runtimeFactory(context);
     const { workspace, machine } = await target(context, runtime, "own");
     if (machine.vm_id !== null) {
-      return context.json<MachineResponse>({ machine: machineView(machine) });
+      return context.json<MachineResponse>({ machine: machineView(machine, deploymentBoxImage(runtime.vars)) });
     }
     if (machine.state === "destroying" || machine.state === "destroyed") {
       throw new HttpError(409, `machine is ${machine.state}`);
@@ -610,7 +606,7 @@ export function addMachineRoutes(
       machine.machine_type_id,
       new URL(context.req.url).origin,
     ));
-    return context.json<MachineResponse>({ machine: machineView(started) });
+    return context.json<MachineResponse>({ machine: machineView(started, deploymentBoxImage(runtime.vars)) });
   });
 
   /** Replaces the VM on the same volume. Sessions restart; disk state
@@ -627,7 +623,7 @@ export function addMachineRoutes(
       machine.machine_type_id,
       new URL(context.req.url).origin,
     ));
-    return context.json<MachineResponse>({ machine: machineView(recreated) });
+    return context.json<MachineResponse>({ machine: machineView(recreated, deploymentBoxImage(runtime.vars)) });
   });
 
   /**
@@ -643,7 +639,7 @@ export function addMachineRoutes(
     const { workspace, machine } = await target(context, runtime, "admin");
     const input = parseSetMachineType(await readJson(context.req.raw, 4 * 1024));
     if (input.machineTypeId === machine.machine_type_id) {
-      return context.json<MachineResponse>({ machine: machineView(machine) });
+      return context.json<MachineResponse>({ machine: machineView(machine, deploymentBoxImage(runtime.vars)) });
     }
     if (machine.state === "destroying" || machine.state === "destroyed") {
       throw new HttpError(409, `machine is ${machine.state}`);
@@ -672,18 +668,20 @@ export function addMachineRoutes(
       input.machineTypeId,
       new URL(context.req.url).origin,
     ));
-    return context.json<MachineResponse>({ machine: machineView(changed) });
+    return context.json<MachineResponse>({ machine: machineView(changed, deploymentBoxImage(runtime.vars)) });
   });
 
   router.delete("/machines/:machineId", async (context) => {
     const runtime = runtimeFactory(context);
     const { machine } = await target(context, runtime, "admin");
     if (machine.state === "destroyed") {
-      return context.json<MachineResponse>({ machine: machineView(machine) });
+      return context.json<MachineResponse>({ machine: machineView(machine, deploymentBoxImage(runtime.vars)) });
     }
     const destroyed = await destroyMachine(runtime, machine);
-    return context.json<MachineResponse>({ machine: machineView(destroyed) });
+    return context.json<MachineResponse>({ machine: machineView(destroyed, deploymentBoxImage(runtime.vars)) });
   });
 }
 
 export { requireWorkspaceAdmin };
+
+export { machineById } from "./machine-access.js";

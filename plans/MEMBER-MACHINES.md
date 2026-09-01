@@ -360,6 +360,112 @@ Injection-at-use (values out of transcripts) rides the existing seams
   refuses a type whose location differs from the volume's.
 - Per-session credential audit dimension: lands with sessions (Build 2+).
 
+## 5a. Updating a machine's box image
+
+A machine runs the box image its VM was created with, and it keeps running it
+forever. Nothing upgrades a box on its own, and nothing should: replacing the
+container kills every process inside it, so the trigger is a person clicking a
+button in their own machine's dialog.
+
+**The flag and its three routes.** `machines.box_update_requested` is the
+request. `GET /workspaces/self/box-config` is the host's five-minute poll,
+`POST /workspaces/self/box-update-result` is its report, and either one
+clears the flag on the way through — a failed attempt was still the answer to
+this request, and a flag that re-arms itself would retry a kill-everything
+operation nobody asked for twice. The shapes are the `box config v1`
+cross-runtime contract; edit them with `packages/schema/fixtures/box-config/`
+and both conformance suites, never one side alone.
+
+Three ways to set it, and the difference between them is deliberate:
+
+- `POST /machines/:machineId/box-update` — the My machine dialog. Names ONE
+  machine whoever calls it, and takes the machine-verb shape and gate of the
+  lifecycle verbs beside it (`core/machine-access.ts`, scope `own`).
+- `POST /workspaces/:id/box-update` — the workspace-wide fan-out. An admin
+  asking here means every machine in the workspace, which is the point of
+  asking at the workspace level. A user who clicked a button in their own
+  dialog did not ask to restart a colleague's work, which is why the two are
+  separate routes rather than one route with a role branch.
+- `POST /workspaces/self/box-update` — the guest verb, `blitz box update`.
+
+**Two install modes, one host script.** Client prod pins a GHCR ref, which is
+the image, and `docker pull` installs it. Canary pins an https R2
+`manifest.json`, which NAMES the image inside itself, so the host has to fetch
+and validate the manifest before it even learns which tag it was asked for.
+Both modes converge on `/usr/local/sbin/blitz-box-image`, written once by the
+bootstrap and invoked by the first boot and by the updater. Its exit codes are
+the interface (10 download, 11 digest, 12 load, 13 bad manifest), and
+`blitz-box-update` turns them into the contract's outcomes.
+
+The pull-first invariant holds on both paths: the image is acquired and
+verified before the running container is touched, so every acquire failure
+(`pull-failed`, `download-failed`, `digest-mismatch`, `load-failed`) leaves the
+workspace exactly as it was. A new image that will not start rolls back.
+
+**Two digests, and why both.** The manifest declares the archive's
+`totalSha256`, but that is self-certifying: whoever serves the manifest serves
+the digest beside it, so on its own it proves only that the parts were
+reassembled correctly. `box-config` therefore carries `boxImageSha256`, the
+deployment's own pin, which reaches the host over a different connection from
+a different origin. The updater passes it to the installer as the same
+optional fourth argument the first boot uses, so an archive that is internally
+consistent and still not the image this deployment pinned is refused. That is
+what makes the updater's verification as strong as the bootstrap's, which has
+always had its digest baked in.
+
+**Answering "is an update available".** Under a manifest pin the ref is
+byte-identical across rebakes while the tag inside it moves, so comparing refs
+would read every box as current forever. The comparison is on the CONCRETE
+image on both sides: `machines.box_image_tag_reported` against
+`deploymentBoxImage(runtime.vars)`, surfaced as `MachineView.boxImage` and
+`.boxImageTarget`. The host reports its concrete image as `tag` on every
+update result — the image it runs once the attempt settled, which is the OLD
+one whenever the attempt changed nothing.
+
+A machine that has never been asked to update would otherwise have no reported
+image at all, so `armPhoneHome` records the image at every VM provision. That
+is the one moment the answer is known exactly: the same `runtime.vars` renders
+the user-data that boot installs.
+
+**Old boxes cannot self-update, and the UI says so.** The emitted updater is
+baked into a VM's user-data at create time. A machine created before this
+change keeps its old script forever, and that script refuses every https ref —
+so every pre-existing canary box, `blitzos-dev` included, answers `unsupported`
+to the first request it is given. The dialog renders that verdict honestly
+("This machine's host cannot update in place. Recreate it to move to the new
+image.") and disables the button, rather than offering one that cannot work.
+Only machines created after this deploy get the new updater.
+
+**The updater holds its own credential.** A box access token lives 15 minutes
+(`ACCESS_LIFETIME_MS`) and the timer runs every 5, but nothing on the VM keeps
+`/var/lib/blitz/box-credential.json` fresh on its own: the Go client inside the
+container rotates only in reaction to its own 401, which needs somebody to run
+`blitz-cred`. On a quiet box the on-disk token expires and every later poll
+401s for good — measured live on `blitzos-dev`, file mtime 02:03 and 401s from
+02:20 onward, while `blitz-cred` and the gateway kept working. So the updater
+spends the refresh token itself against `POST /oauth/token`, under the same
+flock (`box-credential.lock`) the Go client takes, and writes the rotation
+back. It has to be able to do this while the container it is about to replace
+is broken, which is exactly when nothing inside the box can help — and writing
+the file keeps it fresh for every other reader on the machine as a side effect.
+
+**The size budget, and the way out of it.** All of this rides in cloud-init
+user-data, which Hetzner caps at a hard 32 KiB
+(`HETZNER_USER_DATA_MAX_BYTES`; AWS gzips and has room to spare). A heavy
+manifest-mode create was 25.4 KiB before this work and is 30.4 KiB after.
+`test/bootstrap.test.ts` pins a 2 KiB floor so the next feature that wants to
+emit bash finds out there rather than as a 413 on a real create.
+
+That floor is thin, and the way to buy the headroom back is to stop shipping
+the host scripts in user-data at all: `blitz-box-run`, `blitz-box-update` and
+most of `blitz-box-image` could be extracted from the box image the way
+`blitz-box-run` already extracts `/etc/blitz/env.defaults`, leaving only enough
+in user-data to fetch the image. That is a box-image change and a rebake, so it
+is the next step and not this one.
+
+**Not the microVM path.** `packages/microvm-host/` has its own guest lifecycle
+and no update path. The routes and the flag exist for the cloud-VM providers.
+
 ## 6. The workspace details page (revamp target)
 
 The dialog at `/workspaces/:id` ("Workspace details", annotated for revamp)
