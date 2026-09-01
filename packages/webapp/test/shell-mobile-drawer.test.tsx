@@ -59,6 +59,7 @@ function nav(overrides: Partial<Parameters<typeof ShellNav>[0]> = {}) {
       onOpenDrive={() => undefined}
       onOpenSettings={() => undefined}
       onSelectSession={() => undefined}
+      onCloseSession={() => undefined}
       onSpawnSession={() => undefined}
       onOpenPreview={() => undefined}
       onOpenPreviewLink={() => undefined}

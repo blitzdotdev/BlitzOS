@@ -34,6 +34,7 @@ function rail(overrides: Partial<Parameters<typeof SessionRail>[0]> = {}) {
       livePorts={[]}
       previewLinks={[]}
       onSelectSession={() => undefined}
+      onCloseSession={() => undefined}
       onSpawnSession={() => undefined}
       onOpenPreview={() => undefined}
       onOpenPreviewLink={() => undefined}
