@@ -44,6 +44,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     stopMachine: vi.fn(async () => { throw new Error('unused'); }),
     startMachine: vi.fn(async () => { throw new Error('unused'); }),
     recreateMachine: vi.fn(async () => { throw new Error('unused'); }),
+    requestMachineBoxUpdate: vi.fn(async () => { throw new Error('unused'); }),
     setMachineType: vi.fn(async () => { throw new Error('unused'); }),
     destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
     putWorkspaceCredential: vi.fn(async () => undefined),

@@ -215,6 +215,11 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   stopMachine(machineId: string): Promise<MachineResponse>;
   startMachine(machineId: string): Promise<MachineResponse>;
   recreateMachine(machineId: string): Promise<MachineResponse>;
+  /** Ask THIS machine's host to install the deployment's current box image on
+   * its next poll. It names one machine: the workspace-wide route beside it on
+   * the server is a deliberate admin fan-out, and replacing a container kills
+   * every process inside it. */
+  requestMachineBoxUpdate(machineId: string): Promise<MachineResponse>;
   /** Same-location only: the VM is replaced and the volume — the disk — stays.
    * Another location is refused until the volume move lands (§5). */
   setMachineType(machineId: string, input: SetMachineTypeRequest): Promise<MachineResponse>;
@@ -687,6 +692,10 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     stopMachine: (machineId) => machineAction(machineId, "stop"),
     startMachine: (machineId) => machineAction(machineId, "start"),
     recreateMachine: (machineId) => machineAction(machineId, "recreate"),
+    requestMachineBoxUpdate: (machineId) => request<MachineResponse>(
+      `/machines/${encodeURIComponent(machineId)}/box-update`,
+      { method: "POST" },
+    ),
     setMachineType: (machineId, input) => request<MachineResponse>(
       `/machines/${encodeURIComponent(machineId)}/machine-type`,
       { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) },

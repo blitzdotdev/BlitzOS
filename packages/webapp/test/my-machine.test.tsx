@@ -2,6 +2,7 @@ import { act } from 'react';
 import type {
   ListMachineTypesResponse,
   MachineType,
+  MachineView,
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import { describe, expect, it, vi } from 'vitest';
@@ -57,22 +58,30 @@ const ada: WorkspaceMemberView = {
   machine: null,
 };
 
+// Named so the box-image tests below can vary one field of it without
+// spreading `me.machine`, which is nullable on the member row.
+const myMachine: MachineView = {
+  id: 'machine-mo',
+  state: 'running',
+  machineTypeId: 'cx23@fsn1',
+  volumeId: 'volume-one',
+  volumeUsedPercent: 62,
+  boxImage: 'blitz-box:2026-08-31',
+  boxImageTarget: 'blitz-box:2026-08-31',
+  boxUpdateRequested: false,
+  boxUpdateOutcome: null,
+  membershipId: 'membership-2',
+  error: null,
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_000_000,
+};
+
 const me: WorkspaceMemberView = {
   membershipId: 'membership-2',
   name: 'Mo Member',
   avatarUrl: null,
   role: 'member',
-  machine: {
-    id: 'machine-mo',
-    state: 'running',
-    machineTypeId: 'cx23@fsn1',
-    volumeId: 'volume-one',
-    volumeUsedPercent: 62,
-    membershipId: 'membership-2',
-    error: null,
-    createdAt: 1_700_000_000_000,
-    updatedAt: 1_700_000_000_000,
-  },
+  machine: myMachine,
 };
 
 const workspace = workspaceModelFixture({
@@ -93,16 +102,33 @@ function dialog(overrides: Partial<Parameters<typeof MyMachineDialog>[0]> = {}) 
       workspace={workspace}
       membershipId="membership-2"
       listMachineTypes={async () => ({ machineTypes, failures: [] })}
+      refreshWorkspaces={() => undefined}
       onClose={() => undefined}
       {...overrides}
     />
   );
 }
 
+/** The one settings section whose title matches, so a helper that asks for
+ * the lifecycle verbs cannot pick up the Box image section's button too. */
+function section(container: HTMLElement, title: string): HTMLElement {
+  const found = [...container.querySelectorAll<HTMLElement>('.cfg-section')]
+    .find((node) => node.querySelector('.cfg-title')?.textContent === title);
+  if (found === undefined) throw new Error(`no settings section titled ${title}`);
+  return found;
+}
+
 function buttons(container: HTMLElement): HTMLButtonElement[] {
-  // The lifecycle verbs sit in the settings-surface actions row
-  // (src/settings-surface.css); it is the only one in this dialog.
-  return [...container.querySelectorAll<HTMLButtonElement>('.cfg-actions button')];
+  // The lifecycle verbs sit in that section's settings-surface actions row
+  // (src/settings-surface.css).
+  return [...section(container, 'Lifecycle').querySelectorAll<HTMLButtonElement>('.cfg-actions button')];
+}
+
+/** The Box image section's single button. */
+function updateButton(container: HTMLElement): HTMLButtonElement {
+  const found = section(container, 'Box image').querySelector<HTMLButtonElement>('.cfg-actions button');
+  if (found === null) throw new Error('no update button');
+  return found;
 }
 
 describe('MyMachineDialog', () => {
@@ -287,6 +313,98 @@ describe('MyMachineDialog', () => {
     await view.unmount();
   });
 
+  // The deliberate, user-triggered update. It restarts the machine, so it is
+  // confirmed in plain language first and shows as pending afterwards.
+  it('confirms an update in plain language, then asks for it', async () => {
+    const requestMachineBoxUpdate = vi.fn().mockResolvedValue({ machine: me.machine });
+    const refreshWorkspaces = vi.fn();
+    const behind = { ...me, machine: { ...myMachine, boxImage: 'blitz-box:2026-08-01' } };
+    const view = await render(dialog({
+      client: client({ requestMachineBoxUpdate }),
+      refreshWorkspaces,
+      workspace: { ...workspace, members: [ada, behind] },
+    }));
+    await settle();
+
+    expect(view.container.textContent).toContain('Update available');
+    // Both images are shown, so "available" is checkable rather than asserted.
+    expect(view.container.textContent).toContain('blitz-box:2026-08-01');
+    expect(view.container.textContent).toContain('blitz-box:2026-08-31');
+    const button = updateButton(view.container);
+    expect(button.disabled).toBe(false);
+
+    await act(async () => button.click());
+    await settle();
+    // Nothing has been asked for yet: the click opens the confirmation.
+    expect(requestMachineBoxUpdate).not.toHaveBeenCalled();
+    const dialogText = document.body.textContent ?? '';
+    expect(dialogText).toContain('This restarts your machine');
+    expect(dialogText).toContain('Running terminals and agents stop');
+
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((node) => node.textContent === 'Yes, update it');
+    await act(async () => confirm?.click());
+    await settle();
+
+    expect(requestMachineBoxUpdate).toHaveBeenCalledWith('machine-mo');
+    // The poll runs now, so the pending state appears without a 15s wait.
+    expect(refreshWorkspaces).toHaveBeenCalled();
+    await view.unmount();
+  });
+
+  it('shows a requested update as pending and offers no second click', async () => {
+    const pending = { ...me, machine: { ...myMachine, boxUpdateRequested: true } };
+    const view = await render(dialog({
+      workspace: { ...workspace, members: [ada, pending] },
+    }));
+    await settle();
+
+    expect(view.container.textContent).toContain('Update requested');
+    expect(updateButton(view.container).disabled).toBe(true);
+    await view.unmount();
+  });
+
+  // Every box created before the manifest updater shipped reports this, which
+  // is every pre-existing canary box. The dialog must not pretend otherwise.
+  it('tells a machine whose host cannot self-update to recreate instead', async () => {
+    const legacy = {
+      ...me,
+      machine: {
+        ...myMachine,
+        boxImage: 'blitz-box:2026-08-01',
+        boxUpdateOutcome: 'unsupported' as const,
+      },
+    };
+    const view = await render(dialog({
+      workspace: { ...workspace, members: [ada, legacy] },
+    }));
+    await settle();
+
+    expect(view.container.textContent).toContain('cannot update in place');
+    expect(view.container.textContent).toContain('Recreate it');
+    expect(updateButton(view.container).disabled).toBe(true);
+    await view.unmount();
+  });
+
+  it('says a failed attempt left the machine untouched, and still offers a retry', async () => {
+    const failed = {
+      ...me,
+      machine: {
+        ...myMachine,
+        boxImage: 'blitz-box:2026-08-01',
+        boxUpdateOutcome: 'digest-mismatch' as const,
+      },
+    };
+    const view = await render(dialog({
+      workspace: { ...workspace, members: [ada, failed] },
+    }));
+    await settle();
+
+    expect(view.container.textContent).toContain('left untouched');
+    expect(updateButton(view.container).disabled).toBe(false);
+    await view.unmount();
+  });
+
   it('tells a viewer they hold no machine', async () => {
     const view = await render(dialog({
       workspace: {
@@ -298,7 +416,10 @@ describe('MyMachineDialog', () => {
     await settle();
 
     expect(view.container.textContent).toContain('A viewer holds no machine');
-    expect(buttons(view.container)).toHaveLength(0);
+    // No settings sections at all, so no verb of any kind — lifecycle or
+    // box image — is on offer.
+    expect(view.container.querySelectorAll('.cfg-section')).toHaveLength(0);
+    expect(view.container.querySelectorAll('.cfg-actions button')).toHaveLength(0);
     await view.unmount();
   });
 });

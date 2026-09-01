@@ -7,6 +7,7 @@ import type {
 } from '@blitzos/schema';
 import type { ControlPlaneClient } from './api';
 import { caughtErrorMessage } from './error-message';
+import { boxUpdateStatus } from './box-update-state';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { monthlyPriceLabel } from './MachineCatalogGrid';
 import { MachineTypeSelect } from './MachineTypeSelect';
@@ -122,6 +123,7 @@ export function MyMachineDialog({
   workspace,
   membershipId,
   listMachineTypes,
+  refreshWorkspaces,
   onClose,
 }: {
   client: ControlPlaneClient;
@@ -129,6 +131,9 @@ export function MyMachineDialog({
   /** The requesting member's membership, which is what keys a machine. */
   membershipId: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  /** Runs the workspace poll now. An update request only shows as pending once
+   * the machine row comes back, and the poll is 15 seconds otherwise. */
+  refreshWorkspaces: () => void;
   onClose: () => void;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -138,6 +143,7 @@ export function MyMachineDialog({
   const [catalog, setCatalog] = useState<ListMachineTypesResponse>(NO_CATALOG);
   const [error, setError] = useState<string | null>(null);
   const [pendingTypeId, setPendingTypeId] = useState<string | null>(null);
+  const [confirmingUpdate, setConfirmingUpdate] = useState(false);
   const machines: MachineType[] = catalog.machineTypes;
 
   useEffect(() => { closeButton.current?.focus(); }, []);
@@ -180,6 +186,7 @@ export function MyMachineDialog({
     if (action === 'destroy') run(client.destroyMachine(machine.id));
   };
 
+  const updateStatus = boxUpdateStatus(machine);
   const actions = member === undefined || member.role === 'viewer'
     ? []
     : machineActionsFor(machine);
@@ -275,6 +282,35 @@ export function MyMachineDialog({
 
               <div className="cfg-section">
                 <div className="cfg-section-head">
+                  <h2 className="cfg-title">Box image</h2>
+                  <p className="cfg-desc">
+                    The software your machine runs. Updating installs the
+                    current image and restarts the machine.
+                  </p>
+                </div>
+                <dl className="cfg-meta">
+                  <Detail label="Running" value={machine?.boxImage ?? 'Not reported'} />
+                  <Detail label="Available" value={machine?.boxImageTarget ?? 'Unavailable'} />
+                </dl>
+                <p className="cfg-help">{updateStatus.summary}</p>
+                {updateStatus.lastAttempt !== null && (
+                  <p className="cfg-help">{updateStatus.lastAttempt}</p>
+                )}
+                <div className="cfg-actions">
+                  <button
+                    className="webapp-action"
+                    type="button"
+                    disabled={!updateStatus.canRequest}
+                    title={updateStatus.canRequest ? undefined : updateStatus.summary}
+                    onClick={() => setConfirmingUpdate(true)}
+                  >
+                    Update machine
+                  </button>
+                </div>
+              </div>
+
+              <div className="cfg-section">
+                <div className="cfg-section-head">
                   <h2 className="cfg-title">Lifecycle</h2>
                 </div>
                 {actions.length === 0 && (
@@ -311,6 +347,18 @@ export function MyMachineDialog({
           )}
         </div>
       </section>
+      {confirmingUpdate && machine !== null && (
+        <ConfirmationDialog
+          title="Update this machine?"
+          description="This restarts your machine. Running terminals and agents stop. Files on the persistent volume are kept."
+          confirmLabel="Yes, update it"
+          onCancel={() => setConfirmingUpdate(false)}
+          onConfirm={() => {
+            setConfirmingUpdate(false);
+            run(client.requestMachineBoxUpdate(machine.id).then(refreshWorkspaces));
+          }}
+        />
+      )}
       {pendingTypeId !== null && machine !== null && (
         <ConfirmationDialog
           title="Change machine type?"
