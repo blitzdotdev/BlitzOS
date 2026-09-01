@@ -25,19 +25,34 @@ import "fake-indexeddb/auto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { createElement } from "react";
+import { createStore } from "jotai";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { JsonObject, JsonValue } from "@blitzos/schema";
 import { WebSocket as NodeWebSocket } from "ws";
 import { getSessionRoomId } from "@lody/shared";
+import { runtimeAtom } from "@lody/components/atoms/runtime";
 import { BLITZ_CLAUDE_CONFIG_ID } from "../src/lody/agent-configs.js";
 import { sendMachineRpc, sendProjectControl } from "../src/lody/rpc-client.js";
 import { fetchLodyPlatformSnapshot, type LodyPlatformSnapshot } from "../src/lody/platform-snapshot.js";
-import { createLodyRuntime, type LodyRuntimeHandle, type LodyWorkspaceWriter } from "../src/lody/runtime.js";
+import {
+  createLodyRuntime,
+  type LodyRuntimeHandle,
+  type LodyWorkspaceRuntime,
+  type LodyWorkspaceWriter,
+} from "../src/lody/runtime.js";
 import { startLodySession, type LodyProjectRef } from "../src/lody/session.js";
 import {
+  backfillDefaultSessionProject,
   createDefaultSessionProjectResolver,
+  createSessionProjectBackfiller,
   withDefaultSessionProject,
 } from "../src/lody/workdir-default.js";
+import {
+  useDefaultSessionProjectBackfill,
+  type SessionProjectBackfillInput,
+} from "../src/lody/use-session-project-backfill.js";
+import { render, settle } from "./dom.js";
 import { lodyDaemonAvailable, startLodyHarness, type LodyHarness } from "./lody-daemon-harness.js";
 
 const PLANE_ENDPOINTS = {
@@ -205,6 +220,233 @@ describe("the default project a plain session is given", () => {
   });
 });
 
+/**
+ * THE SESSIONS THAT PREDATE THE FIX ABOVE, which is the second half of the same
+ * report: a canary box running the fix still opened every session created
+ * before it onto "Session has no local project or GitHub repository workspace".
+ * Nothing was wrong with those sessions except a missing `project`, and the
+ * member cannot be told to abandon the conversation, so opening one attaches
+ * the same default (`workdir-default.ts` §3).
+ */
+
+/** What `buildInitialSessionMetaPatch` wrote for a plain chat BEFORE §2 shipped:
+ * everything a session has, and no `project`. */
+const LEGACY_META: JsonObject = {
+  id: "s-1",
+  machineId: "m-1",
+  userId: "local:u",
+  createdAt: "2026-08-20T00:00:00.000Z",
+  cliType: "builtin",
+  agentType: "claude",
+};
+
+/** A runtime holding ONE session document, recording what was read and written.
+ * `state.meta` is mutable so a document that arrives late can arrive. */
+function backfillRuntime(meta: JsonObject | undefined) {
+  const state: { meta: JsonObject | undefined; deleted: boolean } = { meta, deleted: false };
+  const reads: string[] = [];
+  const writes: { roomId: string; patch: Record<string, JsonValue | undefined> }[] = [];
+  const stub = {
+    ensureDocStream: async () => {},
+    repo: {
+      getDocMeta: async (roomId: string) => {
+        reads.push(roomId);
+        return state.meta === undefined ? undefined : { meta: state.meta, deleted: state.deleted };
+      },
+    },
+    writer: {
+      upsertDocMeta: async (roomId: string, patch: Record<string, JsonValue | undefined>) => {
+        writes.push({ roomId, patch });
+      },
+    },
+  };
+  // SAFETY: `backfillDefaultSessionProject` reaches exactly `ensureDocStream`,
+  // `repo.getDocMeta` and `writer.upsertDocMeta`. Every other member of
+  // `LodyWorkspaceRuntime` is unreachable from it, so a call that grew one would
+  // fail here rather than pass against a stub that answered anything.
+  return { runtime: stub as unknown as LodyWorkspaceRuntime, state, reads, writes };
+}
+
+const WORKSPACE_PROJECT = { kind: "local", localProjectId: "local--workspace" };
+
+describe("the default project a session created before the fix is given", () => {
+  it("attaches it when the session is opened", async () => {
+    const { fetchImpl, calls } = projectControlStub(addAccepted);
+    const { runtime, writes } = backfillRuntime(LEGACY_META);
+
+    const outcome = await backfillDefaultSessionProject(
+      runtime,
+      "s-1",
+      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+    );
+
+    expect(outcome).toBe("attached");
+    expect(calls).toEqual([{ type: "local-project/add", machineId: "m-1", rootPath: "/workspace" }]);
+    // The session room, and only the `project` key: everything else the member
+    // wrote over the session's life stays exactly as it is.
+    expect(writes).toEqual([
+      { roomId: getSessionRoomId("s-1"), patch: { project: WORKSPACE_PROJECT } },
+    ]);
+  });
+
+  it("leaves a worktree session alone", async () => {
+    const { fetchImpl, calls } = projectControlStub(addAccepted);
+    const { runtime, writes } = backfillRuntime({
+      ...LEGACY_META,
+      project: {
+        kind: "local",
+        localProjectId: "local-repo",
+        branch: "main",
+        githubRepoFullName: "blitzdotdev/BlitzOS",
+        useWorktree: true,
+      },
+      repoFullName: "blitzdotdev/BlitzOS",
+      isWorktree: true,
+    });
+
+    const outcome = await backfillDefaultSessionProject(
+      runtime,
+      "s-1",
+      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+    );
+
+    expect(outcome).toBe("not-a-plain-chat");
+    expect(writes).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("leaves a repo-backed session that has picked no project alone", async () => {
+    const { fetchImpl } = projectControlStub(addAccepted);
+    // `repoFullName` is written from its own input and does not imply `project`
+    // (`use-session-actions.ts:159`). Overwriting one with `/workspace` would
+    // move a repo session into the wrong directory.
+    const { runtime, writes } = backfillRuntime({
+      ...LEGACY_META,
+      repoFullName: "blitzdotdev/BlitzOS",
+    });
+
+    const outcome = await backfillDefaultSessionProject(
+      runtime,
+      "s-1",
+      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+    );
+
+    expect(outcome).toBe("not-a-plain-chat");
+    expect(writes).toEqual([]);
+  });
+
+  it("waits for a document that has not synced, and attaches when it arrives", async () => {
+    const { fetchImpl, calls } = projectControlStub(addAccepted);
+    const backfill = createSessionProjectBackfiller(
+      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+    );
+    // A room the repo has opened but not filled. An empty meta reads exactly
+    // like a plain chat's, so a worktree session caught here would be given
+    // `/workspace` over its own project — which is what `createdAt` prevents.
+    const { runtime, state, writes } = backfillRuntime({});
+
+    expect(await backfill(runtime, "s-1")).toBe("meta-unavailable");
+    expect(writes).toEqual([]);
+    expect(calls).toEqual([]);
+
+    state.meta = LEGACY_META;
+    expect(await backfill(runtime, "s-1")).toBe("attached");
+    expect(writes).toHaveLength(1);
+  });
+
+  it("reads once and writes once when one session is opened twice at once", async () => {
+    const { fetchImpl, calls } = projectControlStub(addAccepted);
+    const backfill = createSessionProjectBackfiller(
+      createDefaultSessionProjectResolver({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1"),
+    );
+    const { runtime, reads, writes } = backfillRuntime(LEGACY_META);
+
+    const raced = await Promise.all([backfill(runtime, "s-1"), backfill(runtime, "s-1")]);
+    // And once more after both settled: the decision is remembered, so a member
+    // who leaves the session and comes back pays nothing.
+    expect(await backfill(runtime, "s-1")).toBe("attached");
+
+    expect(raced).toEqual(["attached", "attached"]);
+    expect(reads).toHaveLength(1);
+    expect(writes).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+  });
+});
+
+/** The hook's props, with the parts no test varies filled in. */
+function backfillProps(
+  fetchImpl: typeof fetch,
+  over: Partial<SessionProjectBackfillInput>,
+): SessionProjectBackfillInput {
+  return {
+    store: createStore(),
+    endpoints: {
+      syncUrl: "https://box.invalid/lody/sync",
+      filesBase: "https://box.invalid/files",
+      ...PLANE_ENDPOINTS,
+      fetchImpl,
+    },
+    machineId: "m-1",
+    sessionId: "s-1",
+    shared: false,
+    ...over,
+  };
+}
+
+describe("the surface seam that opens a session", () => {
+  it("attaches the default project to the session it was shown", async () => {
+    const { fetchImpl, calls } = projectControlStub(addAccepted);
+    const { runtime, writes } = backfillRuntime(LEGACY_META);
+    const props = backfillProps(fetchImpl, {});
+    props.store.set(runtimeAtom, runtime);
+
+    const view = await render(createElement(BackfillProbe, props));
+    await settle();
+    await view.unmount();
+
+    expect(calls).toHaveLength(1);
+    expect(writes).toEqual([
+      { roomId: getSessionRoomId("s-1"), patch: { project: WORKSPACE_PROJECT } },
+    ]);
+  });
+
+  it("writes nothing on a shared surface", async () => {
+    const { fetchImpl, calls } = projectControlStub(addAccepted);
+    const { runtime, reads, writes } = backfillRuntime(LEGACY_META);
+    // Everything else is the case above, so what is under test is the guard and
+    // nothing else: the session document belongs to the box's owner, and a
+    // grantee who opened their surface must not rewrite the owner's session.
+    const props = backfillProps(fetchImpl, { shared: true });
+    props.store.set(runtimeAtom, runtime);
+
+    const view = await render(createElement(BackfillProbe, props));
+    await settle();
+    await view.unmount();
+
+    expect(reads).toEqual([]);
+    expect(writes).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("does nothing on the chat landing, where no session is open", async () => {
+    const { fetchImpl } = projectControlStub(addAccepted);
+    const { runtime, reads } = backfillRuntime(LEGACY_META);
+    const props = backfillProps(fetchImpl, { sessionId: null });
+    props.store.set(runtimeAtom, runtime);
+
+    const view = await render(createElement(BackfillProbe, props));
+    await settle();
+    await view.unmount();
+
+    expect(reads).toEqual([]);
+  });
+});
+
+function BackfillProbe(props: SessionProjectBackfillInput) {
+  useDefaultSessionProjectBackfill(props);
+  return null;
+}
+
 /** Polls until `read` answers with something, for the one thing that is not
  * synchronous here: the session document reaching the daemon. */
 async function until<T>(what: string, read: () => Promise<T | undefined>, timeoutMs = 30_000): Promise<T> {
@@ -263,9 +505,10 @@ describe.skipIf(!lodyDaemonAvailable())("a plain session against a real daemon",
       return answer.code === "session_not_found" ? undefined : answer;
     });
 
-  /** One Code Collab v2 call, polled the same way. Their error member is
-   * `{ error: <code> }` (`shared/src/code-collab.ts`), so a plain read of that
-   * field distinguishes a refusal from a result. */
+  /** One Code Collab v2 call, polled the same way and read the same way: a
+   * refusal is `{ status: 'error', code }` (`CodeCollabV2ErrorSchema`,
+   * `shared/src/code-collab.ts:218`), so `code` is what says which refusal it
+   * is — the same field File Preview answers with. */
   const codeCollab = (sessionId: string, method: string, params: JsonObject) =>
     until(`the daemon to answer ${method} for ${sessionId}`, async () => {
       const response = await sendMachineRpc(endpoints(), {
@@ -277,13 +520,13 @@ describe.skipIf(!lodyDaemonAvailable())("a plain session against a real daemon",
       });
       if (!response.ok) return undefined;
       // SAFETY: every Code Collab v2 response is either an ok member or
-      // `CodeCollabV2ErrorSchema`, whose discriminant is `error`.
+      // `CodeCollabV2ErrorSchema`, whose discriminant is `status: 'error'`.
       const answer = response.result as unknown as {
-        error?: string;
+        code?: string;
         status?: string;
         fileIndex?: Record<string, unknown>;
       };
-      return answer.error === "session_not_found" ? undefined : answer;
+      return answer.code === "session_not_found" ? undefined : answer;
     });
 
   const startPlainSession = async (sessionId: string): Promise<void> => {
@@ -381,7 +624,7 @@ describe.skipIf(!lodyDaemonAvailable())("a plain session against a real daemon",
     const index = await codeCollab("plainwd00003", "code-collab/get-file-index", {
       sessionId: "plainwd00003",
     });
-    expect(index.error).toBeUndefined();
+    expect(index.code).toBeUndefined();
     expect(index.status).toBe("ok");
     expect(Object.keys(index.fileIndex ?? {})).toContain("CLAUDE.md");
 
@@ -389,8 +632,58 @@ describe.skipIf(!lodyDaemonAvailable())("a plain session against a real daemon",
       sessionId: "plainwd00003",
     });
     // The workspace root is not a git repository, so there is nothing to diff —
-    // and that is an EMPTY answer, not the `workspace_unavailable` error the
-    // tab used to render.
-    expect(changes.error).toBeUndefined();
+    // and that is an EMPTY answer, not the `workspace_root_unavailable` error
+    // the tab used to render.
+    expect(changes.code).toBeUndefined();
   }, 60_000);
+
+  it("heals a session that was created before the default project existed", async () => {
+    // A LEGACY SESSION, WRITTEN PAST THE DECORATOR. `startLodySession` goes
+    // through the writer §2 decorates, so a session started that way can never
+    // lack a project; the meta is written directly instead, with exactly the
+    // fields `buildInitialSessionMetaPatch` wrote before §2 existed. No history
+    // entry and no dispatch pointer, so nothing launches an agent — which is
+    // also the state the reported session is in, days after its last turn.
+    const roomId = getSessionRoomId("plainwd00004");
+    await handle.runtime.ensureDocStream(roomId);
+    await handle.runtime.writer.upsertDocMeta(roomId, {
+      id: "plainwd00004",
+      machineId: snapshot.machineId,
+      userId: snapshot.userId,
+      createdAt: new Date().toISOString(),
+      cliType: "builtin",
+      agentType: "claude",
+      isArchived: false,
+    });
+
+    // What the member sees today, and the whole of the report: the Files tab,
+    // All Changes and every chip render this refusal's message.
+    const before = await codeCollab("plainwd00004", "code-collab/get-file-index", {
+      sessionId: "plainwd00004",
+    });
+    expect(before.code).toBe("workspace_root_unavailable");
+    expect(await sessionProject("plainwd00004")).toBeUndefined();
+
+    // What opening it now does.
+    const backfill = createSessionProjectBackfiller(
+      createDefaultSessionProjectResolver(endpoints(), snapshot.machineId, harness.endpoints.filesRoot),
+    );
+    expect(await backfill(handle.runtime, "plainwd00004")).toBe("attached");
+
+    const project = await sessionProject("plainwd00004");
+    expect(project?.kind).toBe("local");
+    expect(project?.useWorktree).toBeUndefined();
+    // And the panel the report was about answers again. No turn has run in this
+    // session, so the daemon resolves the root from the document alone — which
+    // is the whole point: the member's existing conversation gets its files back
+    // without being restarted.
+    const index = await until("the Files tree to come back", async () => {
+      const answer = await codeCollab("plainwd00004", "code-collab/get-file-index", {
+        sessionId: "plainwd00004",
+      });
+      return answer.code === "workspace_root_unavailable" ? undefined : answer;
+    });
+    expect(index.code).toBeUndefined();
+    expect(Object.keys(index.fileIndex ?? {})).toContain("CLAUDE.md");
+  }, 90_000);
 });

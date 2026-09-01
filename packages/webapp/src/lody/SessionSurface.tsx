@@ -72,6 +72,7 @@ import type { LodyAtomStore, LodyRuntimeEndpoints } from "./runtime.js";
 import { SessionRailSidebar } from "./SessionRailSidebar.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 import { SurfaceTabsContext, type SurfaceTabsBinding } from "./surface-tabs.js";
+import { useDefaultSessionProjectBackfill } from "./use-session-project-backfill.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { LodySurfaceProviders } from "./surface-providers.js";
@@ -426,6 +427,24 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     () => (router === null ? null : activeSessionIdFromPathname(router.state.location.pathname)),
     () => null,
   );
+
+  // A SESSION CREATED BEFORE THE DEFAULT PROJECT EXISTED IS REPAIRED ON OPEN
+  // (`workdir-default.ts` §3). Without it, every session a member started before
+  // that fix keeps answering "Session has no local project or GitHub repository
+  // workspace" for the Files tab, All Changes and every file chip — and the only
+  // way out would be to abandon the conversation and start a new one.
+  //
+  // Driven from the address above because an open is not a write, so the writer
+  // seam that carries the same default at creation cannot see it. The hook reads
+  // the runtime off the atom `RuntimeProvider` writes, which is why nothing here
+  // waits for the render tree below.
+  useDefaultSessionProjectBackfill({
+    store,
+    endpoints,
+    machineId: snapshot?.machineId ?? null,
+    sessionId: activeSessionId,
+    shared: isShared,
+  });
 
   // THE AGENT-AUTH BANNER BELONGS TO SESSION CONTENT, NOT TO THE PANE
   // (plans/LODY-TERMINAL-TABS.md wave 3, F8).

@@ -63,6 +63,15 @@ selector) must fully work in GitHub Worktree mode on a box.
    registers `/workspace` through `local-project/add` and gives a projectless
    session that `ProjectRef` with no `useWorktree` and no `githubRepoFullName`:
    it stays a Chat, cuts no worktree, and works in `/workspace`.)*
+   *(2026-08-31, second half: that decorator reaches sessions being CREATED, so
+   a canary member's EXISTING sessions still opened onto "Session has no local
+   project or GitHub repository workspace". The same `ProjectRef` is now
+   attached when such a session is OPENED — driven off the surface's resolved
+   address, guarded on the meta having synced and on the session being a plain
+   chat, and inert on a grantee's surface. What it cannot move is a RUNNING
+   agent's cwd: the daemon fixes that when the process starts and prefers a live
+   session over the document, so an agent still mid-conversation keeps the chats
+   directory until its process is recycled.)*
    *(Phase 5, shipped. Two things the wording did not anticipate: the worktree
    pill is only FORCED in their `github` context, so a `local-shared` session
    runs in the clone itself until the member ticks it — a product decision, not a
