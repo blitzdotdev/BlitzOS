@@ -2,8 +2,11 @@
 
 Investigated 2026-09-01, prompted by "Claude Fable 5.1 does not appear in the
 model picker". The short answer: **model discovery is already dynamic and
-nothing in BlitzOS or Lody needs a per-model edit — the ceiling is the
-`@anthropic-ai/claude-code` version pinned in `packages/box/Dockerfile`.**
+nothing in BlitzOS or Lody needs a per-model edit — the only ceiling is the
+`@anthropic-ai/claude-code` version the box is running.** §4 measures the whole
+path end to end: a `claude update` on a live box put Fable 5.1 in the composer
+with no rebake, no code change and no vendor bump. What is missing is only the
+trigger — the automatic updater is off in four places.
 
 ## 1. The discovery chain (dynamic, end to end)
 
@@ -60,42 +63,115 @@ version 2.1.251 or newer is required.
 So even a UI that offered the model would fail at dispatch. `claude-fable-5-1`
 is the current top model (`claude-fable-5` is now listed as legacy).
 
-## 4. Path forward
+## 4. In-place CLI update reaches the composer — measured end to end
 
-**The fix is a version bump plus a box-image rebake — no code change.**
+A rebake is **not** the only route. The chain above has no version gate
+anywhere, so updating the CLI on a running box is sufficient. Measured on a
+live box, 2026-09-01, in order:
 
-1. Raise `@anthropic-ai/claude-code@2.1.228` to `>= 2.1.251` in
-   `packages/box/Dockerfile` (latest published at the time of writing:
-   `2.1.257`). `packages/broker/Dockerfile:12` carries the same pin and should
-   move with it.
-2. Rebake canary per `docs/BOX-IMAGE.md` and land the new
-   `BLITZ_DEPLOY_VAR_BOX_IMAGE_*` values in `.github/workflows/canary.yml`.
-   Do **not** cut a `v*` tag to refresh an image — the same tag ships client
-   prod.
-3. Re-measure the four `2.1.228` assertions that pin observed CLI bytes:
-   `packages/webapp/test/lody-acp-authentication.test.ts`,
-   `packages/box/guest-tests/test/remote-control-service.test.ts`,
-   `packages/control-plane/test/bootstrap.test.ts:771`, and the fixture note in
-   `packages/schema/fixtures/lody-session-control-stream/README.md`.
-4. Verify on the rebaked box that the composer offers Fable 5.1 and that a turn
-   dispatches. The one thing worth watching: `claude-acp.js` carries the Agent
-   SDK's own baked model catalog (context windows, effort multipliers,
-   `latest_per_family`) alongside the passthrough. It is not a filter, but a
-   model absent from it may lose effort/context metadata until the `lody` pin
-   moves (`0.88.1` here; `0.89.3` published).
+```
+$ claude --version                        # 2.1.228
+$ claude --model claude-fable-5-1 -p ...  # 400: version 2.1.251 or newer is required
+$ claude update
+  Installation method set to: global
+  Successfully updated from 2.1.228 to version 2.1.257
+$ claude --version                        # 2.1.257  (through the shim)
+$ ls ~/.local/bin ~/.claude/local          # empty / absent -- NO shadow copy
+$ claude --model claude-fable-5-1 -p "reply with exactly: ok"
+  ok
+```
+
+Then the adapter, spawned exactly as `setting.ts` spawns it for a builtin
+`claude` config carrying `runtimeOverrides.claudeCodeExecutable`
+(`node lody/dist/claude-acp.js` with `CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude`),
+reported from `session/new`:
+
+```
+model configOption (what the composer renders), currentValue = default
+  default              | Default (recommended)
+  opus[1m]             | Opus (1M context)
+  claude-fable-5-1[1m] | Fable        <-- new model, no image change
+  sonnet               | Sonnet
+  haiku                | Haiku
+```
+
+**No rebake, no code change, no vendor bump.** The `lody` pin stayed at 0.88.1
+and the vendored static list was never consulted.
+
+### Why it worked, precisely
+
+- **`installMethod` resolved to `global`**, so the updater rewrote
+  `/opt/blitz/npm/lib/node_modules/@anthropic-ai/claude-code` in place — the
+  exact binary `/usr/local/bin/claude` execs, and therefore the exact binary
+  Lody launches through `BLITZ_CLAUDE_EXECUTABLE`. The `~/.local/bin` shadow
+  copy the Dockerfile comment warns about is what the **native** installer
+  produces; the npm-global path does not take it. `NPM_CONFIG_PREFIX` being
+  owned by uid 1000 is what makes the in-place rewrite possible — and the
+  Dockerfile says that ownership exists so `claude` *can* auto-update.
+- **The browser half re-probes unconditionally.**
+  `runStartupAcpCapabilitiesRefresh` has no staleness check, no version compare
+  and no cache: it refreshes every config every time it is called.
+  `capabilitySourceVersion` is written onto the Flock row by the daemon but is
+  never read anywhere in `packages/components/src`, so it gates nothing.
+  BlitzOS calls the pass from `LodyAgentConfigGate`'s effect, keyed
+  `[store, machineId, projectUrl]` and guarded by `started = runtime` — **once
+  per runtime mount, i.e. once per load of the Lody surface.** A member who
+  reloads the tab after an update gets the new list.
+
+### The one thing that is actually off: the *automatic* updater
+
+`DISABLE_AUTOUPDATER=1` is set in four places — `packages/box/Dockerfile:168`
+(image-wide ENV), the PATH shim `rootfs/usr/local/bin/claude:27`,
+`rootfs/etc/profile.d/blitz-npm.sh:23`, and
+`broker/internal/vendor/vendor.go:104`, which strips any inbound value and
+force-appends `=1` (asserted by `roaming_test.go:363`).
+
+That flag gates the **background** update check only. The explicit `claude
+update` subcommand ignores it: the run above was made with
+`DISABLE_AUTOUPDATER=1` live in the environment and updated anyway. So today
+nothing updates on its own, and nothing will until something runs `update`.
+
+## 5. Path forward
+
+Ranked, given the goal "new models reach existing boxes without a rebake":
+
+1. **A controlled update hook (recommended).** Keep `DISABLE_AUTOUPDATER=1` and
+   add an s6 oneshot (beside `init-state` / `rules`) that runs `claude update`
+   at boot, and/or on a timer. It runs as the same uid into the same global
+   prefix, so it keeps the in-place property measured above and cannot produce
+   a member-prefix shadow. It is observable, loggable, and revertible with one
+   `npm i -g @anthropic-ai/claude-code@<pin>`. Unlike unsetting the flag, it
+   never swaps the binary underneath a session mid-turn.
+2. **Unset `DISABLE_AUTOUPDATER`.** Same outcome with less code, but it hands
+   the timing to the vendor, re-opens the shadow-copy path if the installer's
+   method detection ever resolves to `native` instead of `global`, and means
+   all four sites above have to move together.
+3. **Bump the pin and rebake** (`packages/box/Dockerfile:36` and
+   `packages/broker/Dockerfile:12`, then `docs/BOX-IMAGE.md`). Still correct for
+   the *baked* floor, so a fresh box is not one update behind on first boot —
+   but it should stop being the mechanism by which a new model arrives.
+
+Whichever is chosen, the pin stops deciding which models exist, so these four
+`2.1.228` assertions need re-basing on a range or a probe rather than a
+literal: `packages/webapp/test/lody-acp-authentication.test.ts`,
+`packages/box/guest-tests/test/remote-control-service.test.ts`,
+`packages/control-plane/test/bootstrap.test.ts:771`, and the fixture note in
+`packages/schema/fixtures/lody-session-control-stream/README.md`.
+
+One thing to keep watching: `claude-acp.js` carries the Agent SDK's own baked
+model catalog (context windows, effort multipliers, `latest_per_family`)
+alongside the passthrough. It is not a filter — Fable 5.1 rendered fine without
+being in it — but a model absent from it may lose effort/context metadata until
+the `lody` pin moves (`0.88.1` here; `0.89.3` published).
 
 ### Standing rule for the next model
 
-A new Anthropic model needs **no BlitzOS change**. It appears on its own once
-the box image ships a Claude Code new enough to report it, because the whole
-chain from `initialize` to the composer is passthrough. Treat "model X is
-missing" as "the box-image Claude Code pin is behind", and check the pin first.
+A new Anthropic model needs **no BlitzOS change and no vendor bump**. The chain
+from `initialize` to the composer is passthrough and the capability re-probe is
+unconditional, so "model X is missing" means "this box's Claude Code is behind".
+Check `claude --version` before reading any of the code above.
 
-Two things would make that automatic and are deliberately not done:
-`DISABLE_AUTOUPDATER=1` in the PATH shim (a self-updating vendor CLI drops a
-second copy into the member's npm prefix and shadows the shim — a terminal
-signed out on a box that holds a valid credential), and the
-`runtimeOverrides.claudeCodeExecutable` on every builtin agent config, which
-short-circuits Lody's managed-runtime download of a second unpinned binary from
-Lody's R2 channel. Both pins are load-bearing; the answer is to move the image
-pin on a cadence, not to unpin.
+The other pin, `runtimeOverrides.claudeCodeExecutable` on every builtin agent
+config, must stay: it short-circuits Lody's managed-runtime download of a
+second, unpinned agent binary from Lody's R2 channel, and it is also what makes
+an in-place update of the npm-global prefix reach Lody at all.
