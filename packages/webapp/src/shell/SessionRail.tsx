@@ -56,6 +56,16 @@ export type SessionRailProps = {
    */
   sessionsNeedMachine?: boolean;
   onSelectSession: (sessionId: string) => void;
+  /**
+   * Close one tab from its row.
+   *
+   * The native tab strip carried the only close there was, and it is deleted
+   * (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"). This rail is what a box with no
+   * session plane sees — an old image, or a member with no machine here — so
+   * without this that member could open a terminal and never close it, and its
+   * tmux session would outlive them on the box.
+   */
+  onCloseSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
   onOpenPreview: (port: number) => void;
   onOpenPreviewLink: (url: string, title: string) => void;
@@ -95,6 +105,7 @@ export function SessionRail({
   sessionsNeedNewerMachine,
   sessionsNeedMachine,
   onSelectSession,
+  onCloseSession,
   onSpawnSession,
   onOpenPreview,
   onOpenPreviewLink,
@@ -203,25 +214,40 @@ export function SessionRail({
           const active = session.id === activeSessionId
             || (activeSessionId === '' && index === 0);
           return (
-            <button
+            // A `div`, because the close below is a button and a button inside
+            // a button is not valid HTML. The label keeps its own button, so
+            // the click target and the keyboard path do not change.
+            <div
               className={`shell-s${active ? ' shell-s--on' : ''}`}
-              type="button"
               key={session.id}
               aria-current={active ? 'page' : undefined}
-              onClick={() => onSelectSession(session.id)}
             >
-              <span className="shell-g">
-                <SessionTypeIcon
-                  type={session.agent}
-                  className="shell-g__glyph"
-                  filePath={session.filePath}
-                />
-              </span>
-              <span className="shell-s__t">{session.label}</span>
+              <button
+                className="shell-s__open"
+                type="button"
+                onClick={() => onSelectSession(session.id)}
+              >
+                <span className="shell-g">
+                  <SessionTypeIcon
+                    type={session.agent}
+                    className="shell-g__glyph"
+                    filePath={session.filePath}
+                  />
+                </span>
+                <span className="shell-s__t">{session.label}</span>
+              </button>
               {/* Time is the status at Build 2. Tabs have no clock, so the
-                * slot is drawn and left empty. */}
-              <span className="shell-s__a" />
-            </button>
+                * slot the rail has always drawn holds the close instead. */}
+              <span className="shell-s__a">
+                <button
+                  className="shell-s__close"
+                  type="button"
+                  aria-label={`Close ${session.label}`}
+                  title={`Close ${session.label}`}
+                  onClick={() => onCloseSession(session.id)}
+                >×</button>
+              </span>
+            </div>
           );
         })}
       </div>

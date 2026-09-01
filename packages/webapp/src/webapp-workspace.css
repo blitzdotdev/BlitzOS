@@ -1,23 +1,30 @@
-.webapp-header {
+/* The row above the panes (`shell/PaneChrome.tsx`). The native tab strip that
+ * used to fill it is deleted — a terminal is a tab of the session strip and of
+ * nothing else — so what is left is the mobile drawer button and the boot
+ * skeleton. It draws nothing at all on a settled desktop layout, and the
+ * `:empty` rule is what stops an absent chrome from costing a border. */
+.webapp-pane-chrome {
   z-index: 9;
   display: flex;
-  grid-column: 2;
+  grid-column: 1 / -1;
   grid-row: 1;
   min-width: 0;
   height: var(--headerH);
-  align-items: stretch;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
   border-bottom: 1px solid var(--rule);
   background: var(--paper);
 }
 
-.webapp-header button {
+.webapp-pane-chrome button {
   color: inherit;
   background: none;
   border: 0;
   cursor: pointer;
 }
 
-.webapp-header button:focus-visible {
+.webapp-pane-chrome button:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -2px;
 }
@@ -26,21 +33,10 @@
   display: none;
 }
 
-.webapp-header-main {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  flex: 1;
-  align-items: stretch;
-}
-
-.webapp-tabstrip {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: stretch;
-}
-
+/* The chrome below is the WORKSPACE DRAWER's segment strip and nothing else
+ * (`WorkspaceDrawer.tsx`, `.workspace-drawer-segments` in files.css). It was
+ * shared with the deleted native tab strip; the drawer kept it, so the rules
+ * stay and their name does not. */
 .webapp-tab-cell {
   position: relative;
   display: flex;
@@ -89,25 +85,6 @@
   max-width: 168px;
 }
 
-.webapp-tab-rename {
-  width: 140px;
-  min-width: 48px;
-  padding: 1px 4px;
-  border: 1px solid var(--accent);
-  border-radius: 2px;
-  outline: 0;
-  background: var(--paper);
-  color: var(--ink);
-  font: inherit;
-}
-
-.webapp-tab-dirty {
-  flex: none;
-  color: var(--accent);
-  font-size: 12px;
-  line-height: 1;
-}
-
 .webapp-tab-icon {
   width: 12px;
   height: 12px;
@@ -122,63 +99,6 @@
 
 .webapp-tab-cell--active .webapp-tab-icon {
   color: var(--accent);
-}
-
-.webapp-tab-close {
-  position: relative;
-  z-index: 1;
-  width: 28px;
-  flex: none;
-  padding: 0 10px 0 0;
-  color: var(--faint) !important;
-  font-size: 15px !important;
-}
-
-.webapp-tab-close:hover,
-.webapp-tab-close:focus-visible {
-  color: var(--ink) !important;
-}
-
-.webapp-tab-close:disabled {
-  color: var(--faint) !important;
-  cursor: default;
-}
-
-.webapp-new-tab-control {
-  position: relative;
-  display: flex;
-  flex: none;
-  align-items: stretch;
-  margin-left: -1px;
-  border-left: 1px solid var(--rule);
-  border-right: 1px solid var(--rule);
-  color: var(--accent);
-}
-
-.webapp-new-tab-spawn {
-  width: 40px;
-  min-width: 40px;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  font-size: 12px !important;
-}
-
-.webapp-new-tab-spawn > span:first-child {
-  font-size: 16px;
-}
-
-.webapp-new-tab-spawn:hover:not(:disabled),
-.webapp-new-tab-spawn:focus-visible:not(:disabled) {
-  color: var(--accent);
-  background: color-mix(in oklab, var(--ink) 6%, var(--paper));
-}
-
-.webapp-new-tab-spawn:disabled {
-  color: var(--faint);
-  cursor: default;
 }
 
 .webapp-new-menu-icon {
@@ -837,7 +757,7 @@
     --mobileStatusH: 48px;
   }
 
-  .webapp-header {
+  .webapp-pane-chrome {
     grid-column: 1;
     width: 100%;
     height: var(--headerH);
@@ -856,24 +776,6 @@
     font-size: 17px;
   }
 
-  .webapp-header-main {
-    height: var(--headerH);
-    min-height: var(--headerH);
-    flex: none;
-  }
-
-  .webapp-tabstrip {
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-    touch-action: pan-x;
-  }
-
-  .webapp-tabstrip::-webkit-scrollbar {
-    display: none;
-  }
-
   .webapp-tab-cell {
     min-width: max-content;
     max-width: none;
@@ -883,21 +785,6 @@
   .webapp-tab-select {
     min-height: 40px;
     padding: 0 10px;
-  }
-
-  .webapp-tab-close {
-    width: 40px;
-    min-width: 40px;
-    min-height: 40px;
-    padding: 0;
-  }
-
-  .webapp-new-tab-spawn {
-    width: 40px;
-    min-width: 40px;
-    height: 40px;
-    min-height: 40px;
-    padding: 0;
   }
 
   .webapp-agent-menu {
@@ -1146,7 +1033,7 @@
     --mobileStatusH: 48px;
   }
 
-  .webapp-header {
+  .webapp-pane-chrome {
     grid-column: 1;
     width: 100%;
     height: var(--headerH);
@@ -1165,24 +1052,6 @@
     font-size: 17px;
   }
 
-  .webapp-header-main {
-    height: var(--headerH);
-    min-height: var(--headerH);
-    flex: none;
-  }
-
-  .webapp-tabstrip {
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-    touch-action: pan-x;
-  }
-
-  .webapp-tabstrip::-webkit-scrollbar {
-    display: none;
-  }
-
   .webapp-tab-cell {
     min-width: max-content;
     max-width: none;
@@ -1192,21 +1061,6 @@
   .webapp-tab-select {
     min-height: 40px;
     padding: 0 10px;
-  }
-
-  .webapp-tab-close {
-    width: 40px;
-    min-width: 40px;
-    min-height: 40px;
-    padding: 0;
-  }
-
-  .webapp-new-tab-spawn {
-    width: 40px;
-    min-width: 40px;
-    height: 40px;
-    min-height: 40px;
-    padding: 0;
   }
 
   .webapp-agent-menu {
@@ -1369,36 +1223,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }}
-/* =========================================================== pane strips */
-/* Each pane owns a tab strip. The header keeps its own chrome; the strip is
- * only its grid slot, so nothing about the tab cells changes between panes. */
-.webapp-pane-strip > .webapp-header {
-  width: 100%;
-}
-
-.webapp-tab-cell--dragging {
-  opacity: .4;
-}
-
-/* The insertion bar names the drop index inside a strip. */
-.webapp-tab-insert {
-  width: 2px;
-  align-self: stretch;
-  margin: 8px 0;
-  border-radius: 2px;
-  background: var(--accent);
-}
-
-/* Translucent landing rectangle: the pane, or the half a new pane will claim.
- * Drawn from the same answer the drop applies, so the two cannot disagree. */
-.webapp-pane-drop {
-  position: absolute;
-  z-index: 20;
-  border: 1px solid color-mix(in oklab, var(--accent) 70%, transparent);
-  background: color-mix(in oklab, var(--accent) 22%, transparent);
-  pointer-events: none;
-  transition: all 90ms ease-out;
-}
+/* ============================================================== pane split */
+/* The tab strips, their drag-and-drop chrome (`.webapp-tab-insert`,
+ * `.webapp-pane-drop`, `.webapp-pane-ghost`, `.webapp-pane-droptip`) and the
+ * dragging state were here. They are deleted with the native strip that was
+ * their only handle (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"). The split
+ * survives as a PLACEMENT, so its resizer does. */
 
 /* The boundary between two panes resizes the side column. A grid item pinned
  * to the side column's real left edge, so the handle stays on the border even
@@ -1414,34 +1244,6 @@
   justify-self: start;
   cursor: col-resize;
   touch-action: none;
-}
-
-.webapp-pane-ghost {
-  position: fixed;
-  z-index: 80;
-  padding: 5px 11px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-item);
-  color: var(--ink);
-  background: var(--paper);
-  box-shadow: var(--lift);
-  font: 12.5px/1.4 var(--font-ui);
-  opacity: .85;
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.webapp-pane-droptip {
-  position: fixed;
-  z-index: 81;
-  padding: 3px 8px;
-  border-radius: var(--r-pill);
-  color: var(--paper);
-  background: color-mix(in oklab, var(--ink) 92%, var(--paper));
-  font: 11px/1.5 var(--font-ui);
-  letter-spacing: .04em;
-  pointer-events: none;
-  white-space: nowrap;
 }
 
 /* ============================================================ right strip */

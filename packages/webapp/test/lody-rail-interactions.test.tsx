@@ -55,7 +55,7 @@ const ENDPOINTS = {
  * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`). */
 const SESSIONS_PRESENT = {
   capability: "present",
-  onLegacyDefaultTabs: () => {},
+  surfaceHostsTabs: true,
 } satisfies LodyRailSessions;
 
 interface MountResult {
@@ -105,7 +105,6 @@ async function mountRegion(options: { path: string; tabCount: number }): Promise
       setRoute,
       route.workspaceId ?? "",
       true,
-      options.tabCount,
       SESSIONS_PRESENT,
     );
     seen.rail = rail;

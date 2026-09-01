@@ -73,7 +73,7 @@ const ENDPOINTS = {
 
 const SESSIONS_PRESENT = {
   capability: "present",
-  onLegacyDefaultTabs: () => {},
+  surfaceHostsTabs: true,
 } satisfies LodyRailSessions;
 
 /**
@@ -103,7 +103,7 @@ async function mountWiring(path: string) {
 
   function Host() {
     const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname));
-    const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, 1, SESSIONS_PRESENT);
+    const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, SESSIONS_PRESENT);
     seen.rail = rail;
     seen.binding = {
       tabs: [],

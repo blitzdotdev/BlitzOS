@@ -32,7 +32,7 @@ async function loadStorage(flag: boolean) {
  * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`). */
 const SESSIONS_PRESENT = {
   capability: "present",
-  onLegacyDefaultTabs: () => {},
+  surfaceHostsTabs: true,
 } satisfies LodyRailSessions;
 
 /** Mounts the hook with a route it also owns, the way `CloudApp` does. */
@@ -56,7 +56,6 @@ async function mountRail(options: {
       setRoute,
       route.workspaceId ?? "",
       options.tabsLoaded ?? true,
-      options.tabCount,
       SESSIONS_PRESENT,
     );
     seen.rail = rail;

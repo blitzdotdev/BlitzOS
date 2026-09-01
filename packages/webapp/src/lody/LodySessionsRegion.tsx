@@ -64,6 +64,10 @@ export interface LodySessionsRegionProps {
   terminals: DriveRailSession[];
   activeTerminalId: string;
   onSelectTerminal: (tabId: string) => void;
+  /** Close a terminal from its rail row. The native strip carried the only
+   * close until it was deleted (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"), and
+   * the rail is the one list every layout has. */
+  onCloseTerminal?: (tabId: string) => void;
   /** What a session row and "+ New session" do: move the shell's ADDRESS, which
    * is the only thing that can take the view back from the panes. See
    * `LodyRailBinding` in `SessionSurface.tsx`. */
@@ -143,6 +147,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     onSelectTerminal: props.onSelectTerminal,
     activeSharedSessionId: sharedOpen === null ? null : sharedOpen.sessionId,
   };
+  if (props.onCloseTerminal !== undefined) rail.onCloseTerminal = props.onCloseTerminal;
   if (props.onOpenSession !== undefined) rail.onOpenSession = props.onOpenSession;
   if (props.onOpenLanding !== undefined) rail.onOpenLanding = props.onOpenLanding;
   if (props.terminalsAction !== undefined) rail.terminalsAction = props.terminalsAction;

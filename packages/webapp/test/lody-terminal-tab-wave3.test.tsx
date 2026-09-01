@@ -555,9 +555,9 @@ async function mountRail(path: string) {
   const seen: { rail: LodyRailState | null } = { rail: null };
   function Host() {
     const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname));
-    seen.rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, 1, {
+    seen.rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, {
       capability: "present",
-      onLegacyDefaultTabs: () => undefined,
+      surfaceHostsTabs: true,
     });
     return null;
   }

@@ -25,22 +25,20 @@
  *    surface is hidden, `mirror` is deliberately inert, and a navigation inside
  *    a hidden surface is invisible. Routing a rail click through the surface
  *    was the third canary dogfood's first three reports, all one defect.
- * 3. The FRESH-WORKSPACE DEFAULT (§0.4). With the flag on, a workspace whose
- *    persisted document holds no tabs opens the chat landing instead of the
- *    panes. `defaultWorkspaceTabs()` is what makes a fresh workspace hold none
- *    (`storage.ts`), so the two halves of the rule live one function apart.
- *    Once per workspace id, and with `replaceState`, so the back button is not
- *    given a step the member never took, and a member who deliberately closed
- *    the landing is not sent back to it.
+ * 3. The WORKSPACE ROOT (§0.4, widened by the strip deletion). With the flag on
+ *    and a layout that draws the session strip, `/workspaces/:id` means the chat
+ *    landing. It used to mean the panes, and the panes used to carry their own
+ *    tab strip; that strip is deleted (plans/LODY-TERMINAL-TABS.md §4.6), so the
+ *    root address would otherwise be a workspace with no tab control. With
+ *    `replaceState`, so the back button is not given a step nobody took.
  *
  * ALL THREE ARE GATED ON THE BOX, not only on the build flag
  * (`box-capability.ts`, plans/LODY-RUNTIME-DESIGN.md §17). A workspace whose
- * machine runs a pre-Lody image gets the FULL flag-off rail back — the New tab
- * bar, one native row per managed tab — and its fresh-workspace default becomes
- * the flag-off tab set, because a chat landing that cannot exist is a worse
- * place to strand a member than a terminal.
+ * machine runs a pre-Lody image, and a member who holds no machine in it, get
+ * the flag-off rail back and keep the panes: there is no session strip to send
+ * them to, and `SessionRail`'s notice is what says so.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { AppRoute, ChatAddress } from "../sessions-page-state.js";
 import {
   chatSharedFrom,
@@ -105,15 +103,18 @@ export interface LodyRailState {
   closeChat: (options?: { replace?: boolean }) => void;
 }
 
-/** What the active workspace's own box can do, and what to do instead when it
- * cannot. Both halves belong to one caller, so they arrive as one argument. */
+/** What the active workspace's own box can do, and whether this layout can draw
+ * the strip that answers for it. Both halves belong to one caller, so they
+ * arrive as one argument. */
 export interface LodyRailSessions {
   /** `useLodySessionsCapability` for the ACTIVE workspace's box. */
   capability: LodySessionsCapability;
-  /** Seeds the flag-off tab set into a fresh workspace whose box turns out not
-   * to serve sessions. Called at most once per workspace id, from the same
-   * decision that would otherwise have opened the chat landing. */
-  onLegacyDefaultTabs: () => void;
+  /**
+   * `CloudApp`'s `surfaceTabsEnabled`: this box serves the surface AND this
+   * layout draws its strip. It is what decides whether the workspace ROOT
+   * address is normalised into the chat plane below — see that effect.
+   */
+  surfaceHostsTabs: boolean;
 }
 
 export function useLodyRail(
@@ -122,13 +123,11 @@ export function useLodyRail(
   activeWorkspaceId: string,
   /** `true` once the workspace's persisted document has been read. */
   tabsLoaded: boolean,
-  /** How many tabs that document holds. Zero is the fresh-workspace signal. */
-  tabCount: number,
   sessions: LodyRailSessions,
 ): LodyRailState {
   const [railHost, setRailHost] = useState<HTMLElement | null>(null);
   const chat: ChatAddress = route.page === "webApp" ? route.chat : null;
-  const { capability, onLegacyDefaultTabs } = sessions;
+  const { capability, surfaceHostsTabs } = sessions;
   // `probing` keeps the vendored zone, because the probe is one round trip and
   // the chunk behind it is 3.5 MB: the rail would flicker from legacy to
   // vendored on every good box to save nothing. Only a SETTLED unavailable takes
@@ -251,38 +250,38 @@ export function useLodyRail(
     [activeWorkspaceId, chat, go],
   );
 
-  // §0.4, once per workspace. `defaulted` is a ref rather than state because a
-  // second pass must not re-run the effect that set it.
-  const defaulted = useRef(new Set<string>());
+  // THE WORKSPACE ROOT IS THE CHAT LANDING (§0.4, widened by the deletion).
+  //
+  // `/workspaces/:id` used to mean "the panes own the view", and the panes drew
+  // their own tab strip. That strip is deleted (plans/LODY-TERMINAL-TABS.md
+  // §4.6, "PR 2"), so on a layout where the SESSION strip draws the tabs the
+  // root address now has no tab control at all — it is not a place a member can
+  // be left. It is normalised into the chat plane instead.
+  //
+  // THIS IS THE OTHER HALF OF THE REFRESH RACE, and the half a boot skeleton
+  // cannot fix. §0.4 ran this once per workspace and only for a document with
+  // ZERO tabs, so a returning member with tabs stayed on the panes for good:
+  // every bookmark, every workspace switch and every `closeChat()` landed on the
+  // native strip and stayed there. The tab count is no longer consulted, and
+  // neither is a once-per-workspace latch — an address that cannot draw tabs is
+  // wrong every time it is reached, not only the first time.
+  //
+  // REPLACES, NEVER PUSHES. The member did not ask for this step, so the back
+  // button must not have to walk through it.
+  //
+  // GATED ON `surfaceHostsTabs` AND NOT ON `available`. A box on a pre-Lody
+  // image, a member with no machine here, and a mobile layout all keep the panes
+  // — the strip they would be sent to does not exist for them, and the rail's
+  // notice is the honest answer instead (`SessionRail`). `available` is true
+  // throughout `probing`, so gating on it would send a cold load to a landing
+  // that may turn out to be unreachable.
   useEffect(() => {
-    if (!LODY_SESSIONS_ENABLED) return;
+    if (!LODY_SESSIONS_ENABLED || !surfaceHostsTabs) return;
     if (route.page !== "webApp" || activeWorkspaceId === "" || !tabsLoaded) return;
-    // The probe has not answered yet, and this decision is not reversible: it
-    // is taken once per workspace and it either moves the address or writes
-    // tabs. Waiting costs one round trip and is the only way to take it once.
-    if (capability === "probing") return;
-    if (defaulted.current.has(activeWorkspaceId)) return;
-    defaulted.current.add(activeWorkspaceId);
-    if (route.chat !== null || tabCount > 0) return;
-    if (lodySessionsUnavailable(capability)) {
-      // §0.4's other half, for a box that cannot serve the landing.
-      // `defaultWorkspaceTabs()` gave this fresh workspace no tabs because the
-      // BUILD has sessions on; the BOX does not, so the flag-off tab set goes
-      // in and the member lands on a terminal instead of on nothing.
-      onLegacyDefaultTabs();
-      return;
-    }
+    if (route.chat !== null) return;
     window.history.replaceState({}, "", workspaceChatPath(activeWorkspaceId));
     setRoute({ workspaceId: activeWorkspaceId, page: "webApp", chat: "landing" });
-  }, [
-    activeWorkspaceId,
-    capability,
-    onLegacyDefaultTabs,
-    route,
-    setRoute,
-    tabCount,
-    tabsLoaded,
-  ]);
+  }, [activeWorkspaceId, route, setRoute, surfaceHostsTabs, tabsLoaded]);
 
   return {
     available,
