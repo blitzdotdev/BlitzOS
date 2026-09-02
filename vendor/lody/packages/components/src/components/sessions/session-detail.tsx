@@ -260,6 +260,7 @@ import {
   canUseProjectHistoryProjectControl,
   importProjectHistoryForLocalProject,
 } from '@/lib/project-history-control-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import {
   getExternalHistoryProviderLabel,
   getExternalHistoryRefreshKey,
@@ -813,6 +814,7 @@ const SessionDetail = ({
    */
   sideChatRequiresAssistantTurn?: boolean;
 }) => {
+  const ipcClient = useIpcClient();
   const { t } = useTranslation();
   const router = useRouter();
   const postHog = usePostHog();
@@ -1667,6 +1669,7 @@ const SessionDetail = ({
         localMachineId,
         machineId: activeSession.machineId,
         supportsLocalProjectHistoryRpc: sessionMachineSupportsLocalProjectHistoryRpc,
+        ipcClient,
       })
     ) {
       return;
@@ -1693,6 +1696,7 @@ const SessionDetail = ({
       localProjectId: project.localProjectId,
       acpSessionIds: [externalHistory.sourceAcpSessionId],
       requestedByUserId: user.id,
+      ipcClient,
     })
       .then((result) => {
         void result;
@@ -1722,6 +1726,7 @@ const SessionDetail = ({
     activeSession,
     currentWorkspaceId,
     externalHistoryRefreshBySessionId,
+    ipcClient,
     localMachineId,
     runtime,
     sessionMachineSupportsLocalProjectHistoryRpc,

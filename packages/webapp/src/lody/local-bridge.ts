@@ -2,14 +2,12 @@
  * `window.ipc`, backed by the box gateway instead of Electron
  * (plans/LODY-RUNTIME-DESIGN.md §2.1).
  *
- * THE SEAM IS `window.ipc`, NOT A SOURCE PATCH. `createLocalLoroDataPlaneConnection`
- * (`vendor/lody/packages/components/src/providers/local-loro-data-plane-connection.ts:8`)
- * gates only on `getIpcServices()`, and `getIpcServices()`
- * (`components/src/lib/electron-ipc-client.ts:50`) is a generic proxy over
- * `window.ipc`: `createLodyIpcProxy` dispatches `groupName.methodName` by string
- * (`:22`). Nothing about it is Electron-specific. So installing `window.ipc`
- * before the runtime mounts makes the whole local plane work with NO vendor edit
- * on the data path at all.
+ * THE TRANSPORT SHAPE IS ELECTRON'S IPC SEAM. `createLodyIpcProxy` dispatches
+ * `groupName.methodName` by string, so nothing about the bridge itself is
+ * Electron-specific. A `SessionSurface` now captures this object in a bound IPC
+ * client and injects that authority into its renderer subtree. `window.ipc` is
+ * still installed for unchanged Electron/default callers, but it is no longer
+ * the authority used by a Blitz runtime after construction; see seam patch 18.
  *
  * DO NOT SET `window.__LODY_ELECTRON__`. Forty-four sites read it — window
  * controls in `routes/__root.tsx`, `electron-menu-handler`,
@@ -101,8 +99,8 @@ export function withBoxBrowseRoot(
 type IpcBridge = NonNullable<Window["ipc"]>;
 
 export interface LodyLocalBridge {
-  /** The object installed at `window.ipc`. Exposed for tests that drive it
-   * without touching the global. */
+  /** Captured by the surface client and also installed at `window.ipc` for
+   * compatibility. Exposed for tests that drive it without touching globals. */
   ipc: IpcBridge;
   /** Data-plane counters, for the phase-3 assertion that nothing is dropped. */
   dataPlaneStats: () => LodyDataPlaneStats;

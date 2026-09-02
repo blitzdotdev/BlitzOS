@@ -39,6 +39,7 @@ import {
   resolveProjectHistoryConflictForLocalProject,
   syncProjectHistoryForLocalProject,
 } from '@/lib/project-history-control-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import { reconcileLocalProjectHistoryCatalog } from '@/lib/local-project-history-catalog';
 import { worktreeCleanupConfigCache, worktreeSetupConfigCache } from '@/lib/local-storage-cache';
 import { projectSharingReducer } from '@/lib/project-sharing-state';
@@ -182,6 +183,7 @@ function useWorktreeScriptConfigState(cache: WorktreeScriptConfigCache) {
  * identical `ProjectSettingsRow` shapes.
  */
 export function useLocalProjectsAdmin(): LocalProjectsAdminData {
+  const ipcClient = useIpcClient();
   const { t } = useTranslation();
   const currentUserId = useAtomValue(userAtom)?.id ?? null;
   const workspaceId = useAtomValue(currentWorkspaceIdAtom);
@@ -444,6 +446,7 @@ export function useLocalProjectsAdmin(): LocalProjectsAdminData {
               localMachineId,
               machineId: entry.machineId,
               supportsLocalProjectHistoryRpc: entry.machine.supportsLocalProjectHistoryRpc,
+              ipcClient,
             }),
           isSyncing: syncingByKey[key] === true,
           isImporting: importingByKey[key] === true,
@@ -507,6 +510,7 @@ export function useLocalProjectsAdmin(): LocalProjectsAdminData {
     currentUserId,
     errorByKey,
     importingByKey,
+    ipcClient,
     isAuthenticated,
     isConvexAuthLoading,
     localMachineId,
@@ -595,6 +599,7 @@ export function useLocalProjectsAdmin(): LocalProjectsAdminData {
           workspaceId,
           localProjectId: row.project.id,
           requestedByUserId: currentUserId,
+          ipcClient,
         });
         setCatalogByKey((current) => ({ ...current, [key]: result }));
         setSelectedSessionIdsByKey((current) => ({ ...current, [key]: [] }));
@@ -608,7 +613,7 @@ export function useLocalProjectsAdmin(): LocalProjectsAdminData {
         });
       }
     },
-    [currentUserId, localMachineId, runtime, workspaceId]
+    [currentUserId, ipcClient, localMachineId, runtime, workspaceId]
   );
 
   const onHistorySelectionChange = useCallback(
@@ -650,6 +655,7 @@ export function useLocalProjectsAdmin(): LocalProjectsAdminData {
           localProjectId: row.project.id,
           acpSessionIds: state.selectedSessionIds,
           requestedByUserId: currentUserId,
+          ipcClient,
           // Large imports run in bounded batches; surface each batch's cumulative
           // result so the UI reflects progress (and partial success) live instead
           // of blocking on the full selection.
@@ -671,7 +677,7 @@ export function useLocalProjectsAdmin(): LocalProjectsAdminData {
         });
       }
     },
-    [currentUserId, localMachineId, runtime, workspaceId]
+    [currentUserId, ipcClient, localMachineId, runtime, workspaceId]
   );
 
   const onResolveHistoryConflict = useCallback(
@@ -714,6 +720,7 @@ export function useLocalProjectsAdmin(): LocalProjectsAdminData {
           sessionId: session.importedSessionId as SessionId,
           acpSessionId: session.acpSessionId,
           requestedByUserId: currentUserId,
+          ipcClient,
         });
         setCatalogByKey((current) => ({ ...current, [key]: result.catalog }));
         setResolvedConflictByKey((current) => ({
@@ -739,7 +746,7 @@ export function useLocalProjectsAdmin(): LocalProjectsAdminData {
         });
       }
     },
-    [currentUserId, localMachineId, runtime, workspaceId]
+    [currentUserId, ipcClient, localMachineId, runtime, workspaceId]
   );
 
   const saveWorktreeConfig = useCallback(

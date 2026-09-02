@@ -1603,6 +1603,60 @@ vendored hook across a box switch and fails without hunk 3.
 **Candidate upstream PR:** key the local-platform snapshot by the installed IPC
 bridge (or expose this reset) so a host driving more than one daemon can move
 between them. Until then this is the smallest seam that closes it.
+### 18. A renderer surface owns its IPC client (Tier 2 keep-alive, declared 2026-09-02)
+
+**Declared before implementation.** Seam 17 makes sequential surface hand-off
+correct, but cannot make two surfaces correct at once. The vendored renderer's
+`getIpcServices()`, `onIpcEvent()`, `sendIpc()`, and local-platform snapshot
+state all discover one page-global `window.ipc`. With an owned surface hidden
+behind another live surface, that lets an asynchronous send from the hidden
+runtime leave through the visible surface's bridge. This exact class was
+measured when an owner's `session/dispatch-turn` reached another box and was
+refused `share_forbidden`.
+
+The seam adds a structural `LodyIpcClient` bound to one invoke/on/send bridge.
+The current helpers accept it as an optional final argument; omission delegates
+to a stable `windowIpcClient` whose methods keep re-reading `window.ipc`, so
+Electron behaviour and existing Electron call sites are unchanged. A new React
+`IpcClientProvider` defaults to that window client. `RuntimeProvider` consumes
+the context and passes the client through runtime deps; non-React runtime code
+then passes it explicitly to the local Loro connection, local presence,
+workspace-machine RPC, and local session control.
+
+The local-platform singleton becomes a `WeakMap` keyed by the client. Electron's
+stable default client still owns exactly one snapshot. Each browser-hosted
+surface owns a different client and therefore a different provider, stores,
+poll, and daemon identity. `resetLocalPlatformSnapshotState` remains only as a
+test/compatibility cleanup scoped to one client; `SessionSurface` stops using it
+for hand-off. This supersedes seam 17 rather than stacking a reset on live
+providers.
+
+Direct IPC calls in the Blitz-mounted session route use `useIpcClient()` or a
+client already carried by the runtime. Electron-only roots/settings remain on
+the default helper path. The behavioural guard mounts two client scopes, points
+`window.ipc` at a poison third bridge, and proves platform, Loro data-plane,
+machine RPC, and session-control traffic stay with their owning bridge;
+`plans/LODY-WORKSPACE-KEEPALIVE.md` records the complete gate.
+
+Initial upstream anchors (line numbers are re-anchored after implementation):
+
+| File | Anchor | Intended additive change |
+|---|---|---|
+| `packages/components/src/lib/electron-ipc-client.ts` | existing four IPC helpers | client interface/factory/default plus optional client parameters |
+| `packages/components/src/providers/ipc-client-provider.tsx` | new file | context with the window-backed client as its default |
+| `packages/components/src/providers/local-platform-provider.ts` | module singleton state | client-keyed state and polling |
+| `packages/components/src/providers/runtime-provider.tsx` | `RuntimeProvider` / `createWorkspaceRuntime` call | consume and thread the context client |
+| `packages/components/src/providers/create-workspace-runtime.ts` | `RuntimeDeps` and local-plane calls | capture one client for the runtime lifetime |
+| `packages/components/src/providers/local-loro-data-plane-connection.ts` | factory | use one explicit client for subscribe/send/events |
+| `packages/components/src/providers/workspace-machine-rpc-facade.ts` | deps/local sender | use the runtime's explicit client |
+| mounted session/chat/file call sites | direct helper imports | read the nearest client context without surrounding refactors |
+
+**Candidate upstream PR:** "allow an embedding renderer to provide an IPC
+client per React/runtime subtree." The use case is general to tests, previews,
+multi-window hosts, and embedded renderers; the API contains no Blitz-specific
+identity or transport. Follow with a separate upstream PR that scopes
+referential Jotai caches by store/runtime. Drop seam 17's reset implementation
+when the keyed provider lands upstream.
 
 ## Patches to the published npm artifact (NOT to this tree)
 
@@ -1686,7 +1740,7 @@ Declared ahead of time so a merge agent recognises them when they appear.
 |---|---|---|---|
 | ~~`create-workspace-runtime.ts` — websocket transport~~ | — | **Not needed, and the plan's §5.3 item 1 is withdrawn.** Phase 1 measured that the daemon already SERVES its `LoroRepo` on a unix socket for the Electron renderer, so the browser speaks Lody's own protocol v7 through `blitz-lody-bridge` rather than a `loro-repo` `transport/websocket`. The local branch in this file was already the one we want. See `plans/evidence/lody-phase1.md` §A.b. | — |
 | ~~`workspace-machine-rpc-facade.ts` — box websocket RPC plane~~ | — | **Not needed.** The facade's existing LOCAL plane is the one we want; it reaches `window.ipc`, which we install. What it needed instead was the predicate widening above, which is a far smaller patch than a new plane. | — |
-| `packages/components/src/lib/electron-ipc-client.ts` | `getIpcServices()` | No change expected — it is a generic proxy over `window.ipc`, and installing that global is exactly how BlitzOS uses it. Listed so nobody "fixes" it. | — |
+| ~~`packages/components/src/lib/electron-ipc-client.ts`~~ | — | **Applied as seam patch 18.** A page-global bridge is sufficient only while surfaces are sequential; Tier 2 requires a client per renderer subtree. | Tier 2 |
 | ~~`loro-sidebar.tsx` — suppression props~~ | — | **Applied**; see seam patch 2 above. | 4 |
 
 ## Things upstream does not support that we work around OUTSIDE the vendor tree

@@ -178,10 +178,10 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   // is part of the surface, so the rail is what raises the first request in
   // practice — see `useLodyRail`.
   //
-  // A CHANGE OF BOX IS NOT A HIDE. The key below carries the box, so switching
-  // workspaces does unmount and rebuild — that is the point of it, and the
-  // `window.ipc` singleton documented further down means it could not be any
-  // other way while only one bridge can exist at a time.
+  // A CHANGE OF BOX IS NOT A HIDE YET. The key below carries the box, so
+  // switching workspaces still unmounts and rebuilds. Per-surface IPC ownership
+  // now makes coexistence possible, but the shared vendor referential caches
+  // catalogued in plans/LODY-WORKSPACE-KEEPALIVE.md must be scoped first.
   const [everRequested, setEverRequested] = useState(false);
   const wanted = props.visible || props.railHost !== null;
   useEffect(() => {
@@ -206,13 +206,11 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   }
 
   const viewer = { name: props.viewerName, avatarUrl: props.viewerAvatarUrl };
-  // EXACTLY ONE SURFACE IS MOUNTED, and this is the constraint that decides it:
-  // the vendored renderer's local plane is a SINGLETON on `window.ipc`
-  // (plans/LODY-SHARING.md §6.1). `sendIpc` re-reads that global on every call,
-  // so a second mounted surface does not get a second bridge — it takes the
-  // first one's. Measured, not reasoned about: with both mounted, the OWNER's
-  // own `session/dispatch-turn` came back `share_forbidden`, because it had been
-  // routed to the grantee's box.
+  // EXACTLY ONE SURFACE IS STILL MOUNTED. Seam 18 removed the old `window.ipc`
+  // ownership wall by binding a client to each surface, but module-scope Jotai
+  // referential caches are still shared across stores. Mounting a second real
+  // surface before Phase B would therefore trade the measured cross-box IPC bug
+  // for cross-store state contamination.
   //
   // So opening a shared session tears the runtime down and rebuilds it against
   // the owner's endpoints, which is §6.3's answer taken as written, with the
@@ -244,9 +242,9 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
           // `local-bridge.ts` has to become mutable to fix this.
           //
           // Still exactly one surface mounted at a time — a key change unmounts
-          // the old one — which is what the `window.ipc` singleton above
-          // requires. `lodySyncUrl` names the box and cannot drift from the
-          // thing that went stale, because it IS the thing that went stale.
+          // the old one — until Phase B scopes the remaining vendor caches.
+          // `lodySyncUrl` names the box and cannot drift from the thing that went
+          // stale, because it IS the thing that went stale.
           key: `own:${endpoints.lodySyncUrl}`,
           endpoints: lodyEndpoints(endpoints),
           shared: undefined,

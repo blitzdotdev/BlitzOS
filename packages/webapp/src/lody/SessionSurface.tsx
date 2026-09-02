@@ -50,7 +50,8 @@ import { createPortal } from "react-dom";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { RouterProvider } from "@tanstack/react-router";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
-import { resetLocalPlatformSnapshotState } from "@lody/components/providers/local-platform-provider";
+import { createBoundIpcClient } from "@lody/components/lib/electron-ipc-client";
+import { IpcClientProvider } from "@lody/components/providers/ipc-client-provider";
 import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
 import {
@@ -238,34 +239,24 @@ export interface LodySessionSurfaceProps {
 }
 
 /**
- * Installs `window.ipc` for the lifetime of the surface.
+ * Creates one bridge and one permanently bound IPC client for this surface.
  *
- * Installed during the FIRST RENDER, not in an effect: `useImplicitLocalWorkspace`
- * polls `localPlatform.getSnapshot` off a module-level singleton that starts on
- * its first read (`providers/local-platform-provider.ts:110`), and that read
- * happens while `RuntimeProvider` renders. An effect would run after it.
- *
- * FORGET THE PREVIOUS BOX'S LOCAL IDENTITY when this surface is born. That
- * snapshot singleton settles ONCE per page and never re-reads (it assumes one
- * daemon per renderer, which is Electron's world, not a browser talking to many
- * boxes). Without the reset the runtime pins to the FIRST box's workspace id for
- * the life of the tab: on every later workspace switch it opens that box's Loro
- * replica and subscribes to its rooms while our bridge dials a DIFFERENT daemon,
- * so nothing syncs and the rail is empty until a full reload — which is the only
- * thing that reset the singleton before. This is `resetLocalPlatformSnapshotState`
- * (BLITZ-PATCHES.md §17), called synchronously in the render body of the incoming
- * surface, gated on a NEW bridge so it fires exactly once per box: it runs before
- * this surface's child `RuntimeProvider` renders and re-reads the snapshot, and
- * the departing surface (keyed by box) does not re-render, so there is no
- * teardown race — the reset always belongs to the box coming in.
+ * `window.ipc` remains installed for Electron-compatible legacy callers while
+ * the migration is in flight, but the provider tree below never rediscovers it:
+ * every local-platform, runtime and data-plane operation receives `ipcClient`.
+ * That lets two retained surfaces coexist without one surface's calls following
+ * whichever bridge happened to write the page global most recently.
  */
-function useLodyLocalBridge(endpoints: LodyRuntimeEndpoints): LodyLocalBridge {
-  const held = useRef<LodyLocalBridge | null>(null);
+function useLodyLocalBridge(endpoints: LodyRuntimeEndpoints): {
+  bridge: LodyLocalBridge;
+  ipcClient: object;
+} {
+  const held = useRef<{ bridge: LodyLocalBridge; ipcClient: object } | null>(null);
   if (held.current === null) {
-    resetLocalPlatformSnapshotState();
-    held.current = createLodyLocalBridge(endpoints);
+    const bridge = createLodyLocalBridge(endpoints);
+    held.current = { bridge, ipcClient: createBoundIpcClient(bridge.ipc) };
   }
-  const bridge = held.current;
+  const { bridge } = held.current;
   // Two property assignments, so repeating it per render costs nothing.
   installLodyLocalBridge(bridge);
   useEffect(() => {
@@ -275,7 +266,7 @@ function useLodyLocalBridge(endpoints: LodyRuntimeEndpoints): LodyLocalBridge {
     const uninstall = installLodyLocalBridge(bridge);
     return uninstall;
   }, [bridge]);
-  return bridge;
+  return held.current;
 }
 
 /**
@@ -374,7 +365,7 @@ function seedCurrentUser(
 export function SessionSurface(props: LodySessionSurfaceProps) {
   const { endpoints, viewer, workspaceTitle, onApiReady, onActiveSessionChange } = props;
   // Installed before anything below renders; see the hook's comment.
-  const bridge = useLodyLocalBridge(endpoints);
+  const { bridge, ipcClient } = useLodyLocalBridge(endpoints);
   const { snapshot, error } = useLodyPlatformSnapshot(endpoints.platformUrl, endpoints.fetchImpl);
   const store = useMemo(() => createStore(), []);
 
@@ -607,34 +598,36 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
       {error !== null && <SurfaceUnavailableNotice reason={error} />}
       {snapshot !== null && router !== null && error === null && (
         <JotaiProvider store={store}>
-          <BlitzPlatformProviders
-            snapshot={snapshot}
-            viewer={viewer}
-            workspaceTitle={workspaceTitle}
-          >
-            <LodySurfaceProviders>
-              <RuntimeProvider key={runtimeGeneration}>
-                {railSidebar}
-                {agentAuthNotice(snapshot.machineId)}
-                <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>
-                  {isShared ? (
-                    // A grantee's surface writes no agent configs at all — the
-                    // rows belong to the owner's machine Flock, which the relay
-                    // refuses — so there is nothing to gate on.
-                    <RouterProvider router={router} />
-                  ) : (
-                    <LodyAgentConfigGate
-                      store={store}
-                      machineId={snapshot.machineId}
-                      endpoints={endpoints}
-                    >
+          <IpcClientProvider client={ipcClient}>
+            <BlitzPlatformProviders
+              snapshot={snapshot}
+              viewer={viewer}
+              workspaceTitle={workspaceTitle}
+            >
+              <LodySurfaceProviders>
+                <RuntimeProvider key={runtimeGeneration}>
+                  {railSidebar}
+                  {agentAuthNotice(snapshot.machineId)}
+                  <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>
+                    {isShared ? (
+                      // A grantee's surface writes no agent configs at all — the
+                      // rows belong to the owner's machine Flock, which the relay
+                      // refuses — so there is nothing to gate on.
                       <RouterProvider router={router} />
-                    </LodyAgentConfigGate>
-                  )}
-                </SurfaceTabsContext.Provider>
-              </RuntimeProvider>
-            </LodySurfaceProviders>
-          </BlitzPlatformProviders>
+                    ) : (
+                      <LodyAgentConfigGate
+                        store={store}
+                        machineId={snapshot.machineId}
+                        endpoints={endpoints}
+                      >
+                        <RouterProvider router={router} />
+                      </LodyAgentConfigGate>
+                    )}
+                  </SurfaceTabsContext.Provider>
+                </RuntimeProvider>
+              </LodySurfaceProviders>
+            </BlitzPlatformProviders>
+          </IpcClientProvider>
         </JotaiProvider>
       )}
     </div>

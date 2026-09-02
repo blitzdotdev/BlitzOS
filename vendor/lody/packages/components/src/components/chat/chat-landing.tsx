@@ -63,6 +63,7 @@ import {
 } from '@/components/shared';
 import { cn } from '@/lib/utils';
 import { getIpcServices, onIpcEvent, sendIpc } from '@/lib/electron-ipc-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import {
   bugReportDialogOpenAtom,
   chatLandingSessionStateAtomFamily,
@@ -602,6 +603,7 @@ function WorkspaceChatLanding({
   resetDraftKey,
   resetDraftOnKeyChange = true,
 }: ChatLandingProps) {
+  const ipcClient = useIpcClient();
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { openSettings } = useOpenSettings();
@@ -2525,8 +2527,8 @@ function WorkspaceChatLanding({
         let fastPathError: string | null = null;
         const canUseElectronFastPath = isElectron && visibleLocalMachineId === project.machineId;
 
-        if (canUseElectronFastPath && window.__LODY_ELECTRON__ && getIpcServices()) {
-          const result = await getIpcServices()!.localProjects.getGitState(
+        if (canUseElectronFastPath && window.__LODY_ELECTRON__ && getIpcServices(ipcClient)) {
+          const result = await getIpcServices(ipcClient)!.localProjects.getGitState(
             targetWorkspaceId,
             project.localProjectId
           );
@@ -2568,7 +2570,7 @@ function WorkspaceChatLanding({
         return response.state;
       });
     },
-    [isElectron, runtime, t, userId, visibleLocalMachineId]
+    [ipcClient, isElectron, runtime, t, userId, visibleLocalMachineId]
   );
 
   // Collapse the machine map down to a single boolean: is the selected
@@ -2717,7 +2719,7 @@ function WorkspaceChatLanding({
     /** Subscribe to CLI state changes and retry once CLI reaches 'running' phase. */
     const waitForCliReady = () => {
       if (cancelled || unsubscribeCliState) return;
-      const services = getIpcServices();
+      const services = getIpcServices(ipcClient);
       if (!services) {
         setLoadingLocalGitState(false);
         return;
@@ -2733,15 +2735,19 @@ function WorkspaceChatLanding({
 
       const subscribeUntilRunning = () => {
         if (cancelled || unsubscribeCliState) return;
-        sendIpc('cli.subscribe', null);
-        unsubscribeCliState = onIpcEvent('cli.state', (s) => {
-          if (cancelled) return;
-          if (s.phase === 'running') {
-            unsubscribeCliState?.();
-            unsubscribeCliState = null;
-            scheduleRetry();
-          }
-        });
+        sendIpc('cli.subscribe', null, ipcClient);
+        unsubscribeCliState = onIpcEvent(
+          'cli.state',
+          (s) => {
+            if (cancelled) return;
+            if (s.phase === 'running') {
+              unsubscribeCliState?.();
+              unsubscribeCliState = null;
+              scheduleRetry();
+            }
+          },
+          ipcClient
+        );
       };
 
       void services.cli
@@ -2764,7 +2770,7 @@ function WorkspaceChatLanding({
       cancelled = true;
       unsubscribeCliState?.();
     };
-  }, [contextType, localGitStateLoadKey]);
+  }, [contextType, ipcClient, localGitStateLoadKey]);
 
   // ── GitHub repo resolution for local projects ──
   const resolveSelectedLocalProjectGitHubRepo = useCallback(
@@ -5586,7 +5592,7 @@ function WorkspaceChatLanding({
   const mobileProjectUsesLocalIpc =
     mobileProjectContext?.kind === 'local' &&
     typeof window !== 'undefined' &&
-    Boolean(getIpcServices()) &&
+    Boolean(getIpcServices(ipcClient)) &&
     visibleLocalMachineId === mobileProjectContext.machineId;
 
   /* A stable identity key for the file provider. The raw memo inputs
@@ -5642,6 +5648,7 @@ function WorkspaceChatLanding({
           ? createLocalProjectIpcFileTransport({
               workspaceId,
               localProjectId: mobileProjectContext.projectId as LocalProjectId,
+              ipcClient,
             })
           : workspaceRuntime && userId
             ? createLocalProjectRpcFileTransport({
@@ -5662,6 +5669,7 @@ function WorkspaceChatLanding({
     mobileProjectFileProviderKey,
     mobileProjectContext,
     mobileProjectUsesLocalIpc,
+    ipcClient,
     userId,
     workspaceId,
     workspaceRuntime,

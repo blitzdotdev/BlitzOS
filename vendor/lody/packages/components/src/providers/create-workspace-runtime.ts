@@ -120,7 +120,13 @@ import { createLocalLoroDataPlaneConnection } from './local-loro-data-plane-conn
 import { createWorkspaceMachineRpcFacade } from './workspace-machine-rpc-facade';
 import { resyncMachineFlockRows } from '@/hooks/use-machine-flock-rows';
 import { createCodeCollabFileIndexCache } from '@/lib/code-collab-file-index-cache';
-import { getIpcServices, onIpcEvent, sendLocalSessionControl } from '@/lib/electron-ipc-client';
+import {
+  getIpcServices,
+  onIpcEvent,
+  sendLocalSessionControl,
+  windowIpcClient,
+  type LodyIpcClient,
+} from '@/lib/electron-ipc-client';
 
 declare global {
   interface Window {
@@ -179,6 +185,8 @@ type RuntimeDeps = {
    */
   getAuthorizedMachineIds?: () => ReadonlySet<MachineId> | null;
   eagerSyncSurface?: EagerSyncSurface;
+  /** IPC authority captured for this runtime. Omitted preserves the window-backed default. */
+  ipcClient?: LodyIpcClient;
 };
 
 type LoroStreamsTokenProvider = ReturnType<typeof createLoroStreamsTokenProvider>;
@@ -294,10 +302,10 @@ const getBrowserLocalStorage = (): Storage | null => {
   }
 };
 
-const isElectronLocalDataPlaneEnabled = (): boolean => {
+const isElectronLocalDataPlaneEnabled = (ipcClient: LodyIpcClient = windowIpcClient): boolean => {
   if (typeof window === 'undefined') return false;
   if (!window.__LODY_ELECTRON__) return false;
-  if (!getIpcServices()) return false;
+  if (!getIpcServices(ipcClient)) return false;
   if (import.meta.env.VITE_LODY_ELECTRON_LOCAL_DATA_PLANE === '0') return false;
   try {
     return globalThis.localStorage?.getItem('lody:electronLocalDataPlane') !== '0';
@@ -367,6 +375,13 @@ function createPendingResponseRegistry<T>(defaultTimeoutMs: number) {
 }
 
 export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<WorkspaceRuntime> {
+  const ipcClient = deps.ipcClient ?? windowIpcClient;
+  const isLocalIpcHost = (): boolean =>
+    typeof window !== 'undefined' &&
+    (deps.ipcClient !== undefined ||
+      window.__LODY_ELECTRON__ === true ||
+      window.__LODY_LOCAL_BRIDGE__ === true);
+
   const createDeferred = <T>() => {
     let resolve: ((value: T | PromiseLike<T>) => void) | undefined;
     let reject: ((reason?: unknown) => void) | undefined;
@@ -437,7 +452,7 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
   // Runtime dispose intentionally rejects this deferred; swallow that expected rejection.
   void transportReady.promise.catch(() => {});
   const syncMode: PlatformSyncMode =
-    deps.syncMode ?? (isElectronLocalDataPlaneEnabled() ? 'dual' : 'cloud');
+    deps.syncMode ?? (isElectronLocalDataPlaneEnabled(ipcClient) ? 'dual' : 'cloud');
   // Historical name: true whenever a local plane exists (dual OR local).
   const electronLocalDataPlane = syncMode !== 'cloud';
   // False only on the local-only platform: no Streams member, no token
@@ -1682,6 +1697,7 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
     workspaceId,
     targetRouter,
     getMachineRpcClient,
+    ipcClient,
   });
 
   const dispatchMachineStatusViaRpc = async (
@@ -2052,13 +2068,10 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
   };
 
   const canUseLocalSessionControl = (message: ClientToServer): boolean => {
-    if (typeof window === 'undefined') {
+    if (!isLocalIpcHost()) {
       return false;
     }
-    if (!window.__LODY_ELECTRON__ && !window.__LODY_LOCAL_BRIDGE__) {
-      return false;
-    }
-    if (!getIpcServices()) {
+    if (!getIpcServices(ipcClient)) {
       return false;
     }
     if (!isLocalSessionControlRequest(message)) {
@@ -2083,35 +2096,39 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
     if (typeof window === 'undefined') {
       return { ok: false, error: 'Local session control requires the Electron renderer' };
     }
-    if (!getIpcServices()) {
+    if (!getIpcServices(ipcClient)) {
       return { ok: false, error: 'Local session control bridge is not available' };
     }
 
     try {
       const streamedProgressCounts = new Map<string, number>();
-      const result = await sendLocalSessionControl(message, (payload) => {
-        const validated = ServerToClientSchema.safeParse(payload);
-        if (!validated.success) {
-          console.warn('createWorkspaceRuntime: invalid streamed local control response', {
-            message: payload,
-            error: validated.error,
-          });
-          return;
-        }
-        const controlMessage = validated.data;
-        if (
-          controlMessage.type !== 'machine/acp-binary-progress' &&
-          controlMessage.type !== 'machine/acp-authentication-progress'
-        ) {
-          return;
-        }
-        const key = JSON.stringify(controlMessage);
-        streamedProgressCounts.set(key, (streamedProgressCounts.get(key) ?? 0) + 1);
-        handleControlMessage(controlMessage as ControlResponseMessage);
-        if (controlMessage.type === 'machine/acp-binary-progress') {
-          options.onProgress?.(controlMessage as MachineAcpBinaryProgressMessage);
-        }
-      });
+      const result = await sendLocalSessionControl(
+        message,
+        (payload) => {
+          const validated = ServerToClientSchema.safeParse(payload);
+          if (!validated.success) {
+            console.warn('createWorkspaceRuntime: invalid streamed local control response', {
+              message: payload,
+              error: validated.error,
+            });
+            return;
+          }
+          const controlMessage = validated.data;
+          if (
+            controlMessage.type !== 'machine/acp-binary-progress' &&
+            controlMessage.type !== 'machine/acp-authentication-progress'
+          ) {
+            return;
+          }
+          const key = JSON.stringify(controlMessage);
+          streamedProgressCounts.set(key, (streamedProgressCounts.get(key) ?? 0) + 1);
+          handleControlMessage(controlMessage as ControlResponseMessage);
+          if (controlMessage.type === 'machine/acp-binary-progress') {
+            options.onProgress?.(controlMessage as MachineAcpBinaryProgressMessage);
+          }
+        },
+        ipcClient
+      );
       if (!result.ok) {
         console.warn('createWorkspaceRuntime: local session control rejected message', {
           type: message.type,
@@ -2676,7 +2693,7 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
       globalThis.crypto?.randomUUID?.() ?? `renderer:${Date.now()}:${Math.random().toString(36)}`;
     const peerId = `renderer:${rawPeerId}`;
 
-    const localConnection = createLocalLoroDataPlaneConnection();
+    const localConnection = createLocalLoroDataPlaneConnection(ipcClient);
     if (!localConnection) {
       // Fail fast: local-first mode without the data-plane bridge would be a
       // runtime with NO transport at all (the Streams path is not a fallback
@@ -2710,17 +2727,21 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
     // only what the local CLI itself authors and is authoritative for that
     // instance, while every remote origin reaches us through the cloud replica
     // alone — see `mergePresenceSnapshots`.
-    if (getIpcServices() && deps.onPresenceSnapshot) {
+    if (getIpcServices(ipcClient) && deps.onPresenceSnapshot) {
       const presenceStore = new EphemeralStore(LODY_PRESENCE_TTL_MS);
-      localPresenceUnsubscribe = onIpcEvent('loro.event', (message) => {
-        if (message.type !== 'presence') return;
-        if (message.workspaceId !== workspaceId) return;
-        presenceStore.apply(base64ToBytes(message.dataBase64));
-        latestLocalOriginPresenceStates = parseLodyPresenceStates(
-          presenceStore.getAllStates() as Record<string, unknown>
-        );
-        publishMergedPresence();
-      });
+      localPresenceUnsubscribe = onIpcEvent(
+        'loro.event',
+        (message) => {
+          if (message.type !== 'presence') return;
+          if (message.workspaceId !== workspaceId) return;
+          presenceStore.apply(base64ToBytes(message.dataBase64));
+          latestLocalOriginPresenceStates = parseLodyPresenceStates(
+            presenceStore.getAllStates() as Record<string, unknown>
+          );
+          publishMergedPresence();
+        },
+        ipcClient
+      );
     }
 
     transportAttached = true;
@@ -4407,6 +4428,8 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
         if (!isDestroyedError(error)) {
           destroyError = error;
         }
+      } finally {
+        if (window.repo === repo) delete window.repo;
       }
 
       if (destroyError) {

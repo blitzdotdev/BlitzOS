@@ -16,6 +16,7 @@ import {
   canUseElectronLocalFileSend,
   sendSessionFileToLocalRuntime,
 } from '@/lib/electron-session-file-sender';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import {
   SESSION_FILE_MAX_SIZE_MB,
   computeSha256Hex,
@@ -89,6 +90,7 @@ export function useChatLandingFileDraft(args: {
   sessionId: SessionId | null;
   ensureSessionId: () => SessionId;
 }) {
+  const ipcClient = useIpcClient();
   const { t } = useTranslation();
   const { workspaceId, authToken, machineId, sessionId: draftSessionId, ensureSessionId } = args;
   const localMachineId = useAtomValue(localMachineIdAtom);
@@ -101,7 +103,7 @@ export function useChatLandingFileDraft(args: {
     !!localMachineId &&
     !!machineId &&
     localMachineId === machineId &&
-    canUseElectronLocalFileSend();
+    canUseElectronLocalFileSend(ipcClient);
 
   const fileUploadFailedLabel = t('sessions.fileUploadFailed', 'File upload failed');
   const fileUploadMissingAuthLabel = t(
@@ -155,6 +157,7 @@ export function useChatLandingFileDraft(args: {
             sessionId,
             machineId,
             file,
+            ipcClient,
           });
           if (outcome?.ok && outcome.files[0]) {
             updatePendingFile(localId, (entry) => ({
@@ -252,6 +255,7 @@ export function useChatLandingFileDraft(args: {
       canSendFileLocally,
       fileUploadFailedLabel,
       fileUploadMissingAuthLabel,
+      ipcClient,
       machineId,
       updatePendingFile,
       workspaceId,

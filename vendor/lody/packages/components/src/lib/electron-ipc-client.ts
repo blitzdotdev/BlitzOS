@@ -18,6 +18,24 @@ export type LodyIpcInvokeBridge = {
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
 };
 
+export type LodyIpcBridge = LodyIpcInvokeBridge & {
+  on: (channel: string, listener: (payload: unknown) => void) => () => void;
+  send: (channel: string, payload?: unknown) => void;
+};
+
+/**
+ * One renderer subtree's IPC authority. A bound client captures one bridge;
+ * the default window client deliberately resolves the bridge again per call.
+ */
+export type LodyIpcClient = {
+  getServices: () => IpcServices | null;
+  on: <K extends keyof IpcPushMap>(
+    channel: K,
+    handler: (payload: IpcPushMap[K]) => void
+  ) => () => void;
+  send: <K extends keyof IpcSendMap>(channel: K, payload: IpcSendMap[K]) => void;
+};
+
 export function createLodyIpcProxy<T extends Record<string, object> = IpcServices>(
   ipc: LodyIpcInvokeBridge | null | undefined
 ): T | null {
@@ -42,39 +60,77 @@ export function createLodyIpcProxy<T extends Record<string, object> = IpcService
   });
 }
 
-function readIpcBridge(): LodyIpcInvokeBridge | null {
+function readIpcBridge(): LodyIpcBridge | null {
   if (typeof window === 'undefined') return null;
   return window.ipc ?? null;
 }
 
-export function getIpcServices(): IpcServices | null {
-  return createLodyIpcProxy<IpcServices>(readIpcBridge());
+function createIpcClient(readBridge: () => LodyIpcBridge | null): LodyIpcClient {
+  return {
+    getServices: () => createLodyIpcProxy<IpcServices>(readBridge()),
+    on: (channel, handler) => {
+      const bridge = readBridge();
+      if (!bridge) return () => {};
+      // SAFETY: `LodyIpcBridge` is the preload contract. Its channel selects
+      // the matching `IpcPushMap` payload; the structural bridge type keeps the
+      // implementation host-neutral and this generic client restores that map.
+      return bridge.on(channel, (payload) => handler(payload as IpcPushMap[typeof channel]));
+    },
+    send: (channel, payload) => {
+      readBridge()?.send(channel, payload);
+    },
+  };
+}
+
+/**
+ * Electron-compatible default: it intentionally does not capture the current
+ * bridge, because existing renderer callers have always observed window.ipc at
+ * the moment of each operation.
+ */
+export const windowIpcClient: LodyIpcClient = createIpcClient(readIpcBridge);
+
+/** Capture one bridge for a surface/runtime lifetime. */
+export function createBoundIpcClient(bridge: LodyIpcBridge): LodyIpcClient {
+  return createIpcClient(() => bridge);
+}
+
+export function getIpcServices(client: LodyIpcClient = windowIpcClient): IpcServices | null {
+  return client.getServices();
 }
 
 export function onIpcEvent<K extends keyof IpcPushMap>(
   channel: K,
-  handler: (payload: IpcPushMap[K]) => void
+  handler: (payload: IpcPushMap[K]) => void,
+  client: LodyIpcClient = windowIpcClient
 ): () => void {
-  if (typeof window === 'undefined' || !window.ipc) return () => {};
-  return window.ipc.on(channel, (payload) => handler(payload as IpcPushMap[K]));
+  return client.on(channel, handler);
 }
 
-export function sendIpc<K extends keyof IpcSendMap>(channel: K, payload: IpcSendMap[K]): void {
-  window.ipc?.send(channel, payload);
+export function sendIpc<K extends keyof IpcSendMap>(
+  channel: K,
+  payload: IpcSendMap[K],
+  client: LodyIpcClient = windowIpcClient
+): void {
+  client.send(channel, payload);
 }
 
 export async function sendLocalSessionControl(
   message: LocalSessionControlRequest,
-  onResponse?: (response: LocalSessionControlResponse) => void
+  onResponse?: (response: LocalSessionControlResponse) => void,
+  client: LodyIpcClient = windowIpcClient
 ): Promise<SendLocalSessionControlResult> {
-  const services = getIpcServices();
+  const services = getIpcServices(client);
   if (!services) return { ok: false, error: 'ipc_unavailable' };
   const requestId = crypto.randomUUID();
-  const stop = onIpcEvent('sessionControl.response', (event) => {
-    if (event.requestId !== requestId) return;
-    const parsed = LocalSessionControlResponseSchema.safeParse(event.response, { jitless: true });
-    if (parsed.success) onResponse?.(parsed.data as LocalSessionControlResponse);
-  });
+  const stop = onIpcEvent(
+    'sessionControl.response',
+    (event) => {
+      if (event.requestId !== requestId) return;
+      const parsed = LocalSessionControlResponseSchema.safeParse(event.response, { jitless: true });
+      if (parsed.success) onResponse?.(parsed.data as LocalSessionControlResponse);
+    },
+    client
+  );
   try {
     return await services.sessionControl.send({ requestId, message });
   } finally {
@@ -82,8 +138,8 @@ export async function sendLocalSessionControl(
   }
 }
 
-export function getPublicBrowserBridge() {
-  const services = getIpcServices();
+export function getPublicBrowserBridge(client: LodyIpcClient = windowIpcClient) {
+  const services = getIpcServices(client);
   if (!services) return null;
   const pub = services.publicBrowser;
   return {
@@ -100,6 +156,6 @@ export function getPublicBrowserBridge() {
     setVisible: (browserId: string, visible: boolean) => pub.setVisible({ browserId, visible }),
     destroy: (browserId: string) => pub.destroy({ browserId }),
     onState: (handler: (state: ElectronPublicBrowserState) => void) =>
-      onIpcEvent('publicBrowser.state', handler),
+      onIpcEvent('publicBrowser.state', handler, client),
   };
 }

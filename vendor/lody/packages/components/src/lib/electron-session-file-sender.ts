@@ -1,6 +1,6 @@
 import type { SessionFilePayload } from '@lody/shared';
 import { isElectronRenderer } from './electron';
-import { getIpcServices } from './electron-ipc-client';
+import { getIpcServices, windowIpcClient, type LodyIpcClient } from './electron-ipc-client';
 
 /**
  * Desktop local-transport file sender (renderer side).
@@ -16,10 +16,10 @@ import { getIpcServices } from './electron-ipc-client';
  * API), so callers fall back to the cloud upload path.
  */
 
-export const canUseElectronLocalFileSend = (): boolean =>
+export const canUseElectronLocalFileSend = (ipcClient: LodyIpcClient = windowIpcClient): boolean =>
   (isElectronRenderer() ||
     (typeof window !== 'undefined' && window.__LODY_LOCAL_BRIDGE__ === true)) &&
-  Boolean(getIpcServices());
+  Boolean(getIpcServices(ipcClient));
 
 export type SendSessionFileLocalOutcome =
   | { ok: true; files: SessionFilePayload[]; message?: string }
@@ -40,12 +40,14 @@ export const sendSessionFileToLocalRuntime = async (args: {
   sessionId: string;
   machineId: string;
   file: File;
+  ipcClient?: LodyIpcClient;
 }): Promise<SendSessionFileLocalOutcome | null> => {
-  if (!getIpcServices()) {
+  const ipcClient = args.ipcClient ?? windowIpcClient;
+  if (!getIpcServices(ipcClient)) {
     return null;
   }
   const bytes = await fileToArrayBuffer(args.file);
-  const result = await getIpcServices()!.localProjects.sendSessionFileLocal({
+  const result = await getIpcServices(ipcClient)!.localProjects.sendSessionFileLocal({
     workspaceId: args.workspaceId,
     sessionId: args.sessionId,
     machineId: args.machineId,

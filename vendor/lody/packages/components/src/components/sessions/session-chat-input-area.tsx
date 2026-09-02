@@ -125,6 +125,7 @@ import {
   canUseElectronLocalFileSend,
   sendSessionFileToLocalRuntime,
 } from '@/lib/electron-session-file-sender';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import type { AgentSelection } from '@/components/shared/agent-selector';
 import { isNativeAppShell } from '@/lib/native-platform';
 import {
@@ -508,6 +509,7 @@ export const SessionChatInputArea = memo(
     }: SessionChatInputAreaProps,
     ref: React.ForwardedRef<SessionChatInputAreaHandle>
   ) {
+    const ipcClient = useIpcClient();
     const { t, i18n } = useTranslation();
     const intlLocale = useMemo(
       () => toIntlLocale(i18n.resolvedLanguage ?? i18n.language),
@@ -531,7 +533,7 @@ export const SessionChatInputArea = memo(
       !!localMachineId &&
       !!session.machineId &&
       localMachineId === session.machineId &&
-      canUseElectronLocalFileSend();
+      canUseElectronLocalFileSend(ipcClient);
     const workspaceId = useAtomValue(currentWorkspaceIdAtom) as WorkspaceId | null;
     const workspaceRuntime = useAtomValue(runtimeAtom);
     const effectiveWorkspaceId = resolveEffectiveCodeCollabWorkspaceId({
@@ -1015,6 +1017,7 @@ export const SessionChatInputArea = memo(
                 sessionId: targetSessionId,
                 machineId: session.machineId,
                 file,
+                ipcClient,
               });
               const localFile = outcome?.ok ? outcome.files[0] : undefined;
               if (localFile) {
@@ -1093,6 +1096,7 @@ export const SessionChatInputArea = memo(
         canSendFileLocally,
         imageUploadFailedLabel,
         imageUploadMissingAuthLabel,
+        ipcClient,
         postHog,
         session.machineId,
         sessionLocalProjectId,
@@ -1124,6 +1128,7 @@ export const SessionChatInputArea = memo(
               sessionId: targetSessionId,
               machineId: session.machineId,
               file,
+              ipcClient,
             });
             if (outcome?.ok && outcome.files[0]) {
               updatePendingFile(targetSessionId, localId, (entry) => ({
@@ -1221,6 +1226,7 @@ export const SessionChatInputArea = memo(
         canSendFileLocally,
         fileUploadFailedLabel,
         fileUploadMissingAuthLabel,
+        ipcClient,
         session.machineId,
         updatePendingFile,
         workspaceId,

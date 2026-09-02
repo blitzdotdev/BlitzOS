@@ -9,6 +9,7 @@ import {
   createLocalProjectRpcFileTransport,
 } from '@/lib/local-project-rpc-file-provider';
 import { getIpcServices } from '@/lib/electron-ipc-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 
 export type LocalProjectFilePathsEntry = {
   paths: string[];
@@ -92,6 +93,7 @@ export function useLocalProjectFilePaths(
   sourceInput?: LocalProjectFilePathsInput,
   options: UseLocalProjectFilePathsOptions = {}
 ): LocalProjectFilePathsState {
+  const ipcClient = useIpcClient();
   const runtime = useAtomValue(runtimeAtom);
   const requestedByUserId = useAtomValue(userAtom)?.id ?? null;
   const localMachineId = useAtomValue(localMachineIdAtom);
@@ -118,12 +120,9 @@ export function useLocalProjectFilePaths(
       return undefined;
     }
 
-    const listLocalProjectFiles = getIpcServices()?.localProjects.listFiles.bind(
-      getIpcServices()!.localProjects
-    );
-    const listSessionWorktreeFiles = getIpcServices()?.localProjects.listSessionWorktreeFiles.bind(
-      getIpcServices()!.localProjects
-    );
+    const localProjects = getIpcServices(ipcClient)?.localProjects;
+    const listLocalProjectFiles = localProjects?.listFiles.bind(localProjects);
+    const listSessionWorktreeFiles = localProjects?.listSessionWorktreeFiles.bind(localProjects);
     let cacheKey = '';
     let loadFiles: (() => Promise<LocalProjectFilePathsLoadResult>) | null = null;
 
@@ -161,6 +160,7 @@ export function useLocalProjectFilePaths(
           return await createLocalProjectIpcFileTransport({
             workspaceId: sourceWorkspaceId as WorkspaceId,
             localProjectId: sourceLocalProjectId as LocalProjectId,
+            ipcClient,
           }).listFiles({ maxFiles: LOCAL_PROJECT_MAX_FILES });
         }
         if (!runtime || !requestedByUserId || !sourceMachineId) {
@@ -258,6 +258,7 @@ export function useLocalProjectFilePaths(
     };
   }, [
     sourceKind,
+    ipcClient,
     sourceWorkspaceId,
     sourceMachineId,
     sourceLocalProjectId,

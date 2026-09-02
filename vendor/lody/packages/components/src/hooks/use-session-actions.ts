@@ -60,6 +60,7 @@ import { resolveSessionCreateRepoFullName } from '@/lib/session-repo';
 import { collectSessionLifecycleIds } from '@/lib/session-lifecycle';
 import { capturePostHogEvent } from '@/lib/posthog-analytics';
 import { sendIpc } from '@/lib/electron-ipc-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import { useAuthenticatedConvex } from './use-authenticated-convex';
 
 const log = debug('lody:session-actions');
@@ -530,6 +531,7 @@ function fireSessionDispatchTurnRpc(
 }
 
 export function useSessionActions(): SessionActions {
+  const ipcClient = useIpcClient();
   const runtime = useAtomValue(activeWorkspaceRuntimeAtom);
   const setDocMetaByRoomId = useSetAtom(setDocMetaByRoomIdAtom);
   const store = useStore();
@@ -1205,7 +1207,7 @@ export function useSessionActions(): SessionActions {
       const lifecycleSessions = getSessionLifecycleMetas(sessionId, sessionMeta);
       for (const session of lifecycleSessions) {
         if (typeof window !== 'undefined') {
-          sendIpc('terminal.closeSession', { sessionId: session.id });
+          sendIpc('terminal.closeSession', { sessionId: session.id }, ipcClient);
         }
         await runtime.writer.upsertDocMeta(getSessionRoomId(session.id), {
           isArchived: true,
@@ -1242,7 +1244,7 @@ export function useSessionActions(): SessionActions {
         lifecycleSessionIds: lifecycleSessions.map((session) => session.id),
       });
     },
-    [runtime, store, getSessionLifecycleMetas]
+    [getSessionLifecycleMetas, ipcClient, runtime, store]
   );
 
   const restoreSession = useCallback(
