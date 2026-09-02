@@ -1263,23 +1263,24 @@ that the host says it and the vendored surface says nothing.
   `Save failed` / `Live sync delayed` are per-file operation feedback about an
   edit the member just made, not ambient connectivity. Only the `machine-offline`
   item of that bar answers the prop.
-- **Every message that REPLACES content stays.** `Connecting to code session…`
-  (`session-file-content-view.tsx:1132`, `session-file-quick-open.tsx:120`),
-  `Syncing changes…` (`session-changes-sidebar.tsx:164`) and
-  `session-file-error-state.tsx`'s `temporarily-unavailable` panel are what a
-  panel draws INSTEAD of its data. Each explains one thing the member asked for,
-  at the place they asked for it. Suppressing them leaves a blank panel, and the
-  footer sentence cannot fill it.
-- **`Syncing {{provider}} history…`** (`session-chat-interface.tsx:2123`) is an
-  agent-history import, not transport, and
-  **`Connection interrupted, Codex is retrying`** (`ai-gui/view.tsx:5342`) is
-  turn data the agent published. Neither is the browser's link to the box.
-- **`Target machine is offline. Start the CLI on that machine to load branches.`**
-  (`chat-landing.tsx:2491`, `:2626`) stays, for the same reason as the panels: it
-  is why one branch list failed to load. Its second sentence is wrong for a box
-  and belongs to a wrong-product sweep, not to this one.
-- **The mobile chat filter's `Offline` bucket** (`chat-landing.tsx:5028`) is a
-  filter category over sessions, not a report about this member's connection.
+- **Every message that REPLACES content stays.** `sessions.codeSession.connecting`
+  — "Connecting to code session…" in both `session-file-content-view.tsx` and
+  `session-file-quick-open.tsx` — `sessions.changes.syncing` ("Syncing changes…",
+  `session-changes-sidebar.tsx`) and `session-file-error-state.tsx`'s
+  `temporarily-unavailable` panel are what a panel draws INSTEAD of its data.
+  Each explains one thing the member asked for, at the place they asked for it.
+  Suppressing them leaves a blank panel, and the footer sentence cannot fill it.
+- **`sessions.externalHistorySyncing`** ("Syncing {{provider}} history") is an
+  agent-history import, not transport, and **`sessions.activity.codexRetrying`**
+  ("Connection interrupted, Codex is retrying", `ai-gui/view.tsx`) is turn data
+  the agent published. Neither is the browser's link to the box.
+- **`chat.localGitStateMachineOffline`** — "Target machine is offline. Start the
+  CLI on that machine to load branches." — stays, for the same reason as the
+  panels: it is why one branch list failed to load. Its second sentence is wrong
+  for a box and belongs to a wrong-product sweep, not to this one.
+- **The mobile chat filter's `Offline` bucket**
+  (`chat.mobileHome.filters.running.offline`) is a filter category over sessions,
+  not a report about this member's connection.
 - **The `ConnectionPill` needed no hunk.** It renders inside `LoroSidebar`'s
   workspace-identity header, and `packages/webapp/src/lody/SessionRailSidebar.tsx`
   already passes seam patch 2's `hideHeader`. Our rail also passes neither
@@ -1288,13 +1289,11 @@ that the host says it and the vendored surface says nothing.
 - **`StuckConnectionBannerContainer` needed no hunk.** It mounts once in
   `MainLayout`, and BlitzOS mounts `ChatLanding`, `SessionDetail` and
   `ArchiveView` directly. Pinned rather than patched.
-- **Three more render nothing here, and are pinned rather than patched.**
-  `OrganizationSwitcher`'s always-red `Disconnected from sync server` dot
-  (`organization-switcher.tsx:171`) is mounted by nobody in either tree;
-  `SessionListRow.isOffline` is computed by our own rail
-  (`SessionRailSidebar.tsx:309`) and read by no renderer in `session-list.tsx`;
-  and every settings screen that prints Online/Offline sits behind the twenty
-  stubbed settings routes in `router.tsx`.
+- **Two more render nothing here, and are pinned rather than patched.**
+  `SessionListRow.isOffline` (`session-list.tsx:146`) is a field of the row type
+  that no renderer in that file reads, and our rail never sets it; and every
+  settings screen that prints Online / Offline sits behind the twenty stubbed
+  settings routes in `packages/webapp/src/lody/router.tsx`.
 
 **ONE PROP, FRAMED FOR ANY EMBEDDING HOST.** `hideConnectionStatus` says "this
 surface is embedded in a host that reports connectivity itself"; it is not
