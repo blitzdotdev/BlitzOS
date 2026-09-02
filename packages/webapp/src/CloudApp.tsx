@@ -1977,6 +1977,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               )}
               onApiReady={setLodyApi}
               onActiveSessionChange={lodyRail.mirror}
+              {...(lodyRail.sessionId === null ? {} : { initialSessionId: lodyRail.sessionId })}
               onShareSession={setSharingSessionId}
               sharedSessions={sharedSessions.rows}
               sharedOpen={sharedSessions.open}
