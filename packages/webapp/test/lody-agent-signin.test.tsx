@@ -37,7 +37,11 @@ import { useMachineAcpAuthentication } from "@lody/components/hooks/use-machine-
 import type { JsonValue } from "@blitzos/schema";
 import { AUTH_NOTICE_POLL_MS, LodyAgentAuthNotice } from "../src/lody/agent-auth-notice";
 import { sessionNeedsAgentSignIn } from "../src/lody/session-auth-recovery";
-import { LodyAgentConfigGate, SURFACE_BOOT_DEADLINE_MS } from "../src/lody/agent-config-gate";
+import {
+  LodyAgentConfigGate,
+  SURFACE_BOOT_DEADLINE_MS,
+  resetAgentConfigGateMemoForTests,
+} from "../src/lody/agent-config-gate";
 import { BLITZ_CLAUDE_CONFIG_ID, bootstrapLodyAgentConfigs } from "../src/lody/agent-configs";
 import { initLodyI18n } from "../src/lody/i18n";
 import type { LodyAtomStore, LodyWorkspaceRuntime } from "../src/lody/runtime";
@@ -59,6 +63,14 @@ beforeAll(async () => {
   installLodyDomStubs();
   ({ createLodySessionRouter } = await import("../src/lody/router"));
 }, 120_000);
+
+// Every test here is a FIRST VISIT. The gate remembers a successful bootstrap
+// per box identity for the page lifetime, this file never resets modules, and
+// its cases share one machine id — so without this, an early success would open
+// the gate the later hang-shaped cases exist to see shut.
+beforeEach(() => {
+  resetAgentConfigGateMemoForTests();
+});
 
 const WORKSPACE_ID = "lw_11111111111111111111111111111111";
 const WORKSPACE_SLUG = "local";
