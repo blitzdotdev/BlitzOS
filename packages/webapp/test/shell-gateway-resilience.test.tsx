@@ -40,6 +40,12 @@ import {
   resetBoxGatewayHealth,
 } from "../src/box-gateway-health.js";
 import { probeLodySessionsDoor } from "../src/lody/box-capability.js";
+// STATIC, AND IT HAS TO BE. `platform.js` pulls Convex and the vendored Lody
+// providers behind it, which is seconds of transform on a loaded box. Imported
+// inside the poller's own `it()` that cost lands INSIDE the 5 s test timeout,
+// and the test fails on module weight rather than on the property — which is
+// measured in a millisecond once the module is there.
+import { useLodyPlatformSnapshot } from "../src/lody/platform.js";
 import { SurfaceLoadBoundary } from "../src/lody/SurfaceLoadBoundary.js";
 import {
   workspaceStatusLine,
@@ -290,7 +296,6 @@ describe("the platform snapshot poller", () => {
     // never come back — two a second, for as long as the tab lived — until the
     // browser had no sockets left for the chunk the shell actually needed.
     vi.useFakeTimers();
-    const { useLodyPlatformSnapshot } = await import("../src/lody/platform.js");
     let reads = 0;
     const hanging: typeof fetch = () => {
       reads += 1;
