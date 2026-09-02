@@ -147,7 +147,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
 }
 
 describe("webapp API adapter", () => {
-  it("maps blitz phases and filters terminal phases", () => {
+  it("maps blitz phases and keeps a workspace whose machine is mid-lifecycle", () => {
     expect(workspaceFromWire(workspace("ready", null))).toMatchObject({
       status: "running",
       canControl: true,
@@ -164,8 +164,18 @@ describe("webapp API adapter", () => {
       errorDetail: "provider failed",
       retryAction: "destroy",
     });
-    expect(workspaceFromWire(workspace("destroying", "poll"))).toBeNull();
-    expect(workspaceFromWire(workspace("destroyed", "create"))).toBeNull();
+    // `phase` is the REQUESTING member's machine state, not the workspace's
+    // own. A machine-type change, a stop and a recreate all pass through
+    // `destroying` with the workspace row untouched, so the record has to
+    // survive: dropping it took the workspace out of the rail mid-operation
+    // and read as a deletion.
+    expect(workspaceFromWire(workspace("destroying", "poll"))).toMatchObject({
+      id: "workspace-destroying",
+      status: "destroying",
+    });
+    expect(workspaceFromWire(workspace("destroyed", "create"))).toMatchObject({
+      status: "destroyed",
+    });
   });
 
   it("uses real identity data and sends a keyless create body unchanged", async () => {
