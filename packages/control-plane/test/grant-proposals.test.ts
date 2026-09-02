@@ -546,8 +546,10 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
       .status).toBe(404);
     // An id nobody issued reads the same as another org's.
     expect((await poll(app, token, "no-such-proposal")).status).toBe(404);
-    // A recycled runtime owns a fresh in-memory store, so the proposal is gone.
-    expect((await poll(harness().app, token, id)).status).toBe(404);
+    // A recycled runtime (another isolate, say) reads the same row, so the
+    // proposal is still there — this is what the row is for.
+    await expect(poll(harness().app, token, id).then((r) => r.json()))
+      .resolves.toMatchObject({ id, state: "pending" });
     // Ours is untouched.
     await expect(poll(app, token, id).then((r) => r.json()))
       .resolves.toMatchObject({ state: "pending" });

@@ -488,6 +488,9 @@ export async function replaceOrgCredentialGrantSets(
   actingMembershipId: string,
   replacements: readonly OrgCredentialGrantReplacement[],
   now = Date.now(),
+  /** Statements that must land with the grants or not at all — a grant
+   * proposal settling itself, say. They run even when no grant changes. */
+  alongside: readonly Query[] = [],
 ): Promise<void> {
   for (const { grants } of replacements) {
     if (grants.length > ORG_CREDENTIAL_MAX_GRANTS) {
@@ -502,8 +505,11 @@ export async function replaceOrgCredentialGrantSets(
     orgId,
     replacements.flatMap(({ grants }) => grants),
   );
-  const statements = replacements.flatMap((replacement) =>
-    grantReplacementQueries(replacement, actingMembershipId, now));
+  const statements = [
+    ...replacements.flatMap((replacement) =>
+      grantReplacementQueries(replacement, actingMembershipId, now)),
+    ...alongside,
+  ];
   if (statements.length > 0) await transaction(runtime.db, statements);
 }
 
