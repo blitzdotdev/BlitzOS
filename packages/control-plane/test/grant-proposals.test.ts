@@ -356,6 +356,50 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
     ]);
   });
 
+  it("never lowers access on an add: a subject holding write keeps it", async () => {
+    const { app, providers } = harness();
+    const admin = await operatorSession(app);
+    const workspace = await createWorkspace(app, admin);
+    await storeOrgCredential(app, admin, "KEY_A");
+    // The person already gave the workspace write, by hand, in the panel.
+    expect((await appRequest(app, "/orgs/self/credentials/KEY_A/grants", withCookie(admin, json({
+      grants: [
+        { subjectKind: "membership", subjectId: "personal", access: "write" },
+        { subjectKind: "workspace", subjectId: workspace.id, access: "write" },
+      ],
+    }, "PUT")))).status).toBe(200);
+    const token = await machineToken(app, providers, workspace.id);
+
+    // The agent asks for read on the same workspace and read for the org.
+    // Approving must not turn that write into a read: only the org read lands.
+    const changes = [
+      add("KEY_A", "workspace", workspace.id, "read"),
+      add("KEY_A", "org", null, "read"),
+    ];
+    const id = await proposed(app, token, changes);
+    const resolved = await resolve(app, admin, id, { approve: true, changes });
+    expect(resolved.status).toBe(200);
+    expect((await resolved.json<ResolveGrantProposalResponse>()).proposal.applied).toEqual([
+      add("KEY_A", "org", null, "read"),
+    ]);
+    expect((await grantsOf(app, admin)).KEY_A).toEqual([
+      { subjectKind: "membership", subjectId: "personal", access: "write" },
+      { subjectKind: "org", subjectId: null, access: "read" },
+      { subjectKind: "workspace", subjectId: workspace.id, access: "write" },
+    ]);
+
+    // The other direction still widens: write over read replaces it.
+    const raise = [add("KEY_A", "org", null, "write")];
+    const raised = await resolve(app, admin, await proposed(app, token, raise), { approve: true, changes: raise });
+    expect(raised.status).toBe(200);
+    expect((await grantsOf(app, admin)).KEY_A).toContainEqual(
+      { subjectKind: "org", subjectId: null, access: "write" },
+    );
+    expect((await grantsOf(app, admin)).KEY_A).not.toContainEqual(
+      { subjectKind: "org", subjectId: null, access: "read" },
+    );
+  });
+
   it("refuses a proposal past the member's authority with a 403 naming the changes", async () => {
     const { app, providers } = harness();
     const admin = await operatorSession(app);

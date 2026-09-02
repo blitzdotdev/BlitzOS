@@ -361,9 +361,13 @@ interface GrantSetEdit {
 }
 
 /** Applies a change list to one grant set, in order, and says which changes
- * made a difference. An add replaces whatever the same subject held (the
- * store allows one grant per subject); a remove deletes the exact grant
- * named. A change that alters nothing is not "applied". */
+ * made a difference. The store allows one grant per subject, so an add
+ * replaces what the same subject held — but only upward: an add never
+ * lowers access. A subject that holds write keeps it when a proposal adds
+ * read, because the approver reads "add read" as widening, not as the
+ * revocation of a write they granted themselves; lowering is what `remove`
+ * says out loud. A remove deletes the exact grant named. A change that
+ * alters nothing is not "applied". */
 function applyChangesToGrantSet(
   current: readonly OrgCredentialGrantView[],
   changes: readonly GrantChange[],
@@ -373,8 +377,9 @@ function applyChangesToGrantSet(
   for (const change of changes) {
     const grant = changeGrant(change);
     if (change.action === "add") {
-      if (next.some((held) => sameGrant(held, grant))) continue;
-      next = [...next.filter((held) => subjectKey(held) !== subjectKey(grant)), grant];
+      const held = next.find((candidate) => subjectKey(candidate) === subjectKey(grant));
+      if (held !== undefined && (held.access === grant.access || held.access === "write")) continue;
+      next = [...next.filter((candidate) => subjectKey(candidate) !== subjectKey(grant)), grant];
     } else {
       if (!next.some((held) => sameGrant(held, grant))) continue;
       next = next.filter((held) => !sameGrant(held, grant));

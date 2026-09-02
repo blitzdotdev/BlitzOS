@@ -151,9 +151,11 @@ export interface CredentialRequestFiledError {
 
 export type GrantChangeAction = "add" | "remove";
 
-/** One grant edit on one named credential. `add` writes the grant (replacing
- * whatever grant the same subject already held); `remove` deletes exactly
- * the grant named. Subject rules are `OrgCredentialGrantView`'s. */
+/** One grant edit on one named credential. `add` writes the grant, replacing
+ * what the same subject already held but never lowering it: adding `read`
+ * to a subject that holds `write` changes nothing. `remove` deletes exactly
+ * the grant named, and is the only way access goes down. Subject rules are
+ * `OrgCredentialGrantView`'s. */
 export interface GrantChange {
   name: string;
   action: GrantChangeAction;
