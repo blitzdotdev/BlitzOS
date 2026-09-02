@@ -64,6 +64,20 @@ describe("workspace tunnels", () => {
     expect(userData.indexOf("/var/lib/blitz/webapp-token"))
       .toBeLessThan(userData.indexOf("/var/lib/blitz/tunnel-token"));
 
+    // The tokens-ready handshake, in the one place all three sides appear.
+    // On a re-provision the volume already carries a tunnel token naming a
+    // tunnel this create has just replaced, so cloudflared may not read the
+    // files until THIS instance has rewritten them. The bootstrap script drops
+    // the marker after mounting the volume and before the box container starts;
+    // the token part writes it last, once both credentials are in place.
+    const clearsMarker = userData.indexOf("rm -f /var/lib/blitz/tokens-ready");
+    const startsContainer = userData.indexOf("docker run --detach");
+    const writesMarker = userData.lastIndexOf("/var/lib/blitz/tokens-ready");
+    expect(clearsMarker).toBeGreaterThan(-1);
+    expect(startsContainer).toBeGreaterThan(-1);
+    expect(clearsMarker).toBeLessThan(startsContainer);
+    expect(userData.indexOf("/var/lib/blitz/tunnel-token")).toBeLessThan(writesMarker);
+
     // 7445 is the only proxied port, and its path passes through unchanged.
     const ports = await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports?x=1`, {
       headers: { Cookie: cookie },
