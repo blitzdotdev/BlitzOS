@@ -351,6 +351,42 @@ node scripts/apply-vendor-patches.mjs        # runs on postinstall too; must be 
 A patch whose target version moved fails here with the file and the hunk. A
 patch upstream DELETED must be removed from the script in the same change.
 
+### 6a. The `@pierre/diffs` sideEffects fix
+
+The same script carries one fix that is a JSON field edit rather than a patch
+file: `@pierre/diffs@1.0.10` publishes `"sideEffects":
+["src/components/web-components.ts"]`, a path that exists only in their source
+tree, while the package ships `dist/`. The allowlist matches nothing, the
+bundler drops `dist/components/web-components.js` — the side-effect-only
+module that `customElements.define`s `<diffs-container>` — and every diff body
+in the product renders as an inert element with no shadow root and no error
+(measured in a real Chromium against the production build, 2026-09-01; the
+"All Changes lists files but expands to nothing" bug). The postinstall step
+appends the real dist path to the allowlist.
+
+The guard is the installed VERSION, and it fails closed: a `@pierre/diffs`
+bump makes `apply-vendor-patches.mjs` exit non-zero (so `npm install` fails
+loudly) and fails `packages/webapp/test/pierre-web-components.test.ts`, which
+pins the fix applied AND the upstream defect present. Re-auditing on a bump
+means:
+
+```sh
+node -e 'console.log(require("@pierre/diffs/package.json").sideEffects)'
+# still names only src/ paths -> bump `version` in PIERRE_SIDE_EFFECTS_FIX
+# (scripts/apply-vendor-patches.mjs) and re-run the probe below
+cd packages/webapp
+npx vite build --config test/diff-probe/vite.config.ts
+node test/diff-probe/run-browser.mjs test/diff-probe/dist   # needs playwright; expects hasPre: true
+npx vitest run test/pierre-web-components.test.ts
+```
+
+**If the new version's `sideEffects` names the shipped
+`dist/components/web-components.js` (or drops the field), DELETE the
+`PIERRE_SIDE_EFFECTS_FIX` block and this section rather than updating them** —
+the test's "upstream still carries the defect" half fails exactly then, and
+say so in the pull request body, because it means the upstream defect is
+fixed.
+
 ## 7. The three workaround mirrors, and when they DELETE
 
 `packages/webapp/src/lody/` holds three workarounds for upstream defects. Each
