@@ -89,12 +89,14 @@ function RailHead() {
 function Strip() {
   return (
     <aside className="shell-strip">
-      <div className="shell-strip__tiles">
-        <button className="shell-wtile shell-wtile--on" type="button">
-          ZS
+      <div className="shell-strip__tiles" role="tree">
+        <button className="shell-wtile" type="button" role="treeitem" aria-selected="true">
+          <span className="shell-wtile__indicator" aria-hidden="true" />
+          <span className="shell-wtile__icon">ZS</span>
         </button>
-        <button className="shell-wtile" type="button">
-          DT
+        <button className="shell-wtile" type="button" role="treeitem" aria-selected="false">
+          <span className="shell-wtile__indicator" aria-hidden="true" />
+          <span className="shell-wtile__icon">DT</span>
         </button>
       </div>
       <span className="shell-strip__spacer" />
