@@ -92,14 +92,15 @@ func homeEnvironment(home string) []string {
 	environment := make([]string, 0, len(os.Environ())+2)
 	for _, item := range os.Environ() {
 		if !strings.HasPrefix(item, "HOME=") && !strings.HasPrefix(item, "CODEX_HOME=") &&
-			!strings.HasPrefix(item, "CLAUDE_CONFIG_DIR=") && !strings.HasPrefix(item, "DISABLE_AUTOUPDATER=") {
+			!strings.HasPrefix(item, "CLAUDE_CONFIG_DIR=") {
 			environment = append(environment, item)
 		}
 	}
-	// A self-updating vendor CLI silently un-pins the image. It matters more
-	// here than anywhere else on the box: THIS process is what refreshes an
-	// expired credential, and that refresh rewrites the only copy. A version
-	// that moves the credential format or the CLI flags under a refresh does
-	// not fail cleanly — it can blank the one credential the member has.
-	return append(environment, "HOME="+home, "DISABLE_AUTOUPDATER=1")
+	// The vendor CLIs update themselves, here as everywhere else on the box.
+	// This process used to force the updater off, on the theory that a refresh
+	// which rewrites the only copy of a credential must not also move the
+	// binary under itself. That is not a boundary worth holding here alone: an
+	// update lands in the same npm-global prefix every other entry point reads,
+	// so pinning this one path bought a version skew rather than a guarantee.
+	return append(environment, "HOME="+home)
 }
