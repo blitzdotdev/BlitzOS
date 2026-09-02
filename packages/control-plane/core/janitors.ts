@@ -85,7 +85,13 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
           row.compute_credential_source,
         );
         await volume.provider.detachVolume(row.volume_id, row.vm_id);
-        await rows(runtime.db, markVolumeDetachedQuery(row.volume_id, Date.now()));
+        // The VM leaves the volume either way; the retention clock is what
+        // separates a destroy from a stop. Starting it on a machine that is
+        // coming back would delete a member's disk seven days after they
+        // paused it, so a kept row keeps its volume undated.
+        if (row.destroy_keeps_row !== 1) {
+          await rows(runtime.db, markVolumeDetachedQuery(row.volume_id, Date.now()));
+        }
       }
       if ((await provider.inspect(row.vm_id)) !== null) {
         await provider.destroy(row.vm_id);
@@ -99,18 +105,24 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
       continue;
     }
     if (row.state === "destroying") {
+      // Which teardown this was is the row's to say, not this sweep's to
+      // assume: a stop, a recreate and a machine-type change all pass through
+      // `destroying` and all come back (`destroyMachine`'s `keepRow`, recorded
+      // by migration 0047). Guessing `destroyed` here is what tombstoned a
+      // machine its member had only stopped.
+      const finalState = row.destroy_keeps_row === 1 ? "stopped" : "destroyed";
       const transition = await transaction(runtime.db, [
         revokeMachineLeasesQuery(row.id),
         { q: "DELETE FROM machine_token_families WHERE machine_id = ?1", v: [row.id] },
         { q: "DELETE FROM broker_keys WHERE machine_id = ?1", v: [row.id] },
         {
           q: `UPDATE machines
-              SET state = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
-                  ssh_user = NULL, ssh_host_public_key = NULL, error = NULL,
-                  updated_at = ?1
-              WHERE id = ?2 AND state = 'destroying'
+              SET state = ?1, destroy_keeps_row = 0, vm_id = NULL, ssh_host = NULL,
+                  ssh_port = NULL, ssh_user = NULL, ssh_host_public_key = NULL,
+                  error = NULL, updated_at = ?2
+              WHERE id = ?3 AND state = 'destroying'
               RETURNING id`,
-          v: [Date.now(), row.id],
+          v: [finalState, Date.now(), row.id],
         },
       ]);
       if (transition[3]?.length !== 1) continue;

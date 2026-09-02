@@ -439,6 +439,14 @@ export interface DestroyMachineOptions {
  * anything on its way out. Cloudflare resources are cleaned before the state
  * flips, and a failure there leaves the row in `destroying` for the janitor,
  * which is the same honest-destroy shape the workspace destroy always had.
+ *
+ * `keepRow` is written to the row in the same statement that enters
+ * `destroying`, because the janitor is the OTHER half of this function: a
+ * teardown that never reaches its last statement — a provider that throws, a
+ * request that dies, a sweep that gets there first — is finished by
+ * `runOrphanSweep`, and `destroying` alone does not say whether the machine
+ * was coming back. Reading the intent from memory is what turned a stop into
+ * a tombstone (migration 0047).
  */
 export async function destroyMachine(
   runtime: CoreRuntime,
@@ -447,9 +455,10 @@ export async function destroyMachine(
 ): Promise<MachineRow> {
   await rows(runtime.db, {
     q: `UPDATE machines
-        SET state = 'destroying', error = NULL, phone_home_hash = NULL, updated_at = ?1
-        WHERE id = ?2 AND state IN ('provisioning', 'running', 'stopped', 'error')`,
-    v: [Date.now(), machine.id],
+        SET state = 'destroying', destroy_keeps_row = ?1, error = NULL,
+            phone_home_hash = NULL, updated_at = ?2
+        WHERE id = ?3 AND state IN ('provisioning', 'running', 'stopped', 'error')`,
+    v: [options.keepRow ? 1 : 0, Date.now(), machine.id],
   });
   await rows(runtime.db, revokeMachineTokensQuery(machine.id));
   await destroyVm(runtime, machine, { keepVolume: options.keepRow });
@@ -472,9 +481,9 @@ export async function destroyMachine(
     { q: "DELETE FROM broker_keys WHERE machine_id = ?1", v: [machine.id] },
     {
       q: `UPDATE machines
-          SET state = ?1, vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
-              ssh_user = NULL, ssh_host_public_key = NULL, error = NULL,
-              updated_at = ?2
+          SET state = ?1, destroy_keeps_row = 0, vm_id = NULL, ssh_host = NULL,
+              ssh_port = NULL, ssh_user = NULL, ssh_host_public_key = NULL,
+              error = NULL, updated_at = ?2
           WHERE id = ?3 AND state = 'destroying'`,
       v: [options.keepRow ? "stopped" : "destroyed", Date.now(), machine.id],
     },
@@ -695,13 +704,29 @@ export function addMachineRoutes(
     return context.json<MachineResponse>({ machine: machineView(stopped) });
   });
 
+  /**
+   * Brings a machine that has no VM back up, on the disk it already has.
+   *
+   * `destroying` is the only refusal: a teardown is in flight and a second VM
+   * on the same volume would race its finaliser. `destroyed` is accepted,
+   * because the row and the volume outlive the tombstone — a destroy keeps the
+   * disk for its retention window (§2.3), and boxes in the field carry rows
+   * that a janitor tombstoned mid-stop before migration 0047 recorded the
+   * intent. Refusing those was the second half of the trap: the workspace
+   * projects as `destroyed`, the member's `machine` reads null, and the one
+   * verb that could have brought it back said 409.
+   *
+   * Provenance is deliberately NOT re-stamped here, unlike `provision`: start
+   * resumes a machine and never creates one, so it cannot be the step that
+   * makes somebody else's surviving disk an agent's to destroy.
+   */
   router.post("/machines/:machineId/start", async (context) => {
     const runtime = runtimeFactory(context);
     const { workspace, machine } = await target(context, runtime, "own");
     if (machine.vm_id !== null) {
       return context.json<MachineResponse>({ machine: machineView(machine) });
     }
-    if (machine.state === "destroying" || machine.state === "destroyed") {
+    if (machine.state === "destroying") {
       throw new HttpError(409, `machine is ${machine.state}`);
     }
     const started = await provisionMachine(runtime, reprovisionInput(
