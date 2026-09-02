@@ -172,7 +172,10 @@ approves it in a panel that shows your proposal as an editable diff.
       --data '{"changes":[...], "reason":"one sentence; the user reads this"}'
 
 Change shapes are in GET /agent/api. A 403 names changes past your user's
-own authority — narrow and retry.
+own authority — narrow and retry. Those changes are somebody else's to
+grant: ask for each such credential by name at
+`POST $CP/agent/credentials/<name>/token` instead. A name not granted to
+you answers 404 and files an access request with whoever can grant it.
 
 Tell the user a proposal is waiting for them, then poll:
 

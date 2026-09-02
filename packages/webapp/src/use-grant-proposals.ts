@@ -26,6 +26,10 @@ export type GrantProposalFeed = {
 export function useGrantProposals(
   client: Pick<ControlPlaneClient, 'listGrantProposals'>,
   enabled: boolean,
+  /** The signed-in member. Only a proposal their own agent filed pops the
+   * dialog; the rest of the feed (an admin sees the whole org's) waits in
+   * Requests, where Review opens it on purpose. */
+  viewerMembershipId: string | null,
 ): GrantProposalFeed {
   const [pending, setPending] = useState<GrantProposalView[]>([]);
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
@@ -76,7 +80,7 @@ export function useGrantProposals(
   }, []);
 
   const active = pending
-    .filter(({ id }) => !dismissed.has(id))
+    .filter(({ id, membershipId }) => !dismissed.has(id) && membershipId === viewerMembershipId)
     .sort((left, right) => left.createdAt - right.createdAt)[0] ?? null;
 
   return { pending, active, dismiss, reopen, settled };
