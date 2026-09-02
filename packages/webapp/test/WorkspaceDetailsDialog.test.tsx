@@ -395,8 +395,10 @@ describe('WorkspaceDetailsDialog', () => {
       if (input === null) throw new Error(`the credentials tab has no ${label} field`);
       return input;
     };
+    expect(view.container.querySelector('[aria-label="Credential label"]')).toBeNull();
     await act(async () => {
       typeInto(field('Credential name'), 'DEPLOY_KEY');
+      typeInto(field('Credential comment'), 'deploys the app');
       typeInto(field('Credential value'), 'secret-value');
     });
     const save = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
@@ -406,7 +408,7 @@ describe('WorkspaceDetailsDialog', () => {
 
     expect(putWorkspaceCredential).toHaveBeenCalledWith(
       workspace.id,
-      { name: 'DEPLOY_KEY', value: 'secret-value' },
+      { name: 'DEPLOY_KEY', comment: 'deploys the app', value: 'secret-value' },
     );
     // The row the write produced, on the list the member is looking at.
     expect(view.container.textContent).toContain('DEPLOY_KEY');
