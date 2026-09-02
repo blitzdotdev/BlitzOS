@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BlitzOS — credential grant approval</title>
+<meta name="description" content="Design mockup: an agent proposed a credential grant change; the human reviews one merged grant list per credential with inline diff rows, edits the proposal, and approves what actually goes through. Styled by the settings-surface canon (tokens.css + cfg- vocabulary)." />
+<style>
+/* Tokens — verbatim from packages/webapp/src/tokens.css (dark + light). */
+:root{
+  --paper:#16181d; --ink:#dfe2e8; --accent:#7e95d7;
+  --muted:color-mix(in oklab,var(--ink) 52%,var(--paper));
+  --faint:color-mix(in oklab,var(--ink) 30%,var(--paper));
+  --soft-ink:color-mix(in oklab,var(--ink) 82%,var(--paper));
+  --rule:color-mix(in oklab,var(--ink) 13%,var(--paper));
+  --hover:color-mix(in oklab,var(--ink) 7%,var(--paper));
+  --sunken:color-mix(in oklab,var(--ink) 5%,var(--paper));
+  --selected:color-mix(in oklab,var(--accent) 20%,var(--paper));
+  --live:#7fd39b;
+  --ansi-red:#c47f86; --ansi-green:#8fa879;
+  --r-card:12px; --r-control:10px; --r-item:8px; --r-pill:999px;
+  --lift:0 10px 30px color-mix(in oklab,#000 34%,transparent);
+  --font-ui:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --font-mono:'Fira Code',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  /* settings-surface.css anchors */
+  --cfg-title-color:var(--ink);
+  --cfg-title-font:700 15px/1.6 var(--font-ui);
+  --cfg-title-tracking:-.01em;
+  --cfg-desc-color:var(--muted);
+  --cfg-desc-size:11.5px;
+  --cfg-control-height:36px;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --paper:#f7f7f4; --ink:#1c1f26; --accent:#4c62aa;
+    --hover:color-mix(in oklab,var(--ink) 6%,var(--paper));
+    --selected:color-mix(in oklab,var(--accent) 16%,var(--paper));
+    --live:#3f8156;
+    --ansi-red:#a34e56; --ansi-green:#5f7d46;
+    --lift:0 10px 30px color-mix(in oklab,#000 16%,transparent);
+    color-scheme:light;
+  }
+}
+
+/* Derived tints — no new colours; everything resolves to a token. */
+:root{
+  --add-bg:color-mix(in oklab,var(--ansi-green) 12%,var(--paper));
+  --del-bg:color-mix(in oklab,var(--ansi-red) 12%,var(--paper));
+  --row-hairline:1px solid color-mix(in oklab,var(--rule) 60%,transparent);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--paper);color:var(--ink);font:14px/1.5 var(--font-ui);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+
+.scrim{position:fixed;inset:0;background:color-mix(in oklab,#000 45%,transparent)}
+.wrap{position:fixed;inset:0;display:grid;place-items:center;padding:24px}
+
+/* Dialog frame — the workspace-details-dialog idiom: paper, rule, r-card, lift. */
+.dlg{width:min(560px,100%);max-height:min(760px,calc(100dvh - 32px));
+     display:flex;flex-direction:column;overflow:hidden;
+     border:1px solid var(--rule);border-radius:var(--r-card);
+     color:var(--ink);background:var(--paper);box-shadow:var(--lift)}
+
+/* head */
+.head{flex:none;padding:20px 18px 6px 22px}
+.head .titlebar{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.head h1{min-width:0;font-size:17px;font-weight:600;letter-spacing:-.01em}
+/* the workspace-details-header close idiom */
+.close{flex:none;width:34px;height:34px;border-radius:50%;color:var(--faint);background:transparent;font-size:20px;line-height:1}
+.close:hover,.close:focus-visible{color:var(--ink);background:var(--hover)}
+.head .req{margin-right:4px}
+.cfg-desc{color:var(--cfg-desc-color);font-size:var(--cfg-desc-size);line-height:1.5}
+
+/* the request card — who is asking, and why, in their own words */
+.req{margin-top:12px;padding:10px 12px;border:1px solid var(--rule);
+     border-radius:var(--r-item);background:var(--sunken)}
+.req-from{display:flex;align-items:center;gap:8px;min-width:0}
+.req-agent{width:20px;height:20px;flex:none;border-radius:6px;background:var(--selected);
+           display:grid;place-items:center;color:var(--accent)}
+.req-agent svg{width:12px;height:12px}
+.req-from b{color:var(--ink);font-size:12px;font-weight:600}
+.req-from span{color:var(--faint);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.req-why{margin:7px 0 0;color:var(--soft-ink);font-size:12px;line-height:1.55;font-style:italic}
+
+/* body — the one scrolling box */
+.body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:14px 22px 8px}
+.body::-webkit-scrollbar{width:6px}
+.body::-webkit-scrollbar-thumb{background:var(--rule);border-radius:3px}
+
+/* section head, sentence case per the canon */
+.caps{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:2px}
+.cfg-title{color:var(--cfg-title-color);font:var(--cfg-title-font);letter-spacing:var(--cfg-title-tracking);text-transform:none}
+.restore{flex:none;color:var(--accent);font:600 11px/1.5 var(--font-ui);
+         border-radius:var(--r-item);padding:1px 7px;visibility:hidden}
+.restore:hover{background:var(--hover)}
+.restore.show{visibility:visible}
+
+/* credential name — a quiet micro-label above its rows; comment on its own line */
+.cname{margin:14px 0 5px;display:grid;gap:1px;min-width:0}
+.cname:first-of-type{margin-top:8px}
+.cname code{font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--ink)}
+.cname .cmt{color:var(--faint);font-size:11px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* subject-kind tag — the machine-chip idiom: pill, rule border, quiet */
+.tag{flex:none;padding:1px 7px;border:1px solid var(--rule);border-radius:var(--r-pill);
+     color:var(--faint);font-size:10px;white-space:nowrap}
+
+.col{display:flex;flex-direction:column}
+
+/* grant rows — list rows, not cards; diff rows carry a tint and a radius */
+.row{display:flex;align-items:center;gap:8px;min-height:36px;padding:3px 8px 3px 6px}
+.row + .row{border-top:var(--row-hairline)}
+.row--add,.row--del,.row--skip{border-radius:var(--r-item);padding-left:8px}
+.row--add + .row,.row--del + .row,.row--skip + .row,
+.row + .row--add,.row + .row--del,.row + .row--skip{border-top:0}
+.row--add{background:var(--add-bg)}
+.row--del{background:var(--del-bg)}
+.row--skip{background:transparent;box-shadow:inset 0 0 0 1px var(--rule)}
+.sign{width:12px;flex:none;text-align:center;font-family:var(--font-mono);font-size:12.5px;font-weight:700;color:transparent}
+.row--add .sign{color:var(--ansi-green)}
+.row--del .sign{color:var(--ansi-red)}
+.row--skip .sign{color:var(--faint);font-weight:400}
+.subj{flex:1;min-width:0;display:flex;align-items:center;gap:7px;color:var(--soft-ink);font-size:12px}
+.subj em{font-style:normal;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row--add .subj{color:var(--ink)}
+.row--skip .subj,.row--skip .lvl{color:var(--faint)}
+.lvl{flex:none;color:var(--faint);font-size:10.5px}
+.hint{flex:none;color:var(--faint);font-size:10.5px;font-style:italic}
+
+/* row controls */
+.seg{display:flex;flex:none;gap:2px;padding:2px;border-radius:var(--r-item);background:var(--sunken)}
+.seg button{height:20px;padding:0 7px;border-radius:6px;color:var(--faint);font:600 10.5px/1 var(--font-ui)}
+.seg button:hover{color:var(--ink)}
+.seg button.on{background:var(--selected);color:var(--ink)}
+.xb{width:24px;height:24px;flex:none;display:grid;place-items:center;border-radius:50%;color:var(--faint)}
+.xb:hover,.xb:focus-visible{color:var(--ink);background:var(--hover)}
+.row--del .xb:hover{color:var(--ansi-red)}
+.xb svg{width:11px;height:11px}
+
+/* footer — cfg-footer: surface-wide verbs, one hairline above */
+.foot{flex:none;display:flex;align-items:center;gap:10px;padding:14px 22px;border-top:1px solid var(--rule)}
+.foot .cfg-help{flex:1;color:var(--faint);font:11px/1.55 var(--font-ui)}
+.btn{display:inline-flex;flex:none;min-height:var(--cfg-control-height);align-items:center;justify-content:center;
+     padding:0 16px;border-radius:var(--r-control);font:650 11.5px/1 var(--font-ui)}
+.btn--ghost{color:var(--muted);border:1px solid var(--rule);background:transparent}
+.btn--ghost:hover:not(:disabled){color:var(--ink);background:var(--hover)}
+.btn--go{border:1px solid transparent;background:var(--accent);color:var(--paper)}
+.btn--go:hover:not(:disabled){background:color-mix(in oklab,var(--accent) 85%,var(--ink))}
+.btn--go:disabled{cursor:not-allowed;opacity:.5}
+.btn--go .k{font-variant-numeric:tabular-nums}
+
+/* resolved states */
+.done{padding:46px 22px;display:none;flex-direction:column;align-items:center;gap:10px;text-align:center}
+.done .big{width:38px;height:38px;border-radius:50%;display:grid;place-items:center}
+.done.ok .big{background:color-mix(in oklab,var(--ansi-green) 18%,var(--paper));color:var(--ansi-green)}
+.done.no .big{background:color-mix(in oklab,var(--ansi-red) 18%,var(--paper));color:var(--ansi-red)}
+.done .big svg{width:18px;height:18px}
+.done h2{font-size:14px;font-weight:650}
+.done p{color:var(--muted);font-size:12px;max-width:420px}
+.done p code{font-family:var(--font-mono);font-size:11.5px}
+.dlg.resolved .head,.dlg.resolved .body,.dlg.resolved .foot{display:none}
+.dlg.resolved .done{display:flex}
+</style>
+</head>
+<body>
+
+<div class="scrim" aria-hidden="true"></div>
+
+<div class="wrap">
+<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" id="dlg">
+
+  <div class="head">
+    <div class="titlebar">
+      <h1 id="dlg-title">Approve credential grants</h1>
+      <button class="close" id="close" title="Close — decide later" aria-label="Close">×</button>
+    </div>
+    <div class="req">
+      <div class="req-from">
+        <span class="req-agent" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 7V4M8 12h.01M16 12h.01M9 16h6"/></svg></span>
+        <b>claude</b><span>· session payments-refactor · workspace payments</span>
+      </div>
+      <p class="req-why">“api-v2 runs the same Stripe integration tests, and Dana takes over key rotation this sprint.”</p>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="caps">
+      <h2 class="cfg-title">Grants after approval</h2>
+      <button class="restore" id="restore">Restore proposal</button>
+    </div>
+    <div id="list"><!-- rendered --></div>
+  </div>
+
+  <div class="foot">
+    <p class="cfg-help">Only what you approve is applied — the agent is told exactly what went through.</p>
+    <button class="btn btn--ghost" id="reject">Reject all</button>
+    <button class="btn btn--go" id="approve"><span class="k">Approve 6 changes</span></button>
+  </div>
+
+  <div class="done ok" id="done-ok">
+    <div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
+    <h2 id="ok-title">6 changes applied</h2>
+    <p>The agent in <code>payments-refactor</code> has been told what was approved and continues with exactly that.</p>
+  </div>
+  <div class="done no" id="done-no">
+    <div class="big"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></div>
+    <h2>Proposal rejected</h2>
+    <p>No grants changed. The agent has been told the proposal was declined.</p>
+  </div>
+
+</div>
+</div>
+
+<script>
+const S = {
+  ws_payments:{t:'workspace', n:'payments'},
+  ws_apiv2:  {t:'workspace', n:'api-v2'},
+  me:        {t:'member',    n:'You'},
+  dana:      {t:'member',    n:'Dana Reyes'},
+  priya:     {t:'member',    n:'Priya N'},
+  org:       {t:'org',       n:'everyone in acme'},
+};
+
+const CREDS = [
+  { name:'STRIPE_API_KEY', comment:'live key; card charges',
+    current:[{subj:'ws_payments',access:'read'},{subj:'me',access:'write'}],
+    deltas:[{id:'d1',op:'add',subj:'ws_apiv2',access:'read'},
+            {id:'d2',op:'add',subj:'dana',access:'write'}]},
+  { name:'STRIPE_WEBHOOK_SECRET', comment:'endpoint secret for webhook signatures',
+    current:[{subj:'ws_payments',access:'read'},{subj:'me',access:'write'},{subj:'priya',access:'write'}],
+    deltas:[{id:'d3',op:'add',subj:'ws_apiv2',access:'read'},
+            {id:'d4',op:'del',subj:'priya',access:'write'}]},
+  { name:'SENTRY_DSN', comment:'error reporting, all services',
+    current:[{subj:'org',access:'read'},{subj:'me',access:'write'}],
+    deltas:[{id:'d5',op:'add',subj:'ws_apiv2',access:'read',hint:'covered by org-wide read'}]},
+  { name:'DATABASE_URL', comment:'staging postgres',
+    current:[{subj:'ws_payments',access:'read'},{subj:'me',access:'write'}],
+    deltas:[{id:'d6',op:'add',subj:'ws_apiv2',access:'read'}]},
+];
+CREDS.forEach(c => c.deltas.forEach(d => { d.proposedAccess=d.access; d.skipped=false; }));
+
+const $ = id => document.getElementById(id);
+const XSVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+const USVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 7"/></svg>';
+
+const subj = s => `<span class="subj"><em>${S[s].n}</em><span class="tag">${S[s].t}</span></span>`;
+
+// one merged list per credential: kept grants plain, changes as inline diff rows
+function rows(c){
+  const out = [];
+  c.current.forEach(g => {
+    const del = c.deltas.find(d => d.op==='del' && d.subj===g.subj && d.access===g.access);
+    if (!del){
+      out.push(`<div class="row"><span class="sign">·</span>${subj(g.subj)}<span class="lvl">${g.access}</span></div>`);
+    } else if (del.skipped){
+      out.push(`<div class="row"><span class="sign">·</span>${subj(g.subj)}<span class="lvl">${g.access}</span>
+        <button class="xb" data-act="undo" data-id="${del.id}" title="Re-apply removal" aria-label="Re-apply removal">${USVG}</button></div>`);
+    } else {
+      out.push(`<div class="row row--del"><span class="sign">−</span>${subj(g.subj)}<span class="lvl">${g.access}</span>
+        <button class="xb" data-act="skip" data-id="${del.id}" title="Keep this grant" aria-label="Keep this grant">${XSVG}</button></div>`);
+    }
+  });
+  c.deltas.filter(d => d.op==='add').forEach(d => {
+    if (d.skipped){
+      out.push(`<div class="row row--skip"><span class="sign">·</span>${subj(d.subj)}<span class="lvl">${d.access}</span>
+        <button class="xb" data-act="undo" data-id="${d.id}" title="Restore this change" aria-label="Restore this change">${USVG}</button></div>`);
+    } else {
+      const hint = d.hint ? `<span class="hint">${d.hint}</span>` : '';
+      out.push(`<div class="row row--add"><span class="sign">+</span>${subj(d.subj)}${hint}
+        <span class="seg" role="group" aria-label="access level">
+          <button data-act="lvl" data-id="${d.id}" data-lvl="read"  class="${d.proposedAccess==='read'?'on':''}">read</button>
+          <button data-act="lvl" data-id="${d.id}" data-lvl="write" class="${d.proposedAccess==='write'?'on':''}">write</button>
+        </span>
+        <button class="xb" data-act="skip" data-id="${d.id}" title="Skip this change" aria-label="Skip this change">${XSVG}</button></div>`);
+    }
+  });
+  return out.join('');
+}
+
+function render(){
+  $('list').innerHTML = CREDS.map(c =>
+    `<div class="cname"><code>${c.name}</code><span class="cmt">${c.comment}</span></div>
+     <div class="col">${rows(c)}</div>`).join('');
+  wire(); refreshChrome();
+}
+
+function allDeltas(){ return CREDS.flatMap(c => c.deltas); }
+function find(id){ return allDeltas().find(d => d.id===id); }
+
+function wire(){
+  $('list').querySelectorAll('button[data-act]').forEach(b => {
+    b.onclick = () => {
+      const d = find(b.dataset.id);
+      if (b.dataset.act==='skip') d.skipped = true;
+      if (b.dataset.act==='undo') d.skipped = false;
+      if (b.dataset.act==='lvl')  d.proposedAccess = b.dataset.lvl;
+      render();
+    };
+  });
+}
+
+function refreshChrome(){
+  const live = allDeltas().filter(d => !d.skipped);
+  const edits = allDeltas().some(d => d.skipped || (d.op==='add' && d.proposedAccess!==d.access));
+  const btn = $('approve');
+  btn.disabled = live.length===0;
+  btn.querySelector('.k').textContent = live.length===0 ? 'Nothing to approve'
+    : `Approve ${live.length} change${live.length>1?'s':''}${edits?' (edited)':''}`;
+  $('restore').classList.toggle('show', edits);
+}
+
+$('restore').onclick = () => {
+  allDeltas().forEach(d => { d.skipped=false; d.proposedAccess=d.access; });
+  render();
+};
+$('approve').onclick = () => {
+  const live = allDeltas().filter(d => !d.skipped);
+  $('ok-title').textContent = `${live.length} change${live.length>1?'s':''} applied`;
+  $('dlg').classList.add('resolved'); $('done-no').style.display='none';
+};
+$('reject').onclick = () => {
+  $('dlg').classList.add('resolved'); $('done-ok').style.display='none';
+};
+// close = decide later: the proposal stays pending; the dialog just goes away
+$('close').onclick = () => { document.querySelector('.wrap').style.display='none'; document.querySelector('.scrim').style.display='none'; };
+
+render();
+</script>
+</body>
+</html>
