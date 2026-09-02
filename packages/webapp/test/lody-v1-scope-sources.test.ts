@@ -39,6 +39,9 @@ const ourSource = (file: string): string => read(join(lodySrc, file));
 describe("the v1 scope constant", () => {
   it("still cuts every group", () => {
     // A flip is a product decision, not a refactor. It fails here first.
+    // `connectionStatus` is seam patch 15's, and it is an ownership boundary
+    // rather than a "not in v1" cut — see `v1-scope.ts`. Mounting the mobile
+    // branch is what gave it a phone to answer on.
     expect(LODY_V1_SCOPE).toEqual({
       gitHubIntegration: false,
       agentRolesAndMcp: false,
@@ -62,25 +65,42 @@ describe("the v1 scope constant", () => {
       keyboardShortcutsAvailable: false,
       hideLanguageServiceActions: true,
       hideTeamScope: true,
+      // Seam patch 16's one. `hideSettingsEntry` reads `cloudSurfaces`, the
+      // flag that already covers the hint band's Go-to-settings button.
+      hideSettingsEntry: true,
       hideConnectionStatus: true,
     });
   });
 });
 
-describe("router.tsx hands the suppression to all three mounted components", () => {
+describe("the two mounts hand the suppression to all four mounted components", () => {
   const router = ourSource("router.tsx");
+  const stack = ourSource("MobileSessionStack.tsx");
 
   it("passes every prop `lodyV1SuppressionProps` returns", () => {
-    // Read from the returned object rather than restated, so adding a fifth
+    // Read from the returned object rather than restated, so adding a
     // suppression and forgetting to pass it fails here.
+    //
+    // TWO MOUNTS, ONE OBJECT. `router.tsx` mounts the desktop pages and the
+    // archive; `MobileSessionStack.tsx` mounts the phone's. A prop may live in
+    // either — `hideSettingsEntry` has no desktop surface at all — but it must
+    // live in ONE of them, or the flag reaches nothing.
     for (const prop of Object.keys(lodyV1SuppressionProps())) {
-      expect(router, `router.tsx passes ${prop}`).toContain(`${prop}={V1.${prop}}`);
+      const passed = `${prop}={V1.${prop}}`;
+      expect(
+        router.includes(passed) || stack.includes(passed),
+        `${prop} is passed by router.tsx or MobileSessionStack.tsx`,
+      ).toBe(true);
     }
   });
 
   it("builds them from the scope constant and nothing else", () => {
-    expect(router).toContain('from "./v1-scope.js"');
-    expect(router).toContain("const V1 = lodyV1SuppressionProps();");
+    for (const [name, source] of [["router.tsx", router], ["MobileSessionStack.tsx", stack]] as const) {
+      expect(source, `${name} reads the scope constant`).toContain('from "./v1-scope.js"');
+      expect(source, `${name} builds the props once`).toContain(
+        "const V1 = lodyV1SuppressionProps();",
+      );
+    }
   });
 
   it("gives ChatLanding the hint, Role and connection suppressions", () => {
@@ -197,23 +217,39 @@ describe("the command palette and the keyboard dispatcher stay unmounted", () =>
   });
 });
 
-describe("the mobile branch is not mounted", () => {
-  it("has no mobile route component and no vendored mobile import", () => {
-    // C110, SP62, T28, X13, X14. Both real routes are the desktop ones; seam
-    // patch 5 leaves `mobile-session-tab-sheet.tsx` unpatched on purpose.
+describe("the mobile branch IS mounted, and the routes stand down for it", () => {
+  /* THIS DESCRIBE USED TO SAY THE OPPOSITE, and the inversion is the amendment
+     rather than a weakening. Area 23 was KILL because both real routes dropped
+     the mobile branch, so no v1 flag had to reach a phone. The user approved
+     mounting it (`plans/LODY-V1-SCOPE.md` §5), and what this suite must now
+     hold is the OTHER side of the same claim: exactly one thing draws the
+     phone's landing and session, and every flag reaches it. */
+
+  it("mounts the stack above both leaves, and both leaves return null on a phone", () => {
     const router = ourSource("router.tsx");
-    expect(router).toContain("Their `routes/$workspaceName/_auth/chat.tsx`, minus the mobile branch.");
-    expect(router).toContain(
-      "Their `routes/$workspaceName/_auth/sessions/$sessionId.tsx`, minus mobile.",
-    );
-    // An IMPORT, not a mention: `router.tsx`'s own doc comment cites
+    // The stack outlives the chat -> session route change, so it hangs off the
+    // route both leaves share. On a leaf it would be torn down by the very
+    // navigation it exists to animate.
+    expect(router).toContain("component: authRouteComponent(options.readOnly === true)");
+    expect(router).toContain("<MobileSessionStack workspaceName={workspaceName}");
+    // Two returns, one per leaf. A third would mean something else stood down.
+    expect(router.match(/if \(isMobile\) return null;/gu)?.length).toBe(2);
+    // The chat leaf still runs: its effect publishes the base context the stack
+    // reads to keep the right page beneath an open session.
+    expect(router).toContain("setMobileBaseContext({");
+  });
+
+  it("imports a vendored mobile screen from exactly one file", () => {
+    // An IMPORT, not a mention: `router.tsx`'s doc comment cites
     // `components/mobile/mobile-workspace-stack.tsx` as the file whose route ids
-    // ours reproduce, and that citation is the reason the ids match.
-    for (const file of readdirSync(lodySrc).filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))) {
-      expect(ourSource(file), `${file} mounts no vendored mobile screen`).not.toMatch(
-        /^import .*components\/mobile\//mu,
-      );
-    }
+    // ours reproduce, and that citation is why the ids match.
+    //
+    // ONE importer is the point. Two would mean two things draw the phone's
+    // session, and the second would be a duplicate mount rather than a feature.
+    const importers = readdirSync(lodySrc)
+      .filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))
+      .filter((f) => /^import .*components\/mobile\//mu.test(ourSource(f)));
+    expect(importers).toEqual(["MobileSessionStack.tsx"]);
   });
 });
 
