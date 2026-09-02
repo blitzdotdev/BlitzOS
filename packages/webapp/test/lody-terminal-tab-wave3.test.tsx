@@ -738,7 +738,12 @@ describe("ADJ2 — the agent-config bootstrap runs once per box", () => {
     }));
     vi.doMock("../src/lody/local-projects.js", () => ({
       mirrorLocalProjectsToMachineMeta: async () => undefined,
-      publishBoxReposAsWorkspaceRepos: async () => [],
+      // An unverified probe, so the gate under test never writes the worktree
+      // default into this process's localStorage.
+      publishBoxReposAsWorkspaceRepos: async () => ({
+        publishedFullNames: [],
+        gitProbe: "no-git-project",
+      }),
     }));
     const { LodyAgentConfigGate } = await import("../src/lody/agent-config-gate.js");
     const { runtimeAtom } = await import("@lody/components/atoms/runtime");

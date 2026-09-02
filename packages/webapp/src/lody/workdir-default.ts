@@ -25,6 +25,23 @@
  * and only when it is absent. That leaves both overrides intact: their own
  * per-project write (which is what ticking the pill off does) still wins, and a
  * member who sets the global key by hand is not overwritten on the next mount.
+ *
+ * SEEDED ONLY ON A BOX THE GIT-STATE SWEEP VERIFIED (the greyed-send finding,
+ * 2026-09-02). A worktree default is not free: the landing's send button is
+ * disabled whenever a local project is selected in worktree mode and its
+ * git-state load errs or never finishes (`getChatLandingSubmitDisabled`,
+ * `chat-landing-derived.ts` — the predicate reads the SELECTED mode, not the
+ * effective one), and the landing auto-selects a project the moment the local
+ * context is active. So an unconditional seed turned any box that cannot
+ * answer `local-project/git-state` into a composer nobody can send from. The
+ * caller is therefore `agent-config-gate.tsx`, after
+ * `publishBoxReposAsWorkspaceRepos` — whose sweep asks git-state for every
+ * registered project anyway — answers `"verified"`: every project answered and
+ * at least one is a git repository. An unverified mount seeds nothing and
+ * upstream's reader falls back to `'local'`, where a send always goes out; the
+ * key being written only when absent means a later verified mount still seeds.
+ * The cost is that the very first mount of a fresh browser may render the pill
+ * off until the sweep lands, which is the honest degradation.
  */
 import { FILES_DAV_ROOT } from "../resolver.js";
 import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from "@blitzos/schema";

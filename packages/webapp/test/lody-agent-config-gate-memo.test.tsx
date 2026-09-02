@@ -39,12 +39,18 @@ vi.mock("../src/lody/agent-configs.js", () => ({
 }));
 vi.mock("../src/lody/local-projects.js", () => ({
   mirrorLocalProjectsToMachineMeta: async () => undefined,
-  publishBoxReposAsWorkspaceRepos: async () => undefined,
+  // An unverified probe, so the gate never writes the worktree default into
+  // this process's localStorage.
+  publishBoxReposAsWorkspaceRepos: async () => ({
+    publishedFullNames: [],
+    gitProbe: "no-git-project",
+  }),
   registerWorkspaceRepositories: async () => undefined,
 }));
 vi.mock("../src/lody/workdir-default.js", () => ({
   applyDefaultSessionProject: (runtime: unknown) => runtime,
   createSessionProjectDefaults: () => ({}),
+  seedWorktreeWorkdirDefault: () => null,
 }));
 
 import { LodyAgentConfigGate, resetAgentConfigGateMemoForTests } from "../src/lody/agent-config-gate.js";

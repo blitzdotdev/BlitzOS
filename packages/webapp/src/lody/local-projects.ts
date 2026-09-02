@@ -259,20 +259,49 @@ export function browseDirPage(result: JsonValue): BrowseDirPage {
  * the daemon's own answer to `local-project/git-state`, so nothing is invented
  * here — a clone with no GitHub remote contributes nothing and its sessions stay
  * in Chats, which is the honest reading.
+ *
+ * THE SWEEP IS ALSO A PROBE, and `gitProbe` is its second answer. The landing
+ * disables its send button whenever a local project is selected in worktree
+ * mode and the project's git-state load errs (`getChatLandingSubmitDisabled`,
+ * `chat-landing-derived.ts`) — and worktree mode is OUR default, seeded by
+ * `workdir-default.ts`. So the seed must not land on a box whose daemon cannot
+ * actually answer git-state: this sweep already asks the exact question for
+ * every registered project, and the verdict says whether every project
+ * answered and at least one is a git repository the worktree default could
+ * apply to. `agent-config-gate.tsx` seeds on `"verified"` and nothing else.
  */
+export type LocalProjectGitProbe =
+  /** Every registered project answered `git-state`, and at least one is a git
+   * repository — the worktree default is meaningful and known to load. */
+  | "verified"
+  /** Every probe answered, but no project is a git repository (a fresh box, or
+   * only the `/workspace` root project). Nothing to conclude; ask again on the
+   * next mount. */
+  | "no-git-project"
+  /** The list or any git-state call was refused — the state the landing's own
+   * loader would turn into a permanent error under a worktree default. */
+  | "unanswered";
+
+export interface BoxRepoPublication {
+  /** The GitHub full names published to the workspace-repos cache. */
+  publishedFullNames: string[];
+  gitProbe: LocalProjectGitProbe;
+}
+
 export async function publishBoxReposAsWorkspaceRepos(
   store: LodyAtomStore,
   endpoints: LodyHttpPlaneEndpoints,
   runtime: LodyWorkspaceRuntime,
   machineId: string,
-): Promise<string[]> {
+): Promise<BoxRepoPublication> {
   const listed = await sendProjectControl(endpoints, {
     type: "local-project/list",
     machineId,
   });
-  if (!listed.ok) return [];
+  if (!listed.ok) return { publishedFullNames: [], gitProbe: "unanswered" };
   const projects = localProjectRows(listed.result);
 
+  let gitProbe: LocalProjectGitProbe = "no-git-project";
   const repositories: { fullName: string }[] = [];
   for (const project of projects) {
     const lookup = await readLocalProjectRepoFullName(
@@ -281,13 +310,21 @@ export async function publishBoxReposAsWorkspaceRepos(
       runtime.workspaceId,
       project.localProjectId,
     );
-    if (!lookup.answered || lookup.repoFullName === null) continue;
+    if (!lookup.answered) {
+      // One refused probe poisons the verdict for good: the landing may
+      // auto-select exactly this project, so "the box answers git-state" has
+      // to hold for every project, not just one.
+      gitProbe = "unanswered";
+      continue;
+    }
+    if (gitProbe === "no-git-project" && lookup.git) gitProbe = "verified";
+    if (lookup.repoFullName === null) continue;
     repositories.push({ fullName: lookup.repoFullName });
   }
-  if (repositories.length === 0) return [];
+  if (repositories.length === 0) return { publishedFullNames: [], gitProbe };
 
   store.set(setWorkspaceReposCacheAtom, { workspaceId: runtime.workspaceId, repositories });
-  return repositories.map((repository) => repository.fullName);
+  return { publishedFullNames: repositories.map((repository) => repository.fullName), gitProbe };
 }
 
 /** The `local-project/list` result, narrowed to the one field this file reads. */
@@ -319,7 +356,7 @@ function localProjectRows(result: JsonValue): { localProjectId: string }[] {
  * next try. `workdir-default.ts` memoizes on exactly this distinction.
  */
 export type LocalProjectRepoLookup =
-  | { answered: true; repoFullName: string | null }
+  | { answered: true; repoFullName: string | null; git: boolean }
   | { answered: false };
 
 /**
@@ -343,7 +380,14 @@ export async function readLocalProjectRepoFullName(
     localProjectId,
   });
   if (!state.ok) return { answered: false };
-  return { answered: true, repoFullName: repoFullNameOf(state.result) };
+  return { answered: true, repoFullName: repoFullNameOf(state.result), git: isGitRepository(state.result) };
+}
+
+/** Whether a `local-project/git-state` result names a git repository. `git` is
+ * the daemon's own verdict: `true` for any repository, remote or not, and
+ * `false` for a registered plain directory such as the `/workspace` root. */
+function isGitRepository(result: JsonValue): boolean {
+  return isJsonObject(result) && result.git === true;
 }
 
 /** `githubRepoFullName` off a `local-project/git-state` result, or `null` for a

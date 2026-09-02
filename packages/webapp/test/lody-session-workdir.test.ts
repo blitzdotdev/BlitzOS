@@ -423,7 +423,7 @@ describe("the clone's own remote, on a repo-backed session", () => {
     const { repoFullName } = createSessionProjectDefaults({ ...PLANE_ENDPOINTS, fetchImpl }, "m-1");
 
     expect(await repoFullName(WORKSPACE_ID, CLONE_PROJECT_ID)).toEqual({ answered: false });
-    const answered = { answered: true, repoFullName: CLONE_REPO_FULL_NAME };
+    const answered = { answered: true, repoFullName: CLONE_REPO_FULL_NAME, git: true };
     expect(await repoFullName(WORKSPACE_ID, CLONE_PROJECT_ID)).toEqual(answered);
     expect(await repoFullName(WORKSPACE_ID, CLONE_PROJECT_ID)).toEqual(answered);
     expect(calls).toHaveLength(2);

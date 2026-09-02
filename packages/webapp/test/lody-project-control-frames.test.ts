@@ -17,14 +17,17 @@
 import type { JsonObject } from "@blitzos/schema";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createStore } from "jotai";
 import { describe, expect, it } from "vitest";
 import { LocalProjectControlRequestSchema } from "@lody/shared/message-schemas";
 import { createLodyLocalBridge } from "../src/lody/local-bridge.js";
 import {
+  publishBoxReposAsWorkspaceRepos,
   readLocalProjectRepoFullName,
   registerWorkspaceRepositories,
 } from "../src/lody/local-projects.js";
 import { sendProjectControl } from "../src/lody/rpc-client.js";
+import type { LodyWorkspaceRuntime } from "../src/lody/runtime.js";
 import { repoRoot } from "./lody-daemon-harness.js";
 
 const CORPUS = join(repoRoot(), "packages/schema/fixtures/lody-project-registration");
@@ -203,7 +206,7 @@ describe("local-project control frames", () => {
       "local-project-5c929c9ed93542aaa69bc27e",
     );
 
-    expect(lookup).toEqual({ answered: true, repoFullName: "blitzdotdev/wt-probe" });
+    expect(lookup).toEqual({ answered: true, repoFullName: "blitzdotdev/wt-probe", git: true });
     expect(sent[0]).toEqual({
       type: "local-project/git-state",
       machineId: MACHINE_ID,
@@ -311,5 +314,135 @@ describe("local-project control frames", () => {
       result: { platform: "linux", pathSeparator: "/", homeDir: "/workspace" },
     });
     bridge.dispose();
+  });
+});
+
+/**
+ * The publish sweep's second answer: the git probe that gates the worktree
+ * workdir default (`workdir-default.ts` §1). The landing greys its send button
+ * when a local project in worktree mode cannot load git state, so the seed must
+ * only ever land on a box this sweep verified — every project answered
+ * `git-state` and at least one is a git repository.
+ */
+describe("the publish sweep's git probe", () => {
+  // SAFETY: `publishBoxReposAsWorkspaceRepos` reads exactly `workspaceId` off
+  // the runtime; the vendor shape is unreachable from it, so a call that grew
+  // another member would fail here first.
+  const runtime = { workspaceId: WORKSPACE_ID } as unknown as LodyWorkspaceRuntime;
+
+  it("answers verified for a box whose one project is a git repository", async () => {
+    const { fetchImpl, sent } = stubFetchSequence([
+      fixture("response/list-one-project.json"),
+      fixture("response/git-state-github-remote.json"),
+    ]);
+
+    const publication = await publishBoxReposAsWorkspaceRepos(
+      createStore(),
+      endpoints(fetchImpl),
+      runtime,
+      MACHINE_ID,
+    );
+
+    expect(publication.gitProbe).toBe("verified");
+    expect(publication.publishedFullNames).toEqual(["blitzdotdev/wt-probe"]);
+    // Both requests the sweep sent are Lody's own union — the probe added no
+    // second wire shape.
+    for (const request of sent) {
+      expect(LocalProjectControlRequestSchema.safeParse(request).success).toBe(true);
+    }
+  });
+
+  it("answers no-git-project when every project is a plain directory", async () => {
+    // The `/workspace` root project `workdir-default.ts` registers for plain
+    // chats is exactly this shape: registered, answering, and not a repository.
+    const { fetchImpl } = stubFetchSequence([
+      fixture("response/list-one-project.json"),
+      { ...fixture("response/git-state-github-remote.json"), result: { git: false } },
+    ]);
+
+    const publication = await publishBoxReposAsWorkspaceRepos(
+      createStore(),
+      endpoints(fetchImpl),
+      runtime,
+      MACHINE_ID,
+    );
+
+    expect(publication.gitProbe).toBe("no-git-project");
+    expect(publication.publishedFullNames).toEqual([]);
+  });
+
+  it("answers no-git-project for a fresh box with no projects at all", async () => {
+    const { fetchImpl } = stubFetchSequence([fixture("response/list-empty.json")]);
+
+    const publication = await publishBoxReposAsWorkspaceRepos(
+      createStore(),
+      endpoints(fetchImpl),
+      runtime,
+      MACHINE_ID,
+    );
+
+    expect(publication.gitProbe).toBe("no-git-project");
+  });
+
+  it("answers unanswered when a git-state probe is refused, even after a verified one", async () => {
+    // One refusal poisons the verdict: the landing may auto-select exactly the
+    // project that refused, so partial health is not health.
+    const twoProjects = {
+      ok: true,
+      type: "local-project/list",
+      result: {
+        workspaces: [
+          {
+            workspaceId: WORKSPACE_ID,
+            workspaceName: "Lody",
+            projects: [
+              {
+                localProjectId: "local-project-5c929c9ed93542aaa69bc27e",
+                name: "wt-probe",
+                rootPath: "/tmp/lp7/ws/wt-probe",
+              },
+              {
+                localProjectId: "local-project-0000000000000000deadbeef",
+                name: "refuses",
+                rootPath: "/tmp/lp7/ws/refuses",
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const { fetchImpl } = stubFetchSequence([
+      twoProjects,
+      fixture("response/git-state-github-remote.json"),
+      { ok: false, type: "local-project/git-state", error: "internal_error", message: "" },
+    ]);
+
+    const publication = await publishBoxReposAsWorkspaceRepos(
+      createStore(),
+      endpoints(fetchImpl),
+      runtime,
+      MACHINE_ID,
+    );
+
+    expect(publication.gitProbe).toBe("unanswered");
+    // The clone that DID answer is still published — the probe verdict guards
+    // the workdir seed, not the workspace-repos cache.
+    expect(publication.publishedFullNames).toEqual(["blitzdotdev/wt-probe"]);
+  });
+
+  it("answers unanswered when the project list itself is refused", async () => {
+    const { fetchImpl } = stubFetchSequence([
+      { ok: false, type: "local-project/list", error: "internal_error", message: "" },
+    ]);
+
+    const publication = await publishBoxReposAsWorkspaceRepos(
+      createStore(),
+      endpoints(fetchImpl),
+      runtime,
+      MACHINE_ID,
+    );
+
+    expect(publication.gitProbe).toBe("unanswered");
+    expect(publication.publishedFullNames).toEqual([]);
   });
 });

@@ -19,7 +19,6 @@ import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { Toaster } from "@lody/components/ui/sonner";
 import { initLodyI18n } from "./i18n.js";
 import { BlitzThemedLodyTree, adoptShellTheme } from "./shell-theme.js";
-import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
 
 /**
  * THE TOASTER IS PART OF THE STACK, and leaving it out cost the surface every
@@ -65,9 +64,11 @@ export const LODY_TOASTER_HOST_CLASS = "lody-surface__toaster";
 export function LodySurfaceProviders(props: { children: ReactNode }) {
   const i18n = useMemo(() => initLodyI18n(), []);
   const theme = useMemo(() => adoptShellTheme(), []);
-  // Beside the theme adoption for the same reason: both write a key their own
-  // code reads on first render, so both have to happen before that render.
-  useMemo(() => seedWorktreeWorkdirDefault(), []);
+  // The worktree workdir default is NOT seeded here any more. It used to be,
+  // "before their first render" — but an unconditional seed armed the landing's
+  // one greyed-send trap on any box whose git-state probe fails, so the seed
+  // now waits for the agent-config bootstrap's own sweep to verify the box
+  // first (`agent-config-gate.tsx`, `workdir-default.ts` §1).
   return (
     <I18nextProvider i18n={i18n}>
       <BlitzThemedLodyTree theme={theme}>
