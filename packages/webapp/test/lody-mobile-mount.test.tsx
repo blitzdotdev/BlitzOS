@@ -335,7 +335,7 @@ describe("the mount is wired the way BLITZ-PATCHES.md and the scope record say",
     // The host tab: listed, selectable, and mounted on the mobile branch.
     expect(detail).toContain("for (const v of surfaceTabItems)");
     expect(detail).toContain("onSurfaceTabSelect?.(id)");
-    expect(detail).toContain("activeMobileSurfaceTab === null");
+    expect(detail).toContain("!hasActiveViewerTab && !hasActiveSurfaceTab");
 
     const landing = readVendoredSource("components/chat/chat-landing.tsx");
     expect(landing).toContain("hideConnectionStatus ? undefined : mobileHomeConnectionUiState");

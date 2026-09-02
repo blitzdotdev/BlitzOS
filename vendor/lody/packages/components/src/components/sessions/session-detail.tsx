@@ -4294,10 +4294,8 @@ const SessionDetail = ({
   /* The mobile counterpart of `activeChatSurfaceId`: an active HOST tab covers
      the conversation on a phone exactly as it does on a desktop. The desktop
      rule lives below the mobile return, so it cannot be shared. */
-  const activeMobileSurfaceTab =
-    activeSurfaceTabId === null
-      ? null
-      : (surfaceTabs.find((tab) => tab.id === activeSurfaceTabId) ?? null);
+  const hasActiveSurfaceTab =
+    activeSurfaceTabId !== null && surfaceTabs.some((tab) => tab.id === activeSurfaceTabId);
 
   /* ── Mobile tab-switcher sheet (replaces the mobile SessionTabBar) ──
      All hooks live here (above the `if (isMobile)` early return) and after
@@ -5177,9 +5175,7 @@ const SessionDetail = ({
           {/* Keep inactive tabs mounted for fast switching; only the active tab holds room sync. */}
           {[activeSession, ...visibleChildSessions].map((tabSession) => {
             const isActive =
-              !hasActiveViewerTab &&
-              activeMobileSurfaceTab === null &&
-              tabSession.id === activeTabSessionId;
+              !hasActiveViewerTab && !hasActiveSurfaceTab && tabSession.id === activeTabSessionId;
             const pendingForkSourceId = pendingForkSourceByTargetSessionId.get(tabSession.id);
             const externalHistoryRefresh = externalHistoryRefreshBySessionId[tabSession.id];
             const externalHistoryProviderLabel = externalHistoryRefresh
@@ -5258,9 +5254,7 @@ const SessionDetail = ({
           })}
           {draftTabs.map((draft) => {
             const isActive =
-              !hasActiveViewerTab &&
-              activeMobileSurfaceTab === null &&
-              draft.id === activeTabSessionId;
+              !hasActiveViewerTab && !hasActiveSurfaceTab && draft.id === activeTabSessionId;
             return (
               <div
                 key={draft.id}
