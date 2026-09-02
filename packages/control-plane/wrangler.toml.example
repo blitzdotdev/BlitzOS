@@ -120,6 +120,7 @@ not_found_handling = "single-page-application"
 # Workers pool.
 run_worker_first = [
   "/",
+  "/agent/*",
   "/agent-rules",
   "/agent-rules/*",
   "/api/*",

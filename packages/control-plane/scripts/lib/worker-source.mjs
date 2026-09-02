@@ -27,7 +27,8 @@ export const CORE_MANIFEST = Object.freeze([
   "core/runtime.ts",
   "core/db.ts",
   "core/blobs.ts",
-  "core/wire.ts", "core/wire-machines.ts", "core/wire-sharing.ts",
+  "core/wire.ts", "core/wire-machines.ts", "core/wire-org-credentials.ts", "core/wire-sharing.ts",
+  "core/agent-routes.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-config.ts",
@@ -36,7 +37,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/crypto.ts",
   "core/entitlements.ts",
   "core/environment.ts",
-  "core/connections/types.ts", "core/connections/pull-routes.ts", "core/connections/pull-wire.ts", "core/connections/root-crypto.ts", "core/connections/manifest.ts", "core/connections/leases.ts",
+  "core/connections/types.ts", "core/connections/root-crypto.ts", "core/connections/manifest.ts", "core/connections/leases.ts",
   "core/connections/catalog/types.ts", "core/connections/catalog/github.ts", "core/connections/catalog/google-workspace.ts", "core/connections/catalog/linear.ts", "core/connections/catalog/discord.ts", "core/connections/catalog/youtrack.ts", "core/connections/catalog/index.ts",
   "core/connections/user-grants.ts", "core/connections/minters/static.ts", "core/connections/minters/oauth.ts", "core/connections/minters/grant.ts",
   "core/connections/registry.ts", "core/connections/requests.ts", "core/connections/health.ts", "core/connections/canary.ts", "core/connections/connect.ts", "core/connections/mint.ts", "core/connections/proxy.ts", "core/connections/github-repo-check.ts", "core/connections/github-repositories.ts",
@@ -50,6 +51,8 @@ export const CORE_MANIFEST = Object.freeze([
   "core/oauth-state.ts",
   "core/oauth.ts",
   "core/operator-tokens.ts",
+  "core/org-credential-import.ts",
+  "core/org-credentials.ts",
   "core/principals.ts",
   "core/recipes.ts",
   "core/registry.ts",
@@ -62,8 +65,8 @@ export const CORE_MANIFEST = Object.freeze([
   "core/preview.ts",
   "core/webapp-state.ts", "core/webapp-proxy.ts", "core/webapp-surface.ts", "core/webapp-tickets.ts",
   "core/template-repos.ts",
-  "core/workspace-access.ts", "core/workspace-credential-import.ts",
-  "core/workspace-credentials.ts", "core/workspace-drain.ts", "core/workspace-members.ts",
+  "core/workspace-access.ts",
+  "core/workspace-drain.ts", "core/workspace-members.ts",
   "core/workspace-names.ts", "core/workspace-projection.ts", "core/workspace-records.ts",
   "core/workspace-settings.ts",
   "core/workspace-tunnels.ts",
@@ -204,9 +207,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
     },
     { name: "agent_rules", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "content", type: "text", sqlType: "text", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["org_id", "name"] }], extensions: [DENY_ALL_RULES] },
     {
-      // Configuration only. Every VM column moved to `machines`, the sharing
-      // ACL to `workspace_members`, and the plaintext environment to
-      // `workspace_credentials` (plans/MEMBER-MACHINES.md §1).
+      // Configuration only. Every VM column moved to `machines` and the
+      // sharing ACL to `workspace_members` (plans/MEMBER-MACHINES.md §1);
+      // static secrets are org-scoped (plans/ORG-CREDENTIALS.md).
       name: "workspaces",
       fields: [
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
@@ -232,7 +235,12 @@ export const BLITZDEV_CONFIG = Object.freeze({
     // change destroys the VM and keeps the disk.
     { name: "machines", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('provisioning', 'running', 'stopped', 'error', 'destroying', 'destroyed')" }, { name: "machine_type_id", type: "text", sqlType: "text", notNull: true }, { name: "compute_credential_source", type: "text", sqlType: "text", notNull: true, default: { l: "deployment" }, check: "compute_credential_source IN ('org', 'deployment')" }, { name: "vm_id", type: "text", sqlType: "text" }, { name: "volume_id", type: "text", sqlType: "text" }, { name: "ssh_host", type: "text", sqlType: "text" }, { name: "ssh_port", type: "integer", sqlType: "integer" }, { name: "ssh_user", type: "text", sqlType: "text" }, { name: "ssh_host_public_key", type: "text", sqlType: "text" }, { name: "phone_home_hash", type: "text", sqlType: "text" }, { name: "phone_home_used", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "phone_home_used IN (0, 1)" }, { name: "tunnel_id", type: "text", sqlType: "text" }, { name: "tunnel_hostname", type: "text", sqlType: "text" }, { name: "dns_record_id", type: "text", sqlType: "text" }, { name: "broker_box_id", type: "text", sqlType: "text", foreignKey: { table: "broker_boxes", column: "box_id", onDelete: "SET NULL" } }, { name: "box_update_requested", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "box_update_requested IN (0, 1)" }, { name: "box_image_reported", type: "text", sqlType: "text" }, { name: "disk_used_percent", type: "integer", sqlType: "integer", check: "disk_used_percent IS NULL OR (disk_used_percent BETWEEN 0 AND 100)" }, { name: "disk_reported_at", type: "integer", sqlType: "integer" }, { name: "created_by_plane", type: "text", sqlType: "text", notNull: true, default: { l: "session" }, check: "created_by_plane IN ('session', 'machine')" }, { name: "error", type: "text", sqlType: "text" }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "membership_id"] }, { name: "workspace", fields: ["workspace_id", "created_at"] }, { name: "state", fields: ["state", "updated_at"] }], extensions: [DENY_ALL_RULES] },
     { name: "workspace_members", fields: [{ name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('admin', 'member', 'viewer')" }, { name: "added_by_membership_id", type: "text", sqlType: "text", foreignKey: { table: "memberships", column: "id" } }, { name: "added_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "membership_id"] }, { name: "membership", fields: ["membership_id", "workspace_id"] }], extensions: [DENY_ALL_RULES] },
-    { name: "workspace_credentials", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "label", type: "text", sqlType: "text" }, { name: "ciphertext", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }, { name: "revoked_at", type: "integer", sqlType: "integer" }, { name: "comment", type: "text", sqlType: "text" }], indexes: [{ name: "workspace", fields: ["workspace_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
+    // Sealed org-scoped statics (plans/ORG-CREDENTIALS.md §5). The live-name
+    // partial unique index and the grant-subject expression index live in the
+    // D1 migrations; teenybase declares only the plain lookup indexes here,
+    // exactly as workspace_credentials did before it.
+    { name: "org_credentials", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "comment", type: "text", sqlType: "text" }, { name: "ciphertext", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }, { name: "revoked_at", type: "integer", sqlType: "integer" }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
+    { name: "org_credential_grants", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "credential_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "org_credentials", column: "id" } }, { name: "subject_kind", type: "text", sqlType: "text", notNull: true, check: "subject_kind IN ('org','workspace','membership')" }, { name: "subject_id", type: "text", sqlType: "text" }, { name: "access", type: "text", sqlType: "text", notNull: true, check: "access IN ('read','write')" }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "credential", fields: ["credential_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
     {
       name: "invites",
       fields: [

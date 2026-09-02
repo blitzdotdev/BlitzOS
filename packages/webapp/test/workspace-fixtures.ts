@@ -5,7 +5,7 @@ import type { CloudWorkspaceModel } from '../src/workspace-store.js';
  * A complete `WorkspaceView`, for the suites that care about three fields and
  * have to state the rest.
  *
- * The member-machines fields (`orgId` … `credentials`) are required on the
+ * The member-machines fields (`orgId` … `members`) are required on the
  * wire, so without this every fixture would restate the same seven defaults
  * and drift from the next field the view grows.
  */
@@ -34,7 +34,6 @@ export function workspaceViewFixture(overrides: Partial<WorkspaceView> = {}): Wo
     autoProvision: true,
     myRole: 'admin',
     members: [],
-    credentials: [],
     ...overrides,
   };
 }
@@ -63,7 +62,6 @@ export function workspaceModelFixture(
     updatedAt: 1_700_000_005_000,
     connections: [],
     members: [],
-    credentials: [],
     defaultMachineTypeId: 'cx23@fsn1',
     autoProvision: true,
     agentRuleId: null,

@@ -9,15 +9,12 @@ import type {
   UpdateWorkspaceRequest,
   ListAgentRulesResponse,
   MachineResponse,
-  PutWorkspaceCredentialRequest,
   SetMachineTypeRequest,
   UpdateWorkspaceMemberRequest,
   SessionShareView,
   WorkspaceMemberResponse,
   PutAgentRuleRequest,
   PutAgentRuleResponse,
-  ImportWorkspaceCredentialsRequest,
-  ImportWorkspaceCredentialsResponse,
   MintWorkspaceConnectionResponse,
   ListCredentialEventsResponse,
   CredentialEventView,
@@ -219,16 +216,9 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
    * Another location is refused until the volume move lands (§5). */
   setMachineType(machineId: string, input: SetMachineTypeRequest): Promise<MachineResponse>;
   destroyMachine(machineId: string): Promise<MachineResponse>;
-  /** Add and rotate are the same write: one live row per (workspace, name). */
-  putWorkspaceCredential(
-    workspaceId: string,
-    input: PutWorkspaceCredentialRequest,
-  ): Promise<void>;
-  importWorkspaceCredentials(
-    workspaceId: string,
-    input: ImportWorkspaceCredentialsRequest,
-  ): Promise<ImportWorkspaceCredentialsResponse>;
-  revokeWorkspaceCredential(workspaceId: string, name: string): Promise<void>;
+  // TODO(org-credentials-ui): org credential client methods
+  // (GET/PUT /orgs/:id/credentials*) land with the new panel
+  // (plans/ORG-CREDENTIALS.md §9). The workspace credential store is deleted.
   getGlobalWebAppState(): Promise<WebAppStateResponse<GlobalWebAppStateV1>>;
   putGlobalWebAppState(
     doc: GlobalWebAppStateV1,
@@ -693,18 +683,6 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     ),
     destroyMachine: (machineId) => request<MachineResponse>(
       `/machines/${encodeURIComponent(machineId)}`,
-      { method: "DELETE" },
-    ),
-    putWorkspaceCredential: (workspaceId, input) => request<void>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
-      { method: "PUT", headers: jsonHeaders, body: JSON.stringify(input) },
-    ),
-    importWorkspaceCredentials: (workspaceId, input) => request<ImportWorkspaceCredentialsResponse>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/credentials/dotenv`,
-      { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) },
-    ),
-    revokeWorkspaceCredential: (workspaceId, name) => request<void>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/credentials/${encodeURIComponent(name)}`,
       { method: "DELETE" },
     ),
     getGlobalWebAppState: () =>

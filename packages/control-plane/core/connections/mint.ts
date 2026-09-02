@@ -26,7 +26,6 @@ import { mintFromGrant } from "./minters/grant.js";
 import { refreshedAccessToken } from "./minters/oauth.js";
 import { openRoot } from "./root-crypto.js";
 import { addProxyRoute } from "./proxy.js";
-import { addBoxConnectionRoutes } from "./pull-routes.js";
 import { addRequestRoutes, fileRequest } from "./requests.js";
 import {
   addConnectionRoutes,
@@ -481,10 +480,9 @@ export function addCredentialRoutes(
   addRequestRoutes(router, runtimeFactory, requirePrincipal);
   addProxyRoute(router, runtimeFactory);
 
-  // The guest side of the credential plane: what an agent may ask for, and how
-  // it asks. Split into its own module so this one stays under the 700-line
-  // warn (house rule: split on touch).
-  addBoxConnectionRoutes(router, runtimeFactory, mintOne);
+  // The guest side of the credential plane lives in `core/agent-routes.ts`
+  // (the `/agent/*` plane, plans/ORG-CREDENTIALS.md §4), which imports
+  // `mintOne` for its connection tier.
 
   /** Connect, from the webApp. It writes the provider into this workspace's
    * manifest, then mints once so the person learns straight away whether the

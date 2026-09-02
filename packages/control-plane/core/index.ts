@@ -61,10 +61,6 @@ export type { MachineRow, WorkspaceRow } from "./workspace-records.js";
 export { machineView, workspaceView } from "./workspace-records.js";
 export { projectWorkspace, projectWorkspaces } from "./workspace-projection.js";
 export {
-  putWorkspaceCredential,
-  workspaceCredentialValue,
-} from "./workspace-credentials.js";
-export {
   requireWorkspaceWebAppAuth,
   WEBAPP_TICKET_TTL_SECONDS,
   WorkspaceWebAppAuth,

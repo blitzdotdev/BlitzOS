@@ -1,11 +1,11 @@
 import type {
+  AgentCredentialsResponse,
+  AgentCredentialTokenResponse,
   ConnectionView,
   CredentialLeaseView,
   ListCatalogResponse,
   ListProviderHealthResponse,
   ListUserGrantsResponse,
-  MintResult,
-  WorkspaceConnectionsResponse,
   WorkspaceView,
 } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
@@ -138,33 +138,33 @@ async function readyWorkspace(
   return { workspace, ...(await enrolledBox(app, providers, workspace.id)) };
 }
 
-/** One pull, from inside a box. The agent asks for one connection at the
- * moment it needs it, and the box names no scopes. */
+/** One pull, from inside a box, over the agent plane. The agent asks for one
+ * name at the moment it needs it, and names no scopes. */
 async function mint(
   app: Harness["app"],
   accessToken: string,
   name: string,
 ): Promise<Response> {
-  return appRequest(app, `/workspaces/self/connections/${name}/token`, {
+  return appRequest(app, `/agent/credentials/${name}/token`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 }
 
-/** What this workspace may pull, read live. */
+/** What this workspace may pull, read live off the agent list. */
 async function listBoxConnections(
   app: Harness["app"],
   accessToken: string,
 ): Promise<string[]> {
-  const response = await appRequest(app, "/workspaces/self/connections", {
+  const response = await appRequest(app, "/agent/credentials", {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   expect(response.status).toBe(200);
-  const { connections } = await response.json<WorkspaceConnectionsResponse>();
-  return connections;
+  const { credentials } = await response.json<AgentCredentialsResponse>();
+  return credentials.map(({ name }) => name);
 }
 
-function environmentValue(result: MintResult, name: string): string | null {
+function environmentValue(result: AgentCredentialTokenResponse, name: string): string | null {
   return result.env.find((entry) => entry.name === name)?.value ?? null;
 }
 
@@ -275,9 +275,9 @@ describe("connections: per-user grants", () => {
 
     const response = await mint(app, box.access_token, "linear");
     expect(response.status).toBe(200);
-    const result = await response.json<MintResult>();
-    expect(result.connection).toBe("linear");
-    expect(result.mode).toBe("proxy");
+    const result = await response.json<AgentCredentialTokenResponse>();
+    expect(result.name).toBe("linear");
+    expect(result.scope).toBe("connection");
 
     // Proxy custody: the box gets a lease token, never the personal key.
     expect(result.token).not.toBe(LINEAR_KEY);
@@ -448,7 +448,9 @@ describe("connections: per-user grants", () => {
     expect((await mint(app, box.access_token, "linear")).status).toBe(200);
     const githubPull = await mint(app, box.access_token, "github");
     expect(githubPull.status).toBe(200);
-    expect((await githubPull.json<MintResult>()).mode).toBe("inject");
+    // Inject custody: the raw personal token crosses, not a lease handle.
+    expect((await githubPull.json<AgentCredentialTokenResponse>()).token)
+      .toBe("github_pat_test-only-key");
     expect((await mint(app, box.access_token, "linear")).status).toBe(200);
 
     const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
@@ -494,7 +496,8 @@ describe("connections: per-user grants", () => {
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
     const { box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
-    const result = await (await mint(app, box.access_token, "linear")).json<MintResult>();
+    const result = await (await mint(app, box.access_token, "linear"))
+      .json<AgentCredentialTokenResponse>();
     const leaseToken = environmentValue(result, "LINEAR_API_KEY") ?? "";
     const proxyUrl = environmentValue(result, "LINEAR_API_URL") ?? "";
 
@@ -790,7 +793,7 @@ describe("connections: connect flow and canary", () => {
     const refreshed = await mint(app, box.access_token, "linear");
     expect(refreshed.status).toBe(200);
     expect(grantTypes).toEqual(["refresh_token"]);
-    const result = await refreshed.json<MintResult>();
+    const result = await refreshed.json<AgentCredentialTokenResponse>();
     expect(result.expiresAt).toBeGreaterThan(Date.now());
 
     // The lease carries the rotated expiry, not the one the pre-refresh row
@@ -1341,7 +1344,7 @@ async function putProxyConnection(
   expect(response.status).toBe(204);
 }
 
-function proxyHandle(result: MintResult): {
+function proxyHandle(result: AgentCredentialTokenResponse): {
   leaseId: string;
   proxyUrl: string;
   token: string;
@@ -1405,8 +1408,9 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const response = await mint(app, box.access_token, "hetzner-prod");
 
     expect(response.status).toBe(200);
-    const result = await response.json<MintResult>();
-    expect(result.mode).toBe("inject");
+    const result = await response.json<AgentCredentialTokenResponse>();
+    // cp custody is an inject: the org root itself crosses, asserted below.
+    expect(result.scope).toBe("connection");
     expect(result.expiresAt).toBeGreaterThan(Date.now() + 59 * 60 * 1000);
     // cp custody hands the org root itself over; every declared name carries it.
     expect(result.token).toBe(ROOT);
@@ -1481,9 +1485,9 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const minted = await mint(app, box.access_token, "static-proxy");
 
     expect(minted.status).toBe(200);
-    const result = await minted.json<MintResult>();
+    const result = await minted.json<AgentCredentialTokenResponse>();
     const handle = proxyHandle(result);
-    expect(result).toMatchObject({ connection: "static-proxy", mode: "proxy" });
+    expect(result).toMatchObject({ name: "static-proxy", scope: "connection" });
     expect(result.expiresAt).toBeGreaterThan(Date.now() + 59 * 60 * 1000);
     expect(handle.proxyUrl).toBe(`https://cp.example/proxy/${handle.leaseId}`);
     expect(handle.token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
@@ -1565,7 +1569,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       "x-key-proxy": {},
     });
     const minted = await mint(app, box.access_token, "x-key-proxy");
-    const handle = proxyHandle(await minted.json<MintResult>());
+    const handle = proxyHandle(await minted.json<AgentCredentialTokenResponse>());
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       async (input, init) => {
         expect(String(input)).toBe("https://keys.example/v2/check?raw=1");
@@ -1595,7 +1599,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       "url-reject-proxy": {},
     });
     const minted = await mint(app, box.access_token, "url-reject-proxy");
-    const handle = proxyHandle(await minted.json<MintResult>());
+    const handle = proxyHandle(await minted.json<AgentCredentialTokenResponse>());
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("must not be reached"),
     );
@@ -1634,7 +1638,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       "named-401-proxy": {},
     });
     const minted = await mint(app, box.access_token, "named-401-proxy");
-    const handle = proxyHandle(await minted.json<MintResult>());
+    const handle = proxyHandle(await minted.json<AgentCredentialTokenResponse>());
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("must not be reached"),
     );
@@ -1679,7 +1683,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       "dead-proxy": {},
     });
     const firstMint = await mint(app, box.access_token, "dead-proxy");
-    const revoked = proxyHandle(await firstMint.json<MintResult>());
+    const revoked = proxyHandle(await firstMint.json<AgentCredentialTokenResponse>());
     expect(
       (
         await appRequest(app, `/leases/${revoked.leaseId}`, {
@@ -1696,7 +1700,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     ).toEqual({ state: "revoked", token_hash: null });
 
     const secondMint = await mint(app, box.access_token, "dead-proxy");
-    const expired = proxyHandle(await secondMint.json<MintResult>());
+    const expired = proxyHandle(await secondMint.json<AgentCredentialTokenResponse>());
     await env.DB
       .prepare("UPDATE credential_leases SET expires_at = ?1 WHERE id = ?2")
       .bind(Date.now() - 1, expired.leaseId)
@@ -1854,9 +1858,9 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
 
     const retried = await mint(app, box.access_token, "hetzner-prod");
     expect(retried.status).toBe(200);
-    expect(await retried.json<MintResult>()).toMatchObject({
-      connection: "hetzner-prod",
-      mode: "inject",
+    expect(await retried.json<AgentCredentialTokenResponse>()).toMatchObject({
+      name: "hetzner-prod",
+      scope: "connection",
       env: [{ name: "HCLOUD_TOKEN", value: ROOT }],
     });
   });
@@ -2395,9 +2399,9 @@ describe("connections: admin-configured providers through templates", () => {
     expect(await listBoxConnections(app, box.access_token)).toEqual(["youtrack"]);
     const pulled = await mint(app, box.access_token, "youtrack");
     expect(pulled.status).toBe(200);
-    const result = await pulled.json<MintResult>();
-    expect(result.connection).toBe("youtrack");
-    expect(result.mode).toBe("proxy");
+    const result = await pulled.json<AgentCredentialTokenResponse>();
+    expect(result.name).toBe("youtrack");
+    expect(result.scope).toBe("connection");
 
     // The box holds a lease token and the proxy URL, never the permanent
     // token: that pair is the whole delivery.
@@ -2469,7 +2473,7 @@ describe("connections: admin-configured providers through templates", () => {
     });
     const pulled = await mint(app, box.access_token, "youtrack");
     expect(pulled.status).toBe(200);
-    const result = await pulled.json<MintResult>();
+    const result = await pulled.json<AgentCredentialTokenResponse>();
     const leaseToken = environmentValue(result, "YOUTRACK_TOKEN");
     const proxyUrl = environmentValue(result, "YOUTRACK_BASE_URL");
     const leaseId = new URL(proxyUrl ?? "").pathname.split("/").at(-1) ?? "";
@@ -2516,10 +2520,10 @@ describe("connections: admin-configured providers through templates", () => {
 
     const minted = await mint(app, box.access_token, "discord");
     expect(minted.status).toBe(200);
-    const result = await minted.json<MintResult>();
+    const result = await minted.json<AgentCredentialTokenResponse>();
     expect(result).toMatchObject({
-      connection: "discord",
-      mode: "inject",
+      name: "discord",
+      scope: "connection",
       token: DISCORD_ROOT,
       env: [
         { name: "DISCORD_BOT_TOKEN", value: DISCORD_ROOT },

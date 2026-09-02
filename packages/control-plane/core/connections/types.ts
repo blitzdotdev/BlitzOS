@@ -20,9 +20,10 @@ export interface ConnectionEnv {
   value: string;
 }
 
-/** What one pull answers with. The agent asks at the moment of use, so this
- * body is read once and never written to disk: `blitz-cred get` prints
- * `token`, and `blitz-cred env` prints `env`. */
+/** What one mint produces. The agent-plane token route
+ * (`POST /agent/credentials/:name/token`) wraps this into
+ * `AgentCredentialTokenResponse`; the session connect flow records it on a
+ * lease. It is read at the moment of use and never written to disk. */
 export interface MintResult {
   connection: string;
   mode: "inject" | "proxy";
@@ -31,28 +32,6 @@ export interface MintResult {
   env: ConnectionEnv[];
   header: TokenHeader;
   expiresAt: number;
-}
-
-/** The providers one workspace may pull. This is the workspace manifest, read
- * live: `blitz-cred list` prints one name per line. */
-export interface WorkspaceConnectionsResponse {
-  connections: string[];
-}
-
-/** One workspace credential as an agent sees it: the name to ask for, and
- * the comment that says what the key is for. No value — the token pull is
- * the only door to one. `comment` is absent rather than null on the wire,
- * so a line without one costs nothing. */
-export interface WorkspaceCredentialEntry {
-  name: string;
-  comment?: string;
-}
-
-/** The workspace credential store, names and comments only. `blitz-cred
- * list` merges this with the connection allow-list and prints a
- * credential's comment after a `#`. */
-export interface WorkspaceCredentialsResponse {
-  credentials: WorkspaceCredentialEntry[];
 }
 
 /** What a minter hands back. Everything beyond `MintResult` is control-plane

@@ -1,3 +1,4 @@
+import { addAgentRoutes } from "./agent-routes.js";
 import { addAgentRuleLibraryRoutes, addAgentRulesRoutes } from "./agent-rules.js";
 import { addBoxConfigRoutes } from "./box-config.js";
 import { addBoxImageRoutes } from "./box-images.js";
@@ -22,9 +23,8 @@ import { addSessionRoutes } from "./sessions.js";
 import { addVersionRoutes } from "./version.js";
 import { addVolumeRoutes } from "./volumes.js";
 import { addWebAppStateRoutes } from "./webapp-state.js";
-import { addBoxCredentialRoutes } from "./connections/pull-routes.js";
-import { addWorkspaceCredentialRoutes } from "./workspace-credentials.js";
-import { addWorkspaceCredentialImportRoutes } from "./workspace-credential-import.js";
+import { addOrgCredentialRoutes } from "./org-credentials.js";
+import { addOrgCredentialImportRoutes } from "./org-credential-import.js";
 import { addWorkspaceMemberRoutes } from "./workspace-members.js";
 import { addSessionShareRoutes } from "./session-shares.js";
 import { addWorkspaceSettingsRoutes } from "./workspace-settings.js";
@@ -123,14 +123,15 @@ export function installControlPlaneRoutes(
   // Box-authenticated too, and registered here for the same prefix reason: the
   // guest's own disk report (packages/schema/fixtures/machine-stats/).
   addMachineStatsRoutes(router, runtimeFactory);
-  // Registered before addWorkspaceRoutes: /workspaces/:id/members and
-  // /workspaces/:id/credentials are literal paths under the same prefix.
+  // Registered before addWorkspaceRoutes: /workspaces/:id/members is a
+  // literal path under the same prefix.
   addWorkspaceMemberRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  // Box-authenticated (/workspaces/self/credentials), registered ahead of the
-  // session credential routes so "self" never binds as their :id.
-  addBoxCredentialRoutes(router, runtimeFactory);
-  addWorkspaceCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  addWorkspaceCredentialImportRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // The agent plane (plans/ORG-CREDENTIALS.md §4): box-authenticated through
+  // boxCaller, under /agent/* — its own prefix, colliding with nothing.
+  addAgentRoutes(router, runtimeFactory);
+  // The org credential session plane (§7): /orgs/:id/credentials*.
+  addOrgCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addOrgCredentialImportRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Same reason: /workspaces/:id/repos is a literal path under the prefix
   // addWorkspaceRoutes registers its parameterised routes on.
   addWorkspaceSettingsRoutes(router, runtimeFactory, requireMembershipPrincipal);

@@ -1,16 +1,12 @@
-import { act, useCallback, useMemo, useState } from 'react';
+import { act } from 'react';
 import type {
-  ImportWorkspaceCredentialsRequest,
-  ImportWorkspaceCredentialsResponse,
   MachineState,
   MachineType,
   MachineView,
-  PutWorkspaceCredentialRequest,
-  WorkspaceCredentialView,
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../src/api.js';
-import { IMPORT_PREVIEW_DEBOUNCE_MS, WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
+import { WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
 import { SessionRail } from '../src/shell/SessionRail.js';
 import { machineActionsFor } from '../src/WorkspaceMembersEditor.js';
 import { describe, expect, it, vi } from 'vitest';
@@ -74,12 +70,6 @@ const workspace = workspaceModelFixture({
   serverName: 'details-test',
   title: 'Details test',
   members: [ada, grace],
-  credentials: [{
-    name: 'STRIPE_API_KEY',
-    label: 'billing',
-    comment: 'test-mode key, safe for CI',
-    createdAt: 1_700_000_000_000,
-  }],
 });
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -117,39 +107,6 @@ function dialog(overrides: Partial<Parameters<typeof WorkspaceDetailsDialog>[0]>
       {...overrides}
     />
   );
-}
-
-/** What a credential write can and cannot answer with: the routes report an
- * outcome, never the list, so the rows come from the workspace poll alone.
- * The harness plays that poll — `refreshWorkspaces` is the only way the rows
- * this store holds reach the dialog, so a dialog that never asks shows the
- * list it opened with, which is the reported bug. */
-function CredentialsHarness({
-  wire,
-  store,
-}: {
-  wire: ControlPlaneClient;
-  store: { rows: WorkspaceCredentialView[] };
-}) {
-  const [credentials, setCredentials] = useState<WorkspaceCredentialView[]>(store.rows);
-  const refreshWorkspaces = useCallback(() => { setCredentials([...store.rows]); }, [store]);
-  const model = useMemo(() => ({ ...workspace, credentials }), [credentials]);
-  return (
-    <WorkspaceDetailsDialog
-      client={wire}
-      workspace={model}
-      listMachineTypes={listMachineTypesStub}
-      refreshWorkspaces={refreshWorkspaces}
-      initialTab="credentials"
-      onClose={noop}
-      onClone={noop}
-      onDelete={noop}
-    />
-  );
-}
-
-function storedCredential(name: string): WorkspaceCredentialView {
-  return { name, label: null, comment: null, createdAt: 1_700_000_100_000 };
 }
 
 function typeInto(field: HTMLInputElement | HTMLTextAreaElement, text: string): void {
@@ -303,173 +260,8 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
-  it('lists credential names, never a value, and revokes one', async () => {
-    const revokeWorkspaceCredential = vi.fn().mockResolvedValue(undefined);
-    const view = await render(dialog({ client: client({ revokeWorkspaceCredential }) }));
-    await settle();
-    await act(async () => tab(view.container, 'Credentials')?.click());
-
-    expect(view.container.textContent).toContain('STRIPE_API_KEY');
-    // The comment outranks the label on the row: it says what the key is
-    // FOR, which is what a person picking one needs.
-    expect(view.container.textContent).toContain('test-mode key, safe for CI');
-    // Write-only: the add field exists, but nothing reads a value back.
-    const valueField = view.container.querySelector<HTMLInputElement>('[aria-label="Credential value"]');
-    expect(valueField?.type).toBe('password');
-    expect(valueField?.value).toBe('');
-
-    const revoke = view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Revoke STRIPE_API_KEY"]',
-    );
-    await act(async () => revoke?.click());
-    expect(revokeWorkspaceCredential).toHaveBeenCalledWith(workspace.id, 'STRIPE_API_KEY');
-    await view.unmount();
-  });
-
-  it('previews an env paste as a dry run, then imports the same text', async () => {
-    const importWorkspaceCredentials = vi.fn().mockResolvedValue({
-      results: [
-        { name: 'CF_TOKEN', line: 1, outcome: 'rotated' },
-        { name: 'NEW_KEY', line: 2, outcome: 'stored' },
-        {
-          name: 'GOOGLE_SA_JSON',
-          line: 3,
-          outcome: 'refused',
-          reason: 'value spans more than one line; base64-encode it first',
-        },
-      ],
-      linesRead: 3,
-    });
-    const view = await render(dialog({ client: client({ importWorkspaceCredentials }) }));
-    await settle();
-    await act(async () => tab(view.container, 'Credentials')?.click());
-
-    const text = 'CF_TOKEN=new\nNEW_KEY=x\nGOOGLE_SA_JSON="{\n';
-    const textarea = view.container.querySelector<HTMLTextAreaElement>('[aria-label="Env file text"]');
-    if (textarea === null) throw new Error('the credentials tab has no import textarea');
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
-        ?.set?.call(textarea, text);
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, IMPORT_PREVIEW_DEBOUNCE_MS + 50));
-    });
-
-    // The preview IS the import request with `dryRun` set, so the rows it
-    // shows are the outcomes the button will produce.
-    expect(importWorkspaceCredentials).toHaveBeenCalledWith(workspace.id, { text, dryRun: true });
-    expect(view.container.textContent).toContain('base64-encode it first');
-    const importButton = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent?.startsWith('Import'));
-    // Two keys will write: stored and rotated. The refused row never counts.
-    expect(importButton?.textContent).toBe('Import 2 keys');
-    expect(importButton?.disabled).toBe(false);
-
-    await act(async () => importButton?.click());
-    expect(importWorkspaceCredentials).toHaveBeenLastCalledWith(workspace.id, { text });
-    await settle();
-    expect(view.container.textContent).toContain('Imported');
-    await view.unmount();
-  });
-
-  it('shows a saved credential without waiting for the next poll tick', async () => {
-    const store = { rows: [...workspace.credentials] };
-    const putWorkspaceCredential = vi.fn(
-      async (_workspaceId: string, input: PutWorkspaceCredentialRequest) => {
-        // A rotation is this same write under a name the store already holds,
-        // so both add and rotate settle through this one path.
-        store.rows = [
-          ...store.rows.filter((row) => row.name !== input.name),
-          storedCredential(input.name),
-        ];
-      },
-    );
-    const view = await render(
-      <CredentialsHarness wire={client({ putWorkspaceCredential })} store={store} />,
-    );
-    await settle();
-
-    const field = (label: string) => {
-      const input = view.container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`);
-      if (input === null) throw new Error(`the credentials tab has no ${label} field`);
-      return input;
-    };
-    await act(async () => {
-      typeInto(field('Credential name'), 'DEPLOY_KEY');
-      typeInto(field('Credential value'), 'secret-value');
-    });
-    const save = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent === 'Save credential');
-    await act(async () => save?.click());
-    await settle();
-
-    expect(putWorkspaceCredential).toHaveBeenCalledWith(
-      workspace.id,
-      { name: 'DEPLOY_KEY', value: 'secret-value' },
-    );
-    // The row the write produced, on the list the member is looking at.
-    expect(view.container.textContent).toContain('DEPLOY_KEY');
-    await view.unmount();
-  });
-
-  it('drops a revoked credential row without waiting for the next poll tick', async () => {
-    const store = { rows: [...workspace.credentials] };
-    const revokeWorkspaceCredential = vi.fn(async (_workspaceId: string, name: string) => {
-      store.rows = store.rows.filter((row) => row.name !== name);
-    });
-    const view = await render(
-      <CredentialsHarness wire={client({ revokeWorkspaceCredential })} store={store} />,
-    );
-    await settle();
-
-    const revoke = view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Revoke STRIPE_API_KEY"]',
-    );
-    await act(async () => revoke?.click());
-    await settle();
-
-    expect(revokeWorkspaceCredential).toHaveBeenCalledWith(workspace.id, 'STRIPE_API_KEY');
-    expect(view.container.querySelector('button[aria-label="Revoke STRIPE_API_KEY"]')).toBeNull();
-    await view.unmount();
-  });
-
-  it('shows imported credentials at once, and asks for nothing after a dry run', async () => {
-    const store = { rows: [...workspace.credentials] };
-    const importWorkspaceCredentials = vi.fn(
-      async (
-        _workspaceId: string,
-        input: ImportWorkspaceCredentialsRequest,
-      ): Promise<ImportWorkspaceCredentialsResponse> => {
-        if (input.dryRun !== true) store.rows = [...store.rows, storedCredential('NEW_KEY')];
-        return { results: [{ name: 'NEW_KEY', line: 1, outcome: 'stored' }], linesRead: 1 };
-      },
-    );
-    const view = await render(
-      <CredentialsHarness wire={client({ importWorkspaceCredentials })} store={store} />,
-    );
-    await settle();
-
-    const textarea = view.container.querySelector<HTMLTextAreaElement>('[aria-label="Env file text"]');
-    if (textarea === null) throw new Error('the credentials tab has no import textarea');
-    await act(async () => typeInto(textarea, 'NEW_KEY=x\n'));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, IMPORT_PREVIEW_DEBOUNCE_MS + 50));
-    });
-    // The dry run wrote nothing, so the list still holds what it opened with.
-    expect(view.container.querySelector('.workspace-credential-rows')?.textContent)
-      .not.toContain('NEW_KEY');
-
-    const importButton = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent?.startsWith('Import'));
-    await act(async () => importButton?.click());
-    await settle();
-
-    expect(view.container.querySelector('.workspace-credential-rows')?.textContent)
-      .toContain('NEW_KEY');
-    await view.unmount();
-  });
-
+// TODO(org-credentials-ui): the Credentials tab returns as a filtered view
+// over org credentials (plans/ORG-CREDENTIALS.md §9); its tests come back with it.
   it('offers clone and delete from the footer, and names the default machine type', async () => {
     const onClone = vi.fn();
     const onDelete = vi.fn();
