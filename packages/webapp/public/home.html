@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>BlitzOS · Your company's AI operating system</title>
-<meta name="description" content="Company templates set the repos, credentials, data, and agent rules for every agent workspace. Free for one person. $100 per member, per month for a team.">
+<meta name="description" content="Give your team cloud computers where the agent is already set up: repos cloned, agent rules loaded, credentials scoped and short-lived.">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)">
 <link rel="preload" as="image" href="/workspace.png" fetchpriority="high">
@@ -40,7 +40,6 @@
   --ring:rgba(0,0,0,.045);       /* ring-black/[.045] */
   --ring-strong:rgba(0,0,0,.07);
   --line:rgba(0,0,0,.16);        /* graph strokes */
-  --divider:rgba(0,0,0,.06);
   --conn-ring:rgba(0,0,0,.08);
   --frame-ring:rgba(0,0,0,.1);
   --wash:rgba(0,0,0,.055);       /* button bg black/[.055] */
@@ -75,7 +74,6 @@
   --ring:rgba(255,255,255,.05);
   --ring-strong:rgba(255,255,255,.1);
   --line:rgba(255,255,255,.18);
-  --divider:rgba(255,255,255,.08);
   --conn-ring:rgba(255,255,255,.14);
   --frame-ring:rgba(255,255,255,.12);
   --wash:rgba(255,255,255,.07);
@@ -107,7 +105,6 @@
     --ring:rgba(255,255,255,.05);
     --ring-strong:rgba(255,255,255,.1);
     --line:rgba(255,255,255,.18);
-    --divider:rgba(255,255,255,.08);
     --conn-ring:rgba(255,255,255,.14);
     --frame-ring:rgba(255,255,255,.12);
     --wash:rgba(255,255,255,.07);
@@ -217,8 +214,11 @@ a{color:inherit}
 
 /* ---------- sections (atat rhythm, left-aligned) ---------- */
 section,footer{padding-left:var(--pad-x);padding-right:var(--pad-x)}
-/* perf: below-fold sections skip layout+paint until scrolled near */
-.sec,.closing,footer{content-visibility:auto;contain-intrinsic-size:auto 900px}
+/* perf: below-fold sections skip layout+paint until scrolled near. The
+   placeholder is 500px because no section is taller than 611px now that the
+   deep-dive mock cards are gone; 900px over-reserved and made the first scroll
+   jump. `auto` still swaps in the real height once a section has rendered. */
+.sec,.closing,footer{content-visibility:auto;contain-intrinsic-size:auto 500px}
 .hero{display:flex;flex-direction:column;align-items:flex-start;padding-top:150px;padding-bottom:40px}
 @media (min-width:768px){.hero{padding-top:194px;padding-bottom:60px}}
 .sec{display:flex;flex-direction:column;align-items:flex-start;gap:40px;padding-top:60px}
@@ -240,19 +240,7 @@ section,footer{padding-left:var(--pad-x);padding-right:var(--pad-x)}
 .card h3{font-size:17px;font-weight:500;color:var(--ink);letter-spacing:-.01em}
 .card p{margin-top:10px;font-size:15px;color:var(--supporting);text-wrap:pretty}
 
-/* ---------- terminal block ---------- */
-pre{
-  margin:0;overflow-x:auto;
-  font-family:var(--font-mono);font-size:12.5px;line-height:1.5;
-  color:var(--supporting);letter-spacing:0;
-}
-.term{
-  width:100%;background:var(--chip);border-radius:12px;
-  padding:18px 20px;box-shadow:0 30px 70px -34px rgba(0,0,0,.55),inset 0 0 0 1px rgba(255,255,255,.06);
-}
-.term pre{color:rgba(255,255,255,.62)}
-.term pre .ok{color:#7ad07a}
-.term pre .cmd{color:#fff;font-weight:500}
+/* ---------- inline code chip ---------- */
 .kbd{
   display:inline-block;padding:1px 7px;border-radius:6px;
   background:var(--chip);color:#fff;
@@ -274,11 +262,6 @@ pre{
 .feature:hover .glyph{transform:scale(1.15)}
 .feature p{font-size:clamp(15px,1.2vw,18px);color:var(--supporting);text-wrap:pretty}
 .feature p strong{color:var(--ink);font-weight:500}
-
-/* ---------- deep dive rows ---------- */
-.dive{display:grid;grid-template-columns:1fr;gap:28px;width:100%;align-items:start}
-@media (min-width:1024px){.dive{grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:48px}}
-.dive .copy{display:flex;flex-direction:column;gap:16px}
 
 /* ---------- laptop frame (atat screenshot treatment) ---------- */
 .frame-wrap{width:100%;margin-top:56px;background:var(--stage);border-radius:18px;box-shadow:inset 0 0 0 1px var(--ring);padding:clamp(16px,4vw,56px) clamp(16px,4vw,56px) 0}
@@ -303,16 +286,6 @@ pre{
 @media (min-width:768px){.screen{border-radius:12px 12px 0 0}}
 
 .frame-caption{margin-top:16px;padding-bottom:24px;font-size:13px;color:var(--supporting)}
-
-/* ---------- avatar stack (sharing mockcard) ---------- */
-.avatars{display:flex}
-.avatar{
-  width:16px;height:16px;border-radius:50%;border:1.5px solid var(--surface);
-  background:linear-gradient(135deg,#c7c7cc,#8e8e93);margin-left:-5px;
-}
-.avatar:first-child{margin-left:0}
-.avatar.a2{background:linear-gradient(135deg,#ffd6a8,#ff9f43)}
-.avatar.a3{background:linear-gradient(135deg,#a8d8ff,#4396ff)}
 
 /* ---------- real product screenshot inside the laptop frame ---------- */
 img.screen{
@@ -349,20 +322,6 @@ img.screen{
 .plan .btn{margin-top:auto;align-self:stretch}
 .plan li{display:flex;gap:10px;font-size:14px;color:var(--supporting);text-wrap:pretty}
 .plan li::before{content:"\2713";color:var(--ok);font-size:12px;line-height:1.45;flex:none}
-
-/* ---------- small mock cards in deep dives ---------- */
-.mockcard{
-  width:100%;background:var(--surface);border-radius:14px;
-  box-shadow:0 18px 44px -24px rgba(0,0,0,.35),inset 0 0 0 1px var(--ring-strong);
-  padding:16px 18px;
-}
-.mockcard .row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--divider);font-size:13px}
-.mockcard .row:last-child{border-bottom:0}
-.mockcard .row .name{display:flex;align-items:center;gap:9px;color:var(--ink);font-weight:500;min-width:0}
-.mockcard .row .state{font-size:11px;color:var(--supporting);white-space:nowrap}
-.mockcard .row .state.on{color:var(--ok)}
-.mockcard .row .state.off{color:var(--faint)}
-.tag{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:7px;background:var(--wash);font-size:11px}
 
 /* ---------- footer ---------- */
 footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding-top:60px;padding-bottom:120px}
@@ -411,9 +370,9 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
       <span class="notch" aria-hidden="true"></span>
       <img class="screen" src="/workspace.png" width="3022" height="1600"
            fetchpriority="high" decoding="async"
-           alt="A BlitzOS workspace in the browser: templates and drive in the sidebar, a Claude agent session in the middle, and a file browser on the right.">
+           alt="A BlitzOS workspace in the browser: the workspace list in the sidebar, a Claude agent session in the middle, and a file browser on the right.">
     </div>
-    <p class="frame-caption">A BlitzOS workspace: agent terminal, chat, files, and connections, in the browser.</p>
+    <p class="frame-caption">A BlitzOS workspace: agent session, files, teenyapps, and connections, in the browser.</p>
   </div>
 </section>
 
@@ -428,80 +387,31 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
     </div>
     <div class="card">
       <h3>Ship setups to everyone</h3>
-      <p>Turn a working setup into a company template. Teammates create workspaces from it and inherit the same agent, rules, repos, and data.</p>
+      <p>Get one workspace right. Invite the team, and every member gets their own machine with the same agent, rules, and repos.</p>
     </div>
     <div class="card">
       <h3>Keep control of access</h3>
-      <p>Each template sets what its workspaces can reach. Credentials are scoped to the workspace and expire.</p>
+      <p>Each workspace sets the providers its agents may reach. Tokens are minted on request against that list, and they expire.</p>
     </div>
   </div>
 </section>
 
-<!-- ======================= TEMPLATES ======================= -->
-<section class="sec" id="templates" aria-labelledby="tpl-title">
-  <div class="dive">
-    <div class="copy">
-      <h2 class="h-section" id="tpl-title">Workspace templates <span class="em">shared with the whole company.</span></h2>
-      <p class="body-md">A template defines what goes into a workspace: repos, credentials, data, machine image, agent rules, and your skill library. Set it once. Anyone on the team creates a workspace from it and gets the same setup. Publish a new version to change that setup for everyone.</p>
-    </div>
-    <div class="mockcard" role="img" aria-label="Template contents: repositories, agent rules, connections, data, and machine image">
-      <div class="row"><span class="name"><span class="tag">▤</span>Repos</span><span class="state on">acme/api, acme/web</span></div>
-      <div class="row"><span class="name"><span class="tag">§</span>Agent rules</span><span class="state on">AGENTS.md + 14 skills</span></div>
-      <div class="row"><span class="name"><span class="tag">⌁</span>Connections</span><span class="state on">GitHub, Linear, Slack</span></div>
-      <div class="row"><span class="name"><span class="tag">◈</span>Data</span><span class="state on">prod-postgres, read only</span></div>
-      <div class="row"><span class="name"><span class="tag">☁</span>Machine</span><span class="state on">8 vCPU, Docker, box 2026.08</span></div>
-      <div class="row"><span class="name"><span class="tag">↻</span>Used by</span><span class="state">Engineering, 34 people</span></div>
-    </div>
-  </div>
+<!-- ======================= SETUP ======================= -->
+<section class="sec" id="setup" aria-labelledby="setup-title">
+  <h2 class="h-section" id="setup-title">Set up one workspace. <span class="em">Hand it to the whole team.</span></h2>
+  <p class="body-md">A workspace holds the setup for one kind of work: repos, agent rules, connections, credentials, and machine type. Add a teammate and they get their own machine with that same setup. Need a variation? Create a new workspace from an existing one. It carries the machine type, the agent rules, the repos, and the connection allow-list.</p>
 </section>
 
 <!-- ======================= WORKSPACES ======================= -->
 <section class="sec" id="workspaces" aria-labelledby="ws-title">
-  <div class="dive">
-    <div class="copy">
-      <h2 class="h-section" id="ws-title">A sandboxed computer <span class="em">for everyone.</span></h2>
-      <p class="body-md">A workspace is a real cloud computer with Linux and Docker inside, holding only the credentials and data that job needs. Claude, Codex, or any CLI agent runs on top. Run as many at once as the work needs, independent of any local dev setup. Watch the work from the browser, the terminal, or the API.</p>
-    </div>
-    <div class="mockcard" role="img" aria-label="Workspace access list showing scoped credentials">
-      <div class="row"><span class="name"><span class="tag">⌁</span>github.com/acme</span><span class="state on">scoped · repo:read, pr:write</span></div>
-      <div class="row"><span class="name"><span class="tag">◈</span>Anthropic API</span><span class="state on">short-lived · expires 14 min</span></div>
-      <div class="row"><span class="name"><span class="tag">▤</span>prod-postgres</span><span class="state on">read-only replica</span></div>
-      <div class="row"><span class="name"><span class="tag">✕</span>Stripe</span><span class="state off">not attached to this job</span></div>
-    </div>
-  </div>
+  <h2 class="h-section" id="ws-title">A sandboxed computer <span class="em">for every member.</span></h2>
+  <p class="body-md">Every member of a workspace gets their own cloud machine, with Linux and Docker inside, holding only the credentials and data that job needs. Claude Code and Codex come installed. Any other CLI agent installs on top. Run as many machines at once as the work needs, independent of any local dev setup. Watch the work from the browser, the terminal, or SSH.</p>
 </section>
 
 <!-- ======================= SHARING ======================= -->
 <section class="sec" id="sharing" aria-labelledby="mp-title">
-  <div class="dive">
-    <div class="copy">
-      <h2 class="h-section" id="mp-title">Share a workspace <span class="em">like a Google Doc.</span></h2>
-      <p class="body-md">Send a teammate the running workspace. They open the same machine, the same files, and the same agent session, with credentials minted for them. Nothing to reinstall and nothing to leak.</p>
-    </div>
-    <div class="mockcard" role="img" aria-label="Workspace sharing panel">
-      <div class="row"><span class="name"><span class="avatars"><span class="avatar"></span><span class="avatar a2"></span><span class="avatar a3"></span></span>acme-onboarding</span><span class="state">shared with Engineering</span></div>
-      <div class="row"><span class="name"><span class="tag">↻</span>Same environment</span><span class="state on">model · machine · data</span></div>
-      <div class="row"><span class="name"><span class="tag">⌘</span>Own credentials</span><span class="state on">minted per member</span></div>
-    </div>
-  </div>
-</section>
-
-<!-- ======================= RECIPES ======================= -->
-<section class="sec" id="recipes" aria-labelledby="rc-title">
-  <div class="dive">
-    <div class="copy">
-      <h2 class="h-section" id="rc-title">Skills capture prompts. <span class="em">Recipes capture the runtime.</span></h2>
-      <p class="body-md">A recipe freezes everything a successful workflow needs: AI model, machine environment, data, and credentials. Then it runs again at any scale, triggered from Slack, GitHub, or a webhook.</p>
-    </div>
-    <div class="term" role="img" aria-label="Terminal running a recipe at scale">
-<pre>
-<span class="cmd">$ blitz run vendor-audit --scale 40</span>
-<span class="ok">✓</span> recipe pinned: claude-opus-5 · box-image 2026.08 · vendor-db
-<span class="ok">✓</span> 40 workspaces provisioned
-<span class="ok">✓</span> 40 agents running, results stream to Agent Drive
-</pre>
-    </div>
-  </div>
+  <h2 class="h-section" id="mp-title">Share the workspace. <span class="em">Skip the setup work.</span></h2>
+  <p class="body-md">Add a teammate to a workspace and they get their own machine, already holding the same repos, the same agent rules, and the same connections. Their provider tokens are minted for them, never handed over. Add someone as a viewer and they read the workspace without using a machine at all.</p>
 </section>
 
 <!-- ======================= THE REST ======================= -->
@@ -510,27 +420,31 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
   <div class="feature-grid">
     <div class="feature">
       <span class="glyph" aria-hidden="true">▦</span>
-      <p><strong>Teenyapps.</strong> Build internal tools such as dashboards, CRMs, and task managers. Each one ships with a backend, auth, and a URL.</p>
-    </div>
-    <div class="feature">
-      <span class="glyph" aria-hidden="true">✓</span>
-      <p><strong>Automatic evals.</strong> Generate evals from real agent usage across your company.</p>
-    </div>
-    <div class="feature">
-      <span class="glyph" aria-hidden="true">▲</span>
-      <p><strong>Agent Drive.</strong> Upload a file once. Attach it to any workspace, or share it with any teammate.</p>
+      <p><strong>Teenyapps.</strong> Agents build internal tools in a workspace: dashboards, CRMs, task managers. Preview one on its live port, then keep the deployed link beside it.</p>
     </div>
     <div class="feature">
       <span class="glyph" aria-hidden="true">⌁</span>
-      <p><strong>Workspace API.</strong> Agents provision approved combinations of compute, data, and credentials for their own subagents.</p>
+      <p><strong>Connections.</strong> GitHub, Google Workspace, Linear, Discord, and YouTrack. Each member connects their own account, or an admin holds one credential for the organization.</p>
+    </div>
+    <div class="feature">
+      <span class="glyph" aria-hidden="true">▲</span>
+      <p><strong>Agent Drive.</strong> Upload a file once. Attach it to any workspace, or share it with any teammate. Edits sync both ways.</p>
+    </div>
+    <div class="feature">
+      <span class="glyph" aria-hidden="true">✓</span>
+      <p><strong>Usage capture.</strong> Turn it on and real agent sessions land in a Drive folder, ready to become an eval suite.</p>
+    </div>
+    <div class="feature">
+      <span class="glyph" aria-hidden="true">⌘</span>
+      <p><strong>Machine API.</strong> An agent inside a workspace lists the workspaces its member reaches, then starts, stops, or recreates machines there and connects over SSH. It cannot add members or workspaces, or reach past its member's role.</p>
     </div>
     <div class="feature">
       <span class="glyph" aria-hidden="true">◇</span>
-      <p><strong>Bring your own agent.</strong> Claude, Codex, or any CLI agent. BlitzOS runs the CLI you already use.</p>
+      <p><strong>Bring your own agent.</strong> Claude Code and Codex come installed. Any other CLI agent installs on top, on your existing billing plan.</p>
     </div>
     <div class="feature">
       <span class="glyph" aria-hidden="true">☁</span>
-      <p><strong>Bring your own cloud.</strong> Hetzner and Firecracker are built in. Any other cloud is one <span class="kbd">VmProvider</span> implementation.</p>
+      <p><strong>Bring your own cloud.</strong> Hetzner, AWS, and your own Firecracker hosts are built in. Any other cloud is one <span class="kbd">VmProvider</span> implementation.</p>
     </div>
   </div>
 </section>
@@ -545,7 +459,7 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
       <p class="desc">A company of one.</p>
       <ul>
         <li>Every feature</li>
-        <li>Unlimited workspaces and templates</li>
+        <li>Unlimited workspaces</li>
         <li>No credit card</li>
       </ul>
       <a class="btn" href="/auth/google/start">Start free</a>
@@ -556,11 +470,11 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
       <p class="desc">A company of two or more.</p>
       <ul>
         <li>Every feature</li>
-        <li>Shared templates, workspaces, and drive</li>
-        <li>Credentials minted per member</li>
+        <li>Shared workspaces and drive</li>
+        <li>A machine per member, provider tokens minted per member</li>
         <li>Billed for every member, including you</li>
       </ul>
-      <a class="btn" href="https://blitzos.com">Start now</a>
+      <a class="btn" href="/auth/google/start">Start now</a>
     </div>
   </div>
 </section>
@@ -580,10 +494,9 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
   <nav class="foot-grid" aria-label="Product, resources, and project">
     <div class="foot-col">
       <span class="h">Product</span>
-      <a href="#templates">Templates</a>
+      <a href="#setup">Workspace setup</a>
       <a href="#workspaces">Agent workspaces</a>
-      <a href="#sharing">Sharing</a>
-      <a href="#recipes">Recipes</a>
+      <a href="#sharing">Team sharing</a>
       <a href="#platform">Teenyapps</a>
       <a href="#pricing">Pricing</a>
     </div>

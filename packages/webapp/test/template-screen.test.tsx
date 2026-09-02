@@ -367,7 +367,7 @@ describe('create template screen', () => {
     });
     const { view } = await screenWith(fetcher);
     const edit = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.className === 'blueprint-agent-rules-edit')!;
+      .find((button) => button.classList.contains('blueprint-agent-rules-edit'))!;
     await act(async () => { edit.click(); });
 
     const dialog = view.container.querySelector('.blueprint-agent-rules-dialog')!;
@@ -421,7 +421,7 @@ describe('create template screen', () => {
   it('closes the rules editor on Escape and returns focus to the opener', async () => {
     const { view } = await screenWith();
     const edit = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.className === 'blueprint-agent-rules-edit')!;
+      .find((button) => button.classList.contains('blueprint-agent-rules-edit'))!;
     await act(async () => {
       edit.focus();
       edit.click();
@@ -456,7 +456,7 @@ describe('create template screen', () => {
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     const edit = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.className === 'blueprint-agent-rules-edit')!;
+      .find((button) => button.classList.contains('blueprint-agent-rules-edit'))!;
     await act(async () => { edit.click(); });
     expect(view.container.querySelector<HTMLInputElement>(
       'input[aria-label="Agent rules name"]',

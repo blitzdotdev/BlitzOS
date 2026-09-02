@@ -6,6 +6,7 @@ import type {
 } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runOrphanSweep } from "../core/index.js";
 import {
   appRequest,
   createWorkspace,
@@ -14,6 +15,7 @@ import {
   operatorSession,
   resetDatabase,
   sameOrgSession,
+  testRuntime,
 } from "./helpers.js";
 
 function json(body: object, method = "POST"): RequestInit {
@@ -141,6 +143,125 @@ describe("member machines", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
     }).then(({ status }) => status)).toBe(200);
+  });
+
+  /**
+   * The incident of 2026-09-01, in one test.
+   *
+   * A member stopped a machine whose VM was already unreachable. The teardown
+   * threw partway, leaving the row in `destroying`, and the janitor — which
+   * could not tell a stop from a destroy — finished it as `destroyed`. The
+   * workspace then projected as destroyed and left the rail, `start` answered
+   * 409, and the volume's retention clock had begun on a disk that was only
+   * paused. Nothing about a stop is allowed to end that way.
+   */
+  it("finishes an interrupted stop as a stop, and never as a tombstone", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const volume = await appRequest(app, "/volumes", {
+      ...json({ name: "state", sizeGb: 20, location: "test" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const volumeId = (await volume.json<{ volume: { id: string } }>()).volume.id;
+    const workspace = await createWorkspace(app, cookie, volumeId);
+    const machineId = await machineIdFor(workspace.id);
+
+    // The VM is gone as far as the provider is concerned, which is what the
+    // real machine's broken tunnel amounted to: the stop cannot finish.
+    providers.onDestroy = () => {
+      throw new Error("provider is unreachable mid-stop");
+    };
+    expect((await appRequest(app, `/machines/${machineId}/stop`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    })).status).toBeGreaterThanOrEqual(500);
+
+    // Mid-flight, and carrying what the finaliser needs to know.
+    const midFlight = await env.DB
+      .prepare("SELECT state, vm_id, destroy_keeps_row FROM machines WHERE id = ?1")
+      .bind(machineId)
+      .first<{ state: string; vm_id: string | null; destroy_keeps_row: number }>();
+    expect(midFlight).toMatchObject({ state: "destroying", destroy_keeps_row: 1 });
+    expect(midFlight?.vm_id).not.toBeNull();
+
+    // The janitor picks the row up, as it does on every hourly tick and on any
+    // request that schedules the lazy sweep.
+    delete providers.onDestroy;
+    expect(await runOrphanSweep(testRuntime(providers))).toBe(1);
+
+    const afterSweep = await machineRow(workspace.id, "personal");
+    expect(afterSweep?.state).toBe("stopped");
+    expect(afterSweep?.vm_id).toBeNull();
+    expect(afterSweep?.volume_id).toBe(volumeId);
+    // The disk was paused, not released: no retention clock runs on it.
+    expect(await env.DB
+      .prepare("SELECT detached_at FROM volume_ownership WHERE volume_id = ?1")
+      .bind(volumeId).first<number | null>("detached_at")).toBeNull();
+
+    // The workspace is still on the rail, and the machine still starts.
+    const view = await appRequest(app, `/workspaces/${workspace.id}`, {
+      headers: { Cookie: cookie },
+    });
+    await expect(view.json<{ workspace: WorkspaceView }>()).resolves.toMatchObject({
+      workspace: { phase: "ready" },
+    });
+    expect((await appRequest(app, `/machines/${machineId}/start`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    })).status).toBe(200);
+    expect((await machineRow(workspace.id, "personal"))?.state).toBe("provisioning");
+  });
+
+  it("starts a machine again when its row and volume outlived a destroy", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const volume = await appRequest(app, "/volumes", {
+      ...json({ name: "state", sizeGb: 20, location: "test" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const volumeId = (await volume.json<{ volume: { id: string } }>()).volume.id;
+    const workspace = await createWorkspace(app, cookie, volumeId);
+    const machineId = await machineIdFor(workspace.id);
+
+    // A row exactly like the one the field is carrying: tombstoned by a
+    // pre-0047 janitor, with the member's disk still attached to it.
+    await env.DB
+      .prepare("UPDATE machines SET state = 'destroyed', vm_id = NULL WHERE id = ?1")
+      .bind(machineId)
+      .run();
+    // The trap, as the browser saw it: no phase to poll on and no machine to
+    // act on, so `start` is the only door left.
+    const trapped = await appRequest(app, `/workspaces/${workspace.id}`, {
+      headers: { Cookie: cookie },
+    });
+    const view = (await trapped.json<{ workspace: WorkspaceView }>()).workspace;
+    expect(view.phase).toBe("destroyed");
+    expect(view.members?.find(({ membershipId }) => membershipId === "personal")?.machine)
+      .toBeNull();
+
+    const started = await appRequest(app, `/machines/${machineId}/start`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(started.status).toBe(200);
+    await expect(started.json<MachineResponse>()).resolves.toMatchObject({
+      machine: { id: machineId, state: "provisioning" },
+    });
+    // Back on the same disk, which is the whole point of keeping the row.
+    expect((await machineRow(workspace.id, "personal"))?.volume_id).toBe(volumeId);
+    expect(providers.createCalls).toBe(2);
+
+    // A teardown that is genuinely in flight is still refused: a second VM on
+    // that volume would race the finaliser.
+    await env.DB
+      .prepare("UPDATE machines SET state = 'destroying', vm_id = NULL WHERE id = ?1")
+      .bind(machineId)
+      .run();
+    const racing = await appRequest(app, `/machines/${machineId}/start`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(racing.status).toBe(409);
   });
 
   it("changes a machine type on the same volume and refuses another location", async () => {

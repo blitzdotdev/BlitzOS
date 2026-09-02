@@ -17,6 +17,7 @@ import {
 } from '../org-credential-grants';
 import { GrantListEditor, OrgCredentialForm } from './OrgCredentialForm';
 import { OrgCredentialImport } from './OrgCredentialImport';
+import { PanelHeader } from './primitives';
 
 function dateLabel(at: number): string {
   return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -155,13 +156,11 @@ export function OrgCredentialsPanel({
 
   return (
     <section className="settings-panel settings-org-credentials" role="tabpanel" aria-label="Credentials">
-      <header className="settings-panel-header">
-        <div>
-          <p>Organization</p>
-          <h1>Credentials</h1>
-          <span>Static secrets agents pull at the moment of use. Each one reaches exactly who it is granted to.</span>
-        </div>
-      </header>
+      <PanelHeader
+        eyebrow="Organization"
+        title="Credentials"
+        detail="Static secrets agents pull at the moment of use. Each one reaches exactly who it is granted to."
+      />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
       <section className="cfg-section" aria-label="Stored credentials">

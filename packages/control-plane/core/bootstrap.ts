@@ -540,6 +540,12 @@ if [ -n "$volume_device" ]; then
   grep -Fqx "$fstab_entry" /etc/fstab || printf '%s\n' "$fstab_entry" >>/etc/fstab
 fi
 
+# The surface tokens on this volume were written by whatever VM last ran here,
+# and on a re-provision its tunnel is already deleted. Drop the marker now --
+# after the mount, before the box container starts -- so the guest's cloudflared
+# waits for THIS instance's cloud-init to rewrite them instead of racing it and
+# holding a dead credential for the life of the box (core/cloud-init.ts).
+rm -f /var/lib/blitz/tokens-ready
 blitz_phase volume-mounted
 touch "$DURABLE_BOOTSTRAP_LOG"
 chmod 0600 "$DURABLE_BOOTSTRAP_LOG"

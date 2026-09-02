@@ -32,11 +32,11 @@ export type ShellNavProps = {
   onOpenWorkspaceSettings: (workspaceId: string) => void;
   onInviteToWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onSwitchOrg: (orgId: string) => void;
-  onCreateOrg: () => void;
   onOpenDrive: () => void;
   onOpenSettings: () => void;
   onSelectSession: (sessionId: string) => void;
+  /** See `SessionRailProps.onCloseSession`. */
+  onCloseSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
   onOpenPreview: (port: number) => void;
   onOpenPreviewLink: (url: string, title: string) => void;
@@ -68,11 +68,10 @@ export function ShellNav({
   onOpenWorkspaceSettings,
   onInviteToWorkspace,
   onCreateWorkspace,
-  onSwitchOrg,
-  onCreateOrg,
   onOpenDrive,
   onOpenSettings,
   onSelectSession,
+  onCloseSession,
   onSpawnSession,
   onOpenPreview,
   onOpenPreviewLink,
@@ -93,8 +92,6 @@ export function ShellNav({
           onOpenWorkspaceSettings={onOpenWorkspaceSettings}
           onInviteToWorkspace={onInviteToWorkspace}
           onCreateWorkspace={onCreateWorkspace}
-          onSwitchOrg={onSwitchOrg}
-          onCreateOrg={onCreateOrg}
           onOpenDrive={onOpenDrive}
           onOpenSettings={onOpenSettings}
           onCloseDrawer={onCloseDrawer}
@@ -110,6 +107,7 @@ export function ShellNav({
             {...(sessionsNeedNewerMachine === undefined ? {} : { sessionsNeedNewerMachine })}
             {...(sessionsNeedMachine === undefined ? {} : { sessionsNeedMachine })}
             onSelectSession={onSelectSession}
+            onCloseSession={onCloseSession}
             onSpawnSession={onSpawnSession}
             onOpenPreview={onOpenPreview}
             onOpenPreviewLink={onOpenPreviewLink}

@@ -45,6 +45,7 @@ export function SessionMonacoTextViewer({
   onSelectionChange,
   onGoToDefinition,
   onFindReferences,
+  lspActions = true,
   onScrollChange,
   externalTextUpdate,
   onExternalTextUpdateApplied,
@@ -99,6 +100,12 @@ export function SessionMonacoTextViewer({
     readonly line: number;
     readonly character: number;
   }) => void;
+  // Whether those two actions exist at all. Separate from the callbacks
+  // above, and read once at mount: a host whose machine serves no language
+  // service wants the entries OFF the context menu, and an action wired to
+  // an absent callback is still an entry that does nothing. Defaults to on,
+  // so a caller that passes neither keeps today's behaviour.
+  readonly lspActions?: boolean;
   readonly onScrollChange?: (state: { readonly scrollTop: number }) => void;
   // Optional Monaco model URI. When provided the viewer creates the
   // model under this URI, which lets Monaco's globally-registered
@@ -139,6 +146,7 @@ export function SessionMonacoTextViewer({
     readOnly,
     wordWrap,
     modelUri,
+    lspActions,
   });
 
   useEffect(() => {
@@ -153,6 +161,7 @@ export function SessionMonacoTextViewer({
       initialReadOnly: initial.readOnly,
       initialWordWrap: initial.wordWrap,
       initialModelUri: initial.modelUri,
+      lspActions: initial.lspActions,
       callbacks: {
         onContentChange,
         onSelectionChange,

@@ -97,7 +97,7 @@ function ReposEditor({
             </span>
             {canManage && (
               <button
-                className="webapp-action"
+                className="webapp-action webapp-action--danger"
                 type="button"
                 aria-label={`Remove ${entry.repo}`}
                 onClick={() => onRemove(entry.repo)}
@@ -211,6 +211,9 @@ export function WorkspaceSettingsTab({
                 Applies to new machines; each member&rsquo;s type is their own.
               </small>
             </div>
+            {/* Not a `SettingsSwitch`: that primitive writes on change, and
+              * this row is part of a draft the one Save below sends. The
+              * inline checkbox field is the settings-surface shape for it. */}
             <label className="cfg-field cfg-field--inline">
               <input
                 type="checkbox"
@@ -264,7 +267,11 @@ export function WorkspaceSettingsTab({
           </p>
         </div>
       )}
+      {/* The redesign named this list; the name is a `cfg-` section title. */}
       <div className="cfg-section">
+        <div className="cfg-section-head">
+          <h2 className="cfg-title">About</h2>
+        </div>
         <dl className="cfg-meta">
           <div>
             <dt>Your role</dt>

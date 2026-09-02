@@ -2,17 +2,24 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import type { TenantMe } from '../api-adapter';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { DriveGlyph, PlusGlyph } from './StripIcons';
-import { workspaceTileStyle } from './workspace-tile';
+import { workspaceSigil } from './workspace-tile';
 import { squareAvatarUrl } from '../avatar-url';
 
-/** The tile legend: initials when the name has several words, otherwise its
- * first two letters. `design-team` reads DT and `engineering` reads EN, as the
- * mockup draws them. */
-export function workspaceCode(title: string): string {
-  const words = title.split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 0);
-  if (words.length === 0) return '··';
-  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
-  return words.slice(0, 3).map((word) => word[0]!).join('').toUpperCase();
+export function WorkspaceSigilIcon({ workspaceId }: { workspaceId: string }) {
+  const sigil = workspaceSigil(workspaceId);
+  return (
+    <svg
+      className="shell-wtile__sigil"
+      viewBox="0 0 5 5"
+      preserveAspectRatio="none"
+      focusable="false"
+    >
+      <rect width="5" height="5" fill={sigil.background} />
+      {sigil.cells.map(([x, y]) => (
+        <rect key={y * 5 + x} x={x} y={y} width="1" height="1" fill={sigil.foreground} />
+      ))}
+    </svg>
+  );
 }
 
 function stateLabel(workspace: CloudWorkspaceModel): string {
@@ -42,17 +49,17 @@ export type WorkspaceStripProps = {
   onOpenWorkspaceSettings: (workspaceId: string) => void;
   onInviteToWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onSwitchOrg: (orgId: string) => void;
-  onCreateOrg: () => void;
   onOpenDrive: () => void;
   onOpenSettings: () => void;
   onCloseDrawer: () => void;
 };
 
-/** Column one of the shell (plans/mockups/session-rail.html `#strip`): the org
- * mark, one tile per workspace, the create tile, Drive, and the avatar on the
- * bottom edge, which goes straight to settings. The workspace panels are the
- * right icon strip's job. */
+/** Column one of the shell (plans/mockups/session-rail.html `#strip`): one
+ * tile per workspace, the create tile, Drive, and the avatar on the bottom
+ * edge, which goes straight to settings. Only workspace tiles live up top —
+ * the org mark read as one of them, so org switching moved to Settings →
+ * Profile (owner annotation 2026-09-01). The workspace panels are the right
+ * icon strip's job. */
 export function WorkspaceStrip({
   workspaces,
   viewer,
@@ -62,29 +69,16 @@ export function WorkspaceStrip({
   onOpenWorkspaceSettings,
   onInviteToWorkspace,
   onCreateWorkspace,
-  onSwitchOrg,
-  onCreateOrg,
   onOpenDrive,
   onOpenSettings,
   onCloseDrawer,
 }: WorkspaceStripProps) {
-  const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [tileMenu, setTileMenu] = useState<TileMenu | null>(null);
   const [renaming, setRenaming] = useState<
     { workspaceId: string; value: string; left: number; top: number } | null
   >(null);
   const renameInput = useRef<HTMLInputElement>(null);
-  const orgLabel = viewer?.org.name || viewer?.org.slug || 'Organization';
   const userLabel = viewer?.identity.name || viewer?.identity.email || 'BlitzOS';
-
-  useEffect(() => {
-    if (!orgMenuOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOrgMenuOpen(false);
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [orgMenuOpen]);
 
   useEffect(() => {
     if (tileMenu === null && renaming === null) return;
@@ -112,7 +106,6 @@ export function WorkspaceStrip({
   const openTileMenu = (event: ReactMouseEvent, workspace: CloudWorkspaceModel) => {
     event.preventDefault();
     setRenaming(null);
-    setOrgMenuOpen(false);
     setTileMenu({
       workspaceId: workspace.id,
       left: Math.max(8, Math.min(event.clientX, window.innerWidth - TILE_MENU_WIDTH)),
@@ -139,103 +132,51 @@ export function WorkspaceStrip({
         onClick={onCloseDrawer}
       >×</button>
 
-      <div className="webapp-org-wrap shell-strip__orgwrap">
-        <button
-          className="shell-orgmark"
-          type="button"
-          aria-label={`Organization: ${orgLabel}`}
-          title={orgLabel}
-          aria-haspopup="menu"
-          aria-expanded={orgMenuOpen}
-          aria-controls="webapp-org-menu"
-          onClick={() => setOrgMenuOpen((open) => !open)}
-        >{orgLabel.trim().charAt(0).toUpperCase() || 'B'}</button>
-        {orgMenuOpen && (
-          <button
-            className="webapp-org-backdrop"
-            type="button"
-            aria-label="Close organization menu"
-            tabIndex={-1}
-            onMouseDown={() => setOrgMenuOpen(false)}
-          />
-        )}
-        <div
-          className="webapp-org-menu shell-strip__menu"
-          id="webapp-org-menu"
-          role="menu"
-          aria-label="Organizations"
-          hidden={!orgMenuOpen}
-        >
-          <div className="webapp-org-menu-label">organization</div>
-          <div className="webapp-org-menu-current" role="menuitemradio" aria-checked="true">
-            <span>{orgLabel}</span>
-            <span className="webapp-org-menu-check" aria-hidden="true">✓</span>
-          </div>
-          {(viewer?.organizations ?? [])
-            .map(({ org }) => org)
-            .filter((candidate) => candidate.id !== viewer?.org.id)
-            .map((candidate) => (
-              <button
-                className="webapp-org-menu-current webapp-org-menu-switch"
-                type="button"
-                role="menuitemradio"
-                aria-checked="false"
-                key={candidate.id}
-                onClick={() => {
-                  setOrgMenuOpen(false);
-                  onSwitchOrg(candidate.id);
-                }}
-              >
-                <span>{candidate.name || candidate.slug}</span>
-              </button>
-            ))}
-          <button
-            className="webapp-org-menu-create"
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOrgMenuOpen(false);
-              onCreateOrg();
-            }}
-          >
-            <span aria-hidden="true">+</span>
-            <span>Create organization</span>
-          </button>
-        </div>
-      </div>
-
-      <div className="shell-strip__sep" role="presentation" />
-
       <nav className="shell-strip__tiles" aria-label="Workspaces">
-        {workspaces.map((workspace) => {
-          const active = workspace.canControl && workspace.id === activeWorkspaceId;
-          const offline = workspace.lifecycleStatus !== 'running';
-          const owner = workspace.canControl ? null : workspace.owner?.name ?? 'a teammate';
-          return (
-            <button
-              className={`shell-wtile${active ? ' shell-wtile--on' : ''}${
-                offline ? ' shell-wtile--off' : ''}`}
-              type="button"
-              key={workspace.id}
-              aria-label={workspace.title}
-              aria-current={active ? 'page' : undefined}
-              disabled={!workspace.canControl}
-              style={workspaceTileStyle(workspace.id)}
-              title={owner === null
-                ? `${workspace.title} — ${stateLabel(workspace)}`
-                : `${workspace.title} — shared by ${owner}`}
-              onClick={() => onSelectWorkspace(workspace.id)}
-              onContextMenu={(event) => openTileMenu(event, workspace)}
-            >{workspaceCode(workspace.title)}</button>
-          );
-        })}
+        <div className="shell-strip__tree" role="tree" aria-label="Workspaces">
+          {workspaces.map((workspace) => {
+            const active = workspace.canControl && workspace.id === activeWorkspaceId;
+            const offline = workspace.lifecycleStatus !== 'running';
+            const owner = workspace.canControl ? null : workspace.owner?.name ?? 'a teammate';
+            return (
+              <button
+                className="shell-wtile"
+                type="button"
+                key={workspace.id}
+                role="treeitem"
+                aria-label={workspace.title}
+                aria-selected={active}
+                aria-current={active ? 'page' : undefined}
+                disabled={!workspace.canControl}
+                title={owner === null
+                  ? `${workspace.title} — ${stateLabel(workspace)}`
+                  : `${workspace.title} — shared by ${owner}`}
+                onClick={() => onSelectWorkspace(workspace.id)}
+                onContextMenu={(event) => openTileMenu(event, workspace)}
+              >
+                <span className="shell-wtile__indicator" aria-hidden="true" />
+                <span
+                  className="shell-wtile__icon"
+                  data-workspace-status={offline ? 'offline' : 'online'}
+                  aria-hidden="true"
+                >
+                  <WorkspaceSigilIcon workspaceId={workspace.id} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
         <button
-          className="shell-wtile shell-wtile--off shell-wtile--new"
+          className="shell-wtile shell-wtile--new"
           type="button"
           aria-label="Create workspace"
           title="New workspace"
           onClick={onCreateWorkspace}
-        ><PlusGlyph className="shell-wtile__plus" /></button>
+        >
+          <span className="shell-wtile__icon shell-wtile__icon--new" aria-hidden="true">
+            <PlusGlyph className="shell-wtile__plus" />
+          </span>
+        </button>
       </nav>
 
       <div className="shell-strip__spacer" role="presentation" />

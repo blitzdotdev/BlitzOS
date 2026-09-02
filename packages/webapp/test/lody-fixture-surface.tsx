@@ -205,11 +205,11 @@ function FixtureTerminalsSection() {
  * Every prop below is `SessionRailSidebar`'s (`src/lody/SessionRailSidebar.tsx:431`),
  * and three of them are load-bearing rather than cosmetic:
  *
- * - `hideHeader` / `hideFooter` are declared seam #4 (`vendor/lody/BLITZ-PATCHES.md`).
- *   The header they hide is the workspace switcher `div.shell-rhead` already
- *   serves; the footer is Settings / Help / Archive, which BlitzOS serves from
- *   its own chrome and which would otherwise draw a `border-t` band across the
- *   bottom of the rail.
+ * - `hideHeader` is declared seam #2 (`vendor/lody/BLITZ-PATCHES.md`); the header
+ *   it hides is the workspace switcher `div.shell-rhead` already serves.
+ *   `footerItems` is declared seam #13: Settings and Help are BlitzOS's own
+ *   chrome, and Archive is upstream's only way into the archive page, so it is
+ *   the one footer entry the rail keeps.
  * - `className` drops their floating-window card chrome: inside the rail the
  *   shell already draws the column's border. `cn()` is tailwind-merge, so these
  *   override rather than stack.
@@ -242,7 +242,7 @@ export function FixtureSidebar() {
     <LoroSidebar
       className="rounded-none border-x-0 shadow-none"
       hideHeader
-      hideFooter
+      footerItems={["archive"]}
       workspaceName=""
       userEmail=""
       workspaces={[]}

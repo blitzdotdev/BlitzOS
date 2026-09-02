@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { OrgUsageCaptureResponse } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../api';
 import { folderPagePath } from '../sessions-page-state';
+import { PanelHeader, SettingsSwitch } from './primitives';
 
 /** Admin switch for org-wide agent-usage capture. While it is on, every
  * workspace mirrors its agents' native transcripts into an admin-only Drive
@@ -36,28 +37,28 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
 
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Usage">
-      <header className="settings-panel-header"><div><p>Organization</p><h1>Agent usage capture</h1><span>Collect every workspace&rsquo;s agent transcripts for evals.</span></div></header>
+      <PanelHeader
+        eyebrow="Organization"
+        title="Agent usage capture"
+        detail={<>Collect every workspace&rsquo;s agent transcripts for evals.</>}
+      />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       {state === null ? (
         !error && <div className="drive-empty" role="status">Loading…</div>
       ) : (
         <>
-          <label className="tplf-share">
-            <input
-              type="checkbox"
-              role="switch"
-              aria-label="Agent usage capture"
-              checked={state.enabled}
-              disabled={busy}
-              onChange={(event) => toggle(event.currentTarget.checked)}
-            />
-            <span>
-              Capture agent usage across the organization. Workspaces mirror
-              their agents&rsquo; native transcripts into an admin-only Drive
-              folder, grouped per workspace. Members&rsquo; workspaces never see
-              the folder.
-            </span>
-          </label>
+          {/* A switch that writes on change, which is what the primitive is
+            * for; it replaces the create-template screen's `.tplf-share`
+            * label this panel used to borrow. */}
+          <SettingsSwitch
+            label="Capture agent usage"
+            description={<>Workspaces mirror their agents&rsquo; native transcripts
+              into an admin-only Drive folder, grouped per workspace.
+              Members&rsquo; workspaces never see the folder.</>}
+            checked={state.enabled}
+            disabled={busy}
+            onChange={toggle}
+          />
           <p className="cfg-help" role="status">
             {state.enabled
               ? 'Capture is on. New workspace activity syncs into the usage folder.'

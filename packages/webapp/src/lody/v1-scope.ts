@@ -12,7 +12,29 @@
  * | `gitHubIntegration` | R16, C17-C19, C65, C72, IC67, IC72, IC96-IC101, SP43, SP44, SP57-SP61, WT15 | BlitzOS connects no GitHub App, so every PR flow fails past the button. |
  * | `agentRolesAndMcp` | C55-C57, C86-C89, C91 | Nothing writes the workspace Agent Role or MCP catalog rows, so both pickers are empty by construction. |
  * | `keyboardShortcuts` | X1-X5, C24, C100, C102, C103, T27 | We mount neither `commands.attach(window)` nor `CommandPalette`, so no chord is answered. |
- * | `cloudSurfaces` | S7-S10, IC60, IC83, IC84, IC88 | Each one advertises Lody's cloud, Lody's Discord, Lody's desktop app or a settings screen we do not serve. |
+ * | `cloudSurfaces` | S7-S10, IC60, IC83, IC84, IC88, T25 | Each one advertises Lody's cloud, Lody's Discord, Lody's desktop app, a settings screen we do not serve, or a team scope a one-member workspace cannot switch. |
+ * | `languageService` | SP26 | A box runs no language service, so Go to Definition and Find References answer "Host language service does not support this file" for every identifier in every file. |
+ * | `connectionStatus` | IC64, IC65 | BlitzOS reports connectivity itself, in the footer. Lody's own status chip, catch-up spinners and mobile banner describe the same outage in different words. |
+ *
+ * `connectionStatus` IS NOT A "NOT IN V1" DECISION, and it is the one row here
+ * that is not. The other five name a surface BlitzOS does not serve yet. This
+ * one names a surface BlitzOS serves ITSELF: `shell/workspace-status-line.ts`
+ * builds one sentence for the whole workspace — `workspace running · box
+ * unreachable` when the machine runs and the browser cannot reach its gateway —
+ * out of the probe in `box-gateway-health.ts`, and the same gateway carries the
+ * terminal, the files, the previews and this surface. Two reports of one outage
+ * tell a member which to believe and nothing else. So the flag is an OWNERSHIP
+ * boundary: flipping it on is what a host that stopped reporting connectivity
+ * would do, not what BlitzOS does when it grows a feature. Seam patch 15.
+ *
+ * MOBILE IS IN, AND IT MOVED THREE OF THESE (2026-09-02). Both real routes used
+ * to drop Lody's mobile branch, so area 23 was KILL and no flag had to reach a
+ * phone. The branch is mounted now (`MobileSessionStack.tsx`), and seam patch 16
+ * is what makes the flags above answer there as well as on a desktop. Three of
+ * them reached NOTHING on that branch: `cloudSurfaces`, `agentRolesAndMcp` and
+ * `connectionStatus` all travel through `getSharedChatSurfaceProps`, which
+ * `session-detail.tsx` defines 952 lines BELOW its own `if (isMobile)` return.
+ * `plans/LODY-V1-SCOPE.md` §5 records the amendment.
  *
  * HOW A FLAG REACHES THE VENDORED RENDERER. Two ways, and which one applies is
  * a property of the flag, not a preference:
@@ -44,12 +66,34 @@ export interface LodyV1Scope {
   /** The command palette, the global dispatcher and the ⌘L hint chip (9 rows). HIDDEN. */
   readonly keyboardShortcuts: boolean;
   /**
-   * Lody-cloud and wrong-product surfaces (9 rows). DELETED for v1: the header
+   * Lody-cloud and wrong-product surfaces (10 rows). DELETED for v1: the header
    * menu's "Change owner", "Share with team" and "Copy URL", the notification
-   * permission prompt, and the no-machine / no-agent hint band with its
-   * Download-the-client, Report-a-bug, Discord and Go-to-settings buttons.
+   * permission prompt, the no-machine / no-agent hint band with its
+   * Download-the-client, Report-a-bug, Discord and Go-to-settings buttons, and
+   * the archive page's My Tasks / All Tasks scope control.
    */
   readonly cloudSurfaces: boolean;
+  /**
+   * The editor's two LSP entry points (1 row). HIDDEN, not deleted: a box that
+   * grows a language service flips this and the actions come back.
+   */
+  readonly languageService: boolean;
+  /**
+   * Every Lody surface that narrates the connection (2 rows). DELETED for v1,
+   * and the reason is ownership rather than scope: the BlitzOS footer says it.
+   *
+   * What goes dark: the composer status chip's browser-offline ("You are
+   * offline. Reconnect to sync.") and machine-offline states, the ambient
+   * catch-up spinner in the session info bar and the mobile session header, the
+   * page header's offline-cloud glyph, the file viewer's offline glyph, and the
+   * mobile home's connection banner.
+   *
+   * What stays, deliberately: the same chip's `machine-removed` state, which is
+   * a membership fact and the only one of the three that blocks sending; and
+   * every message a panel draws INSTEAD of its data ("Connecting to code
+   * session…", "Syncing changes…"), which the footer cannot replace.
+   */
+  readonly connectionStatus: boolean;
 }
 
 /**
@@ -64,6 +108,8 @@ export const LODY_V1_SCOPE = {
   agentRolesAndMcp: false,
   keyboardShortcuts: false,
   cloudSurfaces: false,
+  languageService: false,
+  connectionStatus: false,
 } as const satisfies LodyV1Scope;
 
 /**
@@ -82,9 +128,10 @@ export const lodyExtraCapabilities = (): readonly LodyPlatformCapability[] =>
   LODY_V1_SCOPE.gitHubIntegration ? (["githubIntegration"] as const) : [];
 
 /**
- * The suppression props `router.tsx` passes to `ChatLanding` and `SessionDetail`
- * (seam patch 7). Built here so the two mounts cannot disagree, and so a test
- * reads the same object the surface does.
+ * The suppression props `router.tsx` passes to the three components it mounts:
+ * `ChatLanding`, `SessionDetail` and `ArchiveView` (seam patches 7, 10, 14, 15).
+ * Built here so the mounts cannot disagree, and so a test reads the same object
+ * the surface does.
  */
 export interface LodyV1SuppressionProps {
   readonly hideCloudMenuItems: boolean;
@@ -92,6 +139,36 @@ export interface LodyV1SuppressionProps {
   readonly hideProductHints: boolean;
   readonly hideAgentRoles: boolean;
   readonly keyboardShortcutsAvailable: boolean;
+  readonly hideLanguageServiceActions: boolean;
+  /**
+   * The archive page's My Tasks / All Tasks control (T25, seam patch 14).
+   *
+   * NOT the PR badge on the same page: that answers upstream's own
+   * `githubIntegration` capability, which the local platform already declines,
+   * so there is no prop for it and nothing here to flip.
+   */
+  readonly hideTeamScope: boolean;
+  /**
+  /**
+   * The settings gear in the mobile home header (seam patch 16).
+   *
+   * The same species as S9, the hint band's Go-to-settings button, so it reads
+   * the same flag: BlitzOS serves settings from its own chrome, and every Lody
+   * settings address in our tree is a stub that renders nothing
+   * (`router.tsx`, `SETTINGS_STUB_PATHS`). The desktop landing draws no gear, so
+   * this prop has no desktop twin.
+   */
+  readonly hideSettingsEntry: boolean;
+  /**
+   * Every connection and sync surface Lody draws (IC64, IC65, seam patch 15).
+   * Passed to `SessionDetail` and to `ChatLanding`; the session page rides it on
+   * to every chat surface and every file viewer it mounts.
+   *
+   * NOT the rail's `ConnectionPill`: it renders inside `LoroSidebar`'s workspace
+   * header, which `SessionRailSidebar.tsx` already suppresses with seam patch
+   * 2's `hideHeader`, and our rail passes the pill no state either way.
+   */
+  readonly hideConnectionStatus: boolean;
 }
 
 export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
@@ -100,4 +177,8 @@ export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
   hideProductHints: !LODY_V1_SCOPE.cloudSurfaces,
   hideAgentRoles: !LODY_V1_SCOPE.agentRolesAndMcp,
   keyboardShortcutsAvailable: LODY_V1_SCOPE.keyboardShortcuts,
+  hideLanguageServiceActions: !LODY_V1_SCOPE.languageService,
+  hideTeamScope: !LODY_V1_SCOPE.cloudSurfaces,
+  hideSettingsEntry: !LODY_V1_SCOPE.cloudSurfaces,
+  hideConnectionStatus: !LODY_V1_SCOPE.connectionStatus,
 });

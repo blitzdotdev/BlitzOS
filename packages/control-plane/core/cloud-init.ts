@@ -39,6 +39,12 @@ Content-Type: ${type}; charset="utf-8"
 ${content}`;
 }
 
+/** The file that says the three surface tokens beside it were written by the
+ * running instance's cloud-init, rather than left on the volume by the VM this
+ * one replaced. Named here because three runtimes agree on it: this producer,
+ * the bootstrap script that clears it, and the guest service that waits. */
+export const TOKENS_READY_MARKER = "/var/lib/blitz/tokens-ready";
+
 export interface TunnelTokens {
   workspaceId: string;
   tunnelToken: string;
@@ -48,7 +54,25 @@ export interface TunnelTokens {
 /** Installs the workspace tunnel credentials as a standalone cloud-init
  * part so the pinned bootstrap script bytes stay untouched. The webApp
  * token lands first: the box gateway arms itself fail-closed the moment a
- * tunnel token exists, and cloudflared waits for both files. */
+ * tunnel token exists, and cloudflared waits for both files.
+ *
+ * THE READY MARKER, AND WHY EXISTENCE IS NOT ENOUGH. `/var/lib/blitz` is the
+ * member's persistent volume, so on a re-provision (a machine-type change, a
+ * recreate, a stop/start) these three files are ALREADY THERE, left by the VM
+ * that just went away — and their tunnel has since been deleted. This part is
+ * a separate cloud-init script, so it runs AFTER the bootstrap script has
+ * started the box container: measured on a canary re-provision, cloudflared
+ * came up at 23:11:27 and this script rewrote the token at 23:11:34.8, seven
+ * seconds too late. cloudflared reads `--token-file` once and never again, so
+ * it held a credential for a deleted tunnel for the life of the box, the new
+ * tunnel sat at zero origins, and every browser-facing surface answered 1033.
+ *
+ * So the marker says "written by THIS instance", not "present". The bootstrap
+ * script removes it after mounting the volume and before starting the
+ * container (`core/bootstrap.ts`), and the guest waits on it
+ * (`box/rootfs/etc/s6-overlay/s6-rc.d/cloudflared/run`). A plain reboot re-runs
+ * neither script, so the marker survives beside the tokens it describes and
+ * cloudflared starts without waiting. */
 function tunnelTokenScript(tokens: TunnelTokens): string {
   return `#!/bin/bash
 set -euo pipefail
@@ -63,6 +87,9 @@ mv /var/lib/blitz/workspace-id.tmp /var/lib/blitz/workspace-id
 printf '%s\\n' ${JSON.stringify(tokens.tunnelToken)} >/var/lib/blitz/tunnel-token.tmp
 chown 1000:1000 /var/lib/blitz/tunnel-token.tmp
 mv /var/lib/blitz/tunnel-token.tmp /var/lib/blitz/tunnel-token
+: >/var/lib/blitz/tokens-ready.tmp
+chown 1000:1000 /var/lib/blitz/tokens-ready.tmp
+mv /var/lib/blitz/tokens-ready.tmp ${TOKENS_READY_MARKER}
 `;
 }
 

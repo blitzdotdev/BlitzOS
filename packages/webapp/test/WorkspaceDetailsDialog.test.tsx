@@ -387,6 +387,9 @@ describe('WorkspaceDetailsDialog', () => {
         ?.set?.call(name, 'renamed-workspace');
       name.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    // The auto-provision row is a `.cfg-field--inline` checkbox, not a
+    // self-saving SettingsSwitch: it flips a draft that the Save below sends,
+    // so it keeps its own accessible name.
     const toggle = view.container.querySelector<HTMLInputElement>(
       '[aria-label="Provision a machine when a member is added"]',
     );
@@ -479,6 +482,7 @@ describe('SessionRail', () => {
         livePorts={[]}
         previewLinks={[]}
         onSelectSession={() => undefined}
+        onCloseSession={() => undefined}
         onSpawnSession={() => undefined}
         onOpenPreview={() => undefined}
         onOpenPreviewLink={() => undefined}
@@ -510,6 +514,7 @@ describe('SessionRail', () => {
         livePorts={[]}
         previewLinks={[]}
         onSelectSession={() => undefined}
+        onCloseSession={() => undefined}
         onSpawnSession={() => undefined}
         onOpenPreview={() => undefined}
         onOpenPreviewLink={() => undefined}
@@ -536,6 +541,7 @@ describe('SessionRail', () => {
         livePorts={[{ port: 3000, process: 'vite', firstSeenAt: 1 }]}
         previewLinks={[]}
         onSelectSession={() => undefined}
+        onCloseSession={() => undefined}
         onSpawnSession={onSpawnSession}
         onOpenPreview={onOpenPreview}
         onOpenPreviewLink={() => undefined}

@@ -60,7 +60,28 @@ only through the image.
    docker build --platform linux/amd64 -f packages/box/Dockerfile -t blitz-box:<sha> .
    ```
 
-2. Give the worktree a **canary-scoped** `packages/control-plane/wrangler.toml`.
+2. **Turn the Lody session daemon on in the image.** `env.defaults` tracks
+   `BLITZ_LODY_SESSIONS=0` on purpose — it is the default for every
+   deployment, including a self-hosted fork that should stay dark — but the
+   canary image is expected to ship it ON, and `canary.yml` says so beside
+   `VITE_BLITZ_LODY_SESSIONS`: "half one is BLITZ_LODY_SESSIONS inside the
+   image above, which is already baked on".
+
+   ```sh
+   sed -i 's/^BLITZ_LODY_SESSIONS=0/BLITZ_LODY_SESSIONS=1/' env.defaults
+   ```
+
+   This is a working-tree edit that must NOT be committed, exactly like the
+   `wrangler.toml` below. Baking without it produces an image whose
+   `lody-daemon` service execs `sleep infinity`: the box is healthy, the
+   tunnel is up, terminals work, and every Lody pane is blank with no
+   "New session" — the rail that cannot list a session `canary.yml` warns
+   about. Measured 2026-09-02: the image before this step carried
+   `BLITZ_LODY_SESSIONS=1` only as an uncommitted edit in the build worktree,
+   so the first clean rebake from `origin/main` silently turned Lody off for
+   every new box.
+
+3. Give the worktree a **canary-scoped** `packages/control-plane/wrangler.toml`.
    The publish script always passes `--config` to wrangler, and the copy in the
    main checkout is **client prod's** (`account_id = "d25a778b…"`,
    `APP_URL = "https://blitzos.com"`). Publishing with that config uploads the
@@ -68,7 +89,7 @@ only through the image.
    and set `account_id` to the canary account and `APP_URL` to the canary
    origin. The file is gitignored, so it never lands in a commit.
 
-3. Publish to R2 with the canary token (`CF_CLAUDE_TOKEN_STAGING`; never print
+4. Publish to R2 with the canary token (`CF_CLAUDE_TOKEN_STAGING`; never print
    it). Add `--dry-run` first to see the values without uploading:
 
    ```sh
@@ -77,7 +98,7 @@ only through the image.
      node packages/control-plane/scripts/publish-box-image.mjs --image blitz-box:<sha>
    ```
 
-4. Pin the three values it prints in `.github/workflows/canary.yml` as
+5. Pin the three values it prints in `.github/workflows/canary.yml` as
    `BLITZ_DEPLOY_VAR_BOX_IMAGE_REF`, `BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG` and
    `BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256`, beside the `HETZNER_SERVER_IMAGES`
    line that already works this way. A deploy var becomes `wrangler deploy
@@ -87,7 +108,7 @@ only through the image.
    is a secret: the archive is public by design, because the VM bootstrap
    fetches it with no credential.
 
-5. Merge to `main`. Canary redeploys and **new** boxes boot the new image.
+6. Merge to `main`. Canary redeploys and **new** boxes boot the new image.
    Existing boxes never upgrade in place.
 
 **Single-arch.** A `docker save` archive carries one architecture, so the

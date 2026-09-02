@@ -52,9 +52,9 @@ npm test              # control-plane, box guest tests, ui, guest node:test,
   touch, never big-bang. (`core/files/sync.ts` left the list 2026-08-21 when
   its transfer plumbing split into `core/files/dav.ts`. `core/bootstrap.ts`
   and `webapp/src/api.ts` were already over the line when this list said four;
-  the count is corrected here, not grown. `core/machines.ts` was likewise
-  already over the line on `main` when this list said seven; corrected
-  2026-09-02, not grown.)
+  `core/machines.ts` was over it when the list said seven. The count is
+  corrected here, not grown — `lint:gate` on an untouched `main` prints all
+  eight.)
 
 ## Cross-runtime contracts (fixtures are the source of truth)
 

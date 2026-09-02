@@ -57,10 +57,6 @@ export type WorkspaceAction =
 
 export const initialWorkspaceStore: WorkspaceStoreState = { workspaces: [], viewer: null };
 
-function isVisibleWorkspace(record: WorkspaceRecord): boolean {
-  return record.status !== 'destroying' && record.status !== 'destroyed';
-}
-
 /** The parts of a model the server does not own, and which therefore survive
  * a refresh: the local title, the chosen agent, and the last values of the
  * three fields a record may omit. */
@@ -137,8 +133,11 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
   switch (action.type) {
     case 'workspaces_loaded': {
       const oldById = new Map(state.workspaces.map((workspace) => [workspace.id, workspace]));
-      const visibleRecords = action.records.filter(isVisibleWorkspace);
-      const models = visibleRecords.map((record) => {
+      // Every record the poll returns is a live workspace. `status` is a
+      // projection of the member's MACHINE, so filtering `destroying` here
+      // hid the workspace for the length of a stop, a recreate or a
+      // machine-type change; deletion arrives as `workspace_deleted`.
+      const models = action.records.map((record) => {
         const existing = oldById.get(record.id);
         if (!existing || existing.canControl !== record.canControl) {
           return createWorkspaceModel(record, action.preferences);
@@ -169,7 +168,9 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         ...state,
         workspaces: state.workspaces.flatMap((workspace) => {
           const record = recordsById.get(workspace.id);
-          if (!record || !isVisibleWorkspace(record)) return [];
+          // Same rule as `workspaces_loaded`: a poll that catches the member's
+          // machine mid-replacement must not evict the workspace from the rail.
+          if (!record) return [];
           return [applyRecord(workspace, record)];
         }),
       };

@@ -49,6 +49,20 @@ user_high=${BLITZ_CG_USER_HIGH:-}
 docker_max=${BLITZ_CG_DOCKER_MAX:-}
 headroom=${BLITZ_CG_HEADROOM:-256M}
 high_gap=${BLITZ_CG_HIGH_GAP:-500M}
+# init-state remaps the image's uid/gid to these values after the cgroup tree
+# is built. Delegation has to target that future identity, not the image's
+# baked-in 1000:1000, or a host whose uid differs cannot move user work out of
+# the protected system slice.
+delegate_uid=${BLITZ_UID:-1000}
+delegate_gid=${BLITZ_GID:-1000}
+
+valid_id() {
+  local value=$1
+  case "$value" in
+    "" | *[!0-9]*) return 1 ;;
+  esac
+  [ "$value" -ge 1 ] && [ "$value" -le 60000 ]
+}
 
 to_bytes() {
   local value=$1
@@ -170,6 +184,10 @@ cmd_init() {
     log "boundary disabled or cgroup2 is not writable; the box stays flat"
     return 0
   fi
+  if ! valid_id "$delegate_uid" || ! valid_id "$delegate_gid"; then
+    log "invalid BLITZ_UID:BLITZ_GID [$delegate_uid:$delegate_gid]; the box stays flat"
+    return 0
+  fi
   if ! size_defaults; then
     return 0
   fi
@@ -206,20 +224,20 @@ cmd_init() {
   mkdir -p "$USER_SLICE" || { log "cannot create the user slice"; return 0; }
   # DELEGATION, AND WHY IT IS NARROW.
   #
-  # A terminal tab and an ssh session both run as uid 1000. Neither can migrate
-  # itself into a cgroup unless it can write the destination cgroup.procs AND
-  # the cgroup.procs of the common ancestor of source and destination. ttyd and
-  # sshd live in the system slice, so that common ancestor is the container
-  # root. Hence two chowns, and only two.
+  # A terminal tab and an ssh session both run as the configured Blitz uid.
+  # Neither can migrate itself into a cgroup unless it can write the destination
+  # cgroup.procs AND the cgroup.procs of the common ancestor of source and
+  # destination. ttyd and sshd live in the system slice, so that common ancestor
+  # is the container root. Hence two chowns, and only two.
   #
-  # Handing uid 1000 the root cgroup.procs does NOT let it reach the system
+  # Handing that uid the root cgroup.procs does NOT let it reach the system
   # slice: that destination stays root-owned, and the kernel checks the
   # destination as well. Nor can it park a process in the container root — a
   # root cgroup with controller-enabled children refuses processes outright.
-  # So the grant means exactly one thing: uid 1000 may move work between
+  # So the grant means exactly one thing: the Blitz user may move work between
   # cgroups it already owns.
-  chown 1000:1000 "$ROOT/cgroup.procs" 2>/dev/null || :
-  chown 1000:1000 "$USER_SLICE" "$USER_SLICE/cgroup.procs" \
+  chown "$delegate_uid:$delegate_gid" "$ROOT/cgroup.procs" 2>/dev/null || :
+  chown "$delegate_uid:$delegate_gid" "$USER_SLICE" "$USER_SLICE/cgroup.procs" \
     "$USER_SLICE/cgroup.subtree_control" 2>/dev/null || :
   # memory.high throttles; memory.max kills. The gap between them is the band
   # where a runaway slows down and can still be seen and stopped by hand.

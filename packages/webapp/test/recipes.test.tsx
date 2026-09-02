@@ -527,6 +527,8 @@ describe('usage capture settings', () => {
         onReviewProposal={() => undefined}
         onSignOut={async () => undefined}
         onLeftOrg={() => undefined}
+        onSwitchOrg={() => undefined}
+        onCreateOrg={() => undefined}
       />
     );
   }
@@ -554,8 +556,10 @@ describe('usage capture settings', () => {
     const view = await render(settingsPage(wire, 'admin'));
     await settle();
 
+    // The switch's accessible name comes from its wrapping label
+    // (SettingsSwitch), so the query pins the role instead.
     const toggle = view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Agent usage capture"]',
+      'input[role="switch"]',
     )!;
     expect(toggle.checked).toBe(false);
     expect(view.container.textContent).toContain('created the first time you turn it on');
@@ -566,7 +570,7 @@ describe('usage capture settings', () => {
     await settle();
     expect(putUsageCapture).toHaveBeenCalledWith(true);
     expect(view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Agent usage capture"]',
+      'input[role="switch"]',
     )?.checked).toBe(true);
     expect(view.container.querySelector<HTMLAnchorElement>('a[href="/folder/folder-usage"]'))
       .not.toBeNull();

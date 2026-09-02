@@ -27,32 +27,6 @@
   user-select: none;
 }
 
-/* The org popover keeps the shell's menu markup, so the wrapper drops the
-   rail header box it used to carry. */
-.shell-strip__orgwrap {
-  height: auto;
-  flex: none;
-  border-bottom: 0;
-}
-
-/* The org mark and the workspace tiles share one size so they can never
-   drift apart (user ruling 2026-08-29). */
-.shell-strip { --strip-tile: 35px; }
-
-.shell-orgmark {
-  display: grid;
-  width: var(--strip-tile);
-  height: var(--strip-tile);
-  flex: none;
-  place-items: center;
-  border: 0;
-  border-radius: 10px;
-  color: var(--paper);
-  background: var(--accent);
-  font: 700 13px/1 var(--font-ui);
-  cursor: pointer;
-}
-
 .shell-strip__sep {
   width: 20px;
   flex: none;
@@ -61,6 +35,7 @@
 }
 
 .shell-strip__tiles,
+.shell-strip__tree,
 .shell-strip__surfaces {
   display: flex;
   min-height: 0;
@@ -68,6 +43,9 @@
   align-items: center;
   gap: 6px;
 }
+
+.shell-strip__tiles,
+.shell-strip__tree { width: 100%; }
 
 .shell-strip__tiles {
   overflow-y: auto;
@@ -80,54 +58,74 @@
 .shell-wtile {
   position: relative;
   display: grid;
-  /* Same footprint as the org mark at the top of the strip (user ruling
-     2026-08-29). */
-  width: var(--strip-tile);
-  height: var(--strip-tile);
+  width: 100%;
+  height: 35px;
   flex: none;
   place-items: center;
   border: 0;
-  border-radius: 10px;
   color: var(--muted);
-  background: var(--hover);
+  background: transparent;
   font: 700 13px/1 var(--font-ui);
   cursor: pointer;
 }
 
-.shell-wtile:hover:not(:disabled) { color: var(--ink); }
+.shell-wtile__indicator {
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  width: 8px;
+  height: 0;
+  border-radius: 0 4px 4px 0;
+  background: var(--ink);
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: height 200ms ease-out, opacity 200ms ease-out;
+}
 
-.shell-wtile:focus-visible {
+.shell-wtile__icon {
+  display: grid;
+  overflow: hidden;
+  width: 35px;
+  height: 35px;
+  place-items: center;
+  border-radius: 10px;
+  transition: color 200ms ease-out;
+}
+
+.shell-wtile__sigil {
+  display: block;
+  width: 100%;
+  height: 100%;
+  shape-rendering: crispEdges;
+}
+
+.shell-wtile:hover:not(:disabled) .shell-wtile__indicator {
+  height: 18px;
+  opacity: 1;
+}
+
+.shell-wtile:hover:not(:disabled) .shell-wtile__icon,
+.shell-wtile[aria-selected='true'] .shell-wtile__icon { color: var(--ink); }
+
+.shell-wtile[aria-selected='true'] .shell-wtile__indicator {
+  height: 32px;
+  opacity: 1;
+}
+
+.shell-wtile:focus-visible { outline: none; }
+
+.shell-wtile:focus-visible .shell-wtile__icon {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-/* Selection is the bar at the strip's edge, never a ring: a ring behind a
-   pastel tile reads as a ghost box (user ruling 2026-08-29). */
-.shell-wtile--on { color: var(--ink); }
-.shell-wtile--on::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: -7px;
-  width: 3px;
-  height: 70%;
-  border-radius: 0 3px 3px 0;
-  background: var(--ink);
-  transform: translateY(-50%);
-}
-
-.shell-wtile--off {
+.shell-wtile__icon--new {
   border: 1px dashed var(--rule);
   color: var(--faint);
   background: transparent;
 }
 
-.shell-wtile--off.shell-wtile--on {
-  color: var(--ink);
-  background: color-mix(in oklab, var(--accent) 20%, var(--paper));
-}
-
-.shell-wtile:disabled { cursor: default; }
+.shell-wtile:disabled { cursor: default; opacity: .58; }
 
 .shell-wtile__plus { width: 14px; height: 14px; }
 
@@ -172,15 +170,6 @@
    collapse to the image's intrinsic box, which turned a square photo into a
    tall oval. inset: 0 against the button's padding box cannot. */
 .shell-av__photo { position: absolute; inset: 0; display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
-
-/* The org popover reuses the shell's menu skin; only the anchor changes,
-   because the strip is 48px wide and it opens beside it. */
-.shell-strip__menu {
-  top: 0;
-  right: auto;
-  left: calc(100% + 6px);
-  width: 220px;
-}
 
 /* --------------------------------------------------------------- column 2 */
 .session-rail {
@@ -389,7 +378,14 @@
   color: var(--soft-ink);
 }
 
-/* The row: gutter · title · time. Never more. */
+/* The row: gutter · title · trailing slot. Never more.
+ *
+ * The row became a `div` wrapping `.shell-s__open` when the trailing slot
+ * gained the close button that the deleted native tab strip used to carry
+ * (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"): a button cannot nest inside a
+ * button. The metrics are unchanged — the padding and the gap moved to the
+ * inner button, so a row still measures 31px and still lines its glyph up with
+ * every other row in the rail. */
 .shell-s {
   display: flex;
   width: 100%;
@@ -404,6 +400,65 @@
   font: 13px/1.5 var(--font-ui);
   text-align: left;
   cursor: pointer;
+}
+
+/* The row's own geometry stays on `.shell-s` — `lody-blitz-theme.test.ts` pins
+ * it equal to the vendored row's, and the two must read as one list. This is
+ * only the click target inside it. */
+.shell-s__open {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Quiet until the row is under the pointer or the button has focus, so the
+ * rail still reads as a list of names rather than a list of controls. */
+.shell-s__close {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-item);
+  color: var(--faint);
+  background: transparent;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.shell-s:hover .shell-s__close,
+.shell-s__close:focus-visible {
+  opacity: 1;
+}
+
+.shell-s__close:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+/* A touch device has no hover to reveal it with, and this rail IS the tab list
+ * there — the session strip is a desktop layout (§5.5). So the close is always
+ * drawn, and sized for a finger. */
+@media (hover: none) {
+  .shell-s__close {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+    opacity: 1;
+  }
 }
 
 .shell-s:hover { background: var(--hover); }
@@ -433,9 +488,12 @@
   white-space: nowrap;
 }
 
-/* The time is the status, and green means running. Empty until Build 2. */
+/* The trailing slot: the status at Build 2, and the close today. */
 .shell-s__a {
+  display: flex;
   flex: none;
+  align-items: center;
+  padding-right: 6px;
   color: var(--faint);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
@@ -500,7 +558,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .shell-nav { transition: none; }
+  .shell-nav,
+  .shell-wtile__indicator,
+  .shell-wtile__icon { transition: none; }
 }
 
 /* The tile's context menu, in the tab strip's own menu chrome

@@ -7,9 +7,10 @@
  * `routeTree.gen.ts` that only exists inside their app builds, and the tree's
  * roots are cloud surfaces we do not mount: `__root.tsx` builds the Convex/
  * better-auth stack, and `$workspaceName/_auth.tsx` runs the organization and
- * session guards. What we want out of that tree is exactly two leaves — the
- * chat landing and the session detail — so this file declares those two with
- * their real components and stubs every other address their code navigates to.
+ * session guards. What we want out of that tree is exactly three leaves — the
+ * chat landing, the session detail and the archive — so this file declares those
+ * three with their real components and stubs every other address their code
+ * navigates to.
  *
  * ROUTE IDS ARE UPSTREAM'S, DELIBERATELY. `_auth` is reproduced as a PATHLESS
  * layout route so a leaf's id is `/$workspaceName/_auth/chat`, byte-for-byte
@@ -21,9 +22,9 @@
  * working. Matching the ids keeps that class of failure out of the tree.
  *
  * THE STUBS ARE NOT OPTIONAL. `router.navigate({ to })` throws on an address
- * the tree does not contain, and their components navigate to fourteen settings
- * pages, the archive, the task pages and `/workspace/create` from menus a
- * member can reach at any time. The list is generated, not guessed:
+ * the tree does not contain, and their components navigate to twenty settings
+ * pages, the task pages and `/workspace/create` from menus a member can reach at
+ * any time. The list is generated, not guessed:
  *
  *     cd vendor/lody/packages/components/src
  *     grep -rho "to: '/[^']*'" components hooks lib routes | sort -u
@@ -39,18 +40,25 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  useMatchRoute,
   useNavigate,
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
+import { useSetAtom } from "jotai";
 import { isJsonNumber, isJsonString, type JsonValue } from "@blitzos/schema";
 import { ChatLanding } from "@lody/components/components/chat/chat-landing";
 import { parseChatLandingSearch } from "@lody/components/components/chat/chat-landing-derived";
 import SessionDetail from "@lody/components/components/sessions/session-detail";
+import { ArchiveView } from "@lody/components/components/archive/archive-view";
 import { AppThemeShell } from "@lody/components/components/app-theme-shell";
+import { mobileWorkspaceBaseContextAtom } from "@lody/components/atoms";
+import { useIsMobile } from "@lody/components/hooks/use-mobile";
 import { useWorkspaceContextAtoms } from "@lody/components/hooks/use-workspace-context-atoms";
 import { WorkspaceRouteTargetProvider } from "@lody/components/providers/workspace-route-target";
+import { MobileSessionStack } from "./MobileSessionStack.js";
+import { LODY_ARCHIVE_ROUTE, LODY_CHAT_ROUTE, LODY_SESSION_ROUTE } from "./route-ids.js";
 import { TerminalTabsHost } from "./TerminalTabsStrip.js";
 import { useSurfaceTabs } from "./surface-tabs.js";
 import { lodyV1SuppressionProps } from "./v1-scope.js";
@@ -62,18 +70,16 @@ const V1 = lodyV1SuppressionProps();
 
 /** Every address their components navigate to that we render as nothing.
  *
- * Phase 4 gives some of these real destinations (the archive and the settings
- * pages are products in their own right). Until then a click lands on a blank
- * surface rather than throwing, and the surface is never the one a member is
- * looking at — the rail owns what is visible. */
+ * The archive left this list when it got its own page; the settings pages have
+ * their own reason below. A click on one of these lands on a blank surface
+ * rather than throwing, and the surface is never the one a member is looking at
+ * — the rail owns what is visible. */
 const STUB_PATHS = [
   "/",
   "login",
   "complete-email",
   "workspace/create",
 ] as const;
-
-const WORKSPACE_STUB_PATHS = ["archive"] as const;
 
 /** Every settings page upstream declares, stubbed.
  *
@@ -181,12 +187,65 @@ function workspaceRouteComponent(workspaceId: string) {
   };
 }
 
-/** Their `routes/$workspaceName/_auth/chat.tsx`, minus the mobile branch. */
+/**
+ * Their `routes/$workspaceName/_auth/_layout`, in the one job BlitzOS needs it
+ * for: on a phone the landing and the session are ONE navigation stack, and the
+ * stack has to outlive the route change between them.
+ *
+ * WHY IT HANGS OFF `_auth` AND NOT OFF EITHER LEAF. `MobileSessionStack` keeps
+ * `ChatLanding` mounted underneath an open session — that is the whole point of
+ * it — so it must live above both addresses. `_auth` is the nearest route both
+ * leaves share, which is exactly where upstream puts it: their
+ * `MobileWorkspaceLayout` wraps the whole `_auth` subtree and renders the stack
+ * beside the `<Outlet/>` (`components/mobile/mobile-workspace-layout.tsx:83-88`).
+ *
+ * WHY THE OUTLET STILL RENDERS ON A PHONE. Their comment on the same lines says
+ * it, and it is not decoration: the leaf components return `null` on mobile but
+ * still RUN, and `ChatRoute`'s effect is what publishes the base context the
+ * stack reads to keep the right page under an open session.
+ *
+ * `matchRoute` is asked with the PATH form, `/$workspaceName/chat`, because that
+ * is what upstream asks and `_auth` contributes no URL segment.
+ */
+function authRouteComponent(readOnly: boolean) {
+  return function AuthRoute() {
+    const isMobile = useIsMobile();
+    // SAFETY: `strict: false` returns the params of every active match; this
+    // component is a descendant of the `$workspaceName` route, which declares
+    // the parameter. `undefined` covers the render before a match resolves.
+    const params = useParams({ strict: false }) as { workspaceName?: string };
+    const matchRoute = useMatchRoute();
+    const workspaceName = params.workspaceName;
+    const onStackRoute =
+      workspaceName !== undefined
+      && (matchRoute({ to: "/$workspaceName/chat" }) !== false
+        || matchRoute({ to: "/$workspaceName/sessions/$sessionId" }) !== false);
+    return (
+      <>
+        {isMobile && onStackRoute && workspaceName !== undefined ? (
+          <MobileSessionStack workspaceName={workspaceName} readOnly={readOnly} />
+        ) : null}
+        <Outlet />
+      </>
+    );
+  };
+}
+
+/** Their `routes/$workspaceName/_auth/chat.tsx`, mobile branch and all.
+ *
+ * ON A PHONE THIS ROUTE DRAWS NOTHING AND IS STILL LOAD-BEARING. The landing a
+ * phone sees is the stack's, so this component returns `null` — but its effect
+ * publishes the machine/project/repo the member was looking at, and the stack
+ * reads that atom to keep the right page beneath an open session. Their route
+ * does the same thing in the same place (`routes/$workspaceName/_auth/chat.tsx:39`).
+ */
 function ChatRoute() {
   const { workspaceName } = useParams({ from: "/$workspaceName" });
-  const search = useSearch({ from: "/$workspaceName/_auth/chat" });
+  const search = useSearch({ from: LODY_CHAT_ROUTE });
   const navigate = useNavigate();
   const surfaceTabs = useSurfaceTabs();
+  const isMobile = useIsMobile();
+  const setMobileBaseContext = useSetAtom(mobileWorkspaceBaseContextAtom);
   // Selection steering corrects the current address in place; it is not a visit
   // to a new page, so the mirror always replaces (their comment, their rule).
   const onSelectionUrlSync = useCallback(
@@ -195,6 +254,16 @@ function ChatRoute() {
     },
     [navigate],
   );
+  useEffect(() => {
+    if (!isMobile) return;
+    setMobileBaseContext({
+      context: search.context,
+      machine: search.machine,
+      project: search.project,
+      repo: search.repo,
+    });
+  }, [isMobile, search.context, search.machine, search.project, search.repo, setMobileBaseContext]);
+  if (isMobile) return null;
   const landing = (
     <ChatLanding
       workspaceSlug={workspaceName}
@@ -211,6 +280,12 @@ function ChatRoute() {
       // button that flips an atom nothing renders (S9).
       hideProductHints={V1.hideProductHints}
       hideAgentRoles={V1.hideAgentRoles}
+      // Seam patch 15. On a narrow viewport this landing renders Lody's mobile
+      // home, whose connection banner mirrors the desktop `ConnectionPill`:
+      // "Connecting… / Reconnecting… / Offline". The BlitzOS footer already says
+      // whether the box is reachable, for the whole workspace rather than for
+      // this surface.
+      hideConnectionStatus={V1.hideConnectionStatus}
     />
   );
   // No shell around this mount contributes tabs — a headless render, a router
@@ -220,17 +295,24 @@ function ChatRoute() {
   return <TerminalTabsHost surfaceTabs={surfaceTabs} landing={landing} />;
 }
 
-/** Their `routes/$workspaceName/_auth/sessions/$sessionId.tsx`, minus mobile.
+/** Their `routes/$workspaceName/_auth/sessions/$sessionId.tsx`, mobile branch
+ * and all.
  *
  * `SessionDetail` is deliberately NOT wrapped in `useDeferredValue`: it IS the
  * session identity boundary, and deferring it lets a message typed during a
  * switch be written to the session the member just left. Their comment on that
- * route says so at length; this mount inherits the rule. */
+ * route says so at length; this mount inherits the rule.
+ *
+ * ON A PHONE IT RENDERS NOTHING. `MobileSessionStack` draws the session as a
+ * drawer over the landing, from this route's own params and search, so drawing
+ * it here as well would mount `SessionDetail` twice. Their route returns `null`
+ * for the same reason (`:36`). */
 function sessionDetailRouteComponent(readOnly: boolean) {
   return function SessionDetailRoute() {
-    const { sessionId } = useParams({ from: "/$workspaceName/_auth/sessions/$sessionId" });
-    const search = useSearch({ from: "/$workspaceName/_auth/sessions/$sessionId" });
+    const { sessionId } = useParams({ from: LODY_SESSION_ROUTE });
+    const search = useSearch({ from: LODY_SESSION_ROUTE });
     const surfaceTabs = useSurfaceTabs();
+    const isMobile = useIsMobile();
     // The six props of seam patch 5. Absent when no shell contributes tabs,
     // which is the render every upstream call site does and the one the
     // inertness test pins.
@@ -255,6 +337,7 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           onSessionTabSelect: surfaceTabs.onDeselect,
           onSessionMissing: surfaceTabs.onSessionMissing,
         };
+    if (isMobile) return null;
     return (
       <AppThemeShell>
         <SessionDetail
@@ -278,11 +361,52 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           hideNotificationPrompt={V1.hideNotificationPrompt}
           hideAgentRoles={V1.hideAgentRoles}
           keyboardShortcutsAvailable={V1.keyboardShortcutsAvailable}
+          // Seam patch 10. `hideLanguageServiceActions` takes Go to Definition
+          // and Find References off the editor (SP26): the box runs no language
+          // service, so both answered every identifier with "Host language
+          // service does not support this file".
+          hideLanguageServiceActions={V1.hideLanguageServiceActions}
+          // Seam patch 15. The page's own connection story goes dark: the
+          // composer status chip's offline states (IC64, "You are offline.
+          // Reconnect to sync."), the catch-up spinners in the info bar and the
+          // mobile header (IC65), and the file viewer's offline glyph. The
+          // footer's `workspace running · box unreachable` covers all of it, and
+          // covers the terminal and the files with it. The chip's
+          // "machine removed" state is NOT taken: it blocks sending, and the
+          // footer says nothing about it.
+          hideConnectionStatus={V1.hideConnectionStatus}
           {...hostTabs}
         />
       </AppThemeShell>
     );
   };
+}
+
+/**
+ * Their `routes/$workspaceName/_auth/archive.tsx`, minus the lazy boundary.
+ *
+ * The route file wraps `ArchiveView` in `RouteSuspense` and a `lazy()`, because
+ * upstream splits it out of an app bundle a member loads on sign-in. This whole
+ * surface is already one lazy chunk (`LodySessionsRegion`), so a second boundary
+ * inside it would buy a spinner and nothing else.
+ *
+ * `AppThemeShell` is the session page's own wrapper, and the archive needs it
+ * for the same reason: the page paints `bg-background`, which resolves from the
+ * theme variables that shell publishes.
+ */
+function ArchiveRoute() {
+  return (
+    <AppThemeShell>
+      <ArchiveView
+        // Seam patch 14. `hideTeamScope` takes the My Tasks / All Tasks control
+        // (T25): a local workspace has exactly one member, so both entries list
+        // the same sessions. The row's pull-request badge is NOT a prop — it
+        // answers `useAppCapability('githubIntegration')`, which the local
+        // platform already declines.
+        hideTeamScope={V1.hideTeamScope}
+      />
+    </AppThemeShell>
+  );
 }
 
 export interface LodySessionDetailSearch {
@@ -324,8 +448,7 @@ export function parseSessionDetailSearch(
   return parsed;
 }
 
-export const LODY_CHAT_ROUTE = "/$workspaceName/_auth/chat";
-export const LODY_SESSION_ROUTE = "/$workspaceName/_auth/sessions/$sessionId";
+export { LODY_ARCHIVE_ROUTE, LODY_CHAT_ROUTE, LODY_SESSION_ROUTE } from "./route-ids.js";
 
 /** The router type, stated on our side: `createRouter` is generic over the
  * route tree and the vendor seam erases the component types, so naming the
@@ -383,7 +506,7 @@ export function createLodySessionRouter(
   const authRoute = createRoute({
     getParentRoute: () => workspaceRoute,
     id: "_auth",
-    component: RouteOutlet,
+    component: authRouteComponent(options.readOnly === true),
   });
 
   const chatRoute = createRoute({
@@ -436,9 +559,13 @@ export function createLodySessionRouter(
     createRoute({ getParentRoute: () => settingsRoute, path, component: EmptyRoute }),
   );
 
-  const workspaceStubs = WORKSPACE_STUB_PATHS.map((path) =>
-    createRoute({ getParentRoute: () => authRoute, path, component: EmptyRoute }),
-  );
+  // The archive is a real page, not a stub: it is the only surface that lists
+  // an archived session, and the only one that can restore or delete one.
+  const archiveRoute = createRoute({
+    getParentRoute: () => authRoute,
+    path: "archive",
+    component: ArchiveRoute,
+  });
 
   // `local/$machineId/$localProjectId` is their local-project page. Phase 5
   // gives it a destination; until then it is an address, not a screen.
@@ -457,7 +584,7 @@ export function createLodySessionRouter(
         tasksRoute.addChildren([tasksIndexRoute, taskDetailRoute]),
         settingsRoute.addChildren([settingsIndexRoute, ...settingsStubs]),
         localProjectRoute,
-        ...workspaceStubs,
+        archiveRoute,
       ]),
     ]),
   ]);
@@ -485,4 +612,13 @@ export function createLodySessionRouter(
 export function activeSessionIdFromPathname(pathname: string): string | null {
   const match = /^\/[^/]+\/sessions\/([^/?#]+)/u.exec(pathname);
   return match?.[1] ?? null;
+}
+
+/** Whether the router's current address is the archive page.
+ *
+ * Read off the location for the reason `activeSessionIdFromPathname` is: both
+ * answers are wanted from a `router.subscribe('onResolved')` callback, where no
+ * React context is available. */
+export function isArchivePathname(pathname: string): boolean {
+  return /^\/[^/]+\/archive\/?(?:[?#]|$)/u.test(pathname);
 }

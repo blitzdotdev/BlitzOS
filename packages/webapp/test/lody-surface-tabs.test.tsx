@@ -35,9 +35,6 @@
  * with the same rule (mounted always, `hidden` when inactive).
  */
 import { act } from "react";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { I18nextProvider } from "react-i18next";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { RouterProvider } from "@tanstack/react-router";
@@ -58,217 +55,20 @@ import {
   workspaceTabIdFromSurfaceTabId,
   type SurfaceTabsBinding,
 } from "../src/lody/surface-tabs.js";
-import type { WebAppTabModel } from "../src/WebAppHeader.js";
+import type { WebAppTabModel } from "../src/SessionTypeIcon.js";
 import { installLodyDomStubs } from "./lody-dom-stubs.js";
 import { expectLandingHeading } from "./lody-landing-heading.js";
 import { render, settle } from "./dom.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = join(here, "..", "..", "..");
-const vendorDir = join(
-  repoRoot,
-  "vendor/lody/packages/components/src/components/sessions",
-);
-const baselineDir = join(here, "upstream-baseline");
-
-const readLines = (path: string): string[] => readFileSync(path, "utf8").split("\n");
-
-/** One line the seam removes from upstream, by its line number in the pristine
- * file. The number is what makes an anchor unambiguous: `        )}` occurs
- * dozens of times in `session-tab-bar.tsx`, and "the first one" is not a
- * statement about anything. */
-type Anchor = readonly [line: number, text: string];
-
 /**
- * Asserts one vendored file against its pristine upstream baseline.
- *
- * Two claims, and the second is the one that carries the inertness:
- *
- * 1. Each declared anchor is the line upstream actually has at that number, so
- *    the table in `BLITZ-PATCHES.md` describes this tree and not a remembered
- *    one.
- * 2. Upstream MINUS those lines is still a subsequence of the patched file.
- *    Every other line upstream wrote survives, in order — so the patch only
- *    ADDS, and the branches upstream takes with the new props absent are the
- *    branches it took before. An undeclared deletion, or a reworded line, fails
- *    with the first upstream line that could not be found.
+ * THE SOURCE PIN MOVED, AND THE MOUNT STAYED. Every assertion that reads a
+ * vendored file against its pristine upstream baseline now lives in
+ * `lody-seam-pin.test.ts`, which imports nothing: the `beforeAll` below pulls
+ * the whole vendored renderer in, and on a loaded machine it exceeds its hook
+ * budget — at which point vitest reports every test in THIS file as skipped.
+ * A pin that a slow machine silently turns off is not a pin. What is left here
+ * is claim (2): the patch WORKS, driven through the two real hosts.
  */
-function expectSeam(file: string, anchors: readonly Anchor[]): void {
-  const upstream = readLines(join(baselineDir, `${file}.txt`));
-  const patched = readLines(join(vendorDir, file));
-  const removed = new Set<number>();
-  for (const [line, text] of anchors) {
-    expect(upstream[line - 1], `${file}:${line} is the anchor BLITZ-PATCHES.md names`).toBe(text);
-    removed.add(line);
-  }
-  expect(removed.size, "an anchor is declared twice").toBe(anchors.length);
-
-  const kept = upstream.filter((_line, index) => !removed.has(index + 1));
-  // Greedy is exact for a subsequence test: the earliest match never rules out
-  // a later one, so a failure here is a line the patched file really lost.
-  let cursor = 0;
-  for (const line of kept) {
-    while (cursor < patched.length && patched[cursor] !== line) cursor += 1;
-    expect(
-      cursor,
-      `${file} no longer carries an upstream line the seam does not declare: ${JSON.stringify(line)}`,
-    ).toBeLessThan(patched.length);
-    cursor += 1;
-  }
-}
-
-describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
-  it("removes nothing from session-tab-bar.tsx but the declared anchors", () => {
-    expectSeam("session-tab-bar.tsx", [
-      // hunk 1: the `react` import gains `type ReactNode`
-      [1, "import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';"],
-      // hunk 2: `ViewerTabItem` gains `'custom'` and `icon`
-      [42, "/** A viewer tab item (file or diff) displayed in the tab bar. */"],
-      [45, "  type: 'file' | 'diff';"],
-      // hunk 4: `parentSession` becomes optional
-      [58, "  parentSession: SessionMeta;"],
-      // hunk 3: `ViewerTabContent` draws the host's glyph
-      [466, "        {tab.type === 'file' && tab.filePath ? ("],
-      [470, "        )}"],
-      // hunk 5: `visibleTabIds` reads the parent id only when there is one
-      [726, "    () => (showSessionTabs ? [parentSession.id, ...sortableIds] : sortableIds),"],
-      [727, "    [parentSession.id, showSessionTabs, sortableIds]"],
-      // hunk 6: the parent strip item is guarded on the same thing
-      [765, "        {showSessionTabs && ("],
-    ]);
-  });
-
-  it("removes nothing from session-detail.tsx but seam patches 4, 5, 6 and 7's anchors", () => {
-    expectSeam("session-detail.tsx", [
-      // Seam patch 4's hunks are additive and remove nothing, which is why they
-      // are absent from this list and still covered by the subsequence check.
-      // So are three of seam patch 6's four; its fourth is the last anchor here.
-      // hunk 7: the `react` import gains `type ReactNode`
-      [
-        90,
-        "import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';",
-      ],
-      // hunk 11: the strip's variant follows the host's list
-      [5505, '      variant="session"'],
-      // hunk 14: an active host tab deselects the conversation surfaces
-      [5587, "        const isActive = tabSession.id === activeTabSessionId;"],
-      [5621, "        const isActive = draft.id === activeTabSessionId;"],
-      // hunk 17: the state setter becomes a chokepoint that announces the
-      // conversation tab it selected, so the `useState` keeps the raw setter
-      // under a new name
-      [756, "  const [activeTabSessionIdRaw, setActiveTabSessionId] = useState<string>("],
-      // hunk 18: the three writers that are a CORRECTION rather than a
-      // selection keep the raw setter
-      [947, "    setActiveTabSessionId(nextInitialTabState.activeTabSessionId);"],
-      [2585, "      setActiveTabSessionId((prev) =>"],
-      [2591, "    setActiveTabSessionId((prev) => (prev === sessionId ? prev : sessionId));"],
-      // Seam patch 6 hunk 24: the Side Chat launcher gains a third reason to be
-      // disabled. Its other three hunks add lines and remove none, so they are
-      // covered by the subsequence check rather than named here.
-      [3358, "      disabled: launcherState === 'disabled' || isCreatingSideSession,"],
-      // Seam patch 7 hunk 12: the page's GitHub state answers the
-      // `githubIntegration` capability, so the two lines of the memo it was
-      // built by are rewritten. Its other three hunks in this file add lines
-      // and remove none.
-      [1564, "    () => getSessionGitHubState(activeTabSession, workspaceOwnerSession),"],
-      [1565, "    [activeTabSession, workspaceOwnerSession]"],
-      // Seam patch 7 hunk 15: `session.focusInput` takes `useCommand`'s second
-      // argument, so its closing line gains one. This is the ONE `});` in the
-      // file the seam declares, which is why the anchor is a line number.
-      [3719, "  });"],
-    ]);
-  });
-
-  it("holds a baseline of the commit vendor/lody/UPSTREAM.md pins", () => {
-    // The baselines are only evidence while they are the pin's own bytes, and
-    // nothing else in the tree would notice them going stale. `docs/LODY-MERGE.md`
-    // §4 says to refresh them in the same change as the merge; this is what
-    // fails when that is forgotten.
-    const upstream = readFileSync(join(repoRoot, "vendor/lody/UPSTREAM.md"), "utf8");
-    const pin = /\| Pinned commit \| `([0-9a-f]{40})` \|/u.exec(upstream)?.[1];
-    expect(pin, "UPSTREAM.md still states a pinned commit").toBeDefined();
-    const readme = readFileSync(join(baselineDir, "README.md"), "utf8");
-    expect(readme, "the baselines name the commit they were taken from").toContain(pin ?? "");
-  });
-
-  it("declares the same six props on both sides of the seam", () => {
-    const detail = readFileSync(join(vendorDir, "session-detail.tsx"), "utf8");
-    for (const prop of [
-      "surfaceTabs?: readonly SessionSurfaceTab[];",
-      "activeSurfaceTabId?: string | null;",
-      "onSurfaceTabSelect?: (tabId: string) => void;",
-      "onSurfaceTabClose?: (tabId: string) => void;",
-      "onSessionTabSelect?: (tabId: string) => void;",
-      // Hunk 19, added in wave 3: the page returns above the strip when the
-      // session does not exist, and the host loses every tab with it.
-      "onSessionMissing?: (sessionId: string) => void;",
-    ]) {
-      expect(detail, `seam patch 5 declares ${prop}`).toContain(prop);
-    }
-    // Hunks 17-18, pinned as a CALL and not only as a declaration. A declared
-    // prop that nothing invokes is exactly the shape of the defect it fixes:
-    // the host keeps its tab selected, hunk 15 keeps drawing it, and a click on
-    // a session tab does nothing a member can see.
-    expect(detail, "the announcing setter exists").toContain(
-      "const setActiveTabSessionId = useCallback((tabId: string) => {",
-    );
-    expect(detail, "and it announces").toContain("onSessionTabSelectRef.current?.(tabId);");
-  });
-
-  /**
-   * THE CHOKEPOINT IS ONLY A CHOKEPOINT WHILE NOTHING WALKS AROUND IT.
-   *
-   * Ten call sites move the conversation selection and the first version of the
-   * fix notified from one of them, which left the strip's `+` opening a draft
-   * tab underneath the terminal — the same defect one button along. What the
-   * seam relies on now is that the raw setter has exactly three callers, all
-   * declared, so a merge that adds an eleventh writer either goes through the
-   * wrapper or fails here.
-   */
-  it("routes every conversation-tab SELECTION through the announcing setter", () => {
-    const detail = readFileSync(join(vendorDir, "session-detail.tsx"), "utf8");
-    const rawWrites = [...detail.matchAll(/^\s*setActiveTabSessionIdState\(/gmu)];
-    expect(
-      rawWrites.length,
-      "the raw setter is called only inside the wrapper and by hunk 18's three corrections",
-    ).toBe(4);
-
-    // The writers that were inert with the click-only notification, named so a
-    // merge that reroutes one of them says which.
-    const announcing = new Set(
-      [...detail.matchAll(/^\s*(?:void )?setActiveTabSessionId\((.+?)\);?$/gmu)].map(
-        (match) => match[1],
-      ),
-    );
-    for (const [argument, what] of [
-      ["tabId", "the strip's own tab click, and everything routed through it"],
-      ["draft.id", "the strip's + — a new draft tab"],
-      ["childSessionId", "a draft promoted to a real child session"],
-      ["sessionId", "a close falling back to the parent"],
-      ["tabSessionId", "the browser panel opening a tab"],
-    ] as const) {
-      expect(announcing, `${what} announces`).toContain(argument);
-    }
-    // The next/previous cycle and the archived-tab restore reach the same
-    // setter through `handleSessionTabSelect` rather than directly.
-    expect(detail, "the tab cycle goes through the announcing handler").toContain(
-      "void handleSessionTabSelect(nextTabId);",
-    );
-    expect(detail, "the archived-tab restore goes through it too").toContain(
-      "handleSessionTabSelect(id as SessionId);",
-    );
-    // Our side re-states the tab shape, because every `@lody/components/*`
-    // specifier is `any` at the typecheck seam. The two must not drift.
-    const ours = readFileSync(
-      join(repoRoot, "packages/webapp/src/lody/surface-tabs.ts"),
-      "utf8",
-    );
-    for (const field of ["id: string;", "label: string;", "icon?: ReactNode;", "content: ReactNode;"]) {
-      expect(detail, `vendored SessionSurfaceTab carries ${field}`).toContain(field);
-      expect(ours, `our SessionSurfaceTab carries ${field}`).toContain(field);
-    }
-  });
-});
 
 const i18n = initLodyI18n();
 

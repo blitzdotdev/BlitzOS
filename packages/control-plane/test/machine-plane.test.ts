@@ -241,6 +241,26 @@ describe("machine plane: authentication", () => {
       .toBe(403);
   });
 
+  it("does not let a start launder a machine whose row outlived a destroy", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const home = await createWorkspace(app, cookie);
+    const target = await createWorkspace(app, cookie);
+    const token = await boxTokenFor(app, providers, home.id);
+    const machineId = await machineIdFor(target.id);
+
+    await appRequest(app, `/machines/${machineId}`, { method: "DELETE", headers: { Cookie: cookie } });
+
+    // `start` now recovers a destroyed row, because the row and its disk can
+    // outlive the tombstone. That makes it a resume, never a creation: the
+    // provenance stays the person's, so the agent still cannot destroy it.
+    expect((await appRequest(app, `/machines/${machineId}/start`, asBox(token, "POST"))).status)
+      .toBe(200);
+    expect(await planeOf(machineId)).toBe("session");
+    expect((await appRequest(app, `/machines/${machineId}`, asBox(token, "DELETE"))).status)
+      .toBe(403);
+  });
+
   it("preserves provenance across a recreate", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);

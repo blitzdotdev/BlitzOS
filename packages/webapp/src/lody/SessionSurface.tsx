@@ -50,6 +50,7 @@ import { createPortal } from "react-dom";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { RouterProvider } from "@tanstack/react-router";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
+import { resetLocalPlatformSnapshotState } from "@lody/components/providers/local-platform-provider";
 import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
 import {
@@ -59,12 +60,14 @@ import {
 } from "@lody/components/atoms/workspace-context";
 import { LodyAgentAuthNotice } from "./agent-auth-notice.js";
 import { LodyAgentConfigGate } from "./agent-config-gate.js";
+import { useLodyRuntimeBootRetry } from "./use-runtime-boot-retry.js";
 import { createLodyLocalBridge, installLodyLocalBridge, type LodyLocalBridge } from "./local-bridge.js";
 import { BlitzPlatformProviders, useLodyPlatformSnapshot, type BlitzViewer } from "./platform.js";
 import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
 import {
   activeSessionIdFromPathname,
   createLodySessionRouter,
+  isArchivePathname,
   type LodyRouter,
   type LodySessionRouterOptions,
 } from "./router.js";
@@ -95,6 +98,9 @@ export interface LodyRailBinding {
   terminals: DriveRailSession[];
   activeTerminalId: string;
   onSelectTerminal: (tabId: string) => void;
+  /** Close one terminal tab from its rail row — the deleted native strip's
+   * close, moved (`SessionRailSidebar`'s `TerminalRows`). */
+  onCloseTerminal?: (tabId: string) => void;
   /**
    * THE SHELL'S OWN NAVIGATORS, and the reason they exist rather than the
    * surface routing itself.
@@ -115,6 +121,9 @@ export interface LodyRailBinding {
   onOpenLanding?: () => void;
   /** The `+ New tab` control, rendered in the Terminals section header. */
   terminalsAction?: ReactNode;
+  /** The rail footer's Archive entry (seam patch 13). Absent, the portal falls
+   * back to the surface's own router, exactly as `onOpenSession` does. */
+  onOpenArchive?: () => void;
   /** Right-click Share on a session row. Absent leaves the row's menu exactly
    * as phase 4 shipped it (plans/LODY-SHARING.md §8). */
   onShareSession?: (sessionId: string) => void;
@@ -141,8 +150,15 @@ export interface LodySessionSurfaceApi {
    * member gets an empty composer instead of the one they left.
    */
   openLanding: (options?: { resetDraft?: boolean }) => void;
-  /** The session the surface is currently showing, or `null` on the landing. */
+  /** The session the surface is currently showing, or `null` on the landing and
+   * on the archive. */
   activeSessionId: () => string | null;
+  /** Show the archived-session list. */
+  openArchive: () => void;
+  /** `true` while the archive page is the surface's address. Asked BESIDE
+   * `activeSessionId`, because the archive names no session and would otherwise
+   * be indistinguishable from the landing. */
+  isArchiveOpen: () => boolean;
   /** Every `window.ipc` channel the vendored renderer asked for that the bridge
    * does not serve (design-doc risk 10). Empty is the healthy answer, and the
    * phase-3 exit test asserts it after a full round trip: an upstream call site
@@ -204,6 +220,21 @@ export interface LodySessionSurfaceProps {
   /** Follow the session without driving it. Suppresses the composer and the
    * permission card's answer buttons (seam patch 4). */
   readOnly?: boolean;
+  /**
+   * The session the shell's address named on THIS box at mount, so the memory
+   * router opens on it instead of the chat landing.
+   *
+   * Read ONCE, at the mount this surface is keyed to (a workspace switch mounts
+   * a fresh surface per box), and never again: later selections drive the
+   * router imperatively through `openSession`, and re-reading this would rebuild
+   * the router under the member's cursor. Without it the own-box router starts
+   * at `/chat`, whose first resolved address is `null`; that null is mirrored
+   * back to the shell as `openLanding()` and erases the restored selection —
+   * the "goes back to new session" half of the workspace-switch report. The
+   * `shared` branch already opens on its own session, so this is the own-box
+   * counterpart of that.
+   */
+  initialSessionId?: string;
 }
 
 /**
@@ -213,10 +244,27 @@ export interface LodySessionSurfaceProps {
  * polls `localPlatform.getSnapshot` off a module-level singleton that starts on
  * its first read (`providers/local-platform-provider.ts:110`), and that read
  * happens while `RuntimeProvider` renders. An effect would run after it.
+ *
+ * FORGET THE PREVIOUS BOX'S LOCAL IDENTITY when this surface is born. That
+ * snapshot singleton settles ONCE per page and never re-reads (it assumes one
+ * daemon per renderer, which is Electron's world, not a browser talking to many
+ * boxes). Without the reset the runtime pins to the FIRST box's workspace id for
+ * the life of the tab: on every later workspace switch it opens that box's Loro
+ * replica and subscribes to its rooms while our bridge dials a DIFFERENT daemon,
+ * so nothing syncs and the rail is empty until a full reload — which is the only
+ * thing that reset the singleton before. This is `resetLocalPlatformSnapshotState`
+ * (BLITZ-PATCHES.md §17), called synchronously in the render body of the incoming
+ * surface, gated on a NEW bridge so it fires exactly once per box: it runs before
+ * this surface's child `RuntimeProvider` renders and re-reads the snapshot, and
+ * the departing surface (keyed by box) does not re-render, so there is no
+ * teardown race — the reset always belongs to the box coming in.
  */
 function useLodyLocalBridge(endpoints: LodyRuntimeEndpoints): LodyLocalBridge {
   const held = useRef<LodyLocalBridge | null>(null);
-  held.current ??= createLodyLocalBridge(endpoints);
+  if (held.current === null) {
+    resetLocalPlatformSnapshotState();
+    held.current = createLodyLocalBridge(endpoints);
+  }
   const bridge = held.current;
   // Two property assignments, so repeating it per render costs nothing.
   installLodyLocalBridge(bridge);
@@ -338,6 +386,12 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
   // page under the member's cursor.
   const sharedSessionId = props.shared?.sessionId ?? null;
   const workspaceId = snapshot?.workspace.workspaceId ?? null;
+  // The own-box initial address, frozen at mount: the router builds once, after
+  // the snapshot settles the slug, and later selections drive it imperatively.
+  // A ref, not a dep, so a selection change never rebuilds the router. See the
+  // prop's comment for why the address has to arrive with the router rather than
+  // after it.
+  const initialOwnSessionIdRef = useRef(props.initialSessionId);
   const router = useMemo<LodyRouter | null>(() => {
     if (slug === null) return null;
     const routerOptions: LodySessionRouterOptions = { readOnly };
@@ -346,7 +400,13 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     // directly — the ACP sign-in panel first among them — sees `null` and
     // refuses with "Workspace context is missing". See `router.tsx`.
     if (workspaceId !== null) routerOptions.workspaceId = workspaceId;
+    // A shared surface opens on the shared session; an own surface opens on the
+    // selection the shell restored. Shared wins because the two never coexist on
+    // one surface, and a shared mount is never handed an own-box initial id.
     if (sharedSessionId !== null) routerOptions.initialSessionId = sharedSessionId;
+    else if (initialOwnSessionIdRef.current !== undefined) {
+      routerOptions.initialSessionId = initialOwnSessionIdRef.current;
+    }
     return createLodySessionRouter(slug, routerOptions);
   }, [slug, workspaceId, readOnly, sharedSessionId]);
 
@@ -401,6 +461,11 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     [router, slug],
   );
 
+  const openArchive = useCallback(() => {
+    if (router === null || slug === null) return;
+    void router.navigate({ to: "/$workspaceName/archive", params: { workspaceName: slug } });
+  }, [router, slug]);
+
   const onApiReadyRef = useRef(onApiReady);
   onApiReadyRef.current = onApiReady;
   useEffect(() => {
@@ -408,12 +473,14 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     const api: LodySessionSurfaceApi = {
       openSession,
       openLanding,
+      openArchive,
       activeSessionId: () => activeSessionIdFromPathname(router.state.location.pathname),
+      isArchiveOpen: () => isArchivePathname(router.state.location.pathname),
       unsupportedIpcChannels: () => bridge.unsupportedChannels(),
     };
     onApiReadyRef.current?.(api);
     return () => onApiReadyRef.current?.(null);
-  }, [router, slug, bridge, openSession, openLanding]);
+  }, [router, slug, bridge, openSession, openLanding, openArchive]);
 
   // The rail's own copy of the address. `onActiveSessionChange` tells `CloudApp`
   // (which drives routing and persistence); this drives the highlight inside the
@@ -427,6 +494,20 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     ),
     () => (router === null ? null : activeSessionIdFromPathname(router.state.location.pathname)),
     () => null,
+  );
+
+  // The rail's own copy of the OTHER half of the address, out of the same
+  // subscription and for the same reason: the footer's Archive entry draws its
+  // active state from it, and a prop round-trip through `CloudApp` would render
+  // one frame late on every click.
+  const archiveOpen = useSyncExternalStore(
+    useCallback(
+      (notify: () => void) =>
+        router === null ? () => undefined : router.subscribe("onResolved", notify),
+      [router],
+    ),
+    () => (router === null ? false : isArchivePathname(router.state.location.pathname)),
+    () => false,
   );
 
   // A SESSION CREATED BEFORE THE DEFAULT PROJECT EXISTED IS REPAIRED ON OPEN
@@ -446,6 +527,15 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     sessionId: activeSessionId,
     shared: isShared,
   });
+
+  // THE RUNTIME BOOT IS ONE-SHOT AND THE BOX MAY NOT BE READY FOR IT YET.
+  // `RuntimeProvider` creates the runtime once and, on failure, leaves
+  // `runtimeAtom` null with nothing left in its dependency list that can
+  // change — so on a freshly provisioned workspace, where the gateway answers
+  // long before the session daemon does, the gate below never opens. This
+  // counter rebuilds the provider when that specific failure is on the atoms.
+  // See `use-runtime-boot-retry.ts` for why it is a remount and not a patch.
+  const runtimeGeneration = useLodyRuntimeBootRetry(store, snapshot?.machineId ?? null);
 
   // THE AGENT-AUTH BANNER BELONGS TO SESSION CONTENT, NOT TO THE PANE
   // (plans/LODY-TERMINAL-TABS.md wave 3, F8).
@@ -482,10 +572,15 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             terminals={rail.terminals}
             activeTerminalId={rail.activeTerminalId}
             activeSessionId={activeSessionId}
+            archiveActive={archiveOpen}
             surfaceVisible={props.hidden !== true}
             onSelectTerminal={rail.onSelectTerminal}
+            {...(rail.onCloseTerminal === undefined
+              ? {}
+              : { onCloseTerminal: rail.onCloseTerminal })}
             onSelectSession={rail.onOpenSession ?? openSession}
             onOpenLanding={rail.onOpenLanding ?? openLanding}
+            onOpenArchive={rail.onOpenArchive ?? openArchive}
             {...(rail.terminalsAction === undefined
               ? {}
               : { terminalsAction: rail.terminalsAction })}
@@ -518,7 +613,7 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             workspaceTitle={workspaceTitle}
           >
             <LodySurfaceProviders>
-              <RuntimeProvider>
+              <RuntimeProvider key={runtimeGeneration}>
                 {railSidebar}
                 {agentAuthNotice(snapshot.machineId)}
                 <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>

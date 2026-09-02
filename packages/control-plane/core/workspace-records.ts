@@ -75,6 +75,11 @@ export interface MachineRow {
   /** The plane that asked for this machine: a person's session, or an agent's
    * box credential. An agent may destroy only what the agent plane made. */
   created_by_plane: CreatedByPlane;
+  /** 1 while a teardown that KEEPS this machine is in flight — a stop, a
+   * recreate, a machine-type change. `destroying` alone cannot say whether the
+   * row is coming back, so whoever finalises the teardown reads it here rather
+   * than assuming a destroy (migration 0047). */
+  destroy_keeps_row: number;
   error: string | null;
   created_at: number;
   updated_at: number;
