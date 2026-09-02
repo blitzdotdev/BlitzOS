@@ -32,6 +32,7 @@ VM (Hetzner cloud server, Ubuntu 24.04)
     │
     │  s6 oneshot `cgroups` runs blitz-cgroup init before anything else:
     │  drain every pid out of the container root, then delegate +memory +pids
+    │  (+cpu best-effort: only the Lody session sandbox needs it)
     │
     ├── blitz-system.slice        memory.min 256M (measured: no flip down to 128M; 256M is ~3x the protected set) · oom_score_adj -900 · pids 512
     │     s6 tree, cloudflared, gateway, sshd, dufs, ttyd, watch
@@ -41,7 +42,9 @@ VM (Hetzner cloud server, Ubuntu 24.04)
           pids 4096 · swap 2G      — everything a member's work can grow
           ├── tab-<session>        one per terminal tab      oom.group=1
           ├── ssh-<pid>            one per ssh session       oom.group=1
-          ├── lody.scope           session agents (ACP children) oom.group=1
+          ├── lody.scope           the Lody daemon itself        oom.group=1
+          ├── lody-sessions/       parent for the daemon's per-session leaves: +memory +pids +cpu, uid 1000
+          │     └── lody-session-<id>   one ACP agent and everything it spawns; oom.group=1, cgroup.kill on termination
           ├── rc.scope             claude.ai Remote Control  oom.group=1
           ├── dockerd.scope        the DinD daemon itself
           └── docker.slice         every inner container     max = user/2, oom.group=1
@@ -59,7 +62,7 @@ band below the ceiling so a runaway throttles visibly before it dies.
 |---|---|---|
 | Terminal tab | the tmux **pane command** in `blitz-term` | tmux forks panes from its server, not from the launcher |
 | SSH / sftp | `ForceCommand /usr/local/libexec/blitz-ssh-session` | sessions fork from sshd, which lives in the protected slice |
-| Session agents | the `lody-daemon` s6 `run` | the daemon spawns each ACP agent beyond any wrapper |
+| Session agents | the daemon's own sandbox (`session-sandbox.ts`), into `lody-sessions/lody-session-<id>` | the daemon spawns each ACP agent beyond any wrapper, so only it can place them. It never writes subtree_control, and its own cgroup cannot delegate while holding it, so `blitz-cgroup init` builds the parent beside `lody.scope` and `packages/box/patches/lody-session-sandbox.mjs` points the daemon at it |
 | Remote Control | its s6 `run` | it drives a full agent |
 | Inner containers | `dockerd --cgroup-parent` | dockerd otherwise creates cgroups outside every limit |
 

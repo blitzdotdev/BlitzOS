@@ -1,4 +1,3 @@
-import { availableParallelism, freemem } from "node:os";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -14,15 +13,7 @@ import {
   lodyVendorAliases,
   loroWasmUrlWorkaround,
 } from "./src/lody/vendor-bridge.js";
-
-/** Measured footprint of one worker that has imported the vendored renderer,
- * rounded up to a round number. See `test.maxWorkers` below. */
-const LODY_WORKER_BYTES = 1_073_741_824;
-
-function lodyAwareWorkerCount(): number {
-  const budget = Math.floor(freemem() / LODY_WORKER_BYTES);
-  return Math.max(1, Math.min(availableParallelism(), budget));
-}
+import { lodyAwareWorkerCount } from "./test/worker-budget.js";
 
 // Every first-party control-plane route the dev server must forward to the
 // control plane instead of serving the SPA shell.
@@ -88,12 +79,14 @@ export default defineConfig(({ command, mode }) => {
       globalSetup: ["./test/lody-daemon-reaper.ts"],
       // Capped by MEMORY as well as by cores, because three suites import the
       // vendored Lody renderer and a worker holding that graph — Monaco, three,
-      // mermaid, shiki, loro's WASM — plus a `lody` daemon runs to several
-      // hundred MB. Four of those on a box with a gigabyte free gets the whole
-      // run SIGKILLed by the OOM reaper: exit code 137, no failing test, no
-      // stack, just `Killed`. `freemem` and not `totalmem` because a dev box is
-      // shared, and the failure is about what is free right now. Measured here:
-      // two workers are not slower than four, so the cap costs nothing on the
+      // mermaid, shiki, loro's WASM — plus a `lody` daemon runs to a gigabyte.
+      // Four of those on a box with a gigabyte free gets the whole run
+      // SIGKILLed by the OOM reaper: exit code 137, no failing test, no stack,
+      // just `Killed`. The budget is the LOWER of what the machine has free
+      // and what the enclosing cgroups have left under their ceilings — a box
+      // throttles its user work at `memory.high` well before `freemem` reaches
+      // zero (test/worker-budget.ts has the measurement). Measured here: two
+      // workers are not slower than four, so the cap costs nothing on the
       // machine that needs it.
       maxWorkers: lodyAwareWorkerCount(),
       // `npm run dev` and `npm run build` read `env.defaults` through
