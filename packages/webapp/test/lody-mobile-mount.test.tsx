@@ -276,6 +276,21 @@ describe("the mount is wired the way BLITZ-PATCHES.md and the scope record say",
     expect(router).toContain("setMobileBaseContext({");
   });
 
+  it("asks `matchRoute` with the addresses upstream's own layout asks with", () => {
+    // If either `to` were not an address our tree holds, `matchRoute` would
+    // answer `false` for the life of the surface, the stack would never mount,
+    // and a phone would show a blank pane — a failure with no error in it.
+    // `lody-router-targets.test.ts` proves both addresses exist; this proves we
+    // ask for them by upstream's own spelling, so a merge that renames one
+    // fails here rather than at a member's first tap.
+    const theirs = readVendoredSource("components/mobile/mobile-workspace-layout.tsx");
+    const ours = readOurs("router.tsx");
+    for (const address of ["/$workspaceName/chat", "/$workspaceName/sessions/$sessionId"]) {
+      expect(theirs, `upstream matches on ${address}`).toContain(`matchRoute({ to: '${address}' })`);
+      expect(ours, `our layout matches on ${address}`).toContain(`matchRoute({ to: "${address}" })`);
+    }
+  });
+
   it("passes every v1 suppression the two mounts need", () => {
     const stack = readOurs("MobileSessionStack.tsx");
     for (const prop of [
