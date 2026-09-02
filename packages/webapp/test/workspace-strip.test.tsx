@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { WorkspaceStrip, workspaceCode } from "../src/shell/WorkspaceStrip.js";
@@ -5,6 +7,8 @@ import type { TenantMe } from "../src/api-adapter.js";
 import type { CloudWorkspaceModel } from "../src/workspace-store.js";
 import { render } from "./dom.js";
 import { workspaceModelFixture } from "./workspace-fixtures.js";
+
+const workspaceCss = readFileSync(join(process.cwd(), "src", "webapp-workspace.css"), "utf8");
 
 const acme = { id: "org-one", slug: "acme", name: "Acme", vmLimit: 10 };
 const side = { id: "org-two", slug: "side", name: "Side", vmLimit: 10 };
@@ -148,6 +152,12 @@ describe("workspace strip", () => {
     expect(onSelectWorkspace).not.toHaveBeenCalled();
     expect(view.container.querySelector('[role="menu"][aria-label="Workspace design-team"]')).toBeNull();
     await view.unmount();
+  });
+
+  it("resets native button chrome so the context menu keeps its themed surface", () => {
+    const menuRule = /\.webapp-session-menu button\s*\{(?<body>[^}]*)\}/u.exec(workspaceCss);
+    expect(menuRule?.groups?.body).toMatch(/\bborder:\s*0;/u);
+    expect(menuRule?.groups?.body).toMatch(/\bbackground:\s*transparent;/u);
   });
 
   it("offers a non-admin Settings alone, and renames through the caller's PATCH", async () => {
