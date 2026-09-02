@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/workspace.png" alt="A BlitzOS workspace: agent terminal, files, and connections in the browser" width="100%">
+  <img src="docs/images/workspace.png" alt="A BlitzOS workspace: the session rail with worktrees and chats on the left, an agent session in the middle, and its diff on the right" width="100%">
 </p>
 
 ## What you can do with BlitzOS
