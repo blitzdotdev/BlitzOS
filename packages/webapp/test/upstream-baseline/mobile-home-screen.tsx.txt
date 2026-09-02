@@ -390,17 +390,6 @@ export type MobileHomeScreenProps = {
      gate). When false the tab is not rendered at all — as if never
      built — and a `selectedTab` of `'tasks'` falls back to Chat. */
   showTasksTab?: boolean;
-  /** Shows the GitHub segment of the Projects sub-tab selector. On by
-     default. A platform without GitHub integration has no repositories to
-     list, so the segment leads to an empty state and nothing else; with this
-     off the segment is not rendered and a stale `'github'` sub-tab falls back
-     to Local, the same rule `showTasksTab` applies. */
-  showGitHubProjects?: boolean;
-  /** Hides the first-run onboarding takeover on an empty Chat tab. It tells
-     the reader to download and start Lody on their own computer, which is the
-     mobile counterpart of the desktop hint band's `download-client` state; a
-     host that already runs Lody for the member should not draw it. */
-  hideOnboarding?: boolean;
   /** Active sub-tab inside the Projects tab. Required when `selectedTab`
      is 'projects'; ignored on the Chat tab. */
   selectedProjectsSubTab?: MobileProjectsSubTab;
@@ -1114,15 +1103,12 @@ function ProjectsSubTabSelector({
   githubLabel,
   onSelect,
   iosTheme,
-  showGitHub = true,
 }: {
   active: MobileProjectsSubTab;
   localLabel: string;
   githubLabel: string;
   onSelect: (sub: MobileProjectsSubTab) => void;
   iosTheme: boolean;
-  /** See `MobileHomeScreenProps.showGitHubProjects`. */
-  showGitHub?: boolean;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const localRef = useRef<HTMLButtonElement>(null);
@@ -1143,20 +1129,16 @@ function ProjectsSubTabSelector({
       ),
       ref: localRef,
     },
-    ...(showGitHub
-      ? [
-          {
-            key: 'github' as const,
-            label: githubLabel,
-            icon: iosTheme ? (
-              <Github className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
-            ) : (
-              <MobileReactIcon icon={FaGithub} className="h-3.5 w-3.5" />
-            ),
-            ref: githubRef,
-          },
-        ]
-      : []),
+    {
+      key: 'github',
+      label: githubLabel,
+      icon: iosTheme ? (
+        <Github className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />
+      ) : (
+        <MobileReactIcon icon={FaGithub} className="h-3.5 w-3.5" />
+      ),
+      ref: githubRef,
+    },
   ];
 
   // Drive the active thumb with a *value* animation (x + width) rather than
@@ -1268,8 +1250,6 @@ export function MobileHomeScreen({
   selectedTab,
   showInboxTab = false,
   showTasksTab = false,
-  showGitHubProjects = true,
-  hideOnboarding = false,
   selectedProjectsSubTab = 'local',
   onProjectsSubTabSelect,
   onAddLocalProject,
@@ -1352,7 +1332,6 @@ export function MobileHomeScreen({
      the archive view, an active filter, or an in-progress search) so it
      only ever stands in for the genuine empty workspace. */
   const showChatOnboarding =
-    !hideOnboarding &&
     selectedTab === 'chat' &&
     !isInitialDataLoading &&
     !showArchived &&
@@ -1673,7 +1652,6 @@ export function MobileHomeScreen({
                   onGitHubRepositorySelect={onGitHubRepositorySelect}
                   onPrivateHelp={() => setPrivateHelpOpen(true)}
                   iosTheme={resolvedTheme === 'ios'}
-                  showGitHub={showGitHubProjects}
                 />
               ) : null}
 
@@ -1870,7 +1848,6 @@ function ProjectsTabView({
   onGitHubRepositorySelect,
   onPrivateHelp,
   iosTheme,
-  showGitHub = true,
 }: {
   localProjects: MobileHomeLocalProject[];
   githubRepositories: MobileHomeGitHubRepository[];
@@ -1885,14 +1862,9 @@ function ProjectsTabView({
   onGitHubRepositorySelect?: (fullName: string) => void;
   onPrivateHelp: () => void;
   iosTheme: boolean;
-  /** See `MobileHomeScreenProps.showGitHubProjects`. */
-  showGitHub?: boolean;
 }) {
   const localLabel = labels.localTab ?? '本地';
   const githubLabel = labels.githubTab ?? 'GitHub';
-  /* A stored `'github'` choice must not survive the segment that sets it, or
-     the tab opens on a list the platform cannot fill. */
-  const effectiveSubTab: MobileProjectsSubTab = showGitHub ? selectedSubTab : 'local';
 
   /* Unified recents — only rendered when there's anything to show
      AND the user isn't actively searching. Each item's `kind` drives
@@ -1949,14 +1921,13 @@ function ProjectsTabView({
     <section aria-label={labels.projectsTab ?? '项目'} className="flex flex-col">
       {recentStrip}
       <ProjectsSubTabSelector
-        active={effectiveSubTab}
+        active={selectedSubTab}
         localLabel={localLabel}
         githubLabel={githubLabel}
         onSelect={onSubTabSelect}
         iosTheme={iosTheme}
-        showGitHub={showGitHub}
       />
-      {effectiveSubTab === 'local' ? (
+      {selectedSubTab === 'local' ? (
         <LocalProjectsList
           projects={localProjects}
           machineLookup={machineLookup}

@@ -399,6 +399,17 @@ interface ChatLandingProps {
    */
   hideAgentRoles?: boolean;
   /**
+   * Drop the settings entry the MOBILE home header draws.
+   *
+   * The gear at the top right navigates to `/$workspaceName/settings`. A host
+   * that serves settings from its own chrome, and stubs that address, offers a
+   * button whose only outcome is a blank screen. There is no desktop
+   * counterpart — the desktop landing draws no gear.
+   *
+   * Off by default, so every upstream call site keeps the button.
+   */
+  hideSettingsEntry?: boolean;
+  /**
    * Drop the mobile home's connection banner.
    *
    * For a host that reports connectivity itself. That banner mirrors the desktop
@@ -586,6 +597,7 @@ function WorkspaceChatLanding({
   onSelectionUrlSync,
   hideProductHints = false,
   hideAgentRoles = false,
+  hideSettingsEntry = false,
   hideConnectionStatus = false,
   resetDraftKey,
   resetDraftOnKeyChange = true,
@@ -6316,7 +6328,12 @@ function WorkspaceChatLanding({
           selectedProjectsSubTab={selectedProjectsSubTab}
           onProjectsSubTabSelect={handleMobileHomeProjectsSubTabSelect}
           onAddLocalProject={() => openAddProjectDialog()}
-          onAddGitHubRepository={handleConnectGitRepo}
+          /* The handler opens the GitHub settings screen, so the row cannot
+             work without the capability. The same check every other GitHub
+             surface makes; this one never asked. */
+          onAddGitHubRepository={githubIntegrationAvailable ? handleConnectGitRepo : undefined}
+          showGitHubProjects={githubIntegrationAvailable}
+          hideOnboarding={hideProductHints}
           localProjects={mobileHomeLocalProjects}
           recentLocalProjects={mobileHomeRecentLocalProjects}
           githubRepositories={mobileHomeGitHubRepositories}
@@ -6463,12 +6480,16 @@ function WorkspaceChatLanding({
           onChatArchive={handleMobileChatArchive}
           onChatRestore={handleMobileChatRestore}
           onChatPermanentDelete={handleMobileChatPermanentDelete}
-          onSettingsOpen={() => {
-            void navigate({
-              to: '/$workspaceName/settings',
-              params: { workspaceName: workspaceSlug },
-            });
-          }}
+          onSettingsOpen={
+            hideSettingsEntry
+              ? undefined
+              : () => {
+                  void navigate({
+                    to: '/$workspaceName/settings',
+                    params: { workspaceName: workspaceSlug },
+                  });
+                }
+          }
           /* New-chat chip opens the bottom-sheet composer. Stays on the
              home screen behind the overlay so the user can cancel and
              return to the project / chat list without navigation. */

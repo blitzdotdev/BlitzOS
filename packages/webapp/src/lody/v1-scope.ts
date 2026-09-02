@@ -27,6 +27,15 @@
  * boundary: flipping it on is what a host that stopped reporting connectivity
  * would do, not what BlitzOS does when it grows a feature. Seam patch 15.
  *
+ * MOBILE IS IN, AND IT MOVED THREE OF THESE (2026-09-02). Both real routes used
+ * to drop Lody's mobile branch, so area 23 was KILL and no flag had to reach a
+ * phone. The branch is mounted now (`MobileSessionStack.tsx`), and seam patch 16
+ * is what makes the flags above answer there as well as on a desktop. Three of
+ * them reached NOTHING on that branch: `cloudSurfaces`, `agentRolesAndMcp` and
+ * `connectionStatus` all travel through `getSharedChatSurfaceProps`, which
+ * `session-detail.tsx` defines 952 lines BELOW its own `if (isMobile)` return.
+ * `plans/LODY-V1-SCOPE.md` §5 records the amendment.
+ *
  * HOW A FLAG REACHES THE VENDORED RENDERER. Two ways, and which one applies is
  * a property of the flag, not a preference:
  *
@@ -140,6 +149,17 @@ export interface LodyV1SuppressionProps {
    */
   readonly hideTeamScope: boolean;
   /**
+  /**
+   * The settings gear in the mobile home header (seam patch 16).
+   *
+   * The same species as S9, the hint band's Go-to-settings button, so it reads
+   * the same flag: BlitzOS serves settings from its own chrome, and every Lody
+   * settings address in our tree is a stub that renders nothing
+   * (`router.tsx`, `SETTINGS_STUB_PATHS`). The desktop landing draws no gear, so
+   * this prop has no desktop twin.
+   */
+  readonly hideSettingsEntry: boolean;
+  /**
    * Every connection and sync surface Lody draws (IC64, IC65, seam patch 15).
    * Passed to `SessionDetail` and to `ChatLanding`; the session page rides it on
    * to every chat surface and every file viewer it mounts.
@@ -159,5 +179,6 @@ export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
   keyboardShortcutsAvailable: LODY_V1_SCOPE.keyboardShortcuts,
   hideLanguageServiceActions: !LODY_V1_SCOPE.languageService,
   hideTeamScope: !LODY_V1_SCOPE.cloudSurfaces,
+  hideSettingsEntry: !LODY_V1_SCOPE.cloudSurfaces,
   hideConnectionStatus: !LODY_V1_SCOPE.connectionStatus,
 });

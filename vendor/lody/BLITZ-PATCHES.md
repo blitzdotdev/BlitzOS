@@ -1392,6 +1392,175 @@ eighteen hunks and answer that instead from `v1-scope.ts`. If the status strip
 gains a FOURTH state, decide it explicitly: connectivity answers the flag,
 anything about membership or a blocked action does not.
 
+### 16. The mobile branch: host tabs and the v1 scope cuts (mobile mount, 2026-09-02)
+
+**One idea in two halves, 24 hunks in four files.** BlitzOS now mounts Lody's
+real phone experience (`packages/webapp/src/lody/MobileSessionStack.tsx`), so
+two things that were true only on a desktop have to become true on a phone: a
+host tab must be reachable, and the v1 scope cuts must fire.
+
+Seam patch 5 said this in writing — *"The mobile branch is deliberately NOT
+patched. `MobileSessionTabSheet` keeps a fourth, hand-maintained kind enum; the
+props are inert there and the mobile drawer keeps today's behaviour."* That was
+correct while both routes dropped the mobile branch. It is the gap now.
+
+**THE STRUCTURAL CAUSE, AND IT IS ONE SENTENCE.** `session-detail.tsx` returns
+for mobile at `:4803`, and `getSharedChatSurfaceProps` — the builder that
+forwards `hideCloudMenuItems`, `hideNotificationPrompt`, `hideAgentRoles` and
+seam patch 15's `hideConnectionStatus` to every chat surface — is defined at
+`:5755`, 952 lines BELOW it. The mobile branch hand-writes its own
+`SessionChatInterface` props and carried `readOnly` alone. So **props are lost
+at the mobile fork and capabilities are not**: every
+`useAppCapability('githubIntegration')` call sits above the return and answers
+on both branches, which is why seam patch 7's GitHub half needs nothing here and
+its other groups need everything.
+
+The same fork explains the landing. `hideProductHints` is read at
+`chat-landing.tsx:6584`, and the mobile branch returns at `:6174`/`:6282`.
+
+**WHAT SEAM PATCH 15 ALREADY DOES, SO THIS PATCH DOES NOT.** Connectivity is
+that patch's subject and it reaches the mobile branch on its own in two of the
+three places it matters:
+
+- The mobile home's connection banner is its hunk 18, on the one call site.
+- The mobile session header's catch-up spinner is its hunk 11, which gates
+  `activeSessionDocIsSyncing` at the source rather than at the header.
+- The composer status chip is the exception, and it is hunk 12 below. Its hunk
+  13 forwards `hideConnectionStatus` through the shared builder, which the
+  mobile branch never reaches — the same sentence again.
+
+`hideConnectionStatus` is therefore DECLARED by seam patch 15 and merely
+forwarded here. One flag, one prop, one gate story.
+
+#### Half A — a host tab in the mobile tab sheet
+
+`packages/components/src/components/mobile/mobile-session-tab-sheet.tsx`
+
+| # | Line (at `f3474894`) | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 58 | `kind: 'file' \| 'diff' \| 'pr' \| 'browser' \| 'files';` | adds `\| 'custom'` |
+| 2 | 55-60 | `ViewerTabEntry` | adds `icon?: ReactNode` (already imported at `:1`) |
+| 3 | 102-108 | `const VIEWER_ICON: Record<ViewerTabEntry['kind'], typeof FileIcon>` | adds the `custom` entry — the `Record` is total, so hunk 1 does not compile without it |
+| 4 | 226-238 | `const Icon = VIEWER_ICON[v.kind];` and the `leading` element | draws `v.icon` when the host supplied one, exactly as seam patch 5 hunk 3 does on the desktop strip (`session-tab-bar.tsx:476`) |
+
+**HUNK 1 IS ALSO A BUG FIX.** `session-detail.tsx:4368` already writes
+`kind: v.type` from a `ViewerTabItem`, whose `type` seam patch 5 hunk 2 widened
+to `'file' | 'diff' | 'custom'`. The mobile enum did not follow, so that
+assignment has been unsound since wave 3. It is unreachable today only because
+nothing on the mobile path reads `surfaceTabItems`.
+
+**THE SHEET GETS NO CLOSE VERB, AND THAT IS UPSTREAM'S DESIGN.** `ViewerRow` is
+one `<button>` whose whole body is the row, and its doc comment says "no
+close" — the sheet has no close affordance for any tab kind. Adding one would
+mean a sibling button and a restructured row, for a verb the phone already has:
+a terminal closes from its BlitzOS rail row (`SessionRailSidebar`'s
+`onCloseTerminal`). §0's bias rule applies — copy Lody's behaviour.
+
+`packages/components/src/components/sessions/session-detail.tsx` (pinned)
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 5 | 4262 | `const hasActiveViewerTab =` | adds `hasActiveSurfaceTab`, the mobile counterpart of seam patch 5 hunk 13's `activeChatSurfaceId` |
+| 6 | 4364-4387 | the `for (const v of viewerTabItems)` loop in `mobileViewers`, and its dependency list | appends `surfaceTabItems` as `{ kind: 'custom', icon, active }` |
+| 7 | 4421-4460 | `handleMobileViewerSelect` and its dependency list | routes a host tab id to `onSurfaceTabSelect` before the file/viewer arms |
+| 8 | 4908, 4975 | the two `const isActive = !hasActiveViewerTab && …` | an active host tab hides the conversations and the drafts, the rule seam patch 5 hunk 13 gives the desktop |
+| 9 | 5206-5220 | after the non-file viewer surfaces, inside `div[role="main"]` | mounts every host tab's `content`, hidden unless active — the mobile mirror of seam patch 5 hunk 15 |
+
+Hunks 5-9 need no new prop: `surfaceTabs`, `activeSurfaceTabId` and
+`onSurfaceTabSelect` are seam patch 5's, declared at `:728` and already inert by
+default. `onSurfaceTabClose` stays desktop-only for the reason above.
+
+#### Half B — the v1 scope cuts, on the mobile path
+
+`packages/components/src/components/sessions/session-detail.tsx` (pinned)
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 10 | 5128-5179 | the mobile `<SessionChatInterface>` | forwards `hideCloudMenuItems`, `hideNotificationPrompt` and `hideAgentRoles` beside the `readOnly` it already had — IC60, C86-C89, C91 |
+| 11 | the same element | the same | forwards seam patch 15's `hideConnectionStatus`, which its hunk 13 gives the desktop surfaces through the shared builder — IC64 |
+| 12 | 4870 | `if (activeSessionSharing) {` in `mobileMenuInfoRows` | adds `&& !hideCloudMenuItems` — the visibility row states cloud sharing on a host that serves sharing itself |
+| 13 | 4960 | the `copy-url` `mobileMenuActions.push` | wraps it in the same term — IC88, the mobile twin of seam patch 7 hunk 8 |
+| 14 | 4763 | `if (activeSessionSharing && activeSessionSharing.visibility !== 'team')` | adds the third term — IC84, the mobile twin of seam patch 7 hunk 7 |
+| 15 | 4889 | `owner={isMultiMemberWorkspace && !activeSession.isArchived ? …}` | adds the third term — IC83, the mobile twin of seam patch 7 hunk 6 |
+| 16 | 567-568, 602 | `MobileProjectInfo`'s `repoFullName` / `isGitHub` | takes a `gitHubAvailable` prop, so the header stops drawing the octocat and the repo slug for a local clone that merely has a GitHub remote |
+| 17 | 5053-5057 | the `<MobileProjectInfo>` element | passes the capability |
+
+**Hunk 16 is a CAPABILITY bug, not a prop one, and it is the only one of its
+kind on this page.** `MobileProjectInfo` re-derives `repoFullName` from the
+session instead of taking the value `getSessionGitHubState` already nulls
+(seam patch 7 hunk 2). Every other GitHub surface on the mobile path — the PR
+entry in the tab sheet, the PR drawer, the diff panel's comments, the composer's
+`@issue`/`@pr` — reads the gated value and is already dark. **Open this half
+upstream as a bug fix; there is no prop to drop when it merges.**
+
+`packages/components/src/components/chat/chat-landing.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 18 | 394-400 | `hideProductHints?: boolean;` in `ChatLandingProps` | declares `hideSettingsEntry` |
+| 19 | 578-579 | the destructuring | defaults it to `false` |
+| 20 | 6309 | `onAddGitHubRepository={handleConnectGitRepo}` | `undefined` without the `githubIntegration` capability `:4200` already reads — the row's handler opens a GitHub settings screen we do not serve |
+| 21 | 6456-6461 | `onSettingsOpen={() => …}` | `undefined` when `hideSettingsEntry` — the gear navigates to `/$workspaceName/settings`, which is a stub route that renders nothing |
+
+`packages/components/src/components/mobile/mobile-home-screen.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 22 | `MobileHomeScreenProps` | beside `showTasksTab` | declares `showGitHubProjects` (default `true`) and `hideOnboarding` (default `false`) |
+| 23 | 1334-1341 | `const showChatOnboarding =` | adds `!hideOnboarding` — the "Lody runs on your computer / Download Lody" takeover is the mobile twin of the desktop hint band's `download-client` (S7), and `hideProductHints` never reached it |
+| 24 | 1100-1141, 1837-1949, 1641 | `ProjectsSubTabSelector`, `ProjectsTabView` and its call site | take `showGitHub`, drop the GitHub segment without it, and pin the rendered sub-tab to `local` so a stale `'github'` choice cannot reach an empty list |
+
+The numbering counts anchors, not source lines: hunks 22 and 24 are several
+anchors each in one file with two new props.
+
+#### What this patch does NOT do
+
+- **Connectivity is seam patch 15's, and only hunk 11 above is new.** See the
+  note near the top: two of the three mobile connection surfaces are already
+  gated by that patch's own hunks.
+- **The workspace switcher and the create-workspace sheet need no hunk.** Both
+  mount only under `multiWorkspaceAvailable`, and the local platform declines
+  `multiWorkspace`, so the header falls through to a static nameplate.
+- **The Inbox and Tasks tabs need no hunk.** `showInboxTab` and `showTasksTab`
+  are host props and `chat-landing.tsx` already computes both as `false`.
+- **The sidebar drawer needs no hunk.** BlitzOS does not mount `MainLayout`, so
+  `MobileSidebarDrawer` has no call site, and upstream hard-disables its
+  swipe-open at `mobile-sidebar-drawer.tsx:214`.
+- **The back chevron in the mobile session header stays.** It pops the session
+  drawer back to the landing, which is the stack's own verb. The BlitzOS `☰`
+  opens the workspace rail. Two different verbs, one navigation story.
+- **Nothing is deleted.** Every hunk is a term, a default or a forwarded prop.
+
+Strictly additive: with every new prop absent and `surfaceTabs` empty, all four
+files render byte-for-byte what they rendered before, and no upstream call site
+passes one. Upstream PR sketch: half A and hunk 16 go up as bug fixes; half B
+goes up as the same optional-prop shape seam patch 7 uses.
+
+Verify this divergence by diffing OUR subtree against the upstream commit it was
+imported from, exactly as seam patch 1 describes. **Expected after seam patch
+16: one more file than seam patch 15's twenty-nine — THIRTY.** Only
+`components/mobile/mobile-session-tab-sheet.tsx` and
+`components/mobile/mobile-home-screen.tsx` are new here, and the second of those
+is the thirtieth; `session-detail.tsx` and `chat/chat-landing.tsx` are already
+seam patches 5, 7 and 15's.
+
+`packages/webapp/test/lody-mobile-mount.test.tsx` pins both halves, and
+`packages/webapp/test/lody-v1-scope-sources.test.ts` pins this section by name.
+
+**Merge conflict drill.**
+
+- If upstream hoists `getSharedChatSurfaceProps` above the mobile return, or
+  otherwise makes one builder serve both branches, **drop hunks 10-15** and pass
+  the props once. That single change would also retire seam patch 15's hunk 13
+  distinction, which is the clearest sign the fork is the real defect.
+- If `ViewerTabEntry` grows a host arm of its own, drop hunks 1-4 and use it.
+- If the mobile branch gains a surface block of its own, hunks 8 and 9 follow it
+  to wherever it decides which tab is on screen.
+- If `MobileProjectInfo` starts reading `getSessionGitHubState`, drop hunk 16.
+- If upstream gives the mobile home its own settings or GitHub gate, drop the
+  matching hunk and pass upstream's — the BlitzOS half is one field in
+  `packages/webapp/src/lody/v1-scope.ts`.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.
