@@ -133,3 +133,68 @@ export interface PutAgentCredentialRequest {
   value: string;
   comment?: string | null;
 }
+
+/** Agent-driven grant operations (plans/ORG-CREDENTIALS.md §7a): an agent
+ * proposes an explicit change list, a person approves what applies. */
+
+export type GrantChangeAction = "add" | "remove";
+
+/** One grant edit on one named credential. `add` writes the grant (replacing
+ * whatever grant the same subject already held); `remove` deletes exactly
+ * the grant named. Subject rules are `OrgCredentialGrantView`'s. */
+export interface GrantChange {
+  name: string;
+  action: GrantChangeAction;
+  subjectKind: OrgCredentialGrantSubjectKind;
+  subjectId: string | null;
+  access: OrgCredentialAccess;
+}
+
+/** `POST /agent/credentials/grant-proposals`. Every change must sit within
+ * the acting member's own write authority, or the whole proposal is refused
+ * with a 403 that names the offending changes. `reason` is shown to the
+ * person verbatim. */
+export interface ProposeGrantChangesRequest {
+  changes: GrantChange[];
+  reason: string;
+}
+
+export type GrantProposalState = "pending" | "approved" | "denied" | "expired";
+
+export interface ProposeGrantChangesResponse {
+  id: string;
+  state: GrantProposalState;
+}
+
+/** One proposal as both planes read it: the agent's poll and the approval
+ * feed. `applied` is what actually went through — null until approval, and
+ * possibly narrower than `proposed`, because the person edits before
+ * approving and a credential revoked meanwhile drops out. */
+export interface GrantProposalView {
+  id: string;
+  state: GrantProposalState;
+  machineId: string;
+  membershipId: string;
+  reason: string | null;
+  proposed: GrantChange[];
+  applied: GrantChange[] | null;
+  createdAt: number;
+}
+
+/** `GET /orgs/:id/grant-proposals?state=pending`: the proposals addressed
+ * to the caller, plus every one in the org for an org admin. */
+export interface ListGrantProposalsResponse {
+  proposals: GrantProposalView[];
+}
+
+/** `POST /orgs/:id/grant-proposals/:pid/resolve`. On approve, `changes` is
+ * the edited set that applies — checked against the approver's own write
+ * authority like any grant write. On deny it is ignored and nothing changes. */
+export interface ResolveGrantProposalRequest {
+  approve: boolean;
+  changes: GrantChange[];
+}
+
+export interface ResolveGrantProposalResponse {
+  proposal: GrantProposalView;
+}

@@ -198,7 +198,7 @@ export function orgCredentialView(
 }
 
 /** One parsed grant, refused before any write can trip the unique index. */
-function parseGrant(value: JsonValue, field: string): OrgCredentialGrantView {
+export function parseGrant(value: JsonValue, field: string): OrgCredentialGrantView {
   if (!isRecord(value)) throw new HttpError(400, `${field} must be an object`);
   const { subjectKind, subjectId, access } = value;
   if (subjectKind !== "org" && subjectKind !== "workspace" && subjectKind !== "membership") {
@@ -500,44 +500,43 @@ export async function replaceOrgCredentialGrants(
   };
 }
 
-/** Subjects validate at write time against the same org; membership
- * subjects must be active. A member who leaves later fails resolution at
- * read time regardless — this only keeps the allowlist from ever naming
- * somebody outside the organization. */
+/** The subjects a grant list names that are not valid in this organization —
+ * workspaces not live in it, memberships not active in it — keyed
+ * `<kind>:<id>` so a caller can name the grant that carried one. */
+export async function invalidGrantSubjects(
+  db: Db,
+  orgId: string,
+  grants: readonly OrgCredentialGrantView[],
+): Promise<Set<string>> {
+  const invalid = new Set<string>();
+  for (const [kind, select] of [
+    ["workspace", "SELECT id FROM workspaces WHERE org_id = ?1 AND deleted_at IS NULL"],
+    ["membership", "SELECT id FROM memberships WHERE org_id = ?1 AND status = 'active'"],
+  ] as const) {
+    const ids = [...new Set(grants.flatMap((grant) =>
+      grant.subjectKind === kind && grant.subjectId !== null ? [grant.subjectId] : []))];
+    if (ids.length === 0) continue;
+    const placeholders = ids.map((_id, index) => `?${String(index + 2)}`).join(", ");
+    const known = await rows<{ id: string }>(db, {
+      q: `${select} AND id IN (${placeholders})`,
+      v: [orgId, ...ids],
+    });
+    const knownIds = new Set(known.map(({ id }) => id));
+    ids.filter((id) => !knownIds.has(id)).forEach((id) => invalid.add(`${kind}:${id}`));
+  }
+  return invalid;
+}
+
+/** Subjects validate at write time; the first invalid one refuses the set. A
+ * member who leaves later fails resolution at read time regardless. */
 async function assertGrantSubjects(
   db: Db,
   orgId: string,
   grants: readonly OrgCredentialGrantView[],
 ): Promise<void> {
-  const workspaceIds = [...new Set(grants.flatMap((grant) =>
-    grant.subjectKind === "workspace" && grant.subjectId !== null ? [grant.subjectId] : []))];
-  const membershipIds = [...new Set(grants.flatMap((grant) =>
-    grant.subjectKind === "membership" && grant.subjectId !== null ? [grant.subjectId] : []))];
-  if (workspaceIds.length > 0) {
-    const placeholders = workspaceIds.map((_id, index) => `?${String(index + 2)}`).join(", ");
-    const known = await rows<{ id: string }>(db, {
-      q: `SELECT id FROM workspaces
-          WHERE org_id = ?1 AND deleted_at IS NULL AND id IN (${placeholders})`,
-      v: [orgId, ...workspaceIds],
-    });
-    const knownIds = new Set(known.map(({ id }) => id));
-    const missing = workspaceIds.find((id) => !knownIds.has(id));
-    if (missing !== undefined) {
-      throw new HttpError(400, `grant subject names an unknown workspace ${missing}`);
-    }
-  }
-  if (membershipIds.length > 0) {
-    const placeholders = membershipIds.map((_id, index) => `?${String(index + 2)}`).join(", ");
-    const known = await rows<{ id: string }>(db, {
-      q: `SELECT id FROM memberships
-          WHERE org_id = ?1 AND status = 'active' AND id IN (${placeholders})`,
-      v: [orgId, ...membershipIds],
-    });
-    const knownIds = new Set(known.map(({ id }) => id));
-    const missing = membershipIds.find((id) => !knownIds.has(id));
-    if (missing !== undefined) {
-      throw new HttpError(400, `grant subject names no active membership ${missing}`);
-    }
+  const first = [...await invalidGrantSubjects(db, orgId, grants)][0];
+  if (first !== undefined) {
+    throw new HttpError(400, `grant subject is not in this organization: ${first}`);
   }
 }
 
@@ -574,9 +573,9 @@ export async function recordOrgCredentialUse(
   });
 }
 
-/** The organization a session route names. "self" is the session's own;
- * any other id must BE that organization, or the answer is 404. */
-function requestedOrgId(context: CoreContext, principal: Principal): string {
+/** The organization a session route names. "self" is the session's own; any
+ * other id must BE that organization, or 404. Shared with grant-proposals.ts. */
+export function requestedOrgId(context: CoreContext, principal: Principal): string {
   const requested = context.req.param("id");
   if (principal.orgId === null) throw new HttpError(404, "organization not found");
   if (requested !== "self" && requested !== principal.orgId) {
@@ -585,7 +584,7 @@ function requestedOrgId(context: CoreContext, principal: Principal): string {
   return principal.orgId;
 }
 
-function callerFor(principal: Principal): OrgCredentialCaller {
+export function callerFor(principal: Principal): OrgCredentialCaller {
   return { membershipId: principal.membershipId, orgRole: principal.role };
 }
 

@@ -353,6 +353,68 @@ const putAgentCredentialRequest: SharedShape<
   schema.PutAgentCredentialRequest
 > = { value: "sk_test_only", comment: "test-mode key, safe for CI" };
 
+// Grant proposals (§7a). One row per action, and a null-subject change,
+// because each covers ground the others do not.
+const addGrantChange: SharedShape<wire.GrantChange, schema.GrantChange> = {
+  name: orgCredential.name,
+  action: "add",
+  subjectKind: "workspace",
+  subjectId: "workspace",
+  access: "read",
+};
+
+const removeGrantChange: SharedShape<wire.GrantChange, schema.GrantChange> = {
+  name: orgCredential.name,
+  action: "remove",
+  subjectKind: "org",
+  subjectId: null,
+  access: "write",
+};
+
+const proposeGrantChangesRequest: SharedShape<
+  wire.ProposeGrantChangesRequest,
+  schema.ProposeGrantChangesRequest
+> = { changes: [addGrantChange, removeGrantChange], reason: "the CI workspace needs it" };
+
+const proposeGrantChangesResponse: SharedShape<
+  wire.ProposeGrantChangesResponse,
+  schema.ProposeGrantChangesResponse
+> = { id: "proposal", state: "pending" };
+
+const pendingGrantProposal: SharedShape<
+  wire.GrantProposalView,
+  schema.GrantProposalView
+> = {
+  id: "proposal",
+  state: "pending",
+  machineId: "machine",
+  membershipId: "membership",
+  reason: "the CI workspace needs it",
+  proposed: [addGrantChange, removeGrantChange],
+  applied: null,
+  createdAt: 9,
+};
+
+const approvedGrantProposal: SharedShape<
+  wire.GrantProposalView,
+  schema.GrantProposalView
+> = { ...pendingGrantProposal, state: "approved", reason: null, applied: [addGrantChange] };
+
+const listGrantProposalsResponse: SharedShape<
+  wire.ListGrantProposalsResponse,
+  schema.ListGrantProposalsResponse
+> = { proposals: [pendingGrantProposal] };
+
+const resolveGrantProposalRequest: SharedShape<
+  wire.ResolveGrantProposalRequest,
+  schema.ResolveGrantProposalRequest
+> = { approve: true, changes: [addGrantChange] };
+
+const resolveGrantProposalResponse: SharedShape<
+  wire.ResolveGrantProposalResponse,
+  schema.ResolveGrantProposalResponse
+> = { proposal: approvedGrantProposal };
+
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   name: "brave-otter",
@@ -831,6 +893,15 @@ const fullFieldValues = [
   agentCredentialsResponse,
   agentCredentialTokenResponse,
   putAgentCredentialRequest,
+  addGrantChange,
+  removeGrantChange,
+  proposeGrantChangesRequest,
+  proposeGrantChangesResponse,
+  pendingGrantProposal,
+  approvedGrantProposal,
+  listGrantProposalsResponse,
+  resolveGrantProposalRequest,
+  resolveGrantProposalResponse,
   machineType,
   pricedMachineType,
   machineTypeFailure,
@@ -940,6 +1011,15 @@ describe("local wire copies", () => {
     expectTypeOf<wire.AgentCredentialsResponse>().toEqualTypeOf<schema.AgentCredentialsResponse>();
     expectTypeOf<wire.AgentCredentialTokenResponse>().toEqualTypeOf<schema.AgentCredentialTokenResponse>();
     expectTypeOf<wire.PutAgentCredentialRequest>().toEqualTypeOf<schema.PutAgentCredentialRequest>();
+    expectTypeOf<wire.GrantChangeAction>().toEqualTypeOf<schema.GrantChangeAction>();
+    expectTypeOf<wire.GrantChange>().toEqualTypeOf<schema.GrantChange>();
+    expectTypeOf<wire.ProposeGrantChangesRequest>().toEqualTypeOf<schema.ProposeGrantChangesRequest>();
+    expectTypeOf<wire.GrantProposalState>().toEqualTypeOf<schema.GrantProposalState>();
+    expectTypeOf<wire.ProposeGrantChangesResponse>().toEqualTypeOf<schema.ProposeGrantChangesResponse>();
+    expectTypeOf<wire.GrantProposalView>().toEqualTypeOf<schema.GrantProposalView>();
+    expectTypeOf<wire.ListGrantProposalsResponse>().toEqualTypeOf<schema.ListGrantProposalsResponse>();
+    expectTypeOf<wire.ResolveGrantProposalRequest>().toEqualTypeOf<schema.ResolveGrantProposalRequest>();
+    expectTypeOf<wire.ResolveGrantProposalResponse>().toEqualTypeOf<schema.ResolveGrantProposalResponse>();
     expectTypeOf<wire.MachinePrice>().toEqualTypeOf<schema.MachinePrice>();
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();

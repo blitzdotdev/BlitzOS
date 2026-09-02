@@ -16,6 +16,7 @@ import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-t
 import type { Principal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./compute/microvm.js";
 import { addOrgComputeCredentialRoutes } from "./compute/org-credentials.js";
+import { addGrantProposalRoutes } from "./grant-proposals.js";
 import { addOrgUsageCaptureRoutes } from "./recipes.js";
 import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
@@ -132,6 +133,9 @@ export function installControlPlaneRoutes(
   // The org credential session plane (§7): /orgs/:id/credentials*.
   addOrgCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addOrgCredentialImportRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Grant proposals (§7a): the agent's propose/poll pair under /agent/* and
+  // the approval feed/resolve pair under /orgs/:id/grant-proposals*.
+  addGrantProposalRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Same reason: /workspaces/:id/repos is a literal path under the prefix
   // addWorkspaceRoutes registers its parameterised routes on.
   addWorkspaceSettingsRoutes(router, runtimeFactory, requireMembershipPrincipal);

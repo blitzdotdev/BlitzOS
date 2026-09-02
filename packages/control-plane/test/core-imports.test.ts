@@ -54,6 +54,7 @@ const expected = [
   "files/schedule.ts",
   "files/sync.ts",
   "files/usage-push.ts",
+  "grant-proposals.ts",
   "http.ts",
   "identity/google.ts",
   "identity/invites.ts",
@@ -135,6 +136,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(110);
+    expect(expected).toHaveLength(111);
   });
 });

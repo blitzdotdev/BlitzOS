@@ -49,6 +49,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/machine-plane.ts",
   "core/machine-stats.ts",
   "core/oauth-state.ts",
+  "core/grant-proposals.ts",
   "core/oauth.ts",
   "core/operator-tokens.ts",
   "core/org-credential-import.ts",

@@ -179,8 +179,9 @@ Tell the user a proposal is waiting for them, then poll:
 
 Continue from the "applied" list, never from what you asked for — the user
 can edit or skip any part of your proposal before approving. "denied" and
-"expired" mean no grants changed; re-propose only with a narrower ask or a
-better reason.
+"expired" mean no grants changed — and so does a 404 on the poll, which
+means the control plane restarted and forgot it; re-propose only with a
+narrower ask or a better reason.
 
 ## Never print a credential
 

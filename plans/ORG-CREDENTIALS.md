@@ -399,7 +399,8 @@ interface GrantProposal {
 Held in an in-memory store on the CP runtime, TTL ~1 h. Nothing is
 persisted: the durable record of an approval is the grant rows it writes and
 their `credential_events`. A worker recycle can drop a pending proposal —
-the poll returns `expired` and the agent proposes again.
+the poll then answers 404 (there is nothing left to build a view from), the
+rules tell the agent to read that as `expired`, and it proposes again.
 
 ### Routes
 
@@ -448,8 +449,9 @@ Tell the user a proposal is waiting for them, then poll:
 
 Continue from the "applied" list, never from what you asked for — the user
 can edit or skip any part of your proposal before approving. "denied" and
-"expired" mean no grants changed; re-propose only with a narrower ask or a
-better reason.
+"expired" mean no grants changed — and so does a 404 on the poll, which
+means the control plane restarted and forgot it; re-propose only with a
+narrower ask or a better reason.
 ```
 
 ### The approval dialog
