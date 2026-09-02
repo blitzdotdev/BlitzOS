@@ -32,25 +32,29 @@ npm test              # control-plane, box guest tests, ui, guest node:test,
 
 ## Known debt (as of 2026-08-18)
 
-- 74 anti-slop findings remain, all Tier C: external-boundary code that
-  needs real parsers (31 no-unknown-parameters, 27 no-runtime-typeof in
+- 66 anti-slop findings remain, all Tier C: external-boundary code that
+  needs real parsers (23 no-unknown-parameters, 27 no-runtime-typeof in
   plain JS, 12 no-unsafe-dictionary-type, 4 no-unknown-returns). The counts
-  fell from 102 (47/27/22/6) on 2026-08-29 when the native-chat surface and
-  the box actor were deleted; the baseline moved with them. Fixing one
+  fell from 74 (31/27/12/4) on 2026-09-02 when the box credential wire and
+  the workspace credential store were deleted (plans/ORG-CREDENTIALS.md),
+  and before that from 102 (47/27/22/6) on 2026-08-29 when the native-chat
+  surface and the box actor were deleted; the baseline moved with them. Fixing one
   requires characterization tests FIRST — these fixes can change accepted
   inputs. Plan and history: GitHub issue #1.
-- 16 `TODO(deslop-tier-c):` markers flag type assertions whose invariant is
+- 6 `TODO(deslop-tier-c):` markers flag type assertions whose invariant is
   not actually enforced today (latent-bug candidates). Grep for the marker.
 - `TODO(house-canon):` markers flag direct fetch/console sites awaiting
   migration to the canon helpers.
-- 7 files exceed the 700-line warn: `core/bootstrap.ts`, `core/compute/aws.ts`,
-  `core/workspaces.ts`,
+- 8 files exceed the 700-line warn: `core/bootstrap.ts`, `core/compute/aws.ts`,
+  `core/machines.ts`, `core/workspaces.ts`,
   `control-plane/scripts/lib/worker-source.mjs`, `webapp/src/CloudApp.tsx`,
   `webapp/src/api.ts`, `webapp/src/terminal-touch-controller.ts`. Split on
   touch, never big-bang. (`core/files/sync.ts` left the list 2026-08-21 when
   its transfer plumbing split into `core/files/dav.ts`. `core/bootstrap.ts`
   and `webapp/src/api.ts` were already over the line when this list said four;
-  the count is corrected here, not grown.)
+  the count is corrected here, not grown. `core/machines.ts` was likewise
+  already over the line on `main` when this list said seven; corrected
+  2026-09-02, not grown.)
 
 ## Cross-runtime contracts (fixtures are the source of truth)
 
@@ -271,8 +275,8 @@ deployment credential alone (`plans/SUBSCRIPTION-COMPUTE.md`).
 6a. `/agent/api` coverage + conformance tests green (`test/agent-api-coverage.test.ts`,
    `test/agent-api-conformance.test.ts`, `npm run test:openapi -w @blitzos/control-plane`);
    `npm run openapi:generate` must leave `packages/schema/openapi/agent-api.json` unchanged.
-7. Reference counts for comparison (2026-08-29): anti-slop 74
-   (31/27/12/4), blitz-house 0, max-lines warnings 7. These are the numbers
+7. Reference counts for comparison (2026-09-02): anti-slop 66
+   (23/27/12/4), blitz-house 0, max-lines warnings 8. These are the numbers
    a sweep compares against, so lower them in the same change that removes
    findings — a stale reference hides the next regression.
 
