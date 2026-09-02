@@ -45,6 +45,7 @@ import "../../src/drive-shell.css";
 import "../../src/strip-rail.css";
 import "../../src/files.css";
 import "../../src/confirmation-dialog.css";
+import "../../src/error-dialog/error-dialog.css";
 import "../../src/settings-surface.css";
 import "../../src/workspace-details-dialog.css";
 import "../../src/loading-skeleton.css";

@@ -140,6 +140,7 @@ import {
 import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
 import { useWorkspaceConnectionsFocus } from './use-workspace-connections-focus';
 import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
+import { ErrorReporterProvider } from './error-dialog/ErrorReporter';
 
 /** Shared empty list for a workspace whose tabs have not loaded. A fresh `[]`
  * per render would give every callback derived from it a new identity, and the
@@ -185,7 +186,7 @@ export type CloudAppProps = {
   resolver: EndpointResolver;
 };
 
-export default function CloudApp({ client, resolver }: CloudAppProps) {
+function CloudAppContent({ client, resolver }: CloudAppProps) {
   const mobileWebApp = useMobileWebApp();
   const [store, dispatch] = useReducer(workspaceReducer, initialWorkspaceStore);
   const [route, setRoute] = useState(() => parseAppRoute(window.location.pathname));
@@ -2179,5 +2180,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         />
       )}
     </main>
+  );
+}
+
+/** One action-error host for every first-party screen. Lody keeps its own
+ * provider tree and error surfaces inside the lazy-loaded session region. */
+export default function CloudApp(props: CloudAppProps) {
+  return (
+    <ErrorReporterProvider>
+      <CloudAppContent {...props} />
+    </ErrorReporterProvider>
   );
 }

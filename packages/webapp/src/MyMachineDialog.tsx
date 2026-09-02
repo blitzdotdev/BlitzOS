@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   ListMachineTypesResponse,
   MachineType,
@@ -12,8 +12,13 @@ import { monthlyPriceLabel } from './MachineCatalogGrid';
 import { MachineTypeSelect } from './MachineTypeSelect';
 import { ModalOverlay } from './ModalOverlay';
 import { VolumeMeter } from './VolumeMeter';
-import { machineActionsFor, type MachineAction } from './WorkspaceMembersEditor';
+import {
+  machineActionsFor,
+  machinePendingLabel,
+  type MachineAction,
+} from './WorkspaceMembersEditor';
 import type { CloudWorkspaceModel } from './workspace-store';
+import { useErrorReporter } from './error-dialog/ErrorReporter';
 
 const ACTION_LABELS = {
   provision: 'Provision',
@@ -22,6 +27,28 @@ const ACTION_LABELS = {
   recreate: 'Recreate',
   destroy: 'Destroy',
 } satisfies Record<MachineAction, string>;
+
+const ACTION_FAILURE_TITLES = {
+  provision: 'Couldn’t provision machine',
+  stop: 'Couldn’t stop machine',
+  start: 'Couldn’t start machine',
+  recreate: 'Couldn’t recreate machine',
+  destroy: 'Couldn’t destroy machine',
+} satisfies Record<MachineAction, string>;
+
+type MachineOverlay = {
+  machine: MachineView | null;
+  pendingAction: MachineAction | null;
+};
+
+function visibleMachine(machine: MachineView | null): MachineView | null {
+  return machine?.state === 'destroyed' ? null : machine;
+}
+
+function machineReconciled(polled: MachineView | null, expected: MachineView | null): boolean {
+  if (polled === null || expected === null) return polled === expected;
+  return polled.id === expected.id && polled.updatedAt >= expected.updatedAt;
+}
 
 /**
  * Who may run each verb on their OWN machine (plans/MEMBER-MACHINES.md §3).
@@ -122,6 +149,7 @@ export function MyMachineDialog({
   workspace,
   membershipId,
   listMachineTypes,
+  refreshWorkspaces,
   onClose,
 }: {
   client: ControlPlaneClient;
@@ -129,6 +157,7 @@ export function MyMachineDialog({
   /** The requesting member's membership, which is what keys a machine. */
   membershipId: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  refreshWorkspaces: () => void;
   onClose: () => void;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -138,6 +167,8 @@ export function MyMachineDialog({
   const [catalog, setCatalog] = useState<ListMachineTypesResponse>(NO_CATALOG);
   const [error, setError] = useState<string | null>(null);
   const [pendingTypeId, setPendingTypeId] = useState<string | null>(null);
+  const [machineOverlay, setMachineOverlay] = useState<MachineOverlay | null>(null);
+  const reportError = useErrorReporter();
   const machines: MachineType[] = catalog.machineTypes;
 
   useEffect(() => { closeButton.current?.focus(); }, []);
@@ -155,29 +186,85 @@ export function MyMachineDialog({
     return () => { cancelled = true; };
   }, [listMachineTypes]);
 
-  const run = useCallback((action: Promise<unknown>) => {
-    void action.then(() => setError(null)).catch((caught: Error) => setError(caught.message));
-  }, []);
-
   const member = workspace.members.find((row) => row.membershipId === membershipId);
-  const machine = member?.machine ?? null;
+  const polledMachine = member?.machine ?? null;
+  const machine = machineOverlay?.machine ?? polledMachine;
+  const pendingAction = machineOverlay?.pendingAction ?? null;
+
+  useEffect(() => { setMachineOverlay(null); }, [membershipId, workspace.id]);
+  useEffect(() => {
+    setMachineOverlay((current) => current !== null
+      && current.pendingAction === null
+      && machineReconciled(polledMachine, current.machine)
+      ? null
+      : current);
+  }, [polledMachine]);
   // A workspace admin, or an org admin reaching in implicitly (§3).
   const admin = workspace.myRole === 'admin' || workspace.myRole === null;
   const type = machines.find(({ id }) => id === machine?.machineTypeId);
   const price = monthlyPriceLabel(type?.monthlyPrice);
 
+  const runMachineAction = (
+    action: MachineAction,
+    request: () => Promise<MachineView | null>,
+    title = ACTION_FAILURE_TITLES[action],
+  ) => {
+    setMachineOverlay({ machine, pendingAction: action });
+    void Promise.resolve()
+      .then(request)
+      .then((updated) => {
+        const nextMachine = visibleMachine(updated);
+        setMachineOverlay({ machine: nextMachine, pendingAction: null });
+        if (nextMachine?.state === 'error') {
+          reportError(new Error(nextMachine.error ?? 'The machine entered an error state.'), {
+            title,
+            action: `Your machine in ${workspace.title}.`,
+            workspaceId: workspace.id,
+          });
+        }
+        refreshWorkspaces();
+      })
+      .catch((caught) => {
+        setMachineOverlay(null);
+        reportError(caught, {
+          title,
+          action: `Your machine in ${workspace.title}.`,
+          workspaceId: workspace.id,
+        });
+      });
+  };
+
   const act = (action: MachineAction) => {
     if (machine === null) {
       if (action === 'provision') {
-        run(client.provisionMemberMachine(workspace.id, membershipId ?? '', {}));
+        runMachineAction(action, () => client.provisionMemberMachine(
+          workspace.id,
+          membershipId ?? '',
+          {},
+        ).then(({ member: updated }) => updated.machine));
       }
       return;
     }
-    if (action === 'provision') run(client.provisionMachine(machine.id));
-    if (action === 'stop') run(client.stopMachine(machine.id));
-    if (action === 'start') run(client.startMachine(machine.id));
-    if (action === 'recreate') run(client.recreateMachine(machine.id));
-    if (action === 'destroy') run(client.destroyMachine(machine.id));
+    if (action === 'provision') runMachineAction(
+      action,
+      () => client.provisionMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'stop') runMachineAction(
+      action,
+      () => client.stopMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'start') runMachineAction(
+      action,
+      () => client.startMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'recreate') runMachineAction(
+      action,
+      () => client.recreateMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'destroy') runMachineAction(
+      action,
+      () => client.destroyMachine(machine.id).then(({ machine: updated }) => updated),
+    );
   };
 
   const actions = member === undefined || member.role === 'viewer'
@@ -217,7 +304,9 @@ export function MyMachineDialog({
                     <dt>Status</dt>
                     {/* `MachineState` is a wire term shown to a person. */}
                     <dd className="cfg-meta-term">
-                      {machine === null ? 'No machine' : machine.state}
+                      {pendingAction === null
+                        ? machine === null ? 'No machine' : machine.state
+                        : machinePendingLabel(pendingAction)}
                     </dd>
                   </div>
                   <Detail
@@ -260,6 +349,7 @@ export function MyMachineDialog({
                     defaultMachineTypeId={workspace.defaultMachineTypeId}
                     volumeLocation={volumeLocationOf(machine, machines)}
                     ariaLabel="Change my machine type"
+                    disabled={pendingAction !== null}
                     onChange={(machineTypeId) => {
                       if (machineTypeId !== machine.machineTypeId) setPendingTypeId(machineTypeId);
                     }}
@@ -294,7 +384,7 @@ export function MyMachineDialog({
                           : 'webapp-action'}
                         type="button"
                         key={action}
-                        disabled={blocked}
+                        disabled={blocked || pendingAction !== null}
                         title={blocked ? askLine(workspace.members) : undefined}
                         onClick={() => act(action)}
                       >
@@ -318,8 +408,14 @@ export function MyMachineDialog({
           confirmLabel="Yes, change the type"
           onCancel={() => setPendingTypeId(null)}
           onConfirm={() => {
+            const machineTypeId = pendingTypeId;
             setPendingTypeId(null);
-            run(client.setMachineType(machine.id, { machineTypeId: pendingTypeId }));
+            runMachineAction(
+              'recreate',
+              () => client.setMachineType(machine.id, { machineTypeId })
+                .then(({ machine: updated }) => updated),
+              'Couldn’t change machine type',
+            );
           }}
         />
       )}
