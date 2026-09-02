@@ -94,6 +94,16 @@ export interface LodySessionsRegionProps {
   sharedOpen?: SharedSurfaceTarget | null;
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
   onActiveSessionChange?: (sessionId: string | null) => void;
+  /**
+   * The session the shell's address names on the member's OWN box, restored
+   * across a workspace switch (`CloudApp.navigateToWorkspacePage` →
+   * `recallWorkspaceChatPath`). Handed to the surface so its memory router OPENS
+   * on that session instead of the landing: the own-box router otherwise starts
+   * at `/chat` and its first resolved address — `null` — is mirrored back and
+   * turned into `openLanding()`, erasing the restored selection. Reaches only
+   * the owned surface; a shared surface's address is `sharedOpen.sessionId`.
+   */
+  initialSessionId?: string;
 }
 
 /** One open shared session: whose box, which session, at what level. */
@@ -259,6 +269,13 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const hostTabs = sharedOpen !== null || props.surfaceTabs === undefined
     ? {}
     : { surfaceTabs: props.surfaceTabs };
+  // The restored own-box selection rides ONLY the owned surface. A shared
+  // surface opens on `sharedOpen.sessionId` through the branch above, so passing
+  // it here too would fight that.
+  const ownInitial =
+    sharedOpen === null && props.initialSessionId !== undefined
+      ? { initialSessionId: props.initialSessionId }
+      : {};
   // THE BOUNDARY IS OUTSIDE THE SUSPENSE, so it catches the import's rejection
   // as well as anything the surface throws once it has mounted. Without it a
   // rejected chunk propagates past the whole tree and React unmounts the
@@ -276,6 +293,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
           rail={rail}
           readOnly={surfaceProps.readOnly}
           {...hostTabs}
+          {...ownInitial}
           {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
           {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
           {...(props.onActiveSessionChange === undefined

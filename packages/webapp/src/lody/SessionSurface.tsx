@@ -50,6 +50,7 @@ import { createPortal } from "react-dom";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { RouterProvider } from "@tanstack/react-router";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
+import { resetLocalPlatformSnapshotState } from "@lody/components/providers/local-platform-provider";
 import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
 import {
@@ -219,6 +220,21 @@ export interface LodySessionSurfaceProps {
   /** Follow the session without driving it. Suppresses the composer and the
    * permission card's answer buttons (seam patch 4). */
   readOnly?: boolean;
+  /**
+   * The session the shell's address named on THIS box at mount, so the memory
+   * router opens on it instead of the chat landing.
+   *
+   * Read ONCE, at the mount this surface is keyed to (a workspace switch mounts
+   * a fresh surface per box), and never again: later selections drive the
+   * router imperatively through `openSession`, and re-reading this would rebuild
+   * the router under the member's cursor. Without it the own-box router starts
+   * at `/chat`, whose first resolved address is `null`; that null is mirrored
+   * back to the shell as `openLanding()` and erases the restored selection —
+   * the "goes back to new session" half of the workspace-switch report. The
+   * `shared` branch already opens on its own session, so this is the own-box
+   * counterpart of that.
+   */
+  initialSessionId?: string;
 }
 
 /**
@@ -228,10 +244,27 @@ export interface LodySessionSurfaceProps {
  * polls `localPlatform.getSnapshot` off a module-level singleton that starts on
  * its first read (`providers/local-platform-provider.ts:110`), and that read
  * happens while `RuntimeProvider` renders. An effect would run after it.
+ *
+ * FORGET THE PREVIOUS BOX'S LOCAL IDENTITY when this surface is born. That
+ * snapshot singleton settles ONCE per page and never re-reads (it assumes one
+ * daemon per renderer, which is Electron's world, not a browser talking to many
+ * boxes). Without the reset the runtime pins to the FIRST box's workspace id for
+ * the life of the tab: on every later workspace switch it opens that box's Loro
+ * replica and subscribes to its rooms while our bridge dials a DIFFERENT daemon,
+ * so nothing syncs and the rail is empty until a full reload — which is the only
+ * thing that reset the singleton before. This is `resetLocalPlatformSnapshotState`
+ * (BLITZ-PATCHES.md §17), called synchronously in the render body of the incoming
+ * surface, gated on a NEW bridge so it fires exactly once per box: it runs before
+ * this surface's child `RuntimeProvider` renders and re-reads the snapshot, and
+ * the departing surface (keyed by box) does not re-render, so there is no
+ * teardown race — the reset always belongs to the box coming in.
  */
 function useLodyLocalBridge(endpoints: LodyRuntimeEndpoints): LodyLocalBridge {
   const held = useRef<LodyLocalBridge | null>(null);
-  held.current ??= createLodyLocalBridge(endpoints);
+  if (held.current === null) {
+    resetLocalPlatformSnapshotState();
+    held.current = createLodyLocalBridge(endpoints);
+  }
   const bridge = held.current;
   // Two property assignments, so repeating it per render costs nothing.
   installLodyLocalBridge(bridge);
@@ -353,6 +386,12 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
   // page under the member's cursor.
   const sharedSessionId = props.shared?.sessionId ?? null;
   const workspaceId = snapshot?.workspace.workspaceId ?? null;
+  // The own-box initial address, frozen at mount: the router builds once, after
+  // the snapshot settles the slug, and later selections drive it imperatively.
+  // A ref, not a dep, so a selection change never rebuilds the router. See the
+  // prop's comment for why the address has to arrive with the router rather than
+  // after it.
+  const initialOwnSessionIdRef = useRef(props.initialSessionId);
   const router = useMemo<LodyRouter | null>(() => {
     if (slug === null) return null;
     const routerOptions: LodySessionRouterOptions = { readOnly };
@@ -361,7 +400,13 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     // directly — the ACP sign-in panel first among them — sees `null` and
     // refuses with "Workspace context is missing". See `router.tsx`.
     if (workspaceId !== null) routerOptions.workspaceId = workspaceId;
+    // A shared surface opens on the shared session; an own surface opens on the
+    // selection the shell restored. Shared wins because the two never coexist on
+    // one surface, and a shared mount is never handed an own-box initial id.
     if (sharedSessionId !== null) routerOptions.initialSessionId = sharedSessionId;
+    else if (initialOwnSessionIdRef.current !== undefined) {
+      routerOptions.initialSessionId = initialOwnSessionIdRef.current;
+    }
     return createLodySessionRouter(slug, routerOptions);
   }, [slug, workspaceId, readOnly, sharedSessionId]);
 

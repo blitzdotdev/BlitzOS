@@ -1561,6 +1561,49 @@ seam patches 5, 7 and 15's.
   matching hunk and pass upstream's — the BlitzOS half is one field in
   `packages/webapp/src/lody/v1-scope.ts`.
 
+### 17. The local-platform snapshot must forget the previous box (workspace-switch empty rail, 2026-09-02)
+
+**One idea, one file, and it is additive.** BlitzOS drives MANY box daemons from
+one browser tab — one per workspace — where Electron drives exactly one local
+daemon per renderer. `local-platform-provider.ts` is written for Electron's
+world: `cachedProvider` / `cachedSessionStore` / `cachedWorkspacesStore` /
+`snapshotPollingStarted` are module-scope singletons, and the poll settles on
+the FIRST `localPlatform.getSnapshot` and never reads again for the life of the
+page. So the second workspace a member visits gets `useImplicitLocalWorkspace()`
+= the FIRST box's `lw_<uuid>`, and `RuntimeProvider` (`runtime-provider.tsx:130`,
+the local branch) builds its runtime from it: it opens `lody-loro-repo-db-<A>`
+and subscribes to box A's rooms while the data plane dials box B. Nothing syncs,
+no error is raised, and the rail stays empty until a full reload — the one thing
+that reset the module. That reload is the observed "cure" in the field report.
+
+The fix adds `resetLocalPlatformSnapshotState()`, which clears those singletons
+and stops the running poll interval, so the next read re-polls
+`localPlatform.getSnapshot` against whatever `window.ipc` is installed now.
+BlitzOS calls it from the INCOMING surface's render
+(`packages/webapp/src/lody/SessionSurface.tsx`, `useLodyLocalBridge`, gated on a
+new bridge so it fires once per box) — before that surface's child
+`RuntimeProvider` re-reads the snapshot, and the departing surface (keyed by box
+in `LodySessionsRegion`) does not re-render, so there is no teardown race.
+
+Strictly additive: nothing upstream changes behaviour, because Electron never
+calls the reset and the poll it guards still settles exactly once. The interval
+was a local `let intervalId` in `startLocalPlatformSnapshotPolling`; it is
+promoted to the module-scope `snapshotPollInterval` (renamed in place, same
+three uses) only so the reset can clear a poll that has not settled yet.
+
+| # | File | Line | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/components/src/providers/local-platform-provider.ts` | 35-40 | after `let snapshotPollingStarted = false;` | declares module-scope `snapshotPollInterval` |
+| 2 | same | 46, 79-89, 96 | `let intervalId` in `startLocalPlatformSnapshotPolling` | drops the local `intervalId`, uses `snapshotPollInterval` in its place (declare/clear-on-settle/clear-on-error/assign) |
+| 3 | same | 123-155 | after `ensureLocalPlatformSnapshotPolling()` | exports `resetLocalPlatformSnapshotState()` |
+
+Guard: `packages/webapp/test/lody-local-platform-reset.test.tsx` drives the real
+vendored hook across a box switch and fails without hunk 3.
+
+**Candidate upstream PR:** key the local-platform snapshot by the installed IPC
+bridge (or expose this reset) so a host driving more than one daemon can move
+between them. Until then this is the smallest seam that closes it.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.
