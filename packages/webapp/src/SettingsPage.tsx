@@ -1,3 +1,4 @@
+import type { GrantProposalView } from '@blitzos/schema';
 import { useCallback, useState } from 'react';
 import type { TenantMe } from './api-adapter';
 import type { ControlPlaneClient } from './api';
@@ -149,6 +150,7 @@ export function SettingsHeader({
 export function SettingsPage({
   client,
   viewer,
+  pendingGrantProposals,
   section,
   onNavigate,
   onOpenWorkspace,
@@ -158,6 +160,7 @@ export function SettingsPage({
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
+  pendingGrantProposals: readonly GrantProposalView[];
   section: SettingsSection;
   onNavigate: (section: SettingsSection) => void;
   /** A request row's Connect opens the workspace that wants the connection:
@@ -165,7 +168,7 @@ export function SettingsPage({
   onOpenWorkspace: (workspaceId: string) => void;
   /** Reopens the grant-approval dialog on a pending proposal the person
    * closed without deciding (plans/ORG-CREDENTIALS.md §7a). */
-  onReviewProposal?: (proposalId: string) => void;
+  onReviewProposal: (proposalId: string) => void;
   onSignOut: () => Promise<void>;
   onLeftOrg: () => void;
 }) {
@@ -235,6 +238,7 @@ export function SettingsPage({
         {section === 'requests' && (
           <RequestsPanel
             client={client}
+            proposals={pendingGrantProposals}
             onOpenWorkspace={onOpenWorkspace}
             onReviewProposal={onReviewProposal}
           />

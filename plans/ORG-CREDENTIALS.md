@@ -151,7 +151,8 @@ All box-authed through `boxCaller` (machine bearer), under `/agent/`:
 GET  /agent/api                        the OpenAPI 3.1 document — generated, see below
 GET  /agent/credentials                list: [{name, scope: 'connection'|'org', comment, writable}]
 POST /agent/credentials/:name/token    resolve + mint through the §6 rule;
-                                       {name, scope, token, env[], header, expiresAt}
+                                       connection: {name, scope, token, env[], header, expiresAt}
+                                       org:        {name, scope, token, env[]}
 PUT  /agent/credentials/:name          create or rotate an org credential; {value, comment?}
                                        (create needs an active membership; rotate needs write)
 POST /agent/credentials/dotenv         org-level import; {text, dryRun?} — same parser, new door
@@ -407,7 +408,7 @@ rules tell the agent to read that as `expired`, and it proposes again.
 ```text
 POST /agent/credentials/grant-proposals    {changes[], reason} → {id, state:'pending'}
 GET  /agent/grant-proposals/:id            poll → {state, applied[]?}
-GET  /orgs/:id/grant-proposals?state=pending    the approval feed (webapp poll)
+GET  /orgs/:id/grant-proposals                  pending approval feed (webapp poll)
 POST /orgs/:id/grant-proposals/:pid/resolve     {approve: bool, changes[]}
 ```
 

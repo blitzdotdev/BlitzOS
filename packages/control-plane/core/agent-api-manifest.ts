@@ -106,10 +106,10 @@ export const AGENT_ROUTES: readonly AgentApiRoute[] = [
     path: "/agent/credentials/:name/token",
     summary: "Resolve one credential for immediate use",
     description:
-      "An org connection of that name mints a token through the workspace's own "
-      + "connection; otherwise an org credential the member may read is served. "
-      + "Use the token once and ask again next time: 'expiresAt' is when to "
-      + "re-ask, and a rotation or revoke takes effect on the next call.",
+      "A connection of that name mints a token with its header and expiry; otherwise "
+      + "an org credential the member may read is served without inventing either. "
+      + "Use the value once and ask again next time: a rotation or revoke takes "
+      + "effect on the next call.",
     parameters: [{ name: "name", description: "A name from GET /agent/credentials." }],
     responses: [{ status: 200, body: "AgentCredentialTokenResponse", description: "The token, and how to present it." }],
     refusals: [

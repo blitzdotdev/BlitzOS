@@ -1,17 +1,14 @@
 import { openRoot, sealRoot } from "./connections/root-crypto.js";
 import type { Db, Query } from "./db.js";
 import { first, rows, transaction } from "./db.js";
-import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "./http.js";
+import { HttpError, isRecord, requiredString, type JsonValue } from "./http.js";
 import type { Principal } from "./principals.js";
-import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
+import type { CoreContext, CoreRuntime } from "./runtime.js";
 import type {
-  ListOrgCredentialsResponse,
   OrgCredentialGrantSubjectKind,
   OrgCredentialGrantView,
   OrgCredentialView,
   PutOrgCredentialRequest,
-  PutOrgCredentialResponse,
-  ReplaceOrgCredentialGrantsResponse,
 } from "./wire.js";
 
 /** The org credential store (plans/ORG-CREDENTIALS.md §5-§7): the one static
@@ -32,11 +29,6 @@ export const ORG_CREDENTIAL_COMMENT_MAX = 256;
 
 /** How many grants one credential may carry. */
 export const ORG_CREDENTIAL_MAX_GRANTS = 100;
-
-/** How long an org-credential token answer stays valid to the asking agent.
- * A stored static has nothing to expire server-side; a short expiry says
- * "ask again", which is what makes a revoke land on the next call. */
-export const ORG_CREDENTIAL_TTL_MS = 15 * 60 * 1000;
 
 /** The AAD every org credential is sealed under. It binds a ciphertext to the
  * row it belongs to, so a value cannot be moved to another organization or
@@ -439,34 +431,26 @@ export async function revokeOrgCredential(
 const grantKey = (grant: OrgCredentialGrantView): string =>
   `${grant.subjectKind}:${grant.subjectId ?? ""}:${grant.access}`;
 
-/** Replaces one credential's grant set atomically: what was sent is what
- * holds afterwards. Subjects validate against the same organization —
- * membership subjects must be `active` — and every actual add or remove
- * writes its `credential_events` row (§6). Kept grants keep their rows, so
- * provenance survives an edit that never touched them. */
-export async function replaceOrgCredentialGrants(
-  runtime: CoreRuntime,
-  credential: OrgCredential,
+export interface OrgCredentialGrantReplacement {
+  credential: OrgCredential;
+  grants: readonly OrgCredentialGrantView[];
+}
+
+function grantReplacementQueries(
+  replacement: OrgCredentialGrantReplacement,
   actingMembershipId: string,
-  next: readonly OrgCredentialGrantView[],
-  now = Date.now(),
-): Promise<OrgCredential> {
-  if (next.length > ORG_CREDENTIAL_MAX_GRANTS) {
-    throw new HttpError(
-      400,
-      `a credential may carry at most ${String(ORG_CREDENTIAL_MAX_GRANTS)} grants`,
-    );
-  }
-  await assertGrantSubjects(runtime.db, credential.org_id, next);
-  const nextByKey = new Map(next.map((grant) => [grantKey(grant), grant]));
+  now: number,
+): Query[] {
+  const { credential, grants } = replacement;
+  const nextByKey = new Map(grants.map((grant) => [grantKey(grant), grant]));
   const currentByKey = new Map(
     credential.grants.map((grant) => [grantKey(grantView(grant)), grant]),
   );
   const removed = credential.grants.filter(
     (grant) => !nextByKey.has(grantKey(grantView(grant))),
   );
-  const added = next.filter((grant) => !currentByKey.has(grantKey(grant)));
-  const statements: Query[] = [
+  const added = grants.filter((grant) => !currentByKey.has(grantKey(grant)));
+  return [
     ...removed.map((grant): Query => ({
       q: "DELETE FROM org_credential_grants WHERE id = ?1",
       v: [grant.id],
@@ -493,7 +477,51 @@ export async function replaceOrgCredentialGrants(
       grantEventQuery("approved", credential, grant, actingMembershipId, now),
     ),
   ];
+}
+
+/** Replaces several credentials' grant sets in one transaction. Validation
+ * covers the whole batch before any write; every actual add or remove writes
+ * its `credential_events` row, while kept grants retain their provenance. */
+export async function replaceOrgCredentialGrantSets(
+  runtime: CoreRuntime,
+  orgId: string,
+  actingMembershipId: string,
+  replacements: readonly OrgCredentialGrantReplacement[],
+  now = Date.now(),
+): Promise<void> {
+  for (const { grants } of replacements) {
+    if (grants.length > ORG_CREDENTIAL_MAX_GRANTS) {
+      throw new HttpError(
+        400,
+        `a credential may carry at most ${String(ORG_CREDENTIAL_MAX_GRANTS)} grants`,
+      );
+    }
+  }
+  await assertGrantSubjects(
+    runtime.db,
+    orgId,
+    replacements.flatMap(({ grants }) => grants),
+  );
+  const statements = replacements.flatMap((replacement) =>
+    grantReplacementQueries(replacement, actingMembershipId, now));
   if (statements.length > 0) await transaction(runtime.db, statements);
+}
+
+/** Replaces one credential's grant set atomically and returns its live view. */
+export async function replaceOrgCredentialGrants(
+  runtime: CoreRuntime,
+  credential: OrgCredential,
+  actingMembershipId: string,
+  grants: readonly OrgCredentialGrantView[],
+  now = Date.now(),
+): Promise<OrgCredential> {
+  await replaceOrgCredentialGrantSets(
+    runtime,
+    credential.org_id,
+    actingMembershipId,
+    [{ credential, grants }],
+    now,
+  );
   return {
     ...credential,
     grants: await grantsForCredentials(runtime.db, [credential.id]),
@@ -586,114 +614,4 @@ export function requestedOrgId(context: CoreContext, principal: Principal): stri
 
 export function callerFor(principal: Principal): OrgCredentialCaller {
   return { membershipId: principal.membershipId, orgRole: principal.role };
-}
-
-/** The session plane (plans/ORG-CREDENTIALS.md §7): what the webApp calls.
- * All under `requireMembershipPrincipal`; the agent plane lives in
- * `core/agent-routes.ts` and shares the store functions above. */
-export function addOrgCredentialRoutes(
-  router: CoreRouter,
-  runtimeFactory: RuntimeFactory,
-  requirePrincipal: (context: CoreContext) => Promise<Principal>,
-): void {
-  router.get("/orgs/:id/credentials", async (context) => {
-    const principal = await requirePrincipal(context);
-    const runtime = runtimeFactory(context);
-    const orgId = requestedOrgId(context, principal);
-    const caller = callerFor(principal);
-    const credentials = await liveOrgCredentials(runtime.db, orgId);
-    const visible = credentials.flatMap((credential) => {
-      const access = orgCredentialAccess(credential, caller);
-      if (!access.read) return [];
-      return [orgCredentialView(credential, access.write)];
-    });
-    return context.json<ListOrgCredentialsResponse>({ credentials: visible });
-  });
-
-  router.put("/orgs/:id/credentials", async (context) => {
-    const principal = await requirePrincipal(context);
-    const runtime = runtimeFactory(context);
-    const orgId = requestedOrgId(context, principal);
-    if (principal.membershipId === null) {
-      throw new HttpError(403, "active membership required");
-    }
-    const input = parseOrgCredentialWrite(
-      await readJson(context.req.raw, ORG_CREDENTIAL_MAX_BYTES * 4),
-    );
-    const existing = await orgCredentialByName(runtime.db, orgId, input.name);
-    // Create is open to any active member (§12); rotate needs write.
-    if (existing !== null && !orgCredentialAccess(existing, callerFor(principal)).write) {
-      throw new HttpError(403, `write access to ${input.name} required`);
-    }
-    const write: PutOrgCredentialInput = { name: input.name, value: input.value };
-    if (input.comment !== undefined) write.comment = input.comment;
-    const outcome = await putOrgCredential(runtime, orgId, principal.membershipId, write);
-    // A create that names grants still keeps the creator's own write grant
-    // (§12) unless the request names that membership itself — narrowing
-    // yourself is deliberate; being locked out by an omission is not.
-    const grants = input.grants !== undefined && outcome.created
-      && !input.grants.some((grant) =>
-        grant.subjectKind === "membership" && grant.subjectId === principal.membershipId)
-      ? [...input.grants, {
-          subjectKind: "membership" as const,
-          subjectId: principal.membershipId,
-          access: "write" as const,
-        }]
-      : input.grants;
-    const credential = grants === undefined
-      ? outcome.credential
-      : await replaceOrgCredentialGrants(
-          runtime,
-          outcome.credential,
-          principal.membershipId,
-          grants,
-        );
-    return context.json<PutOrgCredentialResponse>(
-      { credential: orgCredentialView(credential, true) },
-      outcome.created ? 201 : 200,
-    );
-  });
-
-  router.put("/orgs/:id/credentials/:name/grants", async (context) => {
-    const principal = await requirePrincipal(context);
-    const runtime = runtimeFactory(context);
-    const orgId = requestedOrgId(context, principal);
-    if (principal.membershipId === null) {
-      throw new HttpError(403, "active membership required");
-    }
-    const name = requiredString(context.req.param("name"), "name", 128);
-    const credential = await orgCredentialByName(runtime.db, orgId, name);
-    if (credential === null) throw new HttpError(404, "org credential not found");
-    if (!orgCredentialAccess(credential, callerFor(principal)).write) {
-      throw new HttpError(403, `write access to ${name} required`);
-    }
-    const body = await readJson(context.req.raw);
-    if (!isRecord(body)) throw new HttpError(400, "request body must be an object");
-    const grants = parseGrantList(body.grants ?? []);
-    const updated = await replaceOrgCredentialGrants(
-      runtime,
-      credential,
-      principal.membershipId,
-      grants,
-    );
-    return context.json<ReplaceOrgCredentialGrantsResponse>({
-      credential: orgCredentialView(updated, true),
-    });
-  });
-
-  router.delete("/orgs/:id/credentials/:name", async (context) => {
-    const principal = await requirePrincipal(context);
-    const runtime = runtimeFactory(context);
-    const orgId = requestedOrgId(context, principal);
-    const name = requiredString(context.req.param("name"), "name", 128);
-    const credential = await orgCredentialByName(runtime.db, orgId, name);
-    if (credential === null) throw new HttpError(404, "org credential not found");
-    if (!orgCredentialAccess(credential, callerFor(principal)).write) {
-      throw new HttpError(403, `write access to ${name} required`);
-    }
-    if (!await revokeOrgCredential(runtime, orgId, name)) {
-      throw new HttpError(404, "org credential not found");
-    }
-    return context.body(null, 204);
-  });
 }

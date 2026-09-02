@@ -113,19 +113,20 @@ export interface AgentCredentialsResponse {
   credentials: AgentCredentialEntry[];
 }
 
-/** What `POST /agent/credentials/:name/token` answers with, for both tiers.
- * The agent reads it once and stores nothing: `token` is what it presents,
- * `env` names the variables the provider's own tooling reads, `header` is how
- * the token travels in HTTP. `expiresAt` says "ask again" — pulls are
- * per-use, and a rotation or revoke takes effect on the next one. */
-export interface AgentCredentialTokenResponse {
+/** What `POST /agent/credentials/:name/token` answers with. Both tiers expose
+ * the value and environment projection; only a minted connection can promise
+ * an HTTP presentation rule or expiry. */
+interface AgentCredentialTokenBase {
   name: string;
-  scope: AgentCredentialScope;
   token: string;
   env: ConnectionEnv[];
+}
+
+export type AgentCredentialTokenResponse = AgentCredentialTokenBase & ({
+  scope: "connection";
   header: TokenHeader;
   expiresAt: number;
-}
+} | { scope: "org" });
 
 /** `PUT /agent/credentials/:name`: create (201) or rotate (200) an org
  * credential from a machine. Same tri-state `comment` as the session plane. */
@@ -185,13 +186,13 @@ export interface GrantProposalView {
   state: GrantProposalState;
   machineId: string;
   membershipId: string;
-  reason: string | null;
+  reason: string;
   proposed: GrantChange[];
   applied: GrantChange[] | null;
   createdAt: number;
 }
 
-/** `GET /orgs/:id/grant-proposals?state=pending`: the proposals addressed
+/** `GET /orgs/:id/grant-proposals`: the pending proposals addressed
  * to the caller, plus every one in the org for an org admin. */
 export interface ListGrantProposalsResponse {
   proposals: GrantProposalView[];

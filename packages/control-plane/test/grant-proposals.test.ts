@@ -9,7 +9,7 @@ import type {
 } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearGrantProposals, GRANT_PROPOSAL_TTL_MS } from "../core/grant-proposals.js";
+import { GRANT_PROPOSAL_TTL_MS } from "../core/grant-proposals.js";
 import {
   appRequest,
   createWorkspace,
@@ -128,9 +128,8 @@ async function poll(
 async function feed(
   app: Harness["app"],
   cookie: string,
-  query = "?state=pending",
 ): Promise<GrantProposalView[]> {
-  const response = await appRequest(app, `/orgs/self/grant-proposals${query}`, withCookie(cookie, {}));
+  const response = await appRequest(app, "/orgs/self/grant-proposals", withCookie(cookie, {}));
   expect(response.status).toBe(200);
   return (await response.json<ListGrantProposalsResponse>()).proposals;
 }
@@ -159,10 +158,7 @@ const remove = (
 ): GrantChange => ({ name, action: "remove", subjectKind, subjectId, access });
 
 describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
-  beforeEach(async () => {
-    clearGrantProposals();
-    await resetDatabase();
-  });
+  beforeEach(resetDatabase);
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -255,11 +251,40 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
 
     // Resolved means resolved: off the pending feed, and a second answer is a 409.
     await expect(feed(app, sharer.cookie)).resolves.toEqual([]);
-    expect((await feed(app, sharer.cookie, "?state=approved")).map(({ id: got }) => got))
-      .toEqual([id]);
     expect((await resolve(app, sharer.cookie, id, { approve: true, changes: edited })).status)
       .toBe(409);
     expect((await resolve(app, admin, id, { approve: false, changes: [] })).status).toBe(409);
+  });
+
+  it("commits a multi-credential approval as one transaction", async () => {
+    const { app, providers } = harness();
+    const admin = await operatorSession(app);
+    const workspace = await createWorkspace(app, admin);
+    await storeOrgCredential(app, admin, "KEY_A");
+    await storeOrgCredential(app, admin, "KEY_B");
+    const token = await machineToken(app, providers, workspace.id);
+    const changes = [
+      add("KEY_A", "workspace", workspace.id, "read"),
+      add("KEY_B", "workspace", workspace.id, "read"),
+    ];
+    const id = await proposed(app, token, changes);
+
+    await env.DB.prepare(`CREATE TRIGGER fail_key_b_grant
+      BEFORE INSERT ON org_credential_grants
+      WHEN (SELECT name FROM org_credentials WHERE id = NEW.credential_id) = 'KEY_B'
+      BEGIN SELECT RAISE(ABORT, 'forced KEY_B failure'); END`).run();
+    const failed = await resolve(app, admin, id, { approve: true, changes });
+    expect(failed.status).toBe(500);
+    await env.DB.prepare("DROP TRIGGER fail_key_b_grant").run();
+
+    const grants = await grantsOf(app, admin);
+    const creatorGrant = [
+      { subjectKind: "membership", subjectId: "personal", access: "write" },
+    ];
+    expect(grants.KEY_A).toEqual(creatorGrant);
+    expect(grants.KEY_B).toEqual(creatorGrant);
+    await expect(poll(app, token, id).then((response) => response.json()))
+      .resolves.toMatchObject({ state: "pending", applied: null });
   });
 
   it("deny changes nothing, and an org admin may answer for the member", async () => {
@@ -495,14 +520,10 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
     await expect(poll(app, token, id).then((r) => r.json()))
       .resolves.toMatchObject({ id, state: "expired", applied: null });
     await expect(feed(app, admin)).resolves.toEqual([]);
-    expect((await feed(app, admin, "?state=expired")).map(({ id: got }) => got)).toEqual([id]);
     expect((await resolve(app, admin, id, { approve: true, changes })).status).toBe(409);
     expect((await grantsOf(app, admin)).KEY_A).toEqual([
       { subjectKind: "membership", subjectId: "personal", access: "write" },
     ]);
-    // Any feed asked for a state that is not one is a 400, not an empty list.
-    expect((await appRequest(app, "/orgs/self/grant-proposals?state=stale", withCookie(admin, {})))
-      .status).toBe(400);
   });
 
   it("keeps a proposal inside its organization", async () => {
@@ -525,6 +546,8 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
       .status).toBe(404);
     // An id nobody issued reads the same as another org's.
     expect((await poll(app, token, "no-such-proposal")).status).toBe(404);
+    // A recycled runtime owns a fresh in-memory store, so the proposal is gone.
+    expect((await poll(harness().app, token, id)).status).toBe(404);
     // Ours is untouched.
     await expect(poll(app, token, id).then((r) => r.json()))
       .resolves.toMatchObject({ state: "pending" });

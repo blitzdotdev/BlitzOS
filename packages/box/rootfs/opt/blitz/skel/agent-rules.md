@@ -76,11 +76,12 @@ GH_TOKEN=$(curl -sS -X POST -H "Authorization: Bearer $(blitz-cred api-token)" \
   "$CP/agent/credentials/github/token" | jq -r .token) gh pr list
 ```
 
-The variable dies with that command. The same response carries `env`, one
-`{name, value}` per variable the provider's own tooling reads, and `header`,
-which names the header to send — the shape is not the same everywhere: Discord
-wants `Bot `, and some providers want a bare `Authorization` value. Read those
-rather than guessing. When a tool wants several names, or the API base URL as
+The variable dies with that command. Every response carries `env`, one
+`{name, value}` per variable the underlying tooling reads. A connection
+response also carries `header`, which names the header to send — the shape is
+not the same everywhere: Discord wants `Bot `, and some providers want a bare
+`Authorization` value. An org credential has no invented header or expiry.
+When a tool wants several names, or the API base URL as
 well, export `env` inside a subshell so it dies there too:
 
 ```sh

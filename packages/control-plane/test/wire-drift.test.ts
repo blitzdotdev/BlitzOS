@@ -344,8 +344,6 @@ const agentCredentialTokenResponse: SharedShape<
   scope: "org",
   token: "sk_test_only",
   env: [{ name: orgCredential.name, value: "sk_test_only" }],
-  header: { name: "Authorization", prefix: "Bearer " },
-  expiresAt: 8,
 };
 
 const putAgentCredentialRequest: SharedShape<
@@ -403,7 +401,7 @@ const pendingGrantProposal: SharedShape<
 const approvedGrantProposal: SharedShape<
   wire.GrantProposalView,
   schema.GrantProposalView
-> = { ...pendingGrantProposal, state: "approved", reason: null, applied: [addGrantChange] };
+> = { ...pendingGrantProposal, state: "approved", applied: [addGrantChange] };
 
 const listGrantProposalsResponse: SharedShape<
   wire.ListGrantProposalsResponse,

@@ -25,7 +25,7 @@ import { addSessionRoutes } from "./sessions.js";
 import { addVersionRoutes } from "./version.js";
 import { addVolumeRoutes } from "./volumes.js";
 import { addWebAppStateRoutes } from "./webapp-state.js";
-import { addOrgCredentialRoutes } from "./org-credentials.js";
+import { addOrgCredentialRoutes } from "./org-credential-routes.js";
 import { addOrgCredentialImportRoutes } from "./org-credential-import.js";
 import { addWorkspaceMemberRoutes } from "./workspace-members.js";
 import { addSessionShareRoutes } from "./session-shares.js";

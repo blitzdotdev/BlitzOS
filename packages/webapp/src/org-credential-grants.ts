@@ -45,22 +45,21 @@ export function sameGrantSubject(left: Subject, right: Subject): boolean {
 /** Why an org credential shows in one workspace's Credentials tab (§9): a
  * grant on the workspace, an org-wide grant, or the viewer's own membership
  * grant. A plain reader gets `grants: []` on the wire — the credential is
- * readable, the path is not told — which is `'unknown'`. Null means it does
- * not reach this workspace. */
+ * readable, the path is not told — which is `'unknown'`. */
 export type WorkspaceReadPath = 'workspace' | 'org' | 'membership' | 'unknown';
 
 export function workspaceReadPath(
   credential: Pick<OrgCredentialView, 'grants'>,
   workspaceId: string,
   viewerMembershipId: string | null,
-): WorkspaceReadPath | null {
+): WorkspaceReadPath {
   if (credential.grants.length === 0) return 'unknown';
   if (credential.grants.some(({ subjectKind, subjectId }) =>
     subjectKind === 'workspace' && subjectId === workspaceId)) return 'workspace';
   if (credential.grants.some(({ subjectKind }) => subjectKind === 'org')) return 'org';
   if (viewerMembershipId !== null && credential.grants.some(({ subjectKind, subjectId }) =>
     subjectKind === 'membership' && subjectId === viewerMembershipId)) return 'membership';
-  return null;
+  return 'unknown';
 }
 
 /** Decision 3 of the plan: an org-wide `write` is allowed, and the UI says

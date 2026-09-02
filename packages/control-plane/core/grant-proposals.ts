@@ -1,4 +1,4 @@
-import { boxCaller, type MachineCaller } from "./agent-routes.js";
+import { boxCaller } from "./agent-routes.js";
 import {
   HttpError,
   isBoolean,
@@ -13,7 +13,7 @@ import {
   orgCredentialAccess,
   orgCredentialByName,
   parseGrant,
-  replaceOrgCredentialGrants,
+  replaceOrgCredentialGrantSets,
   requestedOrgId,
   type OrgCredential,
   type OrgCredentialCaller,
@@ -46,7 +46,7 @@ import type {
  * agent sees as a 404 on its next poll and answers by proposing again.
  */
 
-export interface GrantProposal {
+interface GrantProposal {
   id: string;
   orgId: string;
   /** Which machine asked. */
@@ -54,7 +54,7 @@ export interface GrantProposal {
   /** The acting member; the approver. */
   membershipId: string;
   /** Shown verbatim in the dialog. */
-  reason: string | null;
+  reason: string;
   proposed: GrantChange[];
   /** What actually went through. */
   applied: GrantChange[] | null;
@@ -69,18 +69,15 @@ export const GRANT_PROPOSAL_TTL_MS = 60 * 60 * 1000;
  * migration. */
 export const GRANT_PROPOSAL_MAX_CHANGES = 200;
 
-const proposals = new Map<string, GrantProposal>();
-
-/** Test seam: the store is module state, so a suite empties it between cases
- * the way `resetDatabase` empties the tables. */
-export function clearGrantProposals(): void {
-  proposals.clear();
-}
+type GrantProposalStore = Map<string, GrantProposal>;
 
 /** The one read. Expiry is enforced here, lazily, with no timer: a pending
- * proposal read past its TTL flips to `expired` on the spot. Unknown ids
- * answer null — including ids a recycle forgot. */
-export function grantProposalById(id: string, now = Date.now()): GrantProposal | null {
+ * proposal read past its TTL flips to `expired` on the spot. */
+function grantProposalById(
+  proposals: GrantProposalStore,
+  id: string,
+  now = Date.now(),
+): GrantProposal | null {
   const proposal = proposals.get(id);
   if (proposal === undefined) return null;
   if (proposal.state === "pending" && now - proposal.createdAt > GRANT_PROPOSAL_TTL_MS) {
@@ -89,25 +86,30 @@ export function grantProposalById(id: string, now = Date.now()): GrantProposal |
   return proposal;
 }
 
-function grantProposalsForOrg(orgId: string, now: number): GrantProposal[] {
+function pendingGrantProposalsForOrg(
+  proposals: GrantProposalStore,
+  orgId: string,
+  now: number,
+): GrantProposal[] {
   return [...proposals.keys()]
     .flatMap((id) => {
-      const proposal = grantProposalById(id, now);
-      return proposal !== null && proposal.orgId === orgId ? [proposal] : [];
+      const proposal = grantProposalById(proposals, id, now);
+      return proposal !== null && proposal.orgId === orgId && proposal.state === "pending"
+        ? [proposal]
+        : [];
     })
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
 /** Inserts sweep what nobody will read again: anything past its TTL has
- * either been resolved and polled or has expired, and `grantProposalById`
- * already answers null for a forgotten id. */
-function evictStaleProposals(now: number): void {
+ * either been resolved and polled or has expired. */
+function evictStaleProposals(proposals: GrantProposalStore, now: number): void {
   for (const [id, proposal] of proposals) {
     if (now - proposal.createdAt > GRANT_PROPOSAL_TTL_MS) proposals.delete(id);
   }
 }
 
-export function grantProposalView(proposal: GrantProposal): GrantProposalView {
+function grantProposalView(proposal: GrantProposal): GrantProposalView {
   return {
     id: proposal.id,
     state: proposal.state,
@@ -120,10 +122,6 @@ export function grantProposalView(proposal: GrantProposal): GrantProposalView {
   };
 }
 
-const GRANT_PROPOSAL_STATES: readonly GrantProposalState[] = [
-  "pending", "approved", "denied", "expired",
-];
-
 function parseGrantChange(value: JsonValue, field: string): GrantChange {
   if (!isRecord(value)) throw new HttpError(400, `${field} must be an object`);
   const name = requiredString(value.name, `${field}.name`, 128);
@@ -134,7 +132,7 @@ function parseGrantChange(value: JsonValue, field: string): GrantChange {
   return { name, action, ...parseGrant(value, field) };
 }
 
-export function parseGrantChanges(value: JsonValue | undefined, field = "changes"): GrantChange[] {
+function parseGrantChanges(value: JsonValue | undefined, field = "changes"): GrantChange[] {
   if (!Array.isArray(value)) throw new HttpError(400, `${field} must be an array`);
   if (value.length > GRANT_PROPOSAL_MAX_CHANGES) {
     throw new HttpError(
@@ -145,14 +143,14 @@ export function parseGrantChanges(value: JsonValue | undefined, field = "changes
   return value.map((entry, index) => parseGrantChange(entry, `${field}[${String(index)}]`));
 }
 
-export function parseProposeGrantChangesRequest(value: JsonValue): ProposeGrantChangesRequest {
+function parseProposeGrantChangesRequest(value: JsonValue): ProposeGrantChangesRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const changes = parseGrantChanges(value.changes);
   if (changes.length === 0) throw new HttpError(400, "changes must name at least one change");
   return { changes, reason: requiredString(value.reason, "reason", 1024) };
 }
 
-export function parseResolveGrantProposalRequest(value: JsonValue): ResolveGrantProposalRequest {
+function parseResolveGrantProposalRequest(value: JsonValue): ResolveGrantProposalRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const { approve } = value;
   if (!isBoolean(approve)) throw new HttpError(400, "approve must be a boolean");
@@ -241,7 +239,7 @@ async function refuseInvalidSubjects(
   );
 }
 
-export interface ProposeGrantChangesInput {
+interface ProposeGrantChangesInput {
   orgId: string;
   machineId: string;
   membershipId: string;
@@ -254,15 +252,16 @@ export interface ProposeGrantChangesInput {
  * every change must name a live credential the acting member may write.
  * Anything past that refuses the whole proposal with a 403 that names the
  * offenders, and nothing is stored — the agent narrows and retries. */
-export async function proposeGrantChanges(
+async function proposeGrantChanges(
   runtime: CoreRuntime,
+  proposals: GrantProposalStore,
   input: ProposeGrantChangesInput,
   now = Date.now(),
 ): Promise<GrantProposal> {
   const credentials = await credentialsNamed(runtime, input.orgId, input.changes);
   refusePastAuthority(changesPastAuthority(input.changes, credentials, input.caller));
   await refuseInvalidSubjects(runtime, input.orgId, input.changes);
-  evictStaleProposals(now);
+  evictStaleProposals(proposals, now);
   const proposal: GrantProposal = {
     id: crypto.randomUUID(),
     orgId: input.orgId,
@@ -312,21 +311,17 @@ function applyChangesToGrantSet(
   return { next, effective };
 }
 
-export interface ResolveGrantProposalInput {
+interface ResolveGrantProposalInput {
   approver: OrgCredentialCaller & { membershipId: string };
   approve: boolean;
   changes: GrantChange[];
 }
 
-/** Resolves a pending proposal. Deny changes nothing. Approve applies the
- * SUBMITTED changes — the person's edit of the proposal — under the same
- * write-authority check as any grant write, revalidated against the live
- * store: a name revoked meanwhile, or a subject that left the org, drops out
- * of `applied` rather than failing the rest. Survivors apply per credential
- * through `replaceOrgCredentialGrants`, which writes the `credential_events`;
- * every input it could refuse is filtered first, so it never refuses
- * mid-apply and a proposal never sticks half-applied in `pending`. */
-export async function resolveGrantProposal(
+/** Resolves a pending proposal. Deny changes nothing. Approve revalidates the
+ * person's edited set against the live store, drops revoked credentials and
+ * invalid subjects, then commits every surviving credential and audit event
+ * in one transaction. */
+async function resolveGrantProposal(
   runtime: CoreRuntime,
   proposal: GrantProposal,
   input: ResolveGrantProposalInput,
@@ -348,7 +343,7 @@ export async function resolveGrantProposal(
     liveCredentials.some((credential) => credential.name === change.name));
   // One subject check over everything the replace will see: the changes AND
   // the grants they leave in place, since a kept grant whose member has since
-  // been disabled would refuse the whole set at write time.
+  // been disabled makes that credential a no-op.
   const invalid = await invalidGrantSubjects(runtime.db, proposal.orgId, [
     ...live.map(changeGrant),
     ...liveCredentials.flatMap((credential) => credential.grants.map(heldGrant)),
@@ -356,47 +351,41 @@ export async function resolveGrantProposal(
   const survivors = live.filter((change) => !invalid.has(subjectKey(change)));
   refusePastAuthority(changesPastAuthority(survivors, credentials, input.approver));
   const applied: GrantChange[] = [];
-  for (const credential of liveCredentials) {
+  const replacements = liveCredentials.flatMap((credential) => {
     const { next, effective } = applyChangesToGrantSet(
       credential.grants.map(heldGrant),
       survivors.filter((change) => change.name === credential.name),
     );
-    // Nothing to write, or a stale kept grant the store would refuse: this
-    // credential is left exactly as it was, and its changes are not applied.
-    if (effective.length === 0 || next.some((grant) => invalid.has(subjectKey(grant)))) continue;
-    await replaceOrgCredentialGrants(runtime, credential, input.approver.membershipId, next, now);
+    if (effective.length === 0 || next.some((grant) => invalid.has(subjectKey(grant)))) return [];
     applied.push(...effective);
-  }
+    return [{ credential, grants: next }];
+  });
+  await replaceOrgCredentialGrantSets(
+    runtime,
+    proposal.orgId,
+    input.approver.membershipId,
+    replacements,
+    now,
+  );
   proposal.applied = applied;
   proposal.state = "approved";
   return proposal;
 }
 
-/** SAFETY: boxCaller refused a workspace whose org_id is null immediately
- * after loading it, so every caller past that point holds an org id. */
-function orgIdOf(caller: MachineCaller): string {
-  const orgId = caller.workspace.org_id;
-  if (orgId === null) throw new HttpError(409, "workspace has no organization");
-  return orgId;
-}
-
 /** A proposal the session route names, inside the caller's org. Another
  * org's id, an unknown id and a forgotten id all read the same: 404. */
-function requestedProposal(context: CoreContext, orgId: string, now: number): GrantProposal {
+function requestedProposal(
+  proposals: GrantProposalStore,
+  context: CoreContext,
+  orgId: string,
+  now: number,
+): GrantProposal {
   const id = requiredString(context.req.param("pid"), "pid", 64);
-  const proposal = grantProposalById(id, now);
+  const proposal = grantProposalById(proposals, id, now);
   if (proposal === null || proposal.orgId !== orgId) {
     throw new HttpError(404, "grant proposal not found");
   }
   return proposal;
-}
-
-function requestedState(context: CoreContext): GrantProposalState | null {
-  const state = new URL(context.req.url).searchParams.get("state");
-  if (state === null) return null;
-  const known = GRANT_PROPOSAL_STATES.find((candidate) => candidate === state);
-  if (known === undefined) throw new HttpError(400, "state must be a proposal state");
-  return known;
 }
 
 function activeMembership(principal: Principal): string {
@@ -409,6 +398,8 @@ export function addGrantProposalRoutes(
   runtimeFactory: RuntimeFactory,
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
+  const proposals: GrantProposalStore = new Map();
+
   /** The agent's ask. Authority is the machine's member, resolved at call
    * time like every other agent route. */
   router.post("/agent/credentials/grant-proposals", async (context) => {
@@ -416,8 +407,8 @@ export function addGrantProposalRoutes(
     const caller = await boxCaller(runtime, context.req.raw);
     const membershipId = activeMembership(caller.principal);
     const input = parseProposeGrantChangesRequest(await readJson(context.req.raw));
-    const proposal = await proposeGrantChanges(runtime, {
-      orgId: orgIdOf(caller),
+    const proposal = await proposeGrantChanges(runtime, proposals, {
+      orgId: caller.workspace.org_id,
       machineId: caller.machineId,
       membershipId,
       caller: {
@@ -440,8 +431,8 @@ export function addGrantProposalRoutes(
     const runtime = runtimeFactory(context);
     const caller = await boxCaller(runtime, context.req.raw);
     const id = requiredString(context.req.param("id"), "id", 64);
-    const proposal = grantProposalById(id);
-    if (proposal === null || proposal.orgId !== orgIdOf(caller)) {
+    const proposal = grantProposalById(proposals, id);
+    if (proposal === null || proposal.orgId !== caller.workspace.org_id) {
       throw new HttpError(404, "grant proposal not found");
     }
     return context.json<GrantProposalView>(grantProposalView(proposal));
@@ -453,10 +444,8 @@ export function addGrantProposalRoutes(
     const principal = await requirePrincipal(context);
     const orgId = requestedOrgId(context, principal);
     const membershipId = activeMembership(principal);
-    const state = requestedState(context);
-    const visible = grantProposalsForOrg(orgId, Date.now()).filter((proposal) =>
-      (state === null || proposal.state === state)
-      && (principal.role === "admin" || proposal.membershipId === membershipId));
+    const visible = pendingGrantProposalsForOrg(proposals, orgId, Date.now()).filter((proposal) =>
+      principal.role === "admin" || proposal.membershipId === membershipId);
     return context.json<ListGrantProposalsResponse>({
       proposals: visible.map(grantProposalView),
     });
@@ -470,7 +459,7 @@ export function addGrantProposalRoutes(
     const orgId = requestedOrgId(context, principal);
     const membershipId = activeMembership(principal);
     const now = Date.now();
-    const proposal = requestedProposal(context, orgId, now);
+    const proposal = requestedProposal(proposals, context, orgId, now);
     if (principal.role !== "admin" && proposal.membershipId !== membershipId) {
       throw new HttpError(403, "only the acting member or an org admin may resolve this proposal");
     }

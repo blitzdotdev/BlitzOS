@@ -53,7 +53,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/grant-proposals.ts",
   "core/oauth.ts",
   "core/operator-tokens.ts",
-  "core/org-credential-import.ts",
+  "core/org-credential-import.ts", "core/org-credential-routes.ts",
   "core/org-credentials.ts",
   "core/principals.ts",
   "core/recipes.ts",

@@ -212,6 +212,67 @@ describe("org credentials: session plane (§7)", () => {
       .map(({ name }) => name)).toEqual(["ADMIN_ONLY_KEY", "MEMBER_MADE_KEY"]);
   });
 
+  it("filters a workspace credential list on the server", async () => {
+    const { app } = harness();
+    const admin = await operatorSession(app);
+    const member = await sameOrgSession("workspace-reader");
+    const createWorkspace = async (members: object[]) => {
+      const response = await appRequest(app, "/workspaces", {
+        ...json({ machineTypeId: "small", members }, "POST"),
+        headers: { Cookie: admin, "Content-Type": "application/json" },
+      });
+      return (await response.json<{ workspace: { id: string } }>()).workspace.id;
+    };
+    const target = await createWorkspace([{ membershipId: member.membershipId, role: "member" }]);
+    const elsewhere = await createWorkspace([]);
+
+    for (const name of ["IN_WORKSPACE", "ORG_WIDE", "ELSEWHERE"]) {
+      expect((await appRequest(app, "/orgs/self/credentials", {
+        ...json({ name, value: `${name}-value` }),
+        headers: { Cookie: admin, "Content-Type": "application/json" },
+      })).status).toBe(201);
+    }
+    const setGrants = async (name: string, grants: object[]) => appRequest(
+      app,
+      `/orgs/self/credentials/${name}/grants`,
+      {
+        ...json({ grants: [
+          ...grants,
+          { subjectKind: "membership", subjectId: "personal", access: "write" },
+        ] }),
+        headers: { Cookie: admin, "Content-Type": "application/json" },
+      },
+    );
+    expect((await setGrants("IN_WORKSPACE", [
+      { subjectKind: "workspace", subjectId: target, access: "read" },
+    ])).status).toBe(200);
+    expect((await setGrants("ORG_WIDE", [
+      { subjectKind: "org", subjectId: null, access: "read" },
+    ])).status).toBe(200);
+    expect((await setGrants("ELSEWHERE", [
+      { subjectKind: "workspace", subjectId: elsewhere, access: "read" },
+    ])).status).toBe(200);
+
+    const scoped = await appRequest(
+      app,
+      `/orgs/self/credentials?workspaceId=${target}`,
+      { headers: { Cookie: member.cookie } },
+    );
+    expect(scoped.status).toBe(200);
+    expect((await scoped.json<ListOrgCredentialsResponse>()).credentials.map(({ name }) => name))
+      .toEqual(["IN_WORKSPACE", "ORG_WIDE"]);
+    const sessionList = await appRequest(app, "/orgs/self/credentials", {
+      headers: { Cookie: member.cookie },
+    });
+    expect((await sessionList.json<ListOrgCredentialsResponse>()).credentials.map(({ name }) => name))
+      .toEqual(["ORG_WIDE"]);
+    expect((await appRequest(
+      app,
+      `/orgs/self/credentials?workspaceId=${elsewhere}`,
+      { headers: { Cookie: member.cookie } },
+    )).status).toBe(403);
+  });
+
   it("replaces the grant set atomically, validates subjects, and writes events", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);

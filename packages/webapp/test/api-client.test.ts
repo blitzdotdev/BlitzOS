@@ -47,6 +47,7 @@ describe("wire API client", () => {
     const client = createControlPlaneClient("https://control.example");
 
     await client.listOrgCredentials();
+    await client.listOrgCredentials(undefined, "workspace/one");
     await client.putOrgCredential({ name: "STRIPE_API_KEY", value: "sk", grants: [] });
     await client.replaceOrgCredentialGrants("STRIPE_API_KEY", {
       grants: [{ subjectKind: "org", subjectId: null, access: "read" }],
@@ -59,14 +60,15 @@ describe("wire API client", () => {
     const calls = fetcher.mock.calls.map(([url, init]) => [String(url), init?.method ?? "GET"]);
     expect(calls).toEqual([
       ["https://control.example/orgs/self/credentials", "GET"],
+      ["https://control.example/orgs/self/credentials?workspaceId=workspace%2Fone", "GET"],
       ["https://control.example/orgs/self/credentials", "PUT"],
       ["https://control.example/orgs/self/credentials/STRIPE_API_KEY/grants", "PUT"],
       ["https://control.example/orgs/self/credentials/dotenv", "POST"],
       ["https://control.example/orgs/self/credentials/STRIPE_API_KEY", "DELETE"],
-      ["https://control.example/orgs/self/grant-proposals?state=pending", "GET"],
+      ["https://control.example/orgs/self/grant-proposals", "GET"],
       ["https://control.example/orgs/self/grant-proposals/p%2F1/resolve", "POST"],
     ]);
-    expect(fetcher.mock.calls[6]?.[1]?.body).toBe(JSON.stringify({ approve: false, changes: [] }));
+    expect(fetcher.mock.calls[7]?.[1]?.body).toBe(JSON.stringify({ approve: false, changes: [] }));
   });
 
   it("uses Google login and omits an absent SSH key from create", async () => {

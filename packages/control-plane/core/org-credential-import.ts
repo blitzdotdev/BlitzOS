@@ -4,9 +4,9 @@ import {
   orgCredentialAccess,
   orgCredentialValue,
   putOrgCredential,
+  ORG_CREDENTIAL_NAME,
   ORG_CREDENTIAL_MAX_BYTES,
   ORG_CREDENTIAL_MAX_COUNT,
-  type OrgCredential,
   type OrgCredentialCaller,
 } from "./org-credentials.js";
 import type { Principal } from "./principals.js";
@@ -16,11 +16,6 @@ import type {
   ImportOrgCredentialsResponse,
   OrgCredentialImportResult,
 } from "./wire.js";
-
-// The same name rule `parseOrgCredentialWrite` enforces, restated here so a
-// parsed line can be refused with a per-line reason instead of a 400 that
-// aborts the whole file.
-const IMPORT_NAME = /^[A-Za-z][A-Za-z0-9_]{0,127}$/u;
 
 /** The ceiling on the dotenv text itself. Two hundred keys of eight KB each
  * do not fit in one env file anybody writes by hand; half a megabyte is the
@@ -75,7 +70,7 @@ export function parseEnvText(text: string): ParsedEnvText {
       return;
     }
     const [, name = "", rest = ""] = match;
-    if (!IMPORT_NAME.test(name)) {
+    if (!ORG_CREDENTIAL_NAME.test(name)) {
       refuse(name.slice(0, 64), line, "name must be an environment variable name");
       return;
     }
@@ -151,7 +146,7 @@ export async function importOrgCredentials(
 ): Promise<ImportOrgCredentialsResponse> {
   const { entries, linesRead } = parseEnvText(input.text);
   const live = await liveOrgCredentials(runtime.db, orgId);
-  const liveByName = new Map<string, OrgCredential>(live.map((row) => [row.name, row]));
+  const liveByName = new Map(live.map((row) => [row.name, row]));
   let liveCount = live.length;
   const results: OrgCredentialImportResult[] = [];
   for (const entry of entries) {
@@ -202,24 +197,6 @@ export async function importOrgCredentials(
     }
     if (existing === undefined) {
       liveCount += 1;
-      // The row the next duplicate line grades against. The importer just
-      // created it (or would, on a dry run), so the actor holds write.
-      liveByName.set(entry.name, {
-        id: "pending",
-        org_id: orgId,
-        name: entry.name,
-        comment: null,
-        created_by_membership_id: actor.membershipId,
-        created_at: 0,
-        updated_at: 0,
-        grants: [{
-          id: "pending",
-          credential_id: "pending",
-          subject_kind: "membership",
-          subject_id: actor.membershipId,
-          access: "write",
-        }],
-      });
     }
     results.push({ name: entry.name, line: entry.line, outcome });
   }

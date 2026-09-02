@@ -165,7 +165,7 @@ describe('grant-approval model', () => {
 });
 
 describe('GrantApprovalDialog', () => {
-  it('draws the request card, one merged list per credential, and a live receipt', async () => {
+  it('draws the request card and one merged list per credential', async () => {
     const view = await render(dialog());
     await settle();
 
@@ -213,9 +213,8 @@ describe('GrantApprovalDialog', () => {
       ],
     });
     await settle();
-    expect(onResolved).toHaveBeenCalledTimes(1);
-    expect(view.container.querySelector('.ga-done--ok')?.textContent).toContain('3 changes applied');
-    expect(view.container.querySelector('.ga-done--ok')?.textContent).toContain('payments');
+    expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ state: 'approved' }));
+    expect(view.container.querySelector('.ga-done')).toBeNull();
     await view.unmount();
   });
 
@@ -246,13 +245,15 @@ describe('GrantApprovalDialog', () => {
     const resolveGrantProposal = vi.fn(async () => ({
       proposal: { ...proposal, state: 'denied' as const, applied: [] },
     }));
-    const view = await render(dialog({ client: client({ resolveGrantProposal }) }));
+    const onResolved = vi.fn();
+    const view = await render(dialog({ client: client({ resolveGrantProposal }), onResolved }));
     await settle();
 
     await act(async () => button(view.container, 'Reject all').click());
     expect(resolveGrantProposal).toHaveBeenCalledWith('proposal-1', { approve: false, changes: [] });
     await settle();
-    expect(view.container.querySelector('.ga-done--no')?.textContent).toContain('Proposal rejected');
+    expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ state: 'denied' }));
+    expect(view.container.querySelector('.ga-done')).toBeNull();
     await view.unmount();
   });
 

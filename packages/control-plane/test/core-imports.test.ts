@@ -71,6 +71,7 @@ const expected = [
   "oauth.ts",
   "operator-tokens.ts",
   "org-credential-import.ts",
+  "org-credential-routes.ts",
   "org-credentials.ts",
   "preview.ts",
   "principals.ts",
@@ -137,6 +138,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(112);
+    expect(expected).toHaveLength(113);
   });
 });

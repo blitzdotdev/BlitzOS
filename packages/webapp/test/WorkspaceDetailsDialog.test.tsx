@@ -261,7 +261,7 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
-  it('filters org credentials to the ones readable in this workspace, values never shown', async () => {
+  it('renders the server-scoped workspace credential list, values never shown', async () => {
     const credential = (name: string, grants: OrgCredentialView['grants'], comment: string | null = null): OrgCredentialView => ({
       id: `cred-${name}`, name, comment, createdByMembershipId: 'membership-1',
       createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_000, grants,
@@ -273,7 +273,6 @@ describe('WorkspaceDetailsDialog', () => {
       ], 'test-mode key, safe for CI'),
       credential('SENTRY_DSN', [{ subjectKind: 'org', subjectId: null, access: 'read' }]),
       credential('MY_TOKEN', [{ subjectKind: 'membership', subjectId: 'membership-1', access: 'write' }]),
-      credential('ELSEWHERE', [{ subjectKind: 'workspace', subjectId: 'workspace-other', access: 'read' }]),
       // A plain reader's view: readable, audience withheld.
       credential('READ_ONLY', []),
     ] });
@@ -293,7 +292,7 @@ describe('WorkspaceDetailsDialog', () => {
       'MY_TOKENgranted to youRotate',
       'READ_ONLYreadable by you',
     ]);
-    expect(view.container.textContent).not.toContain('ELSEWHERE');
+    expect(listOrgCredentials).toHaveBeenCalledWith(expect.any(AbortSignal), workspace.id);
     // Nothing on the tab reads a value back.
     expect(view.container.querySelector('[aria-label="Credential value"]')).toBeNull();
     await view.unmount();

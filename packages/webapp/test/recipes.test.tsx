@@ -520,9 +520,11 @@ describe('usage capture settings', () => {
       <SettingsPage
         client={wire}
         viewer={viewer}
+        pendingGrantProposals={[]}
         section={section}
         onNavigate={() => undefined}
         onOpenWorkspace={() => undefined}
+        onReviewProposal={() => undefined}
         onSignOut={async () => undefined}
         onLeftOrg={() => undefined}
       />

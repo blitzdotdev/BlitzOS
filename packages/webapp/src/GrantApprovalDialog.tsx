@@ -145,8 +145,6 @@ function Row({
   );
 }
 
-type Resolved = { kind: 'approved'; applied: number } | { kind: 'rejected' };
-
 /**
  * The grant-approval dialog (plans/ORG-CREDENTIALS.md §7a; canonical mock
  * `plans/mockups/grant-approval.html`). An agent proposed grant changes; the
@@ -179,7 +177,6 @@ export function GrantApprovalDialog({
   const [edits, setEdits] = useState<ProposalEdit[]>(() => initialEdits(proposal));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [resolved, setResolved] = useState<Resolved | null>(null);
 
   useEffect(() => { closeButton.current?.focus(); }, []);
   useEffect(() => {
@@ -225,9 +222,6 @@ export function GrantApprovalDialog({
         approve,
         changes: approve ? live : [],
       });
-      setResolved(approve
-        ? { kind: 'approved', applied: response.proposal.applied?.length ?? live.length }
-        : { kind: 'rejected' });
       onResolved(response.proposal);
     } catch (caught) {
       setError(caughtErrorMessage(caught, approve ? 'Approval failed.' : 'Rejection failed.'));
@@ -246,27 +240,6 @@ export function GrantApprovalDialog({
         aria-modal="true"
         aria-labelledby="grant-approval-title"
       >
-        {resolved !== null ? (
-          <div className={`ga-done ${resolved.kind === 'approved' ? 'ga-done--ok' : 'ga-done--no'}`} role="status">
-            <div className="ga-done-big" aria-hidden="true">
-              {resolved.kind === 'approved' ? (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
-              ) : (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
-              )}
-            </div>
-            <h2 id="grant-approval-title">
-              {resolved.kind === 'approved' ? `${plural(resolved.applied)} applied` : 'Proposal rejected'}
-            </h2>
-            <p>
-              {resolved.kind === 'approved'
-                ? <>The agent{origin.workspaceName !== null && <> in <code>{origin.workspaceName}</code></>} has been told what was approved and continues with exactly that.</>
-                : 'No grants changed. The agent has been told the proposal was declined.'}
-            </p>
-            <button className="webapp-action" type="button" onClick={onClose}>Done</button>
-          </div>
-        ) : (
-          <>
             <header className="workspace-details-header">
               <h1 id="grant-approval-title">Approve credential grants</h1>
               <button
@@ -289,9 +262,7 @@ export function GrantApprovalDialog({
                   {origin.workspaceName === null && ` · machine ${proposal.machineId}`}
                 </span>
               </div>
-              {proposal.reason !== null && proposal.reason !== '' && (
-                <p className="ga-req-why">“{proposal.reason}”</p>
-              )}
+              <p className="ga-req-why">“{proposal.reason}”</p>
             </div>
             <div className="workspace-details-body ga-body">
               <div className="ga-caps">
@@ -341,8 +312,6 @@ export function GrantApprovalDialog({
                   : `Approve ${plural(live.length)}${edited ? ' (edited)' : ''}`}
               </button>
             </footer>
-          </>
-        )}
       </section>
     </ModalOverlay>
   );

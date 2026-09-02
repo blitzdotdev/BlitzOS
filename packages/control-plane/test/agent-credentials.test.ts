@@ -130,18 +130,16 @@ describe("agent credentials (plans/ORG-CREDENTIALS.md §4)", () => {
       { name: "linear", scope: "connection", comment: null, writable: false },
     ]);
 
-    // Tier 2: the org credential, wrapped in the same response shape.
+    // Tier 2: the static org credential has no invented HTTP presentation or expiry.
     const orgPull = await pull(app, token, "STRIPE_API_KEY");
     expect(orgPull.status).toBe(200);
     const orgResult = await orgPull.json<AgentCredentialTokenResponse>();
-    expect(orgResult).toMatchObject({
+    expect(orgResult).toEqual({
       name: "STRIPE_API_KEY",
       scope: "org",
       token: "sk_live_value",
       env: [{ name: "STRIPE_API_KEY", value: "sk_live_value" }],
-      header: { name: "Authorization", prefix: "Bearer " },
     });
-    expect(orgResult.expiresAt).toBeGreaterThan(Date.now());
     // The lease-less use row: audit without a connection row to hang it on.
     const used = await env.DB.prepare(
       `SELECT detail FROM credential_events

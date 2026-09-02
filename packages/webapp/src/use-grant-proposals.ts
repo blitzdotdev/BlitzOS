@@ -20,7 +20,7 @@ export type GrantProposalFeed = {
   settled: (proposal: GrantProposalView) => void;
 };
 
-/** Polls `GET /orgs/self/grant-proposals?state=pending` on the connect-inbox
+/** Polls the pending-only `GET /orgs/self/grant-proposals` feed on the connect-inbox
  * idiom (plans/ORG-CREDENTIALS.md §7a): one request in flight, only while
  * the tab is visible, aborted on unmount. */
 export function useGrantProposals(
@@ -42,7 +42,7 @@ export function useGrantProposals(
       request = new AbortController();
       const current = request;
       try {
-        const response = await client.listGrantProposals(current.signal, 'pending');
+        const response = await client.listGrantProposals(current.signal);
         if (!disposed && request === current && !current.signal.aborted) {
           setPending(response.proposals);
         }

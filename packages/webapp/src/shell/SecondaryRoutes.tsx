@@ -1,3 +1,4 @@
+import type { GrantProposalView } from '@blitzos/schema';
 import type { ReactNode } from 'react';
 import type { ControlPlaneClient } from '../api';
 import type { TenantMe } from '../api-adapter';
@@ -30,6 +31,7 @@ export type SecondaryRoutesProps = {
   loaded: boolean;
   /** The shell's own navigation columns, drawn on every page. */
   rail: ReactNode;
+  pendingGrantProposals: readonly GrantProposalView[];
   dialogs: ReactNode;
   updateNotice: ReactNode;
   error: string | null;
@@ -39,7 +41,7 @@ export type SecondaryRoutesProps = {
   onNavigateToSettings: (section: SettingsSection) => void;
   onOpenWorkspace: (workspaceId: string) => void;
   /** Reopens a pending grant proposal the person closed without deciding. */
-  onReviewProposal?: (proposalId: string) => void;
+  onReviewProposal: (proposalId: string) => void;
   onLeaveSettings: () => void;
   onSignOut: () => Promise<void>;
   onLeftOrg: () => void;
@@ -71,6 +73,7 @@ export function SecondaryRoutes({
   viewer,
   loaded,
   rail,
+  pendingGrantProposals,
   dialogs,
   updateNotice,
   error,
@@ -94,6 +97,7 @@ export function SecondaryRoutes({
         <SettingsHeader workspaceLabel={activeWorkspaceTitle} onBack={onLeaveSettings} />
         {loaded && viewer ? (
           <SettingsPage
+            pendingGrantProposals={pendingGrantProposals}
             client={client}
             viewer={viewer}
             section={route.settingsSection}
@@ -110,6 +114,7 @@ export function SecondaryRoutes({
         )}
         {notice}
         {updateNotice}
+        {dialogs}
       </main>
     );
   }

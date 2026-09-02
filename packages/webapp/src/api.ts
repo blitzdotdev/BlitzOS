@@ -32,7 +32,6 @@ import type {
   CreateWorkspaceResponse,
   CreateWorkspaceTemplateRequest,
   CreateWorkspaceTemplateResponse,
-  GrantProposalState,
   ImportOrgCredentialsRequest,
   ImportOrgCredentialsResponse,
   ListGrantProposalsResponse,
@@ -229,7 +228,7 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   /** The org credential plane's session routes (plans/ORG-CREDENTIALS.md
    * §7), all on the session's own organization. The list carries names and
    * metadata only — a value never comes back out of the store. */
-  listOrgCredentials(signal?: AbortSignal): Promise<ListOrgCredentialsResponse>;
+  listOrgCredentials(signal?: AbortSignal, workspaceId?: string): Promise<ListOrgCredentialsResponse>;
   /** Create or rotate: one live row per name, so a second write replaces the
    * value. `grants` on a create replaces the set; absent leaves it alone. */
   putOrgCredential(input: PutOrgCredentialRequest): Promise<PutOrgCredentialResponse>;
@@ -244,10 +243,7 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   importOrgCredentials(input: ImportOrgCredentialsRequest): Promise<ImportOrgCredentialsResponse>;
   /** The approval feed (§7a): proposals addressed to the caller, plus every
    * one in the org for an admin. */
-  listGrantProposals(
-    signal?: AbortSignal,
-    state?: GrantProposalState,
-  ): Promise<ListGrantProposalsResponse>;
+  listGrantProposals(signal?: AbortSignal): Promise<ListGrantProposalsResponse>;
   /** The person's answer. On approve, `changes` is the edited set that
    * applies; on deny it is ignored and nothing changes. */
   resolveGrantProposal(
@@ -718,8 +714,13 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       `/machines/${encodeURIComponent(machineId)}`,
       { method: "DELETE" },
     ),
-    listOrgCredentials: (signal) =>
-      request<ListOrgCredentialsResponse>("/orgs/self/credentials", { signal }),
+    listOrgCredentials: (signal, workspaceId) =>
+      request<ListOrgCredentialsResponse>(
+        workspaceId === undefined
+          ? "/orgs/self/credentials"
+          : `/orgs/self/credentials?workspaceId=${encodeURIComponent(workspaceId)}`,
+        { signal },
+      ),
     putOrgCredential: (input) =>
       request<PutOrgCredentialResponse>("/orgs/self/credentials", {
         method: "PUT",
@@ -739,11 +740,8 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
         headers: jsonHeaders,
         body: JSON.stringify(input),
       }),
-    listGrantProposals: (signal, state = "pending") =>
-      request<ListGrantProposalsResponse>(
-        `/orgs/self/grant-proposals?state=${encodeURIComponent(state)}`,
-        { signal },
-      ),
+    listGrantProposals: (signal) =>
+      request<ListGrantProposalsResponse>("/orgs/self/grant-proposals", { signal }),
     resolveGrantProposal: (proposalId, input) =>
       request<ResolveGrantProposalResponse>(
         `/orgs/self/grant-proposals/${encodeURIComponent(proposalId)}/resolve`,

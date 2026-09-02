@@ -86,7 +86,7 @@
     "/agent/credentials/{name}/token": {
       "post": {
         "summary": "Resolve one credential for immediate use",
-        "description": "An org connection of that name mints a token through the workspace's own connection; otherwise an org credential the member may read is served. Use the token once and ask again next time: 'expiresAt' is when to re-ask, and a rotation or revoke takes effect on the next call.",
+        "description": "A connection of that name mints a token with its header and expiry; otherwise an org credential the member may read is served without inventing either. Use the value once and ask again next time: a rotation or revoke takes effect on the next call.",
         "parameters": [
           {
             "name": "name",
@@ -483,40 +483,72 @@
         "description": "The agent plane (plans/ORG-CREDENTIALS.md §4), box-authed under `/agent/`."
       },
       "AgentCredentialTokenResponse": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
+        "anyOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "type": "string",
+                "const": "connection"
+              },
+              "header": {
+                "$ref": "#/components/schemas/TokenHeader"
+              },
+              "expiresAt": {
+                "type": "number"
+              },
+              "name": {
+                "type": "string"
+              },
+              "token": {
+                "type": "string"
+              },
+              "env": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionEnv"
+                }
+              }
+            },
+            "required": [
+              "env",
+              "expiresAt",
+              "header",
+              "name",
+              "scope",
+              "token"
+            ]
           },
-          "scope": {
-            "$ref": "#/components/schemas/AgentCredentialScope"
-          },
-          "token": {
-            "type": "string"
-          },
-          "env": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ConnectionEnv"
-            }
-          },
-          "header": {
-            "$ref": "#/components/schemas/TokenHeader"
-          },
-          "expiresAt": {
-            "type": "number"
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "type": "string",
+                "const": "org"
+              },
+              "name": {
+                "type": "string"
+              },
+              "token": {
+                "type": "string"
+              },
+              "env": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionEnv"
+                }
+              }
+            },
+            "required": [
+              "env",
+              "name",
+              "scope",
+              "token"
+            ]
           }
-        },
-        "required": [
-          "name",
-          "scope",
-          "token",
-          "env",
-          "header",
-          "expiresAt"
-        ],
-        "additionalProperties": false,
-        "description": "What `POST /agent/credentials/:name/token` answers with, for both tiers. The agent reads it once and stores nothing: `token` is what it presents, `env` names the variables the provider's own tooling reads, `header` is how the token travels in HTTP. `expiresAt` says \"ask again\" — pulls are per-use, and a rotation or revoke takes effect on the next one."
+        ]
       },
       "AgentCredentialsResponse": {
         "type": "object",
@@ -652,10 +684,7 @@
             "type": "string"
           },
           "reason": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           },
           "proposed": {
             "type": "array",

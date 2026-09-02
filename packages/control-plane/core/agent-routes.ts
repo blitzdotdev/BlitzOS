@@ -17,7 +17,6 @@ import {
   recordOrgCredentialUse,
   ORG_CREDENTIAL_MAX_BYTES,
   ORG_CREDENTIAL_NAME,
-  ORG_CREDENTIAL_TTL_MS,
   type OrgCredentialCaller,
   type PutOrgCredentialInput,
 } from "./org-credentials.js";
@@ -55,7 +54,7 @@ import type {
  * now — nothing is borrowed, and there is no disclosure to make.
  */
 export interface MachineCaller {
-  workspace: MintWorkspaceRow;
+  workspace: MintWorkspaceRow & { org_id: string };
   machineId: string;
   principal: Principal;
 }
@@ -78,13 +77,14 @@ export async function boxCaller(
     throw new HttpError(409, "workspace is not ready for credential minting");
   }
   if (workspace.org_id === null) throw new HttpError(409, "workspace has no organization");
+  const readyWorkspace = { ...workspace, org_id: workspace.org_id };
   const membership = await first<{ id: string; role: "admin" | "member" }>(runtime.db, {
     q: `SELECT id, role FROM memberships
         WHERE id = ?1 AND org_id = ?2 AND status = 'active' LIMIT 1`,
     v: [box.membershipId, workspace.org_id],
   });
   return {
-    workspace,
+    workspace: readyWorkspace,
     machineId: box.id,
     principal: machinePrincipal(
       box,
@@ -107,14 +107,6 @@ function machineCredentialCaller(caller: MachineCaller): OrgCredentialCaller {
   };
 }
 
-/** SAFETY: boxCaller refused a workspace whose org_id is null immediately
- * after loading it, so every caller past that point holds an org id. */
-function orgIdOf(caller: MachineCaller): string {
-  const orgId = caller.workspace.org_id;
-  if (orgId === null) throw new HttpError(409, "workspace has no organization");
-  return orgId;
-}
-
 export function addAgentRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -127,7 +119,7 @@ export function addAgentRoutes(
     const runtime = runtimeFactory(context);
     const caller = await boxCaller(runtime, context.req.raw);
     const access = machineCredentialCaller(caller);
-    const orgCredentials = await liveOrgCredentials(runtime.db, orgIdOf(caller));
+    const orgCredentials = await liveOrgCredentials(runtime.db, caller.workspace.org_id);
     const entries: AgentCredentialEntry[] = [
       ...manifestConnectionNames(caller.workspace.manifest).map(
         (name): AgentCredentialEntry => ({
@@ -166,7 +158,7 @@ export function addAgentRoutes(
     const caller = await boxCaller(runtime, context.req.raw);
     const { workspace, machineId, principal } = caller;
     const name = requiredString(context.req.param("name"), "name", 256);
-    const orgId = orgIdOf(caller);
+    const orgId = caller.workspace.org_id;
     const connection = await connectionByName(runtime.db, name, orgId);
     if (connection !== null) {
       const outcome = await mintOne(runtime, {
@@ -214,8 +206,6 @@ export function addAgentRoutes(
           scope: "org",
           token: value,
           env: [{ name, value }],
-          header: { name: "Authorization", prefix: "Bearer " },
-          expiresAt: now + ORG_CREDENTIAL_TTL_MS,
         });
       }
     }
@@ -248,7 +238,7 @@ export function addAgentRoutes(
     const input: PutAgentCredentialRequest = { value: parseCredentialValue(body.value) };
     const comment = parseCredentialComment(body.comment);
     if (comment !== undefined) input.comment = comment;
-    const orgId = orgIdOf(caller);
+    const orgId = caller.workspace.org_id;
     const existing = await orgCredentialByName(runtime.db, orgId, name);
     if (
       existing !== null
@@ -282,7 +272,7 @@ export function addAgentRoutes(
     }
     const input = parseImportRequest(await readJson(context.req.raw, IMPORT_TEXT_MAX_BYTES * 2));
     return context.json<ImportOrgCredentialsResponse>(
-      await importOrgCredentials(runtime, orgIdOf(caller), {
+      await importOrgCredentials(runtime, caller.workspace.org_id, {
         workspaceId: caller.workspace.id,
         membershipId,
         orgRole: caller.principal.role,

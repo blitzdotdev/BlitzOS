@@ -9,20 +9,21 @@ export type StatefulCredentialRequest = CredentialRequestView & {
 
 export function RequestsPanel({
   client,
+  proposals,
   onOpenWorkspace,
   onReviewProposal,
 }: {
   client: ControlPlaneClient;
+  proposals: readonly GrantProposalView[];
   /** Connecting happens inside the workspace that filed the request — its
    * connections panel carries the same inbox entry with a Connect that
    * resolves it. This inbox is the org-wide view; the action is a door. */
   onOpenWorkspace: (workspaceId: string) => void;
   /** A pending grant proposal closed without a decision stays pending
    * (plans/ORG-CREDENTIALS.md §7a); this reopens its dialog. */
-  onReviewProposal?: (proposalId: string) => void;
+  onReviewProposal: (proposalId: string) => void;
 }) {
   const [requests, setRequests] = useState<StatefulCredentialRequest[]>([]);
-  const [proposals, setProposals] = useState<GrantProposalView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resolving, setResolving] = useState<string | null>(null);
@@ -30,16 +31,12 @@ export function RequestsPanel({
   const reload = useCallback(async (signal?: AbortSignal) => {
     try {
       const states: CredentialRequestState[] = ['pending', 'approved', 'denied'];
-      const [feeds, pendingProposals] = await Promise.all([
-        Promise.all(states.map((state) => client.listCredentialRequests(signal, state))),
-        client.listGrantProposals(signal, 'pending'),
-      ]);
+      const feeds = await Promise.all(states.map((state) => client.listCredentialRequests(signal, state)));
       if (signal?.aborted) return;
       setRequests(feeds.flatMap((feed, index) => feed.requests.map((request) => ({
         ...request,
         state: states[index]!,
       }))).sort((left, right) => right.created_at - left.created_at));
-      setProposals(pendingProposals.proposals);
       setError(null);
     } catch (caught) {
       if (signal?.aborted) return;
@@ -99,18 +96,16 @@ export function RequestsPanel({
                     <span className="workspace-state-badge workspace-state-badge--pending">pending</span>
                   </div>
                   <p>{[...new Set(proposal.proposed.map(({ name }) => name))].join(', ')}</p>
-                  {proposal.reason !== null && <small>“{proposal.reason}”</small>}
+                  <small>“{proposal.reason}”</small>
                   <time dateTime={new Date(proposal.createdAt).toISOString()}>{new Date(proposal.createdAt).toLocaleString()}</time>
                 </div>
-                {onReviewProposal !== undefined && (
-                  <div className="settings-row-actions">
-                    <button
-                      className="webapp-action webapp-action--primary"
-                      type="button"
-                      onClick={() => onReviewProposal(proposal.id)}
-                    >Review</button>
-                  </div>
-                )}
+                <div className="settings-row-actions">
+                  <button
+                    className="webapp-action webapp-action--primary"
+                    type="button"
+                    onClick={() => onReviewProposal(proposal.id)}
+                  >Review</button>
+                </div>
               </article>
             ))}
           </div>

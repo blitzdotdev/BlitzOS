@@ -1,7 +1,6 @@
 import { Validator } from "@cfworker/json-schema";
 import type { GrantChange, ProposeGrantChangesResponse, WorkspaceView } from "@blitzos/schema";
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearGrantProposals } from "../core/grant-proposals.js";
 import {
   appRequest,
   harness,
@@ -126,10 +125,7 @@ async function storeOrgCredential(
 }
 
 describe("agent API conformance (plans/ORG-CREDENTIALS.md §4)", () => {
-  beforeEach(async () => {
-    clearGrantProposals();
-    await resetDatabase();
-  });
+  beforeEach(resetDatabase);
 
   it("serves the generated document verbatim to a machine, and refuses anyone else", async () => {
     const { app, providers } = harness();

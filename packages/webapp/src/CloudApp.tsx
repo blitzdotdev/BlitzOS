@@ -1841,7 +1841,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     />
     </>
   );
-
   if (signedOut) {
     return <LoginForm loginUrl={api.googleLoginUrl()} />;
   }
@@ -1867,6 +1866,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         viewer={store.viewer}
         loaded={loaded}
         rail={shellNav(null)}
+        pendingGrantProposals={grantProposals.pending}
         dialogs={railOverlays}
         updateNotice={updateNotice}
         error={error}

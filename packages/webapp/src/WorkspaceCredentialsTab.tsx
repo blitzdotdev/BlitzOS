@@ -46,7 +46,7 @@ export function WorkspaceCredentialsTab({
 
   const reload = useCallback(async (signal?: AbortSignal) => {
     try {
-      const listed = await client.listOrgCredentials(signal);
+      const listed = await client.listOrgCredentials(signal, workspaceId);
       if (signal?.aborted) return;
       setCredentials(listed.credentials);
       setError(null);
@@ -56,7 +56,7 @@ export function WorkspaceCredentialsTab({
     } finally {
       if (signal?.aborted !== true) setLoading(false);
     }
-  }, [client]);
+  }, [client, workspaceId]);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -73,10 +73,8 @@ export function WorkspaceCredentialsTab({
     members: orgMembers.filter((member) => member.status === 'active'),
   }), [orgMembers, orgName, viewerMembershipId, workspaceId, workspaceName, workspaces]);
 
-  const visible = credentials.flatMap((credential) => {
-    const path = workspaceReadPath(credential, workspaceId, viewerMembershipId);
-    return path === null ? [] : [{ credential, path }];
-  });
+  const visible = credentials.map((credential) => (
+    { credential, path: workspaceReadPath(credential, workspaceId, viewerMembershipId) }));
 
   const put = async (input: PutOrgCredentialRequest) => {
     await client.putOrgCredential(input);
