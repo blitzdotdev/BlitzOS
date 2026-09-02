@@ -98,7 +98,6 @@ function CredentialsTab({
   onImport: (input: ImportWorkspaceCredentialsRequest) => Promise<ImportWorkspaceCredentialsResponse>;
 }) {
   const [name, setName] = useState('');
-  const [label, setLabel] = useState('');
   const [comment, setComment] = useState('');
   const [value, setValue] = useState('');
   const [importText, setImportText] = useState('');
@@ -160,13 +159,11 @@ function CredentialsTab({
   const submit = () => {
     if (name.trim() === '' || value === '') return;
     const input: PutWorkspaceCredentialRequest = { name: name.trim(), value };
-    if (label.trim() !== '') input.label = label.trim();
     // Absent keeps a rotated key's comment; the field left empty is absence,
     // not a clear, so rotating through this form cannot erase one.
     if (comment.trim() !== '') input.comment = comment.trim();
     onPut(input);
     setName('');
-    setLabel('');
     setComment('');
     setValue('');
   };
@@ -314,14 +311,6 @@ function CredentialsTab({
               placeholder="STRIPE_API_KEY"
               value={name}
               onChange={(event) => setName(event.currentTarget.value)}
-            />
-          </label>
-          <label className="cfg-field">
-            Label (optional)
-            <input
-              aria-label="Credential label"
-              value={label}
-              onChange={(event) => setLabel(event.currentTarget.value)}
             />
           </label>
           <label className="cfg-field">

@@ -551,7 +551,7 @@ describe("create workspace dialog", () => {
     await view.unmount();
   });
 
-  it("sends credential names and values once, and drops an incomplete row", async () => {
+  it("sends credential names, comments, and values once, and drops an incomplete row", async () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
@@ -576,7 +576,8 @@ describe("create workspace dialog", () => {
     const field = (label: string) =>
       view.container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
     await typeInto(field("Credential 1 name"), "STRIPE_API_KEY");
-    await typeInto(field("Credential 1 label"), "billing");
+    expect(view.container.querySelector('[aria-label="Credential 1 label"]')).toBeNull();
+    await typeInto(field("Credential 1 comment"), "billing");
     await typeInto(field("Credential 1 value"), "sk-live-x");
     // Row two is named but has no value, so it is not a credential yet.
     await typeInto(field("Credential 2 name"), "UNFINISHED");
@@ -590,7 +591,7 @@ describe("create workspace dialog", () => {
       );
     });
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({
-      credentials: [{ name: "STRIPE_API_KEY", label: "billing", value: "sk-live-x" }],
+      credentials: [{ name: "STRIPE_API_KEY", comment: "billing", value: "sk-live-x" }],
     }));
     await view.unmount();
   });

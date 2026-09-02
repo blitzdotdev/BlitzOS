@@ -30,7 +30,7 @@ export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 
 /** A credential the create request will carry. This is the only path where a
  * value crosses the wire (plans/MEMBER-MACHINES.md §1 wire types). */
-type DraftCredential = { name: string; label: string; value: string };
+type DraftCredential = { name: string; comment: string; value: string };
 
 type CreateWorkspaceDialogProps = {
   busy: boolean;
@@ -175,11 +175,11 @@ export function CreateWorkspaceDialog({
     );
     if (namedCredentials.length > 0) {
       input.credentials = namedCredentials.map((credential) => (
-        credential.label.trim() === ''
+        credential.comment.trim() === ''
           ? { name: credential.name.trim(), value: credential.value }
           : {
             name: credential.name.trim(),
-            label: credential.label.trim(),
+            comment: credential.comment.trim(),
             value: credential.value,
           }
       ));
@@ -332,10 +332,10 @@ export function CreateWorkspaceDialog({
                   onChange={(event) => updateCredential(index, { name: event.currentTarget.value })}
                 />
                 <input
-                  aria-label={`Credential ${String(index + 1)} label`}
-                  placeholder="Label (optional)"
-                  value={credential.label}
-                  onChange={(event) => updateCredential(index, { label: event.currentTarget.value })}
+                  aria-label={`Credential ${String(index + 1)} comment`}
+                  placeholder="Comment (optional)"
+                  value={credential.comment}
+                  onChange={(event) => updateCredential(index, { comment: event.currentTarget.value })}
                 />
                 <input
                   aria-label={`Credential ${String(index + 1)} value`}
@@ -359,7 +359,7 @@ export function CreateWorkspaceDialog({
               className="webapp-action"
               type="button"
               onClick={() => setCredentials((current) =>
-                [...current, { name: '', label: '', value: '' }])}
+                [...current, { name: '', comment: '', value: '' }])}
             >
               Add credential
             </button>
