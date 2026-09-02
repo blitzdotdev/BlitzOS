@@ -403,11 +403,26 @@ describe("seam patch 15 is declared where a merge agent reads it", () => {
     // `StuckConnectionBannerContainer` mounts once, in `MainLayout`. We mount
     // pages, never upstream's roots — the same reason seam patch 15 declares no
     // hunk for it.
+    //
+    // A MOUNT, NOT A MENTION. The check was a bare substring until the mobile
+    // stack imported `getMobileMainLayoutRootClassName` — two CLASS-NAME
+    // helpers that `MainLayout` also calls, and that seam patch 16's mount
+    // reproduces precisely BECAUSE it does not mount the layout that would
+    // supply them. A mount is an import of the component or an element, so
+    // that is what this looks for; the old spelling would have been satisfied
+    // by deleting a doc comment.
     expect(read(join(vendorSrc, "components/main-layout.tsx"))).toContain(
       "StuckConnectionBannerContainer",
     );
     for (const file of readdirSync(lodySrc).filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))) {
-      expect(ourSource(file), `${file} mounts no upstream layout`).not.toContain("MainLayout");
+      const source = ourSource(file);
+      expect(source, `${file} renders no MainLayout`).not.toMatch(/<MainLayout[\s/>]/u);
+      expect(source, `${file} imports no MainLayout`).not.toMatch(
+        /^import \{[^}]*\bMainLayout\b/mu,
+      );
+      expect(source, `${file} imports no WorkspaceRuntimeShell`).not.toMatch(
+        /^import \{[^}]*\bWorkspaceRuntimeShell\b/mu,
+      );
     }
   });
 });

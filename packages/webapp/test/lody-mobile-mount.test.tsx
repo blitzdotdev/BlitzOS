@@ -331,7 +331,10 @@ describe("the mount is wired the way BLITZ-PATCHES.md and the scope record say",
     expect(detail).toContain("hideNotificationPrompt={hideNotificationPrompt}");
     expect(detail).toContain("hideAgentRoles={hideAgentRoles}");
     expect(detail).toContain("gitHubAvailable={githubIntegrationAvailable}");
-    expect(detail).toContain("isSyncing={hideConnectionStatus ? false : activeSessionDocIsSyncing}");
+    // Connectivity is seam patch 15's, and its hunk 13 forwards the prop
+    // through the builder the mobile branch never reaches. Hunk 11 here is
+    // that one surface: the composer chip on a phone.
+    expect(detail).toContain("hideConnectionStatus={hideConnectionStatus}");
     // The host tab: listed, selectable, and mounted on the mobile branch.
     expect(detail).toContain("for (const v of surfaceTabItems)");
     expect(detail).toContain("onSurfaceTabSelect?.(id)");
