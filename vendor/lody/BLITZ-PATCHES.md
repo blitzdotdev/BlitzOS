@@ -484,7 +484,7 @@ merges.**
 
 ### 7. Host suppression of surfaces BlitzOS does not serve (v1 scope cuts, 2026-09-01)
 
-**One idea, 40 hunks in seven files, and every one of them is inert by default.**
+**One idea, 42 hunks in seven files, and every one of them is inert by default.**
 The 463-row support matrix (`plans/LODY-SESSIONS.md`, the scope decision) found
 four groups of controls that RENDER in a BlitzOS browser and cannot work there.
 Each one is a control a member can click, and the failure is never at the button:
@@ -606,7 +606,9 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
 |---|---|---|---|
 | 36 | 20 | the `@/lib/github-avatar` import | imports `useAppCapability` |
 | 37 | 398 | `const { t } = useTranslation();` in `UnifiedProjectSelectorView` | reads the capability |
-| 38 | 635 | the `repos.connectMore` `<DropdownMenuItem>` | renders it only with the capability — C65 |
+| 38 | 410 | above the selectable-options memo | clears a controlled GitHub selection when the capability is unavailable, so a stale URL or saved draft cannot retain the unsupported remote path |
+| 39 | 428 | `for (const repository of repositories ?? [])` | adds cached GitHub repositories to the selectable project list only with the capability; BlitzOS deliberately caches clone names for local-project metadata, not as remote project choices |
+| 40 | 635 | the `repos.connectMore` `<DropdownMenuItem>` | renders it only with the capability — C65 |
 
 `packages/components/src/components/sessions/session-conversation-diff-panel.tsx`
 — the same two-line shape as hunks 11-12, and what takes SP43 and SP44 with it:
@@ -614,8 +616,8 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 39 | 47 | the `@/lib/github-token` import | imports `useAppCapability` |
-| 40 | 430, 432, 433 | the `getSessionGitHubState` memo | reads the capability and passes it as the third argument |
+| 41 | 47 | the `@/lib/github-token` import | imports `useAppCapability` |
+| 42 | 430, 432, 433 | the `getSessionGitHubState` memo | reads the capability and passes it as the third argument |
 
 #### What this patch does NOT do, and why
 
