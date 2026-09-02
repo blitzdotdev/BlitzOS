@@ -44,6 +44,10 @@ import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
 import { LodySessionsRegion, lodySurfaceMounts } from './lody/LodySessionsRegion';
+import {
+  recallWorkspaceChatPath,
+  rememberWorkspaceChatPath,
+} from './workspace-chat-memory';
 import { SurfaceTabContent } from './lody/SurfaceTabContent';
 import {
   surfaceTabId,
@@ -692,9 +696,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [activeWorkspaceId, api, handlePersistenceError, loaded, storageNamespace, store.workspaces]);
 
   const navigateToWorkspacePage = useCallback((workspaceId: string) => {
-    window.history.pushState({}, '', workspacePath(workspaceId));
-    setRoute({ workspaceId, page: 'webApp', chat: null });
+    // COME BACK WHERE THE MEMBER LEFT. Without this the switch pushes a path
+    // with no chat segment and sets `chat: null`, so returning to a workspace
+    // lands on the landing however deep in a session they were. The remembered
+    // value is a PATH, so restoring is the parser the shell already has rather
+    // than a second switch over `ChatAddress` that would drift from it.
+    const remembered = recallWorkspaceChatPath(workspaceId);
+    const path = remembered ?? workspacePath(workspaceId);
+    window.history.pushState({}, '', path);
+    setRoute(remembered === null ? { workspaceId, page: 'webApp', chat: null } : parseAppRoute(path));
   }, []);
+
+  // WHERE EACH WORKSPACE IS BEING LEFT. Recorded only for a path that carries a
+  // real chat address: the bare `/workspaces/:id` is what the restore above
+  // exists to improve on, so writing it would erase the memory on the way out.
+  useEffect(() => {
+    if (route.page !== 'webApp' || route.workspaceId === null || route.chat === null) return;
+    rememberWorkspaceChatPath(route.workspaceId, window.location.pathname);
+  }, [route]);
 
   const navigateTo = useCallback((path: string) => {
     window.history.pushState({}, '', path);
