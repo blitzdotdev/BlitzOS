@@ -84,11 +84,19 @@
 
 .shell-wtile__icon {
   display: grid;
+  overflow: hidden;
   width: 35px;
   height: 35px;
   place-items: center;
   border-radius: 10px;
   transition: color 200ms ease-out;
+}
+
+.shell-wtile__sigil {
+  display: block;
+  width: 100%;
+  height: 100%;
+  shape-rendering: crispEdges;
 }
 
 .shell-wtile:hover:not(:disabled) .shell-wtile__indicator {
