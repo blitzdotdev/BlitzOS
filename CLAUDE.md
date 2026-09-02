@@ -278,3 +278,12 @@ deployment credential alone (`plans/SUBSCRIPTION-COMPUTE.md`).
   go through the structured logging chokepoints, not bare `console.*`.
 - Prefer editing the four split seams (`scripts/lib/`, ui hooks,
   `terminal-touch-*`, `microvm-*`) over regrowing the monoliths.
+
+## QA matrix (qa/)
+
+`qa/MATRIX.md` defines stable feature rows; `qa/baseline.json` stores verdicts.
+`qa/RUNBOOK.md`, `qa/REGRESSION.md`, and `qa/harness/` define sweep operations.
+Never renumber a row ID. Move a dead row to the matrix Retired section.
+By convention, a PR that changes a user-reachable surface updates its matrix
+rows in the same PR. This convention is not a CI gate.
+Sweep agents follow `qa/RUNBOOK.md`.
