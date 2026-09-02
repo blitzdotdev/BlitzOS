@@ -93,8 +93,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
     listConnections: vi.fn(async () => ({ connections: [] })),
-    putConnection: vi.fn(async () => undefined),
-    deleteConnection: vi.fn(async () => undefined),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
     mintWorkspaceConnection: vi.fn(async () => { throw new Error('unused'); }),
     disconnectWorkspaceConnection: vi.fn(async () => undefined),
@@ -580,39 +578,6 @@ describe('workspace provider rows', () => {
     // a press by seconds. The tile flips when the mint returns, so the member
     // never watches a connected provider read Connect.
     expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
-    await view.unmount();
-  });
-
-  /** An admin's org credential backs the provider for every member, so Connect
-   * mints for them too. The row must not ask for a key nobody has to paste. */
-  it('connects on an org credential with no grant and no form', async () => {
-    const mintWorkspaceConnection = vi.fn(async () => ({ lease: mintedLease('linear') }));
-    const wire = client({
-      mintWorkspaceConnection,
-      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
-      listConnections: vi.fn(async () => ({
-        connections: [{
-          name: 'linear',
-          provider: 'linear',
-          kind: 'static' as const,
-          custody: 'proxy' as const,
-          status: 'active' as const,
-          createdBy: 'admin-one',
-          proxyBaseUrl: null,
-          orgCredential: true,
-        }],
-      })),
-    });
-    const view = await render(connectionsPanel(wire));
-    await settle();
-    await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
-    await settle();
-    expect(mintWorkspaceConnection).not.toHaveBeenCalled();
-    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
-    await settle();
-    expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
-    expect(view.container.querySelector('.connect-form')).toBeNull();
-    expect(rowFor(view.container, 'Linear').textContent).toContain('Connected');
     await view.unmount();
   });
 

@@ -248,9 +248,9 @@ describe("connections: per-user grants", () => {
       connections: [{ name: "linear", provider: "linear", kind: "oauth", custody: "proxy" }],
     });
     const stored = await env.DB.prepare(
-      "SELECT root_ciphertext FROM connections WHERE scoped_name = 'linear'",
-    ).first<{ root_ciphertext: string | null }>();
-    expect(stored?.root_ciphertext).toBeNull();
+      "SELECT config FROM connections WHERE scoped_name = 'linear'",
+    ).first<{ config: string }>();
+    expect(stored?.config).not.toContain(LINEAR_KEY);
   });
 
   it("rejects a personal key for a provider that issues none", async () => {
@@ -1242,7 +1242,6 @@ describe("connect oauth state", () => {
   });
 });
 
-const ROOT = "test-only-static-root-value";
 const GITHUB_TOKEN = "test-only-github-personal-token";
 
 async function createReadyWorkspace(
@@ -1274,74 +1273,20 @@ async function createReadyWorkspace(
   return { workspace, box: await enrolled.json<BoxCredential>() };
 }
 
-async function putStaticConnection(
+/** A linear grant for the caller, then a workspace whose ceiling names linear
+ * under the given entry. Linear is the proxy-custody provider a member can
+ * paste a key for, so it stands in for every proxied vendor below: the org
+ * root that used to back a hand-declared static vendor row is gone
+ * (plans/ORG-CREDENTIALS.md §6a), and a proxied pull now starts from a
+ * person's own grant or not at all. */
+async function linearWorkspace(
   app: ReturnType<typeof harness>["app"],
+  providers: ReturnType<typeof harness>["providers"],
   cookie: string,
-  name: string,
-  options: {
-    root?: string;
-    scopes?: string[];
-    placements?: Record<string, unknown>[];
-    owners?: string[];
-  } = {},
-): Promise<void> {
-  const response = await appRequest(app, `/connections/${name}`, {
-    method: "PUT",
-    headers: { Cookie: cookie, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      provider: "hetzner",
-      kind: "static",
-      custody: "cp",
-      root: options.root ?? ROOT,
-      config: {
-        default_scopes: options.scopes ?? [],
-        placements: options.placements ?? [
-          { kind: "env", name: "HCLOUD_TOKEN" },
-        ],
-      },
-      ...(options.owners === undefined
-        ? {}
-        : { usable_by: { owners: options.owners } }),
-    }),
-  });
-  expect(response.status).toBe(204);
-}
-
-async function putProxyConnection(
-  app: ReturnType<typeof harness>["app"],
-  cookie: string,
-  name: string,
-  options: {
-    baseUrl?: string;
-    tokenHeader?: string;
-    tokenPrefix?: string;
-  } = {},
-): Promise<void> {
-  const response = await appRequest(app, `/connections/${name}`, {
-    method: "PUT",
-    headers: { Cookie: cookie, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      provider: "static-vendor",
-      kind: "static",
-      root: ROOT,
-      config: {
-        placements: [
-          { kind: "env", name: "VENDOR_LEASE_TOKEN" },
-          { kind: "env", name: "VENDOR_BASE_URL", fill: "proxy-url" },
-        ],
-        proxy: {
-          base_url: options.baseUrl ?? "https://vendor.example/api",
-          ...(options.tokenHeader === undefined
-            ? {}
-            : { token_header: options.tokenHeader }),
-          ...(options.tokenPrefix === undefined
-            ? {}
-            : { token_prefix: options.tokenPrefix }),
-        },
-      },
-    }),
-  });
-  expect(response.status).toBe(204);
+  ceiling: Record<string, unknown> = {},
+): Promise<{ workspace: WorkspaceView; box: BoxCredential }> {
+  expect((await connectLinear(app, cookie)).status).toBe(204);
+  return createReadyWorkspace(app, providers, cookie, { linear: ceiling });
 }
 
 function proxyHandle(result: AgentCredentialTokenResponse): {
@@ -1349,7 +1294,7 @@ function proxyHandle(result: AgentCredentialTokenResponse): {
   proxyUrl: string;
   token: string;
 } {
-  const proxyUrl = environmentValue(result, "VENDOR_BASE_URL");
+  const proxyUrl = environmentValue(result, "LINEAR_API_URL");
   if (proxyUrl === null) throw new Error("proxy base URL is missing");
   const leaseId = new URL(proxyUrl).pathname.split("/").at(-1);
   if (leaseId === undefined || leaseId.length === 0) {
@@ -1359,7 +1304,7 @@ function proxyHandle(result: AgentCredentialTokenResponse): {
 }
 
 
-describe("connections: org-root rows, proxy transport, and the request inbox", () => {
+describe("connections: proxy transport and the request inbox", () => {
   beforeEach(async () => {
     await resetDatabase();
     testConnectSecrets.clear();
@@ -1391,110 +1336,24 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(new Set(lease.env.map(({ value }) => value))).toEqual(new Set([GITHUB_TOKEN]));
   });
 
-  it("stores a static connection and fills its env templates at pull", async () => {
+  it("mints a proxy lease token and streams a header-swapped call", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod", {
-      scopes: ["servers:read"],
-      placements: [
-        { kind: "env", name: "HCLOUD_TOKEN" },
-        { kind: "env", name: "HETZNER_TOKEN" },
-      ],
-    });
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": { scopes: ["servers:read"] },
-    });
+    const { box } = await linearWorkspace(app, providers, cookie);
 
-    const response = await mint(app, box.access_token, "hetzner-prod");
-
-    expect(response.status).toBe(200);
-    const result = await response.json<AgentCredentialTokenResponse>();
-    // cp custody is an inject: the org root itself crosses, asserted below.
-    expect(result.scope).toBe("connection");
-    expect(result.expiresAt).toBeGreaterThan(Date.now() + 59 * 60 * 1000);
-    // cp custody hands the org root itself over; every declared name carries it.
-    expect(result.token).toBe(ROOT);
-    expect(result.env).toEqual([
-      { name: "HCLOUD_TOKEN", value: ROOT },
-      { name: "HETZNER_TOKEN", value: ROOT },
-    ]);
-    // A row that declared no header means the vendor's usual one.
-    expect(result.header).toEqual({ name: "Authorization", prefix: "Bearer " });
-    const stored = await env.DB
-      .prepare("SELECT config, root_ciphertext FROM connections WHERE scoped_name = ?1")
-      .bind("hetzner-prod")
-      .first<{ config: string; root_ciphertext: string }>();
-    expect(stored?.root_ciphertext).not.toBe(ROOT);
-    expect(stored?.config).not.toContain(ROOT);
-    expect(
-      await env.DB
-        .prepare("SELECT user_id FROM credential_leases WHERE workspace_id = ?1")
-        .bind(workspace.id)
-        .first<string>("user_id"),
-    ).toBe("operator");
-    const mintEvent = await env.DB
-      .prepare("SELECT detail FROM credential_events WHERE event = 'minted' ORDER BY id DESC LIMIT 1")
-      .first<string>("detail");
-    expect(JSON.parse(mintEvent ?? "null")).toMatchObject({
-      workspace_id: workspace.id,
-      acting_principal: { userId: "operator", membershipId: "personal" },
-    });
-  });
-
-  /** Nothing writes a box file for a connection any more: the agent pulls the
-   * value and scopes it to one command. A stored `file` template would name a
-   * delivery that cannot happen, so the admin route refuses it at write time
-   * rather than failing every later pull. */
-  it("refuses a file placement on the admin route", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-
-    const response = await appRequest(app, "/connections/hetzner-prod", {
-      method: "PUT",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: "hetzner",
-        kind: "static",
-        custody: "cp",
-        root: ROOT,
-        config: {
-          placements: [{ kind: "file", path: "/run/credentials/hcloud" }],
-        },
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      error: "placement.kind must be env",
-    });
-    expect(
-      await env.DB
-        .prepare("SELECT COUNT(*) AS count FROM connections")
-        .first<number>("count"),
-    ).toBe(0);
-  });
-
-  it("mints a default-custody proxy token and streams a header-swapped call", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    await putProxyConnection(app, cookie, "static-proxy");
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "static-proxy": {},
-    });
-
-    const minted = await mint(app, box.access_token, "static-proxy");
+    const minted = await mint(app, box.access_token, "linear");
 
     expect(minted.status).toBe(200);
     const result = await minted.json<AgentCredentialTokenResponse>();
     const handle = proxyHandle(result);
-    expect(result).toMatchObject({ name: "static-proxy", scope: "connection" });
+    expect(result).toMatchObject({ name: "linear", scope: "connection" });
     expect(result.expiresAt).toBeGreaterThan(Date.now() + 59 * 60 * 1000);
     expect(handle.proxyUrl).toBe(`https://cp.example/proxy/${handle.leaseId}`);
     expect(handle.token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-    // The row's own env names carry the pair: the lease token, and the URL it
-    // is good against. The org root itself is in neither.
-    expect(environmentValue(result, "VENDOR_LEASE_TOKEN")).toBe(handle.token);
-    expect(JSON.stringify(result)).not.toContain(ROOT);
+    // The manifest's own env names carry the pair: the lease token, and the
+    // URL it is good against. The personal key itself is in neither.
+    expect(environmentValue(result, "LINEAR_API_KEY")).toBe(handle.token);
+    expect(JSON.stringify(result)).not.toContain(LINEAR_KEY);
     const storedLease = await env.DB
       .prepare(
         `SELECT lease.token_hash, connection.custody
@@ -1512,12 +1371,14 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       async (input, init) => {
         expect(String(input)).toBe(
-          "https://vendor.example/api/v1/messages?stream=true&limit=2",
+          "https://api.linear.app/v1/messages?stream=true&limit=2",
         );
         expect(init?.method).toBe("POST");
         expect(init?.redirect).toBe("manual");
         const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe(`Bearer ${ROOT}`);
+        // Swapped for the grant's own secret in the grant's own shape: a
+        // Linear personal key rides a raw Authorization value, no Bearer.
+        expect(headers.get("authorization")).toBe(LINEAR_KEY);
         expect(headers.get("authorization")).not.toContain(handle.token);
         upstreamBody = await new Response(init?.body).text();
         const encoder = new TextEncoder();
@@ -1557,48 +1418,11 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(await proxied.text()).toBe("vendor-stream");
   });
 
-  it("uses a configured x-api-key header with an empty prefix in both directions", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    await putProxyConnection(app, cookie, "x-key-proxy", {
-      baseUrl: "https://keys.example",
-      tokenHeader: "x-api-key",
-      tokenPrefix: "",
-    });
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "x-key-proxy": {},
-    });
-    const minted = await mint(app, box.access_token, "x-key-proxy");
-    const handle = proxyHandle(await minted.json<AgentCredentialTokenResponse>());
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      async (input, init) => {
-        expect(String(input)).toBe("https://keys.example/v2/check?raw=1");
-        const headers = new Headers(init?.headers);
-        expect(headers.get("x-api-key")).toBe(ROOT);
-        expect(headers.get("authorization")).toBeNull();
-        return new Response("x-key-ok");
-      },
-    );
-
-    const response = await appRequest(
-      app,
-      `/proxy/${handle.leaseId}/v2/check?raw=1`,
-      { headers: { "x-api-key": handle.token } },
-    );
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe("x-key-ok");
-  });
-
   it("never accepts a proxy lease token from the URL path or query", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putProxyConnection(app, cookie, "url-reject-proxy");
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "url-reject-proxy": {},
-    });
-    const minted = await mint(app, box.access_token, "url-reject-proxy");
+    const { box } = await linearWorkspace(app, providers, cookie);
+    const minted = await mint(app, box.access_token, "linear");
     const handle = proxyHandle(await minted.json<AgentCredentialTokenResponse>());
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("must not be reached"),
@@ -1633,11 +1457,8 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
   it("tells missing, unknown, mistyped, and mis-pathed apart", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putProxyConnection(app, cookie, "named-401-proxy");
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "named-401-proxy": {},
-    });
-    const minted = await mint(app, box.access_token, "named-401-proxy");
+    const { box } = await linearWorkspace(app, providers, cookie);
+    const minted = await mint(app, box.access_token, "linear");
     const handle = proxyHandle(await minted.json<AgentCredentialTokenResponse>());
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("must not be reached"),
@@ -1678,11 +1499,8 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
   it("names a revoked lease and an expired one differently in the 401 body", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putProxyConnection(app, cookie, "dead-proxy");
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "dead-proxy": {},
-    });
-    const firstMint = await mint(app, box.access_token, "dead-proxy");
+    const { box } = await linearWorkspace(app, providers, cookie);
+    const firstMint = await mint(app, box.access_token, "linear");
     const revoked = proxyHandle(await firstMint.json<AgentCredentialTokenResponse>());
     expect(
       (
@@ -1699,7 +1517,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
         .first(),
     ).toEqual({ state: "revoked", token_hash: null });
 
-    const secondMint = await mint(app, box.access_token, "dead-proxy");
+    const secondMint = await mint(app, box.access_token, "linear");
     const expired = proxyHandle(await secondMint.json<AgentCredentialTokenResponse>());
     await env.DB
       .prepare("UPDATE credential_leases SET expires_at = ?1 WHERE id = ?2")
@@ -1733,38 +1551,26 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(expiredBody.error.message).toContain("POST /agent/credentials/<provider>/token");
     // Still value-free: no token, no upstream secret, no vendor detail.
     expect(JSON.stringify(expiredBody)).not.toContain(expired.token);
+    expect(JSON.stringify(expiredBody)).not.toContain(LINEAR_KEY);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   /** The box names no scopes now: it asks for a connection, and the pull sends
-   * that connection's declared defaults. Both halves of the gate still refuse —
-   * a ceiling narrower than the defaults, and an allow-list that does not name
-   * the workspace owner. */
-  it("denies a pull outside the manifest and allow-list and writes a value-free event", async () => {
+   * that connection's declared defaults. A ceiling narrower than those
+   * defaults still refuses. (The owner allow-list that used to be the other
+   * half of this gate went with the org root it fenced.) */
+  it("denies a pull outside the manifest ceiling and writes a value-free event", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod", {
-      scopes: ["servers:read"],
-    });
-    await putStaticConnection(app, cookie, "hetzner-fenced", {
-      owners: ["another-member"],
-    });
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": { scopes: [] },
-      "hetzner-fenced": {},
-    });
+    // Linear's declared defaults are read+write; a ceiling that names the
+    // provider with no scopes at all is narrower than that.
+    const { box } = await linearWorkspace(app, providers, cookie, { scopes: [] });
 
-    const overCeiling = await mint(app, box.access_token, "hetzner-prod");
-    const outsideAllowList = await mint(app, box.access_token, "hetzner-fenced");
+    const overCeiling = await mint(app, box.access_token, "linear");
 
     expect(overCeiling.status).toBe(403);
     expect(await overCeiling.json()).toEqual({
-      error: "this workspace is not connected to hetzner-prod",
-      request_id: expect.any(String),
-    });
-    expect(outsideAllowList.status).toBe(403);
-    expect(await outsideAllowList.json()).toEqual({
-      error: "this workspace is not connected to hetzner-fenced",
+      error: "this workspace is not connected to linear",
       request_id: expect.any(String),
     });
     const event = await env.DB
@@ -1774,7 +1580,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       .first<{ lease_id: string | null; event: string; detail: string }>();
     expect(event?.lease_id).toBeNull();
     expect(event?.event).toBe("denied");
-    expect(event?.detail).not.toContain(ROOT);
+    expect(event?.detail).not.toContain(LINEAR_KEY);
     expect(
       await env.DB
         .prepare("SELECT COUNT(*) AS count FROM credential_leases")
@@ -1785,15 +1591,10 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
   it("deduplicates denied pulls, lists the request shape, and approves an actual retry", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod", {
-      scopes: ["servers:read"],
-    });
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": { scopes: [] },
-    });
+    const { workspace, box } = await linearWorkspace(app, providers, cookie, { scopes: [] });
 
-    const firstDenied = await mint(app, box.access_token, "hetzner-prod");
-    const secondDenied = await mint(app, box.access_token, "hetzner-prod");
+    const firstDenied = await mint(app, box.access_token, "linear");
+    const secondDenied = await mint(app, box.access_token, "linear");
     const firstBody = await firstDenied.json<{ request_id: string }>();
     const secondBody = await secondDenied.json<{ request_id: string }>();
 
@@ -1815,8 +1616,8 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
         {
           id: firstBody.request_id,
           workspace_id: workspace.id,
-          connection_name: "hetzner-prod",
-          requested_scopes: ["servers:read"],
+          connection_name: "linear",
+          requested_scopes: ["read", "write"],
           requester: { boxId: box.box_id, userId: "operator" },
           created_at: expect.any(Number),
         },
@@ -1840,7 +1641,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       .bind(workspace.id)
       .first<string>("manifest");
     expect(JSON.parse(storedManifest ?? "null")).toEqual({
-      integrations: { "hetzner-prod": { scopes: ["servers:read"] } },
+      integrations: { linear: { scopes: ["read", "write"] } },
     });
     const event = await env.DB
       .prepare(
@@ -1849,32 +1650,25 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       .first<{ lease_id: string | null; event: string; detail: string }>();
     expect(event).toMatchObject({ lease_id: null, event: "approved" });
     expect(JSON.parse(event?.detail ?? "null")).toEqual({
-      integration: "hetzner-prod",
-      scopes: ["servers:read"],
+      integration: "linear",
+      scopes: ["read", "write"],
       workspace_id: workspace.id,
       resolved_by: "operator",
       acting_principal: { userId: "operator", membershipId: "personal" },
     });
 
-    const retried = await mint(app, box.access_token, "hetzner-prod");
+    const retried = await mint(app, box.access_token, "linear");
     expect(retried.status).toBe(200);
-    expect(await retried.json<AgentCredentialTokenResponse>()).toMatchObject({
-      name: "hetzner-prod",
-      scope: "connection",
-      env: [{ name: "HCLOUD_TOKEN", value: ROOT }],
-    });
+    const retriedResult = await retried.json<AgentCredentialTokenResponse>();
+    expect(retriedResult).toMatchObject({ name: "linear", scope: "connection" });
+    expect(environmentValue(retriedResult, "LINEAR_API_KEY")).toBe(retriedResult.token);
   });
 
   it("denies a pending request without widening the workspace manifest", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod", {
-      scopes: ["servers:write"],
-    });
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": { scopes: [] },
-    });
-    const deniedMint = await mint(app, box.access_token, "hetzner-prod");
+    const { workspace, box } = await linearWorkspace(app, providers, cookie, { scopes: [] });
+    const deniedMint = await mint(app, box.access_token, "linear");
     const { request_id: requestId } = await deniedMint.json<{ request_id: string }>();
     const before = await env.DB
       .prepare("SELECT manifest FROM workspaces WHERE id = ?1")
@@ -1921,24 +1715,23 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
         }),
       ]),
     });
-    expect((await mint(app, box.access_token, "hetzner-prod")).status).toBe(403);
+    expect((await mint(app, box.access_token, "linear")).status).toBe(403);
   });
 
   it("does not let a non-owner approve another workspace's request", async () => {
     const { app, providers } = harness();
-    const operatorCookie = await operatorSession(app);
     const ownerCookie = await userSession("workspace-owner");
     const strangerCookie = await userSession("stranger");
-    await putStaticConnection(app, operatorCookie, "hetzner-prod", {
-      owners: ["workspace-owner"],
-    });
+    // The owner's org declares no linear row, so the pull files a request for
+    // a connection nobody configured — an inbox entry a stranger in another
+    // org must not be able to see or resolve.
     const { box } = await createReadyWorkspace(
       app,
       providers,
       ownerCookie,
-      { "hetzner-prod": { scopes: [] } },
+      { linear: { scopes: [] } },
     );
-    const deniedMint = await mint(app, box.access_token, "hetzner-prod");
+    const deniedMint = await mint(app, box.access_token, "linear");
     const { request_id: requestId } = await deniedMint.json<{ request_id: string }>();
 
     const response = await appRequest(app, `/requests/${requestId}/approve`, {
@@ -1994,12 +1787,9 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
   it("revokes a lease by clearing its token hash in the same state update", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod");
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": {},
-    });
+    const { box } = await linearWorkspace(app, providers, cookie);
     expect(
-      (await mint(app, box.access_token, "hetzner-prod")).status,
+      (await mint(app, box.access_token, "linear")).status,
     ).toBe(200);
     const lease = await env.DB
       .prepare("SELECT id FROM credential_leases LIMIT 1")
@@ -2027,12 +1817,9 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
   it("destroys a workspace with an active lease while preserving revoked audit", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": {},
-    });
+    const { workspace, box } = await linearWorkspace(app, providers, cookie);
     expect(
-      (await mint(app, box.access_token, "hetzner-prod")).status,
+      (await mint(app, box.access_token, "linear")).status,
     ).toBe(200);
 
     const response = await appRequest(app, `/workspaces/${workspace.id}`, {
@@ -2066,11 +1853,8 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
   it("expires overdue active leases without deleting their audit rows", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod");
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": {},
-    });
-    await mint(app, box.access_token, "hetzner-prod");
+    const { box } = await linearWorkspace(app, providers, cookie);
+    await mint(app, box.access_token, "linear");
     await env.DB
       .prepare(
         "UPDATE credential_leases SET expires_at = 10, token_hash = 'overdue-token-hash'",
@@ -2093,7 +1877,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
   it("lists connection status without config, plaintext values, or ciphertext", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod");
+    expect((await connectLinear(app, cookie)).status).toBe(204);
 
     const response = await appRequest(app, "/connections", {
       headers: { Cookie: cookie },
@@ -2104,63 +1888,31 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(body).toEqual({
       connections: [
         {
-          name: "hetzner-prod",
-          provider: "hetzner",
-          kind: "static",
-          custody: "cp",
+          name: "linear",
+          provider: "linear",
+          kind: "oauth",
+          custody: "proxy",
           status: "active",
           createdBy: "operator",
-          proxyBaseUrl: null,
-          // A boolean about the sealed root, never the root itself.
-          orgCredential: true,
+          // The vendor URL only, never the config it was read from.
+          proxyBaseUrl: "https://api.linear.app",
         },
       ],
     });
     const serialized = JSON.stringify(body);
-    expect(serialized).not.toContain(ROOT);
-    expect(serialized).not.toContain("root_ciphertext");
+    expect(serialized).not.toContain(LINEAR_KEY);
     expect(serialized).not.toContain("config");
     expect(serialized).not.toContain('"value"');
-  });
-
-  it("deletes a connection as a soft kill switch and revokes its active leases", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod");
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": {},
-    });
-    await mint(app, box.access_token, "hetzner-prod");
-
-    const response = await appRequest(app, "/connections/hetzner-prod", {
-      method: "DELETE",
-      headers: { Cookie: cookie },
-    });
-
-    expect(response.status).toBe(204);
-    expect(
-      await env.DB
-        .prepare(
-          "SELECT revoked_at IS NOT NULL AS revoked, root_ciphertext FROM connections WHERE scoped_name = ?1",
-        )
-        .bind("hetzner-prod")
-        .first(),
-    ).toEqual({ revoked: 1, root_ciphertext: null });
-    expect(
-      await env.DB
-        .prepare("SELECT state, token_hash FROM credential_leases")
-        .first(),
-    ).toEqual({ state: "revoked", token_hash: null });
+    // A row is a declaration and nothing else: the flag that used to say an
+    // admin had sealed an org root behind it went with the root.
+    expect(serialized).not.toContain("orgCredential");
   });
 
   it("lists minted leases through the session-authenticated audit route", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": {},
-    });
-    await mint(app, box.access_token, "hetzner-prod");
+    const { workspace, box } = await linearWorkspace(app, providers, cookie);
+    await mint(app, box.access_token, "linear");
 
     const response = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
@@ -2172,29 +1924,17 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(body.leases[0]).toMatchObject({
       workspaceId: workspace.id,
       boxId: box.box_id,
-      connection: "hetzner-prod",
+      connection: "linear",
       state: "active",
-      mode: "inject",
+      mode: "proxy",
     });
-    expect(JSON.stringify(body)).not.toContain(ROOT);
+    expect(JSON.stringify(body)).not.toContain(LINEAR_KEY);
   });
 
-  it("keeps /integrations as an alias of the canonical /connections routes", async () => {
+  it("keeps /integrations as an alias of the canonical /connections list", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
-
-    const put = await appRequest(app, "/integrations/alias-token", {
-      method: "PUT",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: "hetzner",
-        kind: "static",
-        custody: "cp",
-        root: ROOT,
-        config: { placements: [{ kind: "env", name: "HCLOUD_TOKEN" }] },
-      }),
-    });
-    expect(put.status).toBe(204);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
 
     const aliasList = await appRequest(app, "/integrations", {
       headers: { Cookie: cookie },
@@ -2206,27 +1946,42 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const canonicalBody = await canonicalList.json();
     await expect(aliasList.json()).resolves.toEqual(canonicalBody);
     expect(canonicalBody).toMatchObject({
-      connections: [{ name: "alias-token", status: "active" }],
+      connections: [{ name: "linear", status: "active" }],
     });
 
-    const remove = await appRequest(app, "/integrations/alias-token", {
-      method: "DELETE",
-      headers: { Cookie: cookie },
-    });
-    expect(remove.status).toBe(204);
+    // The admin write routes went with the org root they existed to store and
+    // revoke: neither name answers a PUT or a DELETE any more.
+    for (const prefix of ["/connections", "/integrations"]) {
+      const put = await appRequest(app, `${prefix}/linear`, {
+        method: "PUT",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "linear",
+          kind: "static",
+          root: "test-only-would-be-org-root",
+          config: { placements: [{ kind: "env", name: "LINEAR_API_KEY" }] },
+        }),
+      });
+      expect(put.status).toBe(404);
+      const remove = await appRequest(app, `${prefix}/linear`, {
+        method: "DELETE",
+        headers: { Cookie: cookie },
+      });
+      expect(remove.status).toBe(404);
+    }
   });
 });
 
-/** The template path for the two new providers. Discord is admin-configured:
- * one bot token stored by an admin reaches every workspace with no per-user
- * step, like a pasted github token. YouTrack is per-member PAT (product ruling:
- * "youtrack is just PAT"): each member pastes their own permanent token,
- * proxied so it never lands on a box disk, with the instance URL inherited
- * from the org connection row once anyone has named it. */
+/** The template path for the two providers that differ most. Discord declares
+ * no personal token, so no member can hold a grant for it; the org-wide bot
+ * token it needs is an org credential now (plans/ORG-CREDENTIALS.md §6a), not
+ * a connection row, and the catalog only says so. YouTrack is per-member PAT
+ * (product ruling: "youtrack is just PAT"): each member pastes their own
+ * permanent token, proxied so it never lands on a box disk, with the instance
+ * URL inherited from the org connection row once anyone has named it. */
 describe("connections: admin-configured providers through templates", () => {
   const YOUTRACK_PAT = "perm:test-only-youtrack-permanent-token";
   const YOUTRACK_BASE = "https://acme.youtrack.example";
-  const DISCORD_ROOT = "test-only-discord-bot-token";
 
   beforeEach(async () => {
     await resetDatabase();
@@ -2252,24 +2007,6 @@ describe("connections: admin-configured providers through templates", () => {
         ...(baseUrl === undefined ? {} : { vendor: { baseUrl } }),
       }),
     });
-  }
-
-  async function putDiscordConnection(
-    app: Harness["app"],
-    cookie: string,
-  ): Promise<void> {
-    const response = await appRequest(app, "/connections/discord", {
-      method: "PUT",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: "discord",
-        kind: "static",
-        custody: "cp",
-        root: DISCORD_ROOT,
-        config: { placements: [{ kind: "env", name: "DISCORD_BOT_TOKEN" }] },
-      }),
-    });
-    expect(response.status).toBe(204);
   }
 
   /** A workspace is its own template now, so the thing a create clones is a
@@ -2370,9 +2107,6 @@ describe("connections: admin-configured providers through templates", () => {
       status: "active",
       createdBy: "operator",
       proxyBaseUrl: YOUTRACK_BASE,
-      // A member-declared row carries no root: it is a declaration, not an
-      // org credential, and the admin surfaces must not read it as one.
-      orgCredential: false,
     }]);
   });
 
@@ -2496,55 +2230,6 @@ describe("connections: admin-configured providers through templates", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(proxied.status).toBe(200);
     await expect(proxied.json()).resolves.toEqual({ id: "1-2", login: "second" });
-  });
-
-  it("discord: the admin cp root reaches a template workspace as the bot token itself", async () => {
-    const { app, providers } = harness();
-    const admin = await operatorSession(app);
-    await putDiscordConnection(app, admin);
-    const template = await templateNaming(app, admin, [
-      { provider: "discord" },
-    ]);
-
-    const member = await sameOrgSession("discord-template-member", "admin");
-    const { workspace, box } = await readyWorkspace(app, providers, member.cookie, {
-      cloneFromWorkspaceId: template.id,
-    });
-    expect(await workspaceCeiling(workspace.id)).toEqual({
-      integrations: { discord: {} },
-    });
-    const atCreate = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
-      headers: { Cookie: member.cookie },
-    });
-    await expect(atCreate.json()).resolves.toEqual({ leases: [] });
-
-    const minted = await mint(app, box.access_token, "discord");
-    expect(minted.status).toBe(200);
-    const result = await minted.json<AgentCredentialTokenResponse>();
-    expect(result).toMatchObject({
-      name: "discord",
-      scope: "connection",
-      token: DISCORD_ROOT,
-      env: [
-        { name: "DISCORD_BOT_TOKEN", value: DISCORD_ROOT },
-      ],
-      // `Bot `, not `Bearer `. The org row stores no header, so the catalog is
-      // the only thing that knows. An agent told `Bearer` reads Discord's 401
-      // as a broken credential and asks the person to reconnect a connection
-      // that was never broken.
-      header: { name: "Authorization", prefix: "Bot " },
-    });
-    expect(result.expiresAt).toBeGreaterThan(Date.now() + 59 * 60 * 1000);
-
-    // Enablement is a ceiling, not a broadcast: the org root is configured,
-    // but a workspace whose manifest names nothing may not pull it.
-    const { box: fencedBox } = await createReadyWorkspace(app, providers, admin, {});
-    expect(await listBoxConnections(app, fencedBox.access_token)).toEqual([]);
-    const fenced = await mint(app, fencedBox.access_token, "discord");
-    expect(fenced.status).toBe(403);
-    await expect(fenced.json()).resolves.toMatchObject({
-      error: "this workspace is not connected to discord",
-    });
   });
 
   it("creates an unbacked stipulated provider as needs-you, never as a 409", async () => {

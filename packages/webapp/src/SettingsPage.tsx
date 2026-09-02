@@ -225,12 +225,7 @@ export function SettingsPage({
           />
         )}
         {section === 'invites' && viewer.membership.role === 'admin' && <InvitesPanel client={client} />}
-        {section === 'connections' && (
-          <ConnectionsPanel
-            client={client}
-            admin={viewer.membership.role === 'admin'}
-          />
-        )}
+        {section === 'connections' && <ConnectionsPanel client={client} />}
         {section === 'credentials' && (
           <OrgCredentialsPanel client={client} viewer={viewer} />
         )}

@@ -51,7 +51,6 @@ import type {
   OrgUsageCaptureResponse,
   OrgUsageResponse,
   PollResponse,
-  PutConnectionRequest,
   RecipeResponse,
   RetryAction,
 } from "@blitzos/schema";
@@ -296,8 +295,6 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   listMachineTypes(): Promise<ListMachineTypesResponse>;
   listVolumes(): Promise<ListVolumesResponse>;
   listConnections(signal?: AbortSignal): Promise<ListConnectionsResponse>;
-  putConnection(name: string, input: PutConnectionRequest): Promise<void>;
-  deleteConnection(name: string): Promise<void>;
   listConnectionCatalog(signal?: AbortSignal): Promise<ListCatalogResponse>;
   listConnectionGrants(signal?: AbortSignal): Promise<ListUserGrantsResponse>;
   listGithubInstallations(signal?: AbortSignal): Promise<ListGithubInstallationsResponse>;
@@ -855,16 +852,6 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     listVolumes: () => request<ListVolumesResponse>("/volumes"),
     listConnections: (signal) =>
       request<ListConnectionsResponse>("/connections", { signal }),
-    putConnection: (name, input) =>
-      request<void>(`/connections/${encodeURIComponent(name)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      }),
-    deleteConnection: (name) =>
-      request<void>(`/connections/${encodeURIComponent(name)}`, {
-        method: "DELETE",
-      }),
     listConnectionCatalog: (signal) =>
       request<ListCatalogResponse>("/connections/catalog", { signal }),
     listConnectionGrants: (signal) =>

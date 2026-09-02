@@ -827,7 +827,6 @@ const connectionView: SharedShape<
   status: "active",
   createdBy: "operator",
   proxyBaseUrl: "https://tracker.example",
-  orgCredential: true,
 };
 
 const credentialLease: SharedShape<

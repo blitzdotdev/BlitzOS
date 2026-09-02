@@ -143,23 +143,6 @@ export function manifestAllows(
   return requestedScopes.every((scope) => allowed.has(scope));
 }
 
-export function usableByAllows(
-  connection: Connection,
-  principalId: string,
-): boolean {
-  if (connection.usable_by === null) return true;
-  try {
-    const value: unknown = JSON.parse(connection.usable_by);
-    return (
-      isRecord(value) &&
-      stringArray(value.owners) &&
-      value.owners.includes(principalId)
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function connectionDefaultScopes(connection: Connection): string[] {
   try {
     const value: unknown = JSON.parse(connection.config);

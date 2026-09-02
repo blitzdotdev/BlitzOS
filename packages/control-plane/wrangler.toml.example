@@ -135,7 +135,6 @@ run_worker_first = [
   "/folders/*",
   "/hosts/*",
   "/integrations",
-  "/integrations/*",
   "/invite/*",
   "/invites",
   "/invites/*",

@@ -266,8 +266,6 @@ function client(): ControlPlaneClient {
     listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
     listConnections: vi.fn(async () => ({ connections: [] })),
-    putConnection: vi.fn(async () => undefined),
-    deleteConnection: vi.fn(async () => undefined),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
     mintWorkspaceConnection: vi.fn(async () => { throw new Error("unused"); }),
     disconnectWorkspaceConnection: vi.fn(async () => undefined),

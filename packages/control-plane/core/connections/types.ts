@@ -49,8 +49,6 @@ export interface Connection {
   kind: MintKind;
   custody: Custody;
   config: string;
-  root_ciphertext: string | null;
-  usable_by: string | null;
   created_by: string;
   created_at: number;
   revoked_at: number | null;
@@ -68,16 +66,6 @@ export interface MintRequest {
   now: number;
   origin: string;
   leaseId: string;
-}
-
-export interface Minter {
-  kind: MintKind;
-  providers?: string[];
-  mint(
-    root: string | null,
-    connection: Connection,
-    request: MintRequest,
-  ): Promise<MinterResult>;
 }
 
 export interface Lease {
@@ -104,19 +92,15 @@ export interface ConnectionView {
   /** The vendor URL a proxy-custody row points at (the org's YouTrack
    * instance, say); null for cp custody. Never any other part of the config. */
   proxyBaseUrl: string | null;
-  /** True when the row seals an org credential (an admin-stored root). A row
-   * declared by a member connect carries no root and reads false, so
-   * "configured" surfaces never mistake a declaration for a credential. */
-  orgCredential: boolean;
 }
 
 export interface ListConnectionsResponse {
   connections: ConnectionView[];
 }
 
-/** An env entry for `config.placements` on `PUT /connections/:id`, sent by
- * the admin form verbatim. Distinct from `ConnectionEnv`: this is a template
- * with a fill, not a filled value. */
+/** An env entry a catalog admin form declares (`CatalogAdminFormView`).
+ * Distinct from `ConnectionEnv`: this is a template with a fill, not a filled
+ * value. */
 export interface CatalogAdminPlacement {
   kind: "env";
   name: string;

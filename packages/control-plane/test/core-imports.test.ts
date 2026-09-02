@@ -34,7 +34,6 @@ const expected = [
   "connections/mint.ts",
   "connections/minters/grant.ts",
   "connections/minters/oauth.ts",
-  "connections/minters/static.ts",
   "connections/proxy.ts",
   "connections/registry.ts",
   "connections/requests.ts",

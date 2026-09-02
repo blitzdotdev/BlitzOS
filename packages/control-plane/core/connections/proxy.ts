@@ -27,8 +27,6 @@ interface TokenCandidate {
 
 interface ProxyLeaseRow {
   token_hash: string;
-  connection_name: string;
-  root_ciphertext: string | null;
   config: string;
   grant_id: string | null;
   grant_user_id: string | null;
@@ -121,11 +119,11 @@ async function proxyLease(
     .map((_, index) => `?${index + 2}`)
     .join(", ");
   const nowParameter = candidates.length + 2;
-  // A grant-backed lease carries its own secret and header shape, so it is not
-  // held to the static-connection rule the org-root path needs.
+  // Only a grant-backed lease can answer: the secret behind a proxy call is
+  // the person's own grant, and a lease whose grant is gone (or that never had
+  // one — the retired org-root path) has nothing to sign with.
   return first<ProxyLeaseRow>(db, {
-    q: `SELECT lease.token_hash, connection.scoped_name AS connection_name,
-               connection.root_ciphertext, connection.config,
+    q: `SELECT lease.token_hash, connection.config,
                lease.grant_id, grant_row.user_id AS grant_user_id,
                grant_row.provider AS grant_provider, grant_row.kind AS grant_kind,
                grant_row.config AS grant_config,
@@ -142,10 +140,7 @@ async function proxyLease(
           AND lease.expires_at > ?${nowParameter}
           AND connection.revoked_at IS NULL
           AND connection.custody = 'proxy'
-          AND (
-            (lease.grant_id IS NULL AND connection.kind = 'static')
-            OR grant_row.id IS NOT NULL
-          )
+          AND grant_row.id IS NOT NULL
         LIMIT 1`,
     v: [leaseId, ...candidates.map(({ hash }) => hash), now],
   });
@@ -204,24 +199,16 @@ function parseProxyConfig(value: string): ProxyConfig | null {
   }
 }
 
-/** Where the upstream secret and its header shape come from for one lease.
- * A grant-backed lease answers from the person's own grant; the org-root path
- * answers from the connection row it always did. */
+/** Where the upstream secret and its header shape come from for one lease:
+ * the person's own grant, and nothing else. The lease lookup already demands
+ * a live grant row, so an absent one here is a row that changed under us. */
 async function upstreamSecret(
   runtime: ReturnType<RuntimeFactory>,
   lease: ProxyLeaseRow,
   config: ProxyConfig,
 ): Promise<{ root: string; config: ProxyConfig } | null> {
   if (lease.grant_id === null || lease.grant_user_id === null || lease.grant_provider === null) {
-    if (lease.root_ciphertext === null) return null;
-    return {
-      root: await openRoot(
-        runtime.credentialMasterKey,
-        lease.connection_name,
-        lease.root_ciphertext,
-      ),
-      config,
-    };
+    return null;
   }
   const grantHeader = parseGrantHeader(lease.grant_config);
   const ciphertext = lease.grant_kind === "pat"

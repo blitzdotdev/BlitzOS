@@ -20,19 +20,12 @@ import {
   manifestAllows,
   manifestWithConnection,
   manifestWithoutConnection,
-  usableByAllows,
 } from "./manifest.js";
 import { mintFromGrant } from "./minters/grant.js";
 import { refreshedAccessToken } from "./minters/oauth.js";
-import { openRoot } from "./root-crypto.js";
 import { addProxyRoute } from "./proxy.js";
 import { addRequestRoutes, fileRequest } from "./requests.js";
-import {
-  addConnectionRoutes,
-  connectionByName,
-  connectionManifestId,
-  resolveMinter,
-} from "./registry.js";
+import { addConnectionRoutes, connectionByName } from "./registry.js";
 import type {
   Connection,
   Lease,
@@ -78,8 +71,7 @@ export async function authorize(
 ): Promise<boolean> {
   const access = await workspaceAccess(db, principal, workspace);
   const requestFitsCeiling =
-    manifestAllows(workspace.manifest, connection.name, requestedScopes) &&
-    usableByAllows(connection, principal.id);
+    manifestAllows(workspace.manifest, connection.name, requestedScopes);
   return isWorkspaceMember(access) && requestFitsCeiling;
 }
 
@@ -252,11 +244,13 @@ export async function mintOne(
   // The acting principal, not the workspace owner. A box mint arrives as the
   // machine's own member, so the grant this finds is that person's.
   const grant = await grantFor(runtime.db, principal.id, connection.name);
-  const minter = grant === null ? resolveMinter(connection) : null;
-  if (grant === null && (minter === null || connection.root_ciphertext === null)) {
+  if (grant === null) {
     // The connection is declared but nobody's identity backs it. That is the
     // connect inbox, not a failure: 404 is the status the box turns into
     // "not configured", and it carries the request id the panel resolves.
+    // No org-root fallback exists any more: an org-shared static is an org
+    // credential (plans/ORG-CREDENTIALS.md §6a), resolved by the caller
+    // before it ever reaches a connection mint.
     if (denied === "skip") return null;
     const requestId = machineId === null ? undefined : await fileRequest(
       runtime.db,
@@ -288,9 +282,7 @@ export async function mintOne(
     origin: input.origin,
     leaseId,
   };
-  const minted = grant === null
-    ? await legacyRootMint(runtime, connection, request)
-    : await memberGrantMint(runtime, grant, connection, request, scopes);
+  const minted = await memberGrantMint(runtime, grant, connection, request, scopes);
   // Control-plane bookkeeping is stripped here: `tokenHash` is what the proxy
   // compares against and must never leave the control plane.
   const { tokenHash = null, grantedScopes, ...result } = minted;
@@ -310,7 +302,7 @@ export async function mintOne(
     connectionId: connection.id,
     connectionName: connection.name,
     userId: principal.id,
-    grantId: grant?.id ?? null,
+    grantId: grant.id,
     scopes: grantedScopes ?? scopes,
     result,
     tokenHash,
@@ -410,38 +402,6 @@ export async function workspaceForMint(
         FROM workspaces WHERE id = ?1 AND deleted_at IS NULL LIMIT 1`,
     v: [workspaceId],
   });
-}
-
-/** Static org-root minting predates per-user grants. It serves every row that
- * carries a sealed root, which the admin form on the template page still
- * creates: `PUT /connections/:name` is the org-credential path.
- *
- * The catalog owns the header shape when it knows the provider. A stored
- * cp-custody row carries no header, and Discord needs `Bot `, not `Bearer `:
- * an agent told to send `Bearer` reads Discord's 401 as a broken credential
- * and asks the person to reconnect a connection that was never broken. */
-async function legacyRootMint(
-  runtime: ReturnType<RuntimeFactory>,
-  connection: Connection,
-  request: MintRequest,
-): Promise<MinterResult> {
-  const minter = resolveMinter(connection);
-  if (minter === null) {
-    throw new HttpError(409, "integration credential mechanism is unavailable");
-  }
-  const root =
-    connection.root_ciphertext === null
-      ? null
-      : await openRoot(
-          runtime.credentialMasterKey,
-          connection.name,
-          connection.root_ciphertext,
-        );
-  const minted = await minter.mint(root, connection, request);
-  const manifest = providerManifest(
-    connectionManifestId(connection) ?? connection.provider,
-  );
-  return manifest === null ? minted : { ...minted, header: manifest.tokenHeader };
 }
 
 /** The workspace and provider a Connect or Disconnect names, once the caller
