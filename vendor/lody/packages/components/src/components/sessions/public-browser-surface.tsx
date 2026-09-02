@@ -5,6 +5,7 @@ import type { ElectronPublicBrowserBounds, ElectronPublicBrowserState } from '@l
 
 import { isElectronRenderer } from '@/lib/electron';
 import { getPublicBrowserBridge } from '@/lib/electron-ipc-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import { observeResizeOnAnimationFrame } from '@/lib/resize-observer';
 import { cn } from '@/lib/utils';
 
@@ -40,6 +41,7 @@ export function PublicBrowserSurface({
   onStateChange,
 }: PublicBrowserSurfaceProps) {
   const { t } = useTranslation();
+  const ipcClient = useIpcClient();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const createdRef = useRef(false);
   const layoutGenerationRef = useRef(0);
@@ -48,7 +50,8 @@ export function PublicBrowserSurface({
   const [phase, setPhase] = useState<ElectronPublicBrowserState['phase']>('idle');
   const [surfaceReady, setSurfaceReady] = useState(false);
   const [blockingOverlayOpen, setBlockingOverlayOpen] = useState(false);
-  const bridge = typeof window === 'undefined' ? undefined : getPublicBrowserBridge() ?? undefined;
+  const bridge =
+    typeof window === 'undefined' ? undefined : getPublicBrowserBridge(ipcClient) ?? undefined;
   const electron = isElectronRenderer();
   const nativeViewVisible = active && !blockingOverlayOpen;
 

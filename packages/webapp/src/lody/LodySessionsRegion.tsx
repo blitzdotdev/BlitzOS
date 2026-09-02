@@ -206,11 +206,10 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   }
 
   const viewer = { name: props.viewerName, avatarUrl: props.viewerAvatarUrl };
-  // EXACTLY ONE SURFACE IS STILL MOUNTED. Seam 18 removed the old `window.ipc`
-  // ownership wall by binding a client to each surface, but module-scope Jotai
-  // referential caches are still shared across stores. Mounting a second real
-  // surface before Phase B would therefore trade the measured cross-box IPC bug
-  // for cross-store state contamination.
+  // EXACTLY ONE SURFACE IS STILL MOUNTED. Seam 18 binds its client and Phase B
+  // has audited the non-effect shared state; Phase C is what will add the live
+  // pool and Activity boundary. This branch still performs today's sequential
+  // hand-off while carrying the active/identity plumbing that pool will use.
   //
   // So opening a shared session tears the runtime down and rebuilds it against
   // the owner's endpoints, which is §6.3's answer taken as written, with the
@@ -225,7 +224,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
           // This was the constant `"own"` — one instance covering EVERY
           // workspace the member owns — and that is a stale-address bug, not a
           // style choice. `SessionSurface` builds its bridge once per instance
-          // (`useLodyLocalBridge`: `held.current ??= createLodyLocalBridge(...)`)
+          // (`useLodySurfaceIpc`: `held.current ??= createLodyLocalBridge(...)`)
           // and that bridge CLOSES OVER the endpoints it was built with: sync,
           // rpc, control, project, platform, files. With one instance shared
           // across workspaces, a switch handed the surface new props and left
@@ -242,10 +241,10 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
           // `local-bridge.ts` has to become mutable to fix this.
           //
           // Still exactly one surface mounted at a time — a key change unmounts
-          // the old one — until Phase B scopes the remaining vendor caches.
+          // the old one — until Phase C installs the keep-alive pool.
           // `lodySyncUrl` names the box and cannot drift from the thing that went
           // stale, because it IS the thing that went stale.
-          key: `own:${endpoints.lodySyncUrl}`,
+          surfaceKey: `own:${endpoints.lodySyncUrl}`,
           endpoints: lodyEndpoints(endpoints),
           shared: undefined,
           readOnly: false,
@@ -254,7 +253,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
           // Keyed by the OWNER's membership: switching between two members'
           // shared sessions rebuilds the runtime, and switching between two
           // sessions on the same member's box does not.
-          key: `shared:${sharedOpen.ownerMembershipId}`,
+          surfaceKey: `shared:${sharedOpen.ownerMembershipId}`,
           endpoints: lodyEndpoints(sharedOpen.endpoints),
           shared: { sessionId: sharedOpen.sessionId },
           readOnly: sharedOpen.level === "ro",
@@ -282,11 +281,12 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     <SurfaceLoadBoundary onRetry={retrySurface}>
       <Suspense fallback={null}>
         <SessionSurface
-          key={surfaceProps.key}
+          surfaceKey={surfaceProps.surfaceKey}
           endpoints={surfaceProps.endpoints}
           viewer={viewer}
           workspaceTitle={props.workspaceTitle}
           hidden={!props.visible}
+          active={props.visible}
           railHost={props.railHost}
           rail={rail}
           readOnly={surfaceProps.readOnly}

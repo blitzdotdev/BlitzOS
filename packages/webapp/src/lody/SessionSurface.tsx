@@ -50,7 +50,6 @@ import { createPortal } from "react-dom";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { RouterProvider } from "@tanstack/react-router";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
-import { createBoundIpcClient } from "@lody/components/lib/electron-ipc-client";
 import { IpcClientProvider } from "@lody/components/providers/ipc-client-provider";
 import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
@@ -62,7 +61,6 @@ import {
 import { LodyAgentAuthNotice } from "./agent-auth-notice.js";
 import { LodyAgentConfigGate } from "./agent-config-gate.js";
 import { useLodyRuntimeBootRetry } from "./use-runtime-boot-retry.js";
-import { createLodyLocalBridge, installLodyLocalBridge, type LodyLocalBridge } from "./local-bridge.js";
 import { BlitzPlatformProviders, useLodyPlatformSnapshot, type BlitzViewer } from "./platform.js";
 import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
 import {
@@ -78,9 +76,10 @@ import type { SharedSessionRow } from "./shared-sessions.js";
 import { SurfaceTabsContext, type SurfaceTabsBinding } from "./surface-tabs.js";
 import { useDefaultSessionProjectBackfill } from "./use-session-project-backfill.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
+import { useLodySurfaceIpc, useLodySurfaceIpcLifecycle } from "./surface-ipc.js";
 import { SurfaceUnavailableNotice } from "./SurfaceLoadBoundary.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
-import { LodySurfaceProviders } from "./surface-providers.js";
+import { LodySurfaceProviders, LodySurfaceThemeRoot } from "./surface-providers.js";
 import "./lody-surface.css";
 import "./lody-surface-shell.css";
 import "./blitz-skin.css";
@@ -176,6 +175,12 @@ export interface LodySessionSurfaceProps {
   /** Hidden, not unmounted: the runtime must survive a rail click. */
   hidden?: boolean;
   /**
+   * Owns page-global compatibility, shell callbacks, rail and toast rendering.
+   * Future retained surfaces pass false while inactive. Defaults to true for
+   * the current single-surface and standalone compositions.
+   */
+  active?: boolean;
+  /**
    * The rail's list region (`div.session-list--vendor`), if the shell offers
    * one. Lody's sidebar body is PORTALLED there rather than rendered by the
    * rail, because everything it reads — the session mirror, the runtime, the
@@ -236,37 +241,6 @@ export interface LodySessionSurfaceProps {
    * counterpart of that.
    */
   initialSessionId?: string;
-}
-
-/**
- * Creates one bridge and one permanently bound IPC client for this surface.
- *
- * `window.ipc` remains installed for Electron-compatible legacy callers while
- * the migration is in flight, but the provider tree below never rediscovers it:
- * every local-platform, runtime and data-plane operation receives `ipcClient`.
- * That lets two retained surfaces coexist without one surface's calls following
- * whichever bridge happened to write the page global most recently.
- */
-function useLodyLocalBridge(endpoints: LodyRuntimeEndpoints): {
-  bridge: LodyLocalBridge;
-  ipcClient: object;
-} {
-  const held = useRef<{ bridge: LodyLocalBridge; ipcClient: object } | null>(null);
-  if (held.current === null) {
-    const bridge = createLodyLocalBridge(endpoints);
-    held.current = { bridge, ipcClient: createBoundIpcClient(bridge.ipc) };
-  }
-  const { bridge } = held.current;
-  // Two property assignments, so repeating it per render costs nothing.
-  installLodyLocalBridge(bridge);
-  useEffect(() => {
-    // Re-asserted here because React can run the cleanup below and then mount
-    // again WITHOUT re-rendering — StrictMode's double-invoke does exactly
-    // that — which would otherwise leave `window.ipc` removed for good.
-    const uninstall = installLodyLocalBridge(bridge);
-    return uninstall;
-  }, [bridge]);
-  return held.current;
 }
 
 /**
@@ -362,10 +336,12 @@ function seedCurrentUser(
   });
 }
 
-export function SessionSurface(props: LodySessionSurfaceProps) {
+function SessionSurfaceContent(props: LodySessionSurfaceProps) {
   const { endpoints, viewer, workspaceTitle, onApiReady, onActiveSessionChange } = props;
-  // Installed before anything below renders; see the hook's comment.
-  const { bridge, ipcClient } = useLodyLocalBridge(endpoints);
+  const active = props.active !== false;
+  const localBridge = useLodySurfaceIpc(endpoints);
+  const { bridge, ipcClient } = localBridge;
+  useLodySurfaceIpcLifecycle(localBridge, active);
   const { snapshot, error } = useLodyPlatformSnapshot(endpoints.platformUrl, endpoints.fetchImpl);
   const store = useMemo(() => createStore(), []);
 
@@ -419,13 +395,13 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
   const onActiveSessionChangeRef = useRef(onActiveSessionChange);
   onActiveSessionChangeRef.current = onActiveSessionChange;
   useEffect(() => {
-    if (router === null) return undefined;
+    if (!active || router === null) return undefined;
     return router.subscribe("onResolved", () => {
       onActiveSessionChangeRef.current?.(
         activeSessionIdFromPathname(router.state.location.pathname),
       );
     });
-  }, [router]);
+  }, [active, router]);
 
   const openSession = useCallback(
     (sessionId: string) => {
@@ -460,7 +436,7 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
   const onApiReadyRef = useRef(onApiReady);
   onApiReadyRef.current = onApiReady;
   useEffect(() => {
-    if (router === null || slug === null) return undefined;
+    if (!active || router === null || slug === null) return undefined;
     const api: LodySessionSurfaceApi = {
       openSession,
       openLanding,
@@ -471,7 +447,7 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     };
     onApiReadyRef.current?.(api);
     return () => onApiReadyRef.current?.(null);
-  }, [router, slug, bridge, openSession, openLanding, openArchive]);
+  }, [active, router, slug, bridge, openSession, openLanding, openArchive]);
 
   // The rail's own copy of the address. `onActiveSessionChange` tells `CloudApp`
   // (which drives routing and persistence); this drives the highlight inside the
@@ -556,7 +532,7 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
 
   const { railHost, rail } = props;
   const railSidebar =
-    railHost === null || railHost === undefined || rail === undefined
+    !active || railHost === null || railHost === undefined || rail === undefined
       ? null
       : createPortal(
           <SessionRailSidebar
@@ -598,13 +574,13 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
       {error !== null && <SurfaceUnavailableNotice reason={error} />}
       {snapshot !== null && router !== null && error === null && (
         <JotaiProvider store={store}>
-          <IpcClientProvider client={ipcClient}>
+          <IpcClientProvider client={ipcClient} localIpcHost>
             <BlitzPlatformProviders
               snapshot={snapshot}
               viewer={viewer}
               workspaceTitle={workspaceTitle}
             >
-              <LodySurfaceProviders>
+              <LodySurfaceProviders active={active}>
                 <RuntimeProvider key={runtimeGeneration}>
                   {railSidebar}
                   {agentAuthNotice(snapshot.machineId)}
@@ -634,8 +610,31 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
   );
 }
 
+/** Standalone/direct-test composition: one surface under one root theme owner. */
+export function SessionSurface(props: LodySessionSurfaceProps) {
+  return (
+    <LodySurfaceThemeRoot>
+      <SessionSurfaceContent {...props} />
+    </LodySurfaceThemeRoot>
+  );
+}
+
+export interface LodySessionSurfaceHostProps extends LodySessionSurfaceProps {
+  /** React identity for the per-box surface below the page-global theme owner. */
+  surfaceKey: string;
+}
+
+/** Lazy region composition. The theme owner survives per-box surface replacement. */
+function LodySessionSurfaceHost({ surfaceKey, ...props }: LodySessionSurfaceHostProps) {
+  return (
+    <LodySurfaceThemeRoot>
+      <SessionSurfaceContent key={surfaceKey} {...props} />
+    </LodySurfaceThemeRoot>
+  );
+}
+
 /** Re-exported here because this is the file a reader comes to for the surface's
  * composition, and `surface-providers.tsx` states why the stack lives alone. */
 export { LodySurfaceProviders };
 
-export default SessionSurface;
+export default LodySessionSurfaceHost;

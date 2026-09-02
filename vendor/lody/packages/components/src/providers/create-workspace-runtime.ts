@@ -187,6 +187,8 @@ type RuntimeDeps = {
   eagerSyncSurface?: EagerSyncSurface;
   /** IPC authority captured for this runtime. Omitted preserves the window-backed default. */
   ipcClient?: LodyIpcClient;
+  /** Explicitly permits local IPC fast paths. Omitted preserves Electron/global-host defaults. */
+  localIpcHost?: boolean;
 };
 
 type LoroStreamsTokenProvider = ReturnType<typeof createLoroStreamsTokenProvider>;
@@ -376,11 +378,10 @@ function createPendingResponseRegistry<T>(defaultTimeoutMs: number) {
 
 export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<WorkspaceRuntime> {
   const ipcClient = deps.ipcClient ?? windowIpcClient;
-  const isLocalIpcHost = (): boolean =>
-    typeof window !== 'undefined' &&
-    (deps.ipcClient !== undefined ||
-      window.__LODY_ELECTRON__ === true ||
-      window.__LODY_LOCAL_BRIDGE__ === true);
+  const localIpcHost =
+    deps.localIpcHost ??
+    (typeof window !== 'undefined' &&
+      (window.__LODY_ELECTRON__ === true || window.__LODY_LOCAL_BRIDGE__ === true));
 
   const createDeferred = <T>() => {
     let resolve: ((value: T | PromiseLike<T>) => void) | undefined;
@@ -1698,6 +1699,7 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
     targetRouter,
     getMachineRpcClient,
     ipcClient,
+    localIpcHost,
   });
 
   const dispatchMachineStatusViaRpc = async (
@@ -2068,7 +2070,7 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
   };
 
   const canUseLocalSessionControl = (message: ClientToServer): boolean => {
-    if (!isLocalIpcHost()) {
+    if (!localIpcHost) {
       return false;
     }
     if (!getIpcServices(ipcClient)) {

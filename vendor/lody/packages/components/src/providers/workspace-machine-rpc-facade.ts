@@ -86,6 +86,8 @@ export type WorkspaceMachineRpcFacadeDeps = {
   targetRouter: Pick<WorkspaceTargetRouter, 'getPlaneForMachine' | 'resolvePlaneForMachine'>;
   getMachineRpcClient: (machineId: MachineId) => Promise<LoroStreamsMachineRpcClient>;
   ipcClient?: LodyIpcClient;
+  /** Explicit capability for Electron/local bridge fast paths. */
+  localIpcHost?: boolean;
 };
 
 const toCodeCollabTransportError = (error: unknown): CodeCollabV2Error => ({
@@ -101,11 +103,10 @@ const getLocalMachineRpcSender = (ipcClient: LodyIpcClient): LocalMachineRpcSend
 export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeDeps) {
   const { workspaceId, targetRouter, getMachineRpcClient } = deps;
   const ipcClient = deps.ipcClient ?? windowIpcClient;
-  const isLocalIpcHost = (): boolean =>
-    typeof window !== 'undefined' &&
-    (deps.ipcClient !== undefined ||
-      window.__LODY_ELECTRON__ === true ||
-      window.__LODY_LOCAL_BRIDGE__ === true);
+  const localIpcHost =
+    deps.localIpcHost ??
+    (typeof window !== 'undefined' &&
+      (window.__LODY_ELECTRON__ === true || window.__LODY_LOCAL_BRIDGE__ === true));
   const codeCollabDiffRpcGate = createAsyncConcurrencyGate(CODE_COLLAB_DIFF_RPC_CONCURRENCY_LIMIT);
 
   const waitForMachineRoute = async (machineId: MachineId): Promise<void> => {
@@ -124,7 +125,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
     await waitForMachineRoute(machineId);
     return Boolean(
       typeof window !== 'undefined' &&
-      isLocalIpcHost() &&
+      localIpcHost &&
       getLocalMachineRpcSender(ipcClient) &&
       targetRouter.getPlaneForMachine(machineId) === 'local'
     );
@@ -186,7 +187,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
     };
     try {
       const result = await (async () => {
-        const isElectron = typeof window !== 'undefined' && isLocalIpcHost();
+        const isElectron = typeof window !== 'undefined' && localIpcHost;
         if (isElectron) {
           // A local Electron file preview must never fall through to the
           // Streams RPC plane. Until the target router identifies the machine,
@@ -1003,7 +1004,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
     try {
       await waitForMachineRoute(machineId);
       if (
-        isLocalIpcHost() &&
+        localIpcHost &&
         getIpcServices(ipcClient) &&
         targetRouter.getPlaneForMachine(machineId) === 'local'
       ) {
@@ -1059,7 +1060,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
     try {
       await waitForMachineRoute(request.machineId);
       if (
-        isLocalIpcHost() &&
+        localIpcHost &&
         getIpcServices(ipcClient) &&
         targetRouter.getPlaneForMachine(request.machineId) === 'local'
       ) {

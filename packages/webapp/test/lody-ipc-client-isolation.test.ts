@@ -6,11 +6,19 @@
  * exercise the real vendor factories and hooks, then add a source audit so an
  * unthreaded helper call cannot quietly reintroduce the singleton.
  */
+import "fake-indexeddb/auto";
 import { createElement } from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LOCAL_LORO_DATA_PLANE_PROTOCOL_VERSION } from "@lody/shared";
+import { Provider as JotaiProvider, createStore } from "jotai";
+import { EphemeralStore } from "loro-crdt";
+import { PlatformContext } from "@lody/platform/react";
+import {
+  LOCAL_LORO_DATA_PLANE_PROTOCOL_VERSION,
+  bytesToBase64,
+  getLodySessionViewingPresenceKey,
+} from "@lody/shared";
 import {
   createBoundIpcClient,
   getIpcServices,
@@ -20,14 +28,57 @@ import {
 import { IpcClientProvider } from "@lody/components/providers/ipc-client-provider";
 import { createLocalLoroDataPlaneConnection } from "@lody/components/providers/local-loro-data-plane-connection";
 import {
+  getLocalPlatformProvider,
   resetLocalPlatformSnapshotState,
   useImplicitLocalWorkspace,
 } from "@lody/components/providers/local-platform-provider";
+import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
 import { createWorkspaceMachineRpcFacade } from "@lody/components/providers/workspace-machine-rpc-facade";
+import { runtimeAtom } from "@lody/components/atoms/runtime";
+import { userAtom } from "@lody/components/atoms";
+import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
+import { setWorkspaceContextAtom } from "@lody/components/atoms/workspace-context";
+import { lodyPresenceStatesAtom } from "@lody/components/atoms/presence";
+import {
+  BlitzPlatformProviders,
+  createBlitzPlatformProvider,
+} from "../src/lody/platform.js";
+import type { LodyPlatformSnapshot } from "../src/lody/platform-snapshot.js";
 import { render, settle } from "./dom.js";
+import {
+  findUnscopedIpcCalls,
+  mountedSourceClosure,
+  workspacePath,
+} from "./lody-ipc-source-closure.js";
 
 type IpcBridge = NonNullable<Window["ipc"]>;
 type Listener = (payload: unknown) => void;
+type TestStore = ReturnType<typeof createStore>;
+type TestIpcClient = {
+  readonly signal: AbortSignal;
+  dispose: () => void;
+};
+type TestWorkspaceRuntime = {
+  setLocalMachineId: (machineId: string | null) => void;
+  requestSessionDispatchTurn: (
+    machineId: string,
+    args: {
+      sessionId: string;
+      userTurnId: string;
+      userId: string;
+      timestamp: string;
+      inputConfig: object;
+    },
+  ) => Promise<object | null>;
+  requestMachineAcpCapabilitiesRefresh: (request: {
+    type: "machine/acp-capabilities-refresh";
+    machineId: string;
+    configId: string;
+    cliType: "builtin";
+    agentType: string;
+  }) => Promise<object | null>;
+  dispose: () => Promise<void>;
+};
 
 interface BoxSnapshot {
   userId: string;
@@ -41,11 +92,13 @@ function snapshotFor(tag: string): BoxSnapshot {
   };
 }
 
-function fakeBridge(tag: string) {
+function fakeBridge(tag: string, options: { snapshotPending?: boolean } = {}) {
   const listeners = new Map<string, Set<Listener>>();
   return {
-    invoke: vi.fn(async (channel: string) => {
-      if (channel === "localPlatform.getSnapshot") return snapshotFor(tag);
+    invoke: vi.fn(async (channel: string, ...args: unknown[]) => {
+      if (channel === "localPlatform.getSnapshot") {
+        return options.snapshotPending === true ? null : snapshotFor(tag);
+      }
       if (channel === "loro.isConnected") return true;
       if (channel === "machineRpc.send") {
         return {
@@ -57,6 +110,21 @@ function fakeBridge(tag: string) {
             accepted: true,
             disposition: "accepted",
           },
+        };
+      }
+      if (channel === "sessionControl.send") {
+        return {
+          ok: true,
+          responses: [
+            {
+              type: "machine/acp-capabilities-refresh_response",
+              machineId: `machine-${tag}`,
+              configId: `config-${tag}`,
+              cliType: "builtin",
+              agentType: "claude",
+              success: true,
+            },
+          ],
         };
       }
       return undefined;
@@ -74,6 +142,9 @@ function fakeBridge(tag: string) {
     emit(channel: string, payload: unknown): void {
       for (const listener of listeners.get(channel) ?? []) listener(payload);
     },
+    listenerCount(channel: string): number {
+      return listeners.get(channel)?.size ?? 0;
+    },
   };
 }
 
@@ -84,17 +155,22 @@ function asIpcBridge(bridge: ReturnType<typeof fakeBridge>): IpcBridge {
   return bridge as unknown as IpcBridge;
 }
 
-const clientsToReset: object[] = [];
+const clientsToReset: TestIpcClient[] = [];
 
-function bind(bridge: ReturnType<typeof fakeBridge>) {
+function bind(bridge: ReturnType<typeof fakeBridge>): TestIpcClient {
   const client = createBoundIpcClient(asIpcBridge(bridge));
   clientsToReset.push(client);
   return client;
 }
 
-function detach(workspaceId: string) {
+function detach(workspaceId: string): {
+  type: "detach";
+  protocolVersion: number;
+  workspaceId: string;
+  peerId: string;
+} {
   return {
-    type: "detach" as const,
+    type: "detach",
     protocolVersion: LOCAL_LORO_DATA_PLANE_PROTOCOL_VERSION,
     workspaceId,
     peerId: `peer-${workspaceId}`,
@@ -107,11 +183,129 @@ function PlatformProbe(props: { report: (workspaceId: string | null) => void }) 
   return null;
 }
 
+function runtimeSnapshotFor(tag: string): LodyPlatformSnapshot {
+  return {
+    machineId: `machine-${tag}`,
+    ...snapshotFor(tag),
+  };
+}
+
+function seedRuntimeStore(store: TestStore, tag: string): () => void {
+  const snapshot = runtimeSnapshotFor(tag);
+  store.set(setWorkspaceContextAtom, {
+    slug: snapshot.workspace.slug,
+    workspaceId: snapshot.workspace.workspaceId,
+  });
+  store.set(userAtom, {
+    id: snapshot.userId,
+    email: `${tag.toLowerCase()}@lody.local`,
+    name: tag,
+    image: null,
+  });
+  const identity = {
+    ok: true,
+    machineId: snapshot.machineId,
+    workspaceId: snapshot.workspace.workspaceId,
+  };
+  const repair = (): void => {
+    if (store.get(localProbeResultAtom) === null) store.set(localProbeResultAtom, identity);
+  };
+  repair();
+  return store.sub(localProbeResultAtom, repair);
+}
+
+async function waitForRuntime(store: TestStore): Promise<TestWorkspaceRuntime> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    // SAFETY: RuntimeProvider writes the vendored WorkspaceRuntime contract to
+    // this atom; the test exercises every member in this local narrowing.
+    const runtime = store.get(runtimeAtom) as TestWorkspaceRuntime | null;
+    if (runtime !== null) return runtime;
+    await settle();
+  }
+  throw new Error("timed out waiting for RuntimeProvider");
+}
+
+function runtimeTree(
+  tag: string,
+  store: TestStore,
+  client: TestIpcClient,
+  options: { localIpcHost?: boolean; cloudMode?: boolean } = {},
+) {
+  const snapshot = runtimeSnapshotFor(tag);
+  const runtime = createElement(RuntimeProvider, null, null);
+  const runtimeForMode = options.cloudMode === true
+    ? createElement(
+        PlatformContext.Provider,
+        {
+          value: {
+            ...createBlitzPlatformProvider({
+              snapshot,
+              viewer: { name: tag, avatarUrl: null },
+              workspaceTitle: `Workspace ${tag}`,
+            }),
+            sync: { mode: "cloud" },
+          },
+        },
+        runtime,
+      )
+    : runtime;
+  return createElement(
+    JotaiProvider,
+    { store },
+    createElement(
+      IpcClientProvider,
+      { client, localIpcHost: options.localIpcHost ?? true },
+      createElement(
+        BlitzPlatformProviders,
+        {
+          snapshot,
+          viewer: { name: tag, avatarUrl: null },
+          workspaceTitle: `Workspace ${tag}`,
+          children: runtimeForMode,
+        },
+      ),
+    ),
+  );
+}
+
+function presenceFrame(tag: string) {
+  const instanceId = `instance-${tag}`;
+  const sessionId = `session-${tag}`;
+  const userId = `user-${tag}`;
+  const now = Date.now();
+  const ephemeral = new EphemeralStore();
+  ephemeral.set(getLodySessionViewingPresenceKey(userId, instanceId), {
+    kind: "session-viewing",
+    userId,
+    instanceId,
+    sessionId,
+    since: now,
+    updatedAt: now,
+  });
+  const frame = {
+    type: "presence",
+    protocolVersion: LOCAL_LORO_DATA_PLANE_PROTOCOL_VERSION,
+    workspaceId: `lw_${tag}`,
+    dataBase64: bytesToBase64(ephemeral.encodeAll()),
+  };
+  ephemeral.destroy();
+  return { frame, key: getLodySessionViewingPresenceKey(userId, instanceId) };
+}
+
+function readPresenceStates(store: TestStore): Record<string, object> {
+  // SAFETY: lodyPresenceStatesAtom always contains the parsed presence map;
+  // RuntimeProvider is the only writer in this harness.
+  return store.get(lodyPresenceStatesAtom) as Record<string, object>;
+}
+
 afterEach(() => {
   for (const client of clientsToReset.splice(0)) {
     resetLocalPlatformSnapshotState(client);
+    client.dispose();
   }
   resetLocalPlatformSnapshotState();
+  // SAFETY: cleanup intentionally narrows the test-owned optional global so it
+  // can remove only that property without changing the Window declaration.
   delete (window as { ipc?: unknown }).ipc;
   vi.restoreAllMocks();
 });
@@ -171,6 +365,11 @@ describe("per-surface IPC ownership", () => {
 
     connectionA?.dispose();
     connectionB?.dispose();
+    bridgeA.emit("loro.event", detach("lw_A-after-dispose"));
+    bridgeB.emit("loro.event", detach("lw_B-after-dispose"));
+    await settle();
+    expect(receivedA).toEqual([detach("lw_A")]);
+    expect(receivedB).toEqual([detach("lw_B")]);
   });
 
   it("settles two simultaneous platform consumers on different daemon identities", async () => {
@@ -179,7 +378,7 @@ describe("per-surface IPC ownership", () => {
     const poison = fakeBridge("poison");
     const clientA = bind(bridgeA);
     const clientB = bind(bridgeB);
-    const observed = { A: null as string | null, B: null as string | null };
+    const observed: { A: string | null; B: string | null } = { A: null, B: null };
 
     window.ipc = asIpcBridge(poison);
     const mounted = await render(
@@ -223,12 +422,14 @@ describe("per-surface IPC ownership", () => {
       targetRouter,
       getMachineRpcClient: noCloudClient,
       ipcClient: bind(bridgeA),
+      localIpcHost: true,
     });
     const facadeB = createWorkspaceMachineRpcFacade({
       workspaceId: "lw_B",
       targetRouter,
       getMachineRpcClient: noCloudClient,
       ipcClient: bind(bridgeB),
+      localIpcHost: true,
     });
 
     window.ipc = asIpcBridge(poison);
@@ -260,114 +461,209 @@ describe("per-surface IPC ownership", () => {
     expect(poison.invoke).not.toHaveBeenCalled();
     expect(noCloudClient).not.toHaveBeenCalled();
   });
+
+  it("mounts two real RuntimeProvider trees and keeps every local plane isolated", async () => {
+    const bridgeA = fakeBridge("A");
+    const bridgeB = fakeBridge("B");
+    const poison = fakeBridge("poison");
+    const clientA = bind(bridgeA);
+    const clientB = bind(bridgeB);
+    const storeA = createStore();
+    const storeB = createStore();
+    const releaseSeedA = seedRuntimeStore(storeA, "A");
+    const releaseSeedB = seedRuntimeStore(storeB, "B");
+
+    window.ipc = asIpcBridge(poison);
+    const mounted = await render(
+      createElement(
+        "div",
+        null,
+        runtimeTree("A", storeA, clientA),
+        runtimeTree("B", storeB, clientB),
+      ),
+    );
+    const runtimeA = await waitForRuntime(storeA);
+    const runtimeB = await waitForRuntime(storeB);
+    const machineA = "machine-A";
+    const machineB = "machine-B";
+    runtimeA.setLocalMachineId(machineA);
+    runtimeB.setLocalMachineId(machineB);
+
+    const responseA = await runtimeA.requestSessionDispatchTurn(machineA, {
+      sessionId: "session-A",
+      userTurnId: "turn-A",
+      userId: "user-A",
+      timestamp: "2026-09-02T00:00:00.000Z",
+      inputConfig: {},
+    });
+    const responseB = await runtimeB.requestSessionDispatchTurn(machineB, {
+      sessionId: "session-B",
+      userTurnId: "turn-B",
+      userId: "user-B",
+      timestamp: "2026-09-02T00:00:00.000Z",
+      inputConfig: {},
+    });
+    const controlA = await runtimeA.requestMachineAcpCapabilitiesRefresh({
+      type: "machine/acp-capabilities-refresh",
+      machineId: machineA,
+      configId: "config-A",
+      cliType: "builtin",
+      agentType: "claude",
+    });
+    const controlB = await runtimeB.requestMachineAcpCapabilitiesRefresh({
+      type: "machine/acp-capabilities-refresh",
+      machineId: machineB,
+      configId: "config-B",
+      cliType: "builtin",
+      agentType: "claude",
+    });
+
+    const presenceA = presenceFrame("A");
+    const presenceB = presenceFrame("B");
+    bridgeA.emit("loro.event", presenceA.frame);
+    bridgeB.emit("loro.event", presenceB.frame);
+    poison.emit("loro.event", presenceFrame("poison").frame);
+    await settle();
+
+    expect(responseA).toMatchObject({ sessionId: "session-A", userTurnId: "turn-A" });
+    expect(responseB).toMatchObject({ sessionId: "session-B", userTurnId: "turn-B" });
+    expect(controlA).toMatchObject({ machineId: "machine-A", configId: "config-A" });
+    expect(controlB).toMatchObject({ machineId: "machine-B", configId: "config-B" });
+    expect(readPresenceStates(storeA)).toHaveProperty(presenceA.key);
+    expect(readPresenceStates(storeA)).not.toHaveProperty(presenceB.key);
+    expect(readPresenceStates(storeB)).toHaveProperty(presenceB.key);
+    expect(readPresenceStates(storeB)).not.toHaveProperty(presenceA.key);
+    expect(bridgeA.send).toHaveBeenCalledWith("loro.subscribe", null);
+    expect(bridgeB.send).toHaveBeenCalledWith("loro.subscribe", null);
+    expect(bridgeA.invoke).toHaveBeenCalledWith("machineRpc.send", expect.any(Object));
+    expect(bridgeB.invoke).toHaveBeenCalledWith("machineRpc.send", expect.any(Object));
+    expect(bridgeA.invoke).toHaveBeenCalledWith("sessionControl.send", expect.any(Object));
+    expect(bridgeB.invoke).toHaveBeenCalledWith("sessionControl.send", expect.any(Object));
+    expect(poison.invoke).not.toHaveBeenCalled();
+    expect(poison.send).not.toHaveBeenCalled();
+    expect(poison.on).not.toHaveBeenCalled();
+
+    await mounted.unmount();
+    await Promise.all([runtimeA.dispose(), runtimeB.dispose()]);
+    clientA.dispose();
+    clientB.dispose();
+    releaseSeedA();
+    releaseSeedB();
+    bridgeA.emit("loro.event", presenceFrame("A-after-dispose").frame);
+    bridgeB.emit("loro.event", presenceFrame("B-after-dispose").frame);
+    await settle();
+    expect(bridgeA.listenerCount("loro.event")).toBe(0);
+    expect(bridgeB.listenerCount("loro.event")).toBe(0);
+    expect(readPresenceStates(storeA)).toEqual({});
+    expect(readPresenceStates(storeB)).toEqual({});
+  }, 30_000);
+
+  it("releases a never-settling platform poll when its client is disposed", async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = fakeBridge("pending", { snapshotPending: true });
+      const client = bind(bridge);
+      getLocalPlatformProvider(client);
+      await Promise.resolve();
+      expect(bridge.invoke).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(bridge.invoke).toHaveBeenCalledTimes(4);
+      const capturedServices = getIpcServices(client);
+      client.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(bridge.invoke).toHaveBeenCalledTimes(4);
+      expect(getIpcServices(client)).toBeNull();
+      await expect(capturedServices?.loro.isConnected()).rejects.toThrow("IPC client is disposed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not infer a local host from a client supplied to a cloud assembly", async () => {
+    const bridge = fakeBridge("cloud");
+    const cloudResponse: {
+      type: "session/dispatch-turn_response";
+      sessionId: string;
+      userTurnId: string;
+      accepted: boolean;
+      disposition: "accepted";
+    } = {
+      type: "session/dispatch-turn_response",
+      sessionId: "session-cloud",
+      userTurnId: "turn-cloud",
+      accepted: true,
+      disposition: "accepted",
+    };
+    const cloudRequest = vi.fn(async () => cloudResponse);
+    const facade = createWorkspaceMachineRpcFacade({
+      workspaceId: "lw_cloud",
+      targetRouter: {
+        getPlaneForMachine: (): "local" => "local",
+        resolvePlaneForMachine: async (): Promise<"local"> => "local",
+      },
+      getMachineRpcClient: async () => ({ requestSessionDispatchTurn: cloudRequest }),
+      ipcClient: bind(bridge),
+    });
+
+    const response = await facade.requestSessionDispatchTurn("machine-cloud", {
+      sessionId: "session-cloud",
+      userTurnId: "turn-cloud",
+      userId: "user-cloud",
+      timestamp: "2026-09-02T00:00:00.000Z",
+      inputConfig: {},
+    });
+
+    expect(response).toEqual(cloudResponse);
+    expect(cloudRequest).toHaveBeenCalledTimes(1);
+    expect(bridge.invoke).not.toHaveBeenCalledWith("machineRpc.send", expect.anything());
+  });
+
+  it("keeps an actual cloud-mode RuntimeProvider off a supplied local client", async () => {
+    const bridge = fakeBridge("cloud-runtime");
+    const poison = fakeBridge("poison");
+    const client = bind(bridge);
+    const store = createStore();
+    const releaseSeed = seedRuntimeStore(store, "cloud-runtime");
+    window.ipc = asIpcBridge(poison);
+
+    const mounted = await render(
+      runtimeTree("cloud-runtime", store, client, {
+        localIpcHost: false,
+        cloudMode: true,
+      }),
+    );
+    const runtime = await waitForRuntime(store);
+    runtime.setLocalMachineId("machine-cloud-runtime");
+    await runtime.requestSessionDispatchTurn("machine-cloud-runtime", {
+      sessionId: "session-cloud-runtime",
+      userTurnId: "turn-cloud-runtime",
+      userId: "user-cloud-runtime",
+      timestamp: "2026-09-02T00:00:00.000Z",
+      inputConfig: {},
+    });
+
+    expect(bridge.invoke).not.toHaveBeenCalledWith("machineRpc.send", expect.anything());
+    expect(poison.invoke).not.toHaveBeenCalled();
+    await mounted.unmount();
+    await runtime.dispose();
+    releaseSeed();
+  });
 });
 
-const SURFACE_SCOPED_SOURCE_FILES = [
-  "providers/ipc-client-provider.tsx",
-  "providers/local-platform-provider.ts",
-  "providers/local-loro-data-plane-connection.ts",
-  "providers/create-workspace-runtime.ts",
-  "providers/runtime-provider.tsx",
-  "providers/workspace-machine-rpc-facade.ts",
-  "components/chat/chat-landing.tsx",
-  "components/mentions/mention-project-file-source.ts",
-  "components/sessions/session-file-content-view.tsx",
-  "components/sessions/session-detail.tsx",
-  "components/sessions/session-chat-input-area.tsx",
-  "hooks/use-chat-landing-file-draft.ts",
-  "hooks/use-local-project-file-paths.ts",
-  "hooks/use-local-projects-admin.ts",
-  "hooks/use-session-actions.ts",
-  "lib/electron-session-file-sender.ts",
-  "lib/local-project-rpc-file-provider.ts",
-  "lib/project-history-control-client.ts",
-] as const;
-
-const IPC_HELPER_NAMES = [
-  "getIpcServices",
-  "onIpcEvent",
-  "sendIpc",
-  "sendLocalSessionControl",
-] as const;
-
-/** Find the closing parenthesis while ignoring parentheses in strings/comments. */
-function findCallEnd(source: string, openingParenthesis: number): number {
-  let depth = 1;
-  let quote: "\"" | "'" | "`" | null = null;
-  let lineComment = false;
-  let blockComment = false;
-  for (let index = openingParenthesis + 1; index < source.length; index += 1) {
-    const character = source[index];
-    const next = source[index + 1];
-    if (lineComment) {
-      if (character === "\n") lineComment = false;
-      continue;
-    }
-    if (blockComment) {
-      if (character === "*" && next === "/") {
-        blockComment = false;
-        index += 1;
-      }
-      continue;
-    }
-    if (quote) {
-      if (character === "\\") {
-        index += 1;
-      } else if (character === quote) {
-        quote = null;
-      }
-      continue;
-    }
-    if (character === "/" && next === "/") {
-      lineComment = true;
-      index += 1;
-      continue;
-    }
-    if (character === "/" && next === "*") {
-      blockComment = true;
-      index += 1;
-      continue;
-    }
-    if (character === "\"" || character === "'" || character === "`") {
-      quote = character;
-      continue;
-    }
-    if (character === "(") depth += 1;
-    if (character === ")") {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
-  }
-  return source.length;
-}
-
-function findUnscopedIpcCalls(relativePath: string): string[] {
-  const file = resolve(
-    process.cwd(),
-    "../../vendor/lody/packages/components/src",
-    relativePath,
-  );
-  const sourceText = readFileSync(file, "utf8");
-  const failures: string[] = [];
-  for (const helperName of IPC_HELPER_NAMES) {
-    const callPattern = new RegExp(`\\b${helperName}\\s*\\(`, "gu");
-    for (const match of sourceText.matchAll(callPattern)) {
-      const matchIndex = match.index;
-      const openingParenthesis = sourceText.indexOf("(", matchIndex);
-      const closingParenthesis = findCallEnd(sourceText, openingParenthesis);
-      const argumentsText = sourceText.slice(openingParenthesis + 1, closingParenthesis);
-      if (!/\bipcClient\b/u.test(argumentsText)) {
-        const line = sourceText.slice(0, matchIndex).split("\n").length;
-        failures.push(`${relativePath}:${line} ${helperName}`);
-      }
-    }
-  }
-  return failures;
-}
-
 describe("mounted Lody IPC conversion inventory", () => {
-  it("contains no ambient helper calls in the runtime or Blitz-mounted route tree", () => {
-    expect(SURFACE_SCOPED_SOURCE_FILES.flatMap(findUnscopedIpcCalls)).toEqual([]);
+  it("contains no ambient helper calls in the runtime or Blitz-mounted route tree", async () => {
+    const closure = await mountedSourceClosure();
+    expect(closure.map(workspacePath)).toContain(
+      "vendor/lody/packages/components/src/components/sessions/public-browser-surface.tsx",
+    );
+    expect(closure.map(workspacePath)).toContain(
+      "vendor/lody/packages/components/src/components/sessions/session-browser-panel.tsx",
+    );
+    expect(closure.flatMap(findUnscopedIpcCalls)).toEqual([]);
   });
 
   it("binds and provides the client at both Blitz runtime entry points", () => {
@@ -375,12 +671,18 @@ describe("mounted Lody IPC conversion inventory", () => {
       resolve(process.cwd(), "src/lody/SessionSurface.tsx"),
       "utf8",
     );
+    const surfaceIpc = readFileSync(resolve(process.cwd(), "src/lody/surface-ipc.ts"), "utf8");
     const headlessRuntime = readFileSync(resolve(process.cwd(), "src/lody/runtime.ts"), "utf8");
 
-    expect(sessionSurface).toMatch(/createBoundIpcClient\(bridge\.ipc\)/u);
-    expect(sessionSurface).toMatch(/<IpcClientProvider client=\{ipcClient\}>/u);
+    expect(surfaceIpc).toMatch(/createBoundIpcClient\(bridge\.ipc\)/u);
+    expect(surfaceIpc).toMatch(/if \(!active\) return undefined;\s+return publishLodyLocalBridge/u);
+    expect(sessionSurface).toMatch(/useLodySurfaceIpc\(endpoints\)/u);
+    expect(sessionSurface).toMatch(/<IpcClientProvider client=\{ipcClient\} localIpcHost>/u);
+    expect(sessionSurface).toMatch(
+      /<LodySurfaceThemeRoot>\s+<SessionSurfaceContent key=\{surfaceKey\}/u,
+    );
     expect(sessionSurface).not.toMatch(/resetLocalPlatformSnapshotState/u);
     expect(headlessRuntime).toMatch(/createBoundIpcClient\(bridge\.ipc\)/u);
-    expect(headlessRuntime).toMatch(/eagerSyncSurface: "web",\s+ipcClient,/u);
+    expect(headlessRuntime).toMatch(/eagerSyncSurface: "web",\s+ipcClient,\s+localIpcHost: true,/u);
   });
 });

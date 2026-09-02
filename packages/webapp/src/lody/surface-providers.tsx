@@ -1,6 +1,7 @@
 /**
  * The surface's provider stack, in the order design doc §1.4 fixes: i18n, the
- * theme tree, tooltips — and the toast host.
+ * per-surface i18n/tooltips and the active surface's toast host. The root theme
+ * owner is separate because it is page-global, not runtime/store state.
  *
  * ITS OWN MODULE, for the reason `shell-theme.tsx` gives about itself. Mounting
  * `SessionSurface` in a test costs the whole vendored renderer — Monaco, shiki,
@@ -62,18 +63,29 @@ import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
  */
 export const LODY_TOASTER_HOST_CLASS = "lody-surface__toaster";
 
-export function LodySurfaceProviders(props: { children: ReactNode }) {
-  const i18n = useMemo(() => initLodyI18n(), []);
+/**
+ * One page-global Lody theme owner around every surface slot.
+ *
+ * The provider reads no Jotai store or workspace runtime. Hoisting it keeps an
+ * inactive or evicted surface's VS Code-theme cleanup from clearing root CSS
+ * state installed by the active surface.
+ */
+export function LodySurfaceThemeRoot(props: { children: ReactNode }) {
   const theme = useMemo(() => adoptShellTheme(), []);
-  // Beside the theme adoption for the same reason: both write a key their own
-  // code reads on first render, so both have to happen before that render.
+  return <BlitzThemedLodyTree theme={theme}>{props.children}</BlitzThemedLodyTree>;
+}
+
+export function LodySurfaceProviders(props: { children: ReactNode; active?: boolean }) {
+  const i18n = useMemo(() => initLodyI18n(), []);
+  // This writes a key vendored code reads on first render, so it must happen
+  // before that render just like the hoisted root's theme adoption.
   useMemo(() => seedWorktreeWorkdirDefault(), []);
   return (
     <I18nextProvider i18n={i18n}>
-      <BlitzThemedLodyTree theme={theme}>
-        <TooltipProvider>{props.children}</TooltipProvider>
+      <TooltipProvider>{props.children}</TooltipProvider>
+      {props.active !== false && (
         <div className={LODY_TOASTER_HOST_CLASS}><Toaster /></div>
-      </BlitzThemedLodyTree>
+      )}
     </I18nextProvider>
   );
 }

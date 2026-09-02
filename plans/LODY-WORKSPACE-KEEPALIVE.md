@@ -1,8 +1,8 @@
 # Lody workspace keep-alive (Tier 2)
 
-Status: Phase A is implemented locally and has a behavioral + mutation-tested
-gate. Phase B remains the active prerequisite. The keep-alive pool is not
-allowed to mount until the shared-cache gates below are green.
+Status: Phase A and the non-effect Phase B audit are implemented locally with
+behavioral gates. Phase C remains the active step: it adds the pool and the
+React `Activity` boundary, then proves effect-scoped quiescence while hidden.
 
 ## Goal and measured budget
 
@@ -10,13 +10,32 @@ An already-visited workspace should return without rebuilding its Lody
 renderer, IndexedDB-backed `LoroRepo`, WASM state, data-plane WebSocket, room
 subscriptions, router, drafts, selection, or scroll position.
 
-The original verified compute-only baseline is 751 ms for a warm remount
-(`packages/webapp/test/lody-switch-cost.probe.test.tsx`). After Phase A, the
-same probe measured 1,579 ms cold, 784 ms warm, and 772 ms warm with bootstrap
-stubbed. That is noise around the same rebuild floor, not a speed claim. A
-retained surface should activate in one render frame, targeting 10-50 ms:
-roughly 700-740 ms saved in the probe, plus the field's serialized tunnel round
-trips.
+The measured warm remount is **541.5 ms**. A bootstrap-stubbed warm remount is
+**502.1 ms**, so React/router/provider reconstruction accounts for roughly 500
+ms; runtime/socket/bootstrap work accounts for roughly **39.5 ms**. Retaining
+the tree therefore removes the dominant cost. A retained surface should still
+activate in one render frame, targeting 10-50 ms.
+
+One instrumented run (the probe observes its endpoint on a roughly 100 ms
+sampling interval; no distribution or confidence interval is claimed):
+
+| Phase | ms | Notes |
+|---|---:|---|
+| Initial render → first blank React commit | 2.6 | Providers wait for the platform snapshot. |
+| First commit → platform snapshot ready | 9.6 | Snapshot ready at 12.2 ms total. |
+| Snapshot ready → router created | 91.0 | Includes synchronous memory-router construction. |
+| Router created → provider/snapshot commit | 140.0 | Jotai, platform, theme and runtime-provider tree construction. |
+| Provider commit → runtime create start | 13.4 | Cache-clear await and effect scheduling. |
+| `createWorkspaceRuntime` | 5.8 | LoroRepo/IndexedDB 3.7 ms; local transport 0.9 ms; initial meta sync 0.7 ms; other 0.5 ms. |
+| Runtime return → agent bootstrap ready | 26.5 | Bootstrap itself was 24.8 ms. |
+| Bootstrap ready → rail/gate commit | 74.0 | Rail ready at 362.85 ms. |
+| Gate commit → first non-starting content observed | 178.6 | Heavy route render plus probe polling quantization. |
+| **Warm total** | **541.5** | One measured run. |
+
+The data-plane WebSocket opened at 260.67 ms and connected at 268.11 ms: 7.4
+ms, overlapping runtime/bootstrap work. Observed totals were 943.186 ms cold,
+541.538 ms warm, and 502.086 ms warm with bootstrap stubbed; warm minus stubbed
+was 39.452 ms.
 
 ## Non-negotiable invariants
 
@@ -27,9 +46,9 @@ trips.
    existing helper continues to read `window.ipc` exactly as it does today.
 3. A cache key is a daemon-minted identity or a bridge/client instance, never a
    URL. A rescue rebuild can put a new `lw_` identity at the same URL.
-4. Two renderer stores may not share referential memo state. Keep-alive remains
-   disabled until the doc-meta, machine, presence, and machine-flock caches are
-   scoped by store/runtime.
+4. Two renderer stores may share referential stabilization only where a
+   two-store gate proves distinct daemon identities still return correct
+   values. Runtime data, transports and writable state remain surface-scoped.
 5. Only the active surface may publish shell callbacks or portal its rail.
    Hidden surfaces retain their runtime but cannot overwrite the visible
    workspace's shell state.
@@ -125,26 +144,24 @@ the default window client produced three independent failures (data plane,
 platform identity, and dispatch routing); restoring the capture made all six
 checks pass.
 
-### Phase A validation record (2026-09-02)
+### Phase A + non-effect Phase B validation record (2026-09-02)
 
-- IPC isolation gate: 6/6 passed after the mutation was restored.
-- Focused required Lody floor: 9 files passed, 53 tests passed, 1 skipped.
-- `npm run typecheck`: passed.
-- `npm run lint:gate`: passed at 74 anti-slop, 0 house, 8 max-lines.
-- `npm test`: the first run passed all 110 webapp files / 937 tests but hit an
-  unrelated guest CLI assertion because this runner supplied conflicting
-  `NO_COLOR` and `FORCE_COLOR`; the unchanged guest paths passed 4/4 with the
-  conflict removed. Subsequent clean-color runs exposed the documented
-  `lody-tab-selection-sync` load flake and real-relay 60-second timeouts.
-  Crucially, a detached, unchanged `HEAD` worktree reproduced the relay timeout
-  in isolation on a different relay assertion. The full root command therefore
-  does not currently produce a stable zero with this daemon bundle; do not
-  misattribute that baseline nondeterminism to seam 18.
+- IPC isolation gate: 10/10 passed, including two real provider trees, disposal,
+  import-closure inventory and an actual cloud-mode runtime.
+- Focused required Lody floor: 11 unique files, 79 tests passed, 2 skipped. The
+  first aggregate run's two concurrent renderer imports exhausted their
+  240-second hook budget; the same two files passed serially, 17 passed / 2
+  skipped.
+- `npm run typecheck`: passed across all workspaces.
+- `npm run lint:gate`: passed at 66 anti-slop, 0 house, 8 unchanged max-lines
+  warnings.
+- `git diff --check`: passed. The temporary Vite filesystem allowlist needed
+  for the shared icon dependency was reverted.
 
 ### Upstream conflict footprint
 
-Phase A currently touches 19 vendor source files: seven central
-client/provider/runtime files (including one new provider) and twelve mounted
+Seam 18 now touches 21 vendor source files: seven central
+client/provider/runtime files (including one new provider) and fourteen mounted
 helper/leaf callers. The caller changes are intentionally repetitive—one
 context hook, an optional client argument, and dependency-list entries—with no
 component restructure. An upstream pull only conflicts when upstream edits
@@ -152,18 +169,35 @@ those same few call-site lines; the generic central seam can be dropped
 wholesale once the fork PR lands. Keep this phase in its own commit so a subtree
 re-pin never has to reconcile it with cache isolation or the Blitz-owned LRU.
 
-## Phase B: shared cache isolation
+## Phase B: non-effect shared-state disposition
 
-Before two real surfaces mount, add two-store tests and scope these caches:
+`packages/webapp/test/lody-two-store-memos.test.ts` interleaves two independent
+Jotai stores with distinct daemon-minted session, machine and presence IDs.
+Doc-meta, machine and presence derived values remain correct. Cross-store memo
+reference churn is allowed; wrong values are not. Phase C must prevent two live
+entries for the same daemon identity and add one hidden-surface test for every
+item delegated to the `Activity` boundary.
 
-- `atoms/doc-meta.ts`: previous session-list values and atom-family closure
-  memos;
-- `atoms/machines.ts`: previous machine meta map;
-- `atoms/presence.ts`: previous online-machine-id set;
-- `hooks/use-machine-flock-rows.ts`: sync state and listener maps by runtime,
-  matching its existing runtime-keyed WeakMaps;
-- `lib/clear-local-cache.ts`: consume the per-database page-lifetime behaviour
-  from Lody fork PR #19 before a second live runtime can open the same DB.
+| Item | Disposition |
+|---|---|
+| Doc-meta `_prev*` and atom-family closure memos | **Accepted.** The two-store gate proves correct values with distinct daemon IDs; only referential churn remains. No vendor edit. |
+| Machine-meta `_prevMachineMetaMap` | **Accepted.** Correct under the same two-store gate; wrong only on a daemon-ID collision forbidden by the pool key. |
+| Presence `_prevOnlineMachineIds` | **Accepted.** Correct under the same two-store gate; wrong only on a machine-ID collision. |
+| Machine-flock sync/listener Maps | **Accepted.** Keys already include workspace and machine; duplicate mounting of one daemon identity is forbidden by Phase C. Entries are otherwise wasted work, not cross-box values. |
+| Page-global boot-clear promise | **Accepted.** Distinct daemon identities use distinct database names and the page promise only coordinates boot clearing; no A/B data leak is demonstrated. |
+| Auth-client singleton | **Accepted inert.** Blitz supplies its auth client directly in `packages/webapp/src/lody/platform.tsx` and never calls `createLodyAuthClient`. |
+| Shared server-time offset | **Accepted inert.** Blitz does not mount `AppInitializer`, the only sync caller. |
+| Monaco URI/model/provider ownership | **Deferred to Phase C hidden-surface tests.** The editor controllers/providers live in route-tree effects; React 19.2 `Activity mode="hidden"` cleans those effects while preserving state/DOM, so an inactive box cannot own the path-keyed provider. |
+| Global keyboard handlers | **Deferred to Phase C hidden-surface tests.** Their route-tree effects are disconnected by the `Activity` boundary. |
+| Session-viewing presence | **Deferred to Phase C hidden-surface tests.** `usePublishSessionViewing` is route-effect scoped; hiding actively runs its cleanup. |
+| Global Sonner store / per-surface toaster | **Fixed** in `packages/webapp/src/lody/surface-providers.tsx`: only the `active` surface mounts the toast renderer. |
+| Session-mention slug map | **Accepted.** It is wrong only across boxes sharing a slug when a stale draft from the other box is expanded; session IDs remain daemon-minted and Phase C activation replaces the address owner. |
+| Managed-preview frame LRU | **Accepted warm-state loss only.** Cross-box eviction can discard a hidden preview iframe, but does not route work to the wrong box; the session's durable browser state remains authoritative. |
+| Root theme/CSS-variable ownership | **Fixed** in `packages/webapp/src/lody/SessionSurface.tsx` and `surface-providers.tsx`: one theme provider is hoisted above the keyed surface, and inactive surfaces never own the root. |
+| Command registry singleton | **Accepted inert.** Blitz mounts neither `commands.attach(window)` nor `CommandPalette`, so no dispatcher consumes stacked registrations. |
+| Unsettled local-platform interval | **Fixed** by seam 18: bound-client disposal aborts the poll, deletes its client state and disables later invokes. |
+| Per-runtime page listeners/timers | **Accepted live runtime work.** They are correct per runtime, required for continuity/reconnect, and fully removed by runtime disposal on eviction. |
+| Monaco worker/theme one-time registration | **Accepted.** Definitions are page-global, workspace-independent and idempotent. |
 
 ## Phase C: identity-keyed keep-alive pool
 
@@ -171,6 +205,12 @@ Implement an LRU in `LodySessionsRegion`, initially capped at two total live
 surfaces. Owned surfaces are cacheable. A shared surface is initially transient
 and may coexist with only the most-recent owned surface, making the common
 shared-to-own return instant without retaining revocable foreign access.
+
+Retain each surface's bridge, store, runtime providers and router. Wrap the
+route tree (`RouterProvider` and below) in React 19.2
+`<Activity mode="hidden">` while inactive. Only the active surface publishes
+shell callbacks, portals its rail, mounts the toaster and installs compatibility
+`window.ipc`; the `active` prop added in Phase B already names that ownership.
 
 Key retained entries by `(machineId, lw_workspaceId)` and store their bridge,
 IPC client, Jotai store, runtime, router, and last-used sequence together. Never

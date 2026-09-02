@@ -32,6 +32,7 @@ type LocalPlatformClientState = {
   workspacesStore: MutableStore<WorkspacesState> | null;
   pollingStarted: boolean;
   pollInterval: ReturnType<typeof setInterval> | null;
+  releaseDisposeListener: () => void;
 };
 
 const LOCAL_PLATFORM_STATE_BY_CLIENT = new WeakMap<LodyIpcClient, LocalPlatformClientState>();
@@ -45,7 +46,14 @@ function getLocalPlatformClientState(ipcClient: LodyIpcClient): LocalPlatformCli
     workspacesStore: null,
     pollingStarted: false,
     pollInterval: null,
+    releaseDisposeListener: () => {},
   };
+  const dispose = () => {
+    stopLocalPlatformSnapshotPolling(created);
+    LOCAL_PLATFORM_STATE_BY_CLIENT.delete(ipcClient);
+  };
+  ipcClient.signal.addEventListener('abort', dispose, { once: true });
+  created.releaseDisposeListener = () => ipcClient.signal.removeEventListener('abort', dispose);
   LOCAL_PLATFORM_STATE_BY_CLIENT.set(ipcClient, created);
   return created;
 }
@@ -127,6 +135,7 @@ function getLocalSessionStore(state: LocalPlatformClientState): MutableStore<Pla
 }
 
 function ensureLocalPlatformSnapshotPolling(ipcClient: LodyIpcClient): void {
+  if (ipcClient.signal.aborted) return;
   const state = getLocalPlatformClientState(ipcClient);
   if (state.pollingStarted) return;
   state.pollingStarted = true;
@@ -143,6 +152,7 @@ export function resetLocalPlatformSnapshotState(ipcClient: LodyIpcClient = windo
   const state = LOCAL_PLATFORM_STATE_BY_CLIENT.get(ipcClient);
   if (!state) return;
   stopLocalPlatformSnapshotPolling(state);
+  state.releaseDisposeListener();
   LOCAL_PLATFORM_STATE_BY_CLIENT.delete(ipcClient);
 }
 

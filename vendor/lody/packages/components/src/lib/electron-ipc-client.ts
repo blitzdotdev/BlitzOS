@@ -28,12 +28,14 @@ export type LodyIpcBridge = LodyIpcInvokeBridge & {
  * the default window client deliberately resolves the bridge again per call.
  */
 export type LodyIpcClient = {
+  readonly signal: AbortSignal;
   getServices: () => IpcServices | null;
   on: <K extends keyof IpcPushMap>(
     channel: K,
     handler: (payload: IpcPushMap[K]) => void
   ) => () => void;
   send: <K extends keyof IpcSendMap>(channel: K, payload: IpcSendMap[K]) => void;
+  dispose: () => void;
 };
 
 export function createLodyIpcProxy<T extends Record<string, object> = IpcServices>(
@@ -67,6 +69,7 @@ function readIpcBridge(): LodyIpcBridge | null {
 
 function createIpcClient(readBridge: () => LodyIpcBridge | null): LodyIpcClient {
   return {
+    signal: new AbortController().signal,
     getServices: () => createLodyIpcProxy<IpcServices>(readBridge()),
     on: (channel, handler) => {
       const bridge = readBridge();
@@ -79,6 +82,7 @@ function createIpcClient(readBridge: () => LodyIpcBridge | null): LodyIpcClient 
     send: (channel, payload) => {
       readBridge()?.send(channel, payload);
     },
+    dispose: () => {},
   };
 }
 
@@ -91,7 +95,19 @@ export const windowIpcClient: LodyIpcClient = createIpcClient(readIpcBridge);
 
 /** Capture one bridge for a surface/runtime lifetime. */
 export function createBoundIpcClient(bridge: LodyIpcBridge): LodyIpcClient {
-  return createIpcClient(() => bridge);
+  const controller = new AbortController();
+  const guardedBridge: LodyIpcBridge = {
+    ...bridge,
+    invoke: (channel, ...args) =>
+      controller.signal.aborted
+        ? Promise.reject(new Error('IPC client is disposed'))
+        : bridge.invoke(channel, ...args),
+  };
+  return {
+    ...createIpcClient(() => (controller.signal.aborted ? null : guardedBridge)),
+    signal: controller.signal,
+    dispose: () => controller.abort(),
+  };
 }
 
 export function getIpcServices(client: LodyIpcClient = windowIpcClient): IpcServices | null {

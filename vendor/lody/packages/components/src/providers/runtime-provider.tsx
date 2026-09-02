@@ -28,7 +28,7 @@ import { createWorkspaceRuntime } from './create-workspace-runtime';
 import { resolveCloudPlatformRuntimePolicy } from './cloud-platform-runtime-policy';
 import type { EagerSyncSurface } from './background-sync-coordinator';
 import { resolveEffectiveWorkspaceId } from './resolve-effective-workspace-id';
-import { useIpcClient } from './ipc-client-provider';
+import { useIpcClient, useLocalIpcHost } from './ipc-client-provider';
 import { useImplicitLocalWorkspace } from './local-platform-provider';
 import { capturePostHogEvent } from '@/lib/posthog-analytics';
 import { maybeClearLodyCacheOnBoot } from '@/lib/clear-local-cache';
@@ -64,6 +64,7 @@ const resolveRuntimeEagerSyncSurface = (): EagerSyncSurface => {
 
 export function RuntimeProvider({ children }: { children: ReactNode }) {
   const ipcClient = useIpcClient();
+  const localIpcHost = useLocalIpcHost();
   const platform = usePlatform();
   // Use workspaceSlug for runtime initialization (available immediately from URL)
   // Use workspaceId for WebSocket connections (requires server response)
@@ -263,6 +264,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
           // re-probe Electron or cloud configuration inside the runtime.
           syncMode: platform.sync.mode,
           ipcClient,
+          localIpcHost,
           getAuthorizedMachineIds: () => {
             const snapshot = authorizedMachineIdsRef.current;
             return snapshot?.workspaceId === effectiveWorkspaceId ? snapshot.machineIds : null;
@@ -369,6 +371,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     workspaceSlug,
     effectiveWorkspaceId,
     ipcClient,
+    localIpcHost,
     localAgentRuntimeReady,
   ]);
 

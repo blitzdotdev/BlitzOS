@@ -5,9 +5,10 @@
  * THE TRANSPORT SHAPE IS ELECTRON'S IPC SEAM. `createLodyIpcProxy` dispatches
  * `groupName.methodName` by string, so nothing about the bridge itself is
  * Electron-specific. A `SessionSurface` now captures this object in a bound IPC
- * client and injects that authority into its renderer subtree. `window.ipc` is
- * still installed for unchanged Electron/default callers, but it is no longer
- * the authority used by a Blitz runtime after construction; see seam patch 18.
+ * client and injects that authority into its renderer subtree. The active
+ * surface still installs `window.ipc` for unchanged Electron/default callers,
+ * but it is no longer the authority used by a Blitz runtime after construction;
+ * see seam patch 18.
  *
  * DO NOT SET `window.__LODY_ELECTRON__`. Forty-four sites read it — window
  * controls in `routes/__root.tsx`, `electron-menu-handler`,
@@ -130,8 +131,8 @@ interface PushListeners {
 type ProjectFailureStyle = "error" | "throw" | "null" | "success";
 
 /**
- * Builds the bridge. `installLodyLocalBridge` puts it on `window`; a test can
- * hold it instead.
+ * Builds the bridge. `publishLodyLocalBridge` or the compatibility installer
+ * puts it on `window`; a test can hold it instead.
  *
  * The data-plane socket is opened lazily on the first `loro.subscribe`, which is
  * what `createLocalLoroDataPlaneConnection` sends before anything else. Opening
@@ -148,6 +149,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
   let dataPlane: LodyDataPlaneConnectionHandle | null = null;
   let unsubscribeMessages: (() => void) | null = null;
   let unsubscribeStatus: (() => void) | null = null;
+  let disposed = false;
 
   const openDataPlane = (): LodyDataPlaneConnectionHandle => {
     if (dataPlane !== null) return dataPlane;
@@ -287,6 +289,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
   }
 
   const invoke = async (channel: string, ...args: LodyIpcArgument[]): Promise<LodyIpcReply> => {
+    if (disposed) throw new Error("lody_ipc_bridge_disposed");
     switch (channel) {
       case "loro.isConnected":
         return dataPlane?.connection.isConnected() ?? false;
@@ -472,6 +475,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
   };
 
   const send = (channel: string, payload?: LodyIpcSendPayload): void => {
+    if (disposed) return;
     switch (channel) {
       case "loro.subscribe":
         openDataPlane();
@@ -491,6 +495,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
   };
 
   const on = (channel: string, listener: (payload: LodyIpcPush) => void): (() => void) => {
+    if (disposed) return () => {};
     switch (channel) {
       case "loro.event": {
         listeners.loroEvent.add(listener);
@@ -531,6 +536,8 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
       },
     unsupportedChannels: () => [...unsupported],
     dispose: () => {
+      if (disposed) return;
+      disposed = true;
       unsubscribeMessages?.();
       unsubscribeStatus?.();
       dataPlane?.dispose();
@@ -575,6 +582,18 @@ export function installLodyLocalBridge(
   bridge: LodyLocalBridge,
   target: Window & typeof globalThis = window,
 ): () => void {
+  const unpublish = publishLodyLocalBridge(bridge, target);
+  return () => {
+    unpublish();
+    bridge.dispose();
+  };
+}
+
+/** Publishes compatibility globals without owning the bridge's lifetime. */
+export function publishLodyLocalBridge(
+  bridge: LodyLocalBridge,
+  target: Window & typeof globalThis = window,
+): () => void {
   target.ipc = bridge.ipc;
   target.__LODY_LOCAL_BRIDGE__ = true;
   return () => {
@@ -596,8 +615,5 @@ export function installLodyLocalBridge(
       delete target.ipc;
       delete target.__LODY_LOCAL_BRIDGE__;
     }
-    // Ownership decides the GLOBAL, never the socket. This bridge's data plane
-    // closes either way, or a switch leaks a WebSocket per visited workspace.
-    bridge.dispose();
   };
 }

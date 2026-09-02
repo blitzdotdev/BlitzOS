@@ -30,7 +30,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { toast } from "sonner";
-import { LodySurfaceProviders, LODY_TOASTER_HOST_CLASS } from "../src/lody/surface-providers";
+import {
+  LodySurfaceProviders,
+  LodySurfaceThemeRoot,
+  LODY_TOASTER_HOST_CLASS,
+} from "../src/lody/surface-providers";
 import { LODY_SURFACE_CLASS } from "../src/lody/surface-class";
 import { render, settle } from "./dom";
 
@@ -62,8 +66,12 @@ afterEach(async () => {
   window.localStorage.clear();
 });
 
-async function mountProviders() {
-  const view = await render(<LodySurfaceProviders><div /></LodySurfaceProviders>);
+async function mountProviders(active = true) {
+  const view = await render(
+    <LodySurfaceThemeRoot>
+      <LodySurfaceProviders active={active}><div /></LodySurfaceProviders>
+    </LodySurfaceThemeRoot>,
+  );
   cleanup = view.unmount;
   return view;
 }
@@ -93,6 +101,14 @@ describe("the vendored surface's toast host", () => {
     // ONE toaster and therefore one toast. Two hosts would show every message
     // twice, which is the failure mode a second mount produces.
     expect(rendered).toHaveLength(1);
+  });
+
+  it("gives toast rendering to the active surface only", async () => {
+    const view = await mountProviders(false);
+    expect(view.container.querySelector("section[aria-live]")).toBeNull();
+
+    await fireVendoredToast("Hidden surface failure");
+    expect(view.container.querySelector("[data-sonner-toast]")).toBeNull();
   });
 
   it("puts the toaster below the theme provider, so it paints in the shell's mode", async () => {

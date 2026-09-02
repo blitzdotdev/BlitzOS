@@ -89,4 +89,13 @@ describe("handing window.ipc from one box's surface to the next", () => {
     expect(disposeOutgoing).toHaveBeenCalledTimes(1);
     expect(target.ipc).toBe(incoming.ipc);
   });
+
+  it("rejects invokes after the bound bridge is disposed", async () => {
+    const bridge = createLodyLocalBridge(endpointsFor("box-a.invalid"));
+    const invoke = bridge.ipc.invoke;
+    bridge.dispose();
+
+    await expect(invoke("loro.isConnected")).rejects.toThrow("lody_ipc_bridge_disposed");
+    expect(() => bridge.ipc.send("loro.subscribe", null)).not.toThrow();
+  });
 });

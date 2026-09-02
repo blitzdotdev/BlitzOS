@@ -38,6 +38,7 @@ import { toast } from 'sonner';
 import { writeTextToClipboard } from '@/lib/clipboard';
 import { isElectronRenderer } from '@/lib/electron';
 import { getPublicBrowserBridge } from '@/lib/electron-ipc-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import { useSessionDoc } from '@/hooks/use-session-doc';
 import { hasUsableManagedPreviewUrl } from '@/lib/managed-preview-connection';
 import { buildManagedViewerUrl, samePreviewTargetOrigin } from '@/lib/session-browser-url';
@@ -108,6 +109,7 @@ function SessionBrowserPanelController({
   onToggleVisualAnnotationInChat,
 }: SessionBrowserPanelProps) {
   const { t } = useTranslation();
+  const ipcClient = useIpcClient();
   const runtime = useAtomValue(activeWorkspaceRuntimeAtom);
   const user = useAtomValue(userAtom);
   const sessionMachine = useAtomValue(getMachineMetaByIdAtomFamily(session.machineId));
@@ -694,9 +696,9 @@ function SessionBrowserPanelController({
     if (
       currentAddress?.engine === 'public-web' &&
       publicState?.canGoBack &&
-      getPublicBrowserBridge()
+      getPublicBrowserBridge(ipcClient)
     ) {
-      void getPublicBrowserBridge()?.back(`session-browser-${session.id}`).then(
+      void getPublicBrowserBridge(ipcClient)?.back(`session-browser-${session.id}`).then(
         (result) => {
           if (!result.ok) setError(result.error);
         },
@@ -715,6 +717,7 @@ function SessionBrowserPanelController({
     managedState?.canGoBack,
     navigateHistory,
     publicState?.canGoBack,
+    ipcClient,
     session.id,
   ]);
 
@@ -722,9 +725,9 @@ function SessionBrowserPanelController({
     if (
       currentAddress?.engine === 'public-web' &&
       publicState?.canGoForward &&
-      getPublicBrowserBridge()
+      getPublicBrowserBridge(ipcClient)
     ) {
-      void getPublicBrowserBridge()?.forward(`session-browser-${session.id}`).then(
+      void getPublicBrowserBridge(ipcClient)?.forward(`session-browser-${session.id}`).then(
         (result) => {
           if (!result.ok) setError(result.error);
         },
@@ -743,12 +746,13 @@ function SessionBrowserPanelController({
     managedState?.canGoForward,
     navigateHistory,
     publicState?.canGoForward,
+    ipcClient,
     session.id,
   ]);
 
   const handleReload = useCallback(() => {
-    if (currentAddress?.engine === 'public-web' && getPublicBrowserBridge()) {
-      void getPublicBrowserBridge()?.reload(`session-browser-${session.id}`).then(
+    if (currentAddress?.engine === 'public-web' && getPublicBrowserBridge(ipcClient)) {
+      void getPublicBrowserBridge(ipcClient)?.reload(`session-browser-${session.id}`).then(
         (result) => {
           if (!result.ok) setError(result.error);
         },
@@ -767,11 +771,11 @@ function SessionBrowserPanelController({
       // anything else goes back through the confirmation flow.
       void openAddress(currentAddress, { approved: currentAddress.targetClass === 'loopback' });
     }
-  }, [currentAddress, openAddress, session.id, viewerUrl]);
+  }, [currentAddress, ipcClient, openAddress, session.id, viewerUrl]);
 
   const handleStop = useCallback(() => {
-    if (currentAddress?.engine === 'public-web' && getPublicBrowserBridge()) {
-      void getPublicBrowserBridge()?.stop(`session-browser-${session.id}`).then(
+    if (currentAddress?.engine === 'public-web' && getPublicBrowserBridge(ipcClient)) {
+      void getPublicBrowserBridge(ipcClient)?.stop(`session-browser-${session.id}`).then(
         (result) => {
           if (!result.ok) setError(result.error);
         },
@@ -783,7 +787,7 @@ function SessionBrowserPanelController({
       setManagedCommand((current) => ({ id: (current?.id ?? 0) + 1, action: 'stop' }));
       setManagedLoading(false);
     }
-  }, [annotationAvailable, currentAddress?.engine, session.id]);
+  }, [annotationAvailable, currentAddress?.engine, ipcClient, session.id]);
 
   const copyUrl = useCallback(
     async (url: string) => {

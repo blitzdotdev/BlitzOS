@@ -225,7 +225,12 @@ export async function createLodyRuntime(options: {
   }
   const bridge = createLodyLocalBridge(bridgeEndpoints);
   const ipcClient = createBoundIpcClient(bridge.ipc);
-  const uninstall = options.installGlobals === false ? () => bridge.dispose() : installLodyLocalBridge(bridge);
+  const releaseBridge =
+    options.installGlobals === false ? () => bridge.dispose() : installLodyLocalBridge(bridge);
+  const disposeIpc = (): void => {
+    ipcClient.dispose();
+    releaseBridge();
+  };
 
   let runtime: LodyWorkspaceRuntime;
   try {
@@ -240,9 +245,10 @@ export async function createLodyRuntime(options: {
       syncMode: "local",
       eagerSyncSurface: "web",
       ipcClient,
+      localIpcHost: true,
     })) as LodyWorkspaceRuntime;
   } catch (cause) {
-    uninstall();
+    disposeIpc();
     throw cause;
   }
   runtime.setLocalMachineId(snapshot.machineId);
@@ -287,7 +293,7 @@ export async function createLodyRuntime(options: {
     bridge,
     dispose: async () => {
       await runtime.dispose();
-      uninstall();
+      disposeIpc();
     },
   };
 }

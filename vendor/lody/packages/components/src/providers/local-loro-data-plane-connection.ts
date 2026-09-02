@@ -15,6 +15,7 @@ export function createLocalLoroDataPlaneConnection(ipcClient: LodyIpcClient = wi
 
   let connected = false;
   const statusListeners = new Set<(connected: boolean) => void>();
+  const messageUnsubscribers = new Set<() => void>();
   const setConnected = (next: boolean) => {
     if (connected === next) return;
     connected = next;
@@ -27,7 +28,14 @@ export function createLocalLoroDataPlaneConnection(ipcClient: LodyIpcClient = wi
   return {
     connection: {
       send: (message) => sendIpc('loro.send', message, ipcClient),
-      onMessage: (listener) => onIpcEvent('loro.event', listener, ipcClient),
+      onMessage: (listener) => {
+        const unsubscribe = onIpcEvent('loro.event', listener, ipcClient);
+        messageUnsubscribers.add(unsubscribe);
+        return () => {
+          messageUnsubscribers.delete(unsubscribe);
+          unsubscribe();
+        };
+      },
       onStatusChange: (listener) => {
         statusListeners.add(listener);
         listener(connected);
@@ -37,6 +45,8 @@ export function createLocalLoroDataPlaneConnection(ipcClient: LodyIpcClient = wi
     },
     dispose: () => {
       unsubscribeStatus();
+      for (const unsubscribe of messageUnsubscribers) unsubscribe();
+      messageUnsubscribers.clear();
       statusListeners.clear();
     },
   };

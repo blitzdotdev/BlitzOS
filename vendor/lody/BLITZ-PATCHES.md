@@ -1605,58 +1605,89 @@ bridge (or expose this reset) so a host driving more than one daemon can move
 between them. Until then this is the smallest seam that closes it.
 ### 18. A renderer surface owns its IPC client (Tier 2 keep-alive, declared 2026-09-02)
 
-**Declared before implementation.** Seam 17 makes sequential surface hand-off
-correct, but cannot make two surfaces correct at once. The vendored renderer's
-`getIpcServices()`, `onIpcEvent()`, `sendIpc()`, and local-platform snapshot
-state all discover one page-global `window.ipc`. With an owned surface hidden
-behind another live surface, that lets an asynchronous send from the hidden
-runtime leave through the visible surface's bridge. This exact class was
-measured when an owner's `session/dispatch-turn` reached another box and was
-refused `share_forbidden`.
+Seam 17 makes sequential hand-off correct but cannot make two surfaces correct
+at once. The renderer helpers formerly rediscovered page-global `window.ipc`,
+so an asynchronous operation could leave through another surface's bridge. The
+fix adds a structural `LodyIpcClient`: omitted arguments retain Electron's lazy
+window-backed default, while an embedding host captures one bridge, provides it
+to one React subtree and threads it into plain runtime code.
 
-The seam adds a structural `LodyIpcClient` bound to one invoke/on/send bridge.
-The current helpers accept it as an optional final argument; omission delegates
-to a stable `windowIpcClient` whose methods keep re-reading `window.ipc`, so
-Electron behaviour and existing Electron call sites are unchanged. A new React
-`IpcClientProvider` defaults to that window client. `RuntimeProvider` consumes
-the context and passes the client through runtime deps; non-React runtime code
-then passes it explicitly to the local Loro connection, local presence,
-workspace-machine RPC, and local session control.
+Bound clients now have a terminal disposal lifecycle. Disposal aborts their
+signal and makes later service lookup/send/event operations reject or no-op.
+The local-platform state is a client-keyed WeakMap; its abort listener clears a
+never-settling snapshot interval and deletes the entry. The local Loro adapter
+owns every message unsubscribe, not only its status listener.
+`RuntimeDeps.localIpcHost` and the matching facade dependency are an explicit
+fast-path capability: supplying a client no longer implies a local plane.
+Omission preserves the existing Electron/global-host test.
 
-The local-platform singleton becomes a `WeakMap` keyed by the client. Electron's
-stable default client still owns exactly one snapshot. Each browser-hosted
-surface owns a different client and therefore a different provider, stores,
-poll, and daemon identity. `resetLocalPlatformSnapshotState` remains only as a
-test/compatibility cleanup scoped to one client; `SessionSurface` stops using it
-for hand-off. This supersedes seam 17 rather than stacking a reset on live
-providers.
+The Blitz-mounted public-browser panel is reachable from both desktop and
+mobile `SessionDetail`; its calls therefore consume `useIpcClient()`. The theme
+provider remains ambient without another vendor edit: Blitz hoists one provider
+above its keyed surfaces, publishes compatibility `window.ipc` only for the
+active surface, and its bridge explicitly no-ops `app.nativeTheme` and
+`app.setNativeTheme`. Those reads cannot reach a data/session/machine plane.
 
-Direct IPC calls in the Blitz-mounted session route use `useIpcClient()` or a
-client already carried by the runtime. Electron-only roots/settings remain on
-the default helper path. The behavioural guard mounts two client scopes, points
-`window.ipc` at a poison third bridge, and proves platform, Loro data-plane,
-machine RPC, and session-control traffic stay with their owning bridge;
-`plans/LODY-WORKSPACE-KEEPALIVE.md` records the complete gate.
+**Footprint.** The Phase A commit touched exactly **19** vendor source files.
+This follow-up adds exactly two reachable public-browser files; seam 18 now
+touches **21**. No file was removed:
 
-Initial upstream anchors (line numbers are re-anchored after implementation):
-
-| File | Anchor | Intended additive change |
+| File | Stable upstream anchor | Mechanical seam change |
 |---|---|---|
-| `packages/components/src/lib/electron-ipc-client.ts` | existing four IPC helpers | client interface/factory/default plus optional client parameters |
-| `packages/components/src/providers/ipc-client-provider.tsx` | new file | context with the window-backed client as its default |
-| `packages/components/src/providers/local-platform-provider.ts` | module singleton state | client-keyed state and polling |
-| `packages/components/src/providers/runtime-provider.tsx` | `RuntimeProvider` / `createWorkspaceRuntime` call | consume and thread the context client |
-| `packages/components/src/providers/create-workspace-runtime.ts` | `RuntimeDeps` and local-plane calls | capture one client for the runtime lifetime |
-| `packages/components/src/providers/local-loro-data-plane-connection.ts` | factory | use one explicit client for subscribe/send/events |
-| `packages/components/src/providers/workspace-machine-rpc-facade.ts` | deps/local sender | use the runtime's explicit client |
-| mounted session/chat/file call sites | direct helper imports | read the nearest client context without surrounding refactors |
+| `packages/components/src/lib/electron-ipc-client.ts` | `LodyIpcBridge`, four helpers, `getPublicBrowserBridge` | disposable client/default/bound factory and optional client arguments |
+| `packages/components/src/providers/ipc-client-provider.tsx` | new file | client plus explicit `localIpcHost` context |
+| `packages/components/src/providers/local-platform-provider.ts` | local snapshot singleton / `startLocalPlatformSnapshotPolling` | client-keyed state and abort cleanup |
+| `packages/components/src/providers/runtime-provider.tsx` | `RuntimeProvider` / `createWorkspaceRuntime({...})` | consume and thread client and host capability |
+| `packages/components/src/providers/create-workspace-runtime.ts` | `RuntimeDeps`, `canUseLocalSessionControl`, local attach | capture client/capability for runtime, control and presence |
+| `packages/components/src/providers/local-loro-data-plane-connection.ts` | `createLocalLoroDataPlaneConnection` | explicit client plus owned message unsubscribes |
+| `packages/components/src/providers/workspace-machine-rpc-facade.ts` | `WorkspaceMachineRpcFacadeDeps`, `canUseLocalMachineRpc` | explicit client and local-host capability |
+| `packages/components/src/components/chat/chat-landing.tsx` | direct local file/project IPC calls | nearest `useIpcClient()` and final arguments |
+| `packages/components/src/components/mentions/mention-project-file-source.ts` | `MentionProjectFileSource` local reads | nearest client and final arguments |
+| `packages/components/src/components/sessions/session-chat-input-area.tsx` | local session-file sender construction | nearest client dependency |
+| `packages/components/src/components/sessions/session-detail.tsx` | session action/file-provider assembly | nearest client dependency |
+| `packages/components/src/components/sessions/session-file-content-view.tsx` | project file/history reads | nearest client and final arguments |
+| `packages/components/src/hooks/use-chat-landing-file-draft.ts` | Electron file sender | context client argument |
+| `packages/components/src/hooks/use-local-project-file-paths.ts` | local-project path RPC | context client argument |
+| `packages/components/src/hooks/use-local-projects-admin.ts` | local-project admin RPC | context client argument |
+| `packages/components/src/hooks/use-session-actions.ts` | session control/action fast paths | context client argument |
+| `packages/components/src/lib/electron-session-file-sender.ts` | exported sender/capability helpers | optional client dependency |
+| `packages/components/src/lib/local-project-rpc-file-provider.ts` | provider options / local service lookup | optional client dependency |
+| `packages/components/src/lib/project-history-control-client.ts` | four history entry points | optional client dependency |
+| `packages/components/src/components/sessions/public-browser-surface.tsx` | `getPublicBrowserBridge` during surface render | **added here:** context client argument |
+| `packages/components/src/components/sessions/session-browser-panel.tsx` | back/forward/reload/stop public-browser callbacks | **added here:** context client argument/deps |
 
-**Candidate upstream PR:** "allow an embedding renderer to provide an IPC
-client per React/runtime subtree." The use case is general to tests, previews,
-multi-window hosts, and embedded renderers; the API contains no Blitz-specific
-identity or transport. Follow with a separate upstream PR that scopes
-referential Jotai caches by store/runtime. Drop seam 17's reset implementation
-when the keyed provider lands upstream.
+`packages/webapp/test/lody-ipc-client-isolation.test.ts` derives its inventory
+from the import closure rooted at Blitz's `SessionSurface.tsx`. It fails every
+unbound `getIpcServices`, `onIpcEvent`, `sendIpc`,
+`sendLocalSessionControl`, or `window.ipc` site except this explicit allowlist:
+
+| File | Why ambient IPC is allowed |
+|---|---|
+| `theme-provider.tsx` | Native OS theme/window-chrome channels only; both are declared bridge no-ops, and one hoisted active owner mounts it. |
+| `atoms/local-probe.ts` | Returns before IPC outside Electron. |
+| `hooks/use-electron-cli-daemon.ts` | Inert unless `window.__LODY_ELECTRON__`. |
+| `components/terminal/electron-terminal-channel.ts` | Constructed only by the Electron-gated terminal host. |
+| `components/sessions/session-chat-interface.tsx` | Ambient sites are inside Electron-only desktop path launch. |
+| `lib/electron.ts` | Fullscreen IPC is Electron-gated. |
+| `lib/native-browser.ts` | Native URL open is Electron/native-shell gated. |
+| `lib/image-preview-export.ts` | Export IPC is Electron-gated. |
+| `lib/clear-local-cache.ts` | IPC reload is Electron-gated; Web uses `location.reload()`. |
+| `components/mobile/mobile-about-settings.tsx` | Blitz stubs every settings route; these updater actions are never mounted. |
+| `components/mobile/mobile-general-settings.tsx` | Blitz stubs every settings route; these notification and OS-setting controls are never mounted. |
+| `components/settings/about-setting.tsx` | Blitz stubs every settings route; these updater actions are never mounted. |
+| `components/settings/general-setting.tsx` | Blitz stubs every settings route; these notification and OS-setting controls are never mounted. |
+| `hooks/use-electron-updater-state.ts` | The effect returns unless `window.__LODY_ELECTRON__` is true. |
+| `lib/native-global-shortcuts.ts` | All callers are Electron-only shortcut settings; Blitz disables both that surface and its dispatcher. |
+| `lib/electron-ipc-client.ts` | The intentional compatibility default and sole production reader of `window.ipc`. |
+
+**Candidate upstream PR: “allow an embedding renderer to provide a disposable
+IPC client per React/runtime subtree.”** Commit sketch: (1) additive client,
+provider and helper parameters with unchanged Electron defaults; (2)
+client-keyed local-platform state released by the client signal; (3) explicit
+local-host capability through runtime/facade; (4) mechanical mounted leaf
+conversions, including public browser; (5) two-provider poison-global and
+post-disposal tests. The API contains no Blitz URL, workspace or relay concept.
+Drop seam 17's reset implementation once the keyed provider lands upstream.
 
 ## Patches to the published npm artifact (NOT to this tree)
 
