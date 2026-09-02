@@ -116,7 +116,7 @@ npm view lody@<candidate> dist.shasum
 Then, in ONE change:
 
 1. bump `lody@<version>` in `packages/box/Dockerfile`;
-2. re-audit BOTH patches in `packages/box/patches/` — see §5, neither is
+2. re-audit ALL FOUR patches in `packages/box/patches/` — see §5, none is
    optional and each is guarded twice;
 3. record both numbers in `vendor/lody/UPSTREAM.md`.
 
@@ -236,10 +236,10 @@ prominently in the pull request body.
 
 ## 5. Re-audit the npm-artifact patches
 
-Three scripts in `packages/box/patches/` are applied to the **published npm
+Four scripts in `packages/box/patches/` are applied to the **published npm
 artifact**, in the Dockerfile's order. The order is load-bearing:
 `lody-local-platform.mjs` guards on a sha256 of the file AS PUBLISHED, so nothing
-may rewrite it first. All three are idempotent — re-running any of them on an
+may rewrite it first. All four are idempotent — re-running any of them on an
 already-patched bundle reports it and exits 0, which is what lets the daemon test
 harness copy a real box's bundle and re-apply them to the copy.
 
@@ -324,6 +324,41 @@ npx vitest run test/lody-worktree-session.test.ts   # in packages/webapp, on a b
 **If the new version resolves a local-project worktree session to its worktree,
 DELETE this patch rather than updating it.** Their own
 `lib/terminal-workdir-resolver.ts:97` already does, so the two may converge.
+
+### 5d. The assistant-message split patch
+
+`packages/box/patches/lody-agent-message-split.mjs` groups streamed assistant
+text by the `messageId` the ACP adapter already stamps on every chunk. Without
+it, ONE Anthropic message is stored as two text blocks whenever anything — a
+tool call, a subagent task — lands between two of its deltas, so the reader gets
+a sentence cut in half around a tool card:
+
+```
+[21] text       "Three"
+[22] tool_call  toolu_0166kpDv… (grep …)
+[23] text       " characterization agents are running in parallel, plus …"
+```
+
+`claude-acp.js` computes the id (`messageIdForGrouping`, the API message `id`)
+and `applyMessageId` puts it on the update; the schema keeps it
+(`zContentChunk.messageId`); the history applier drops it and merges only into
+`items[items.length - 1]`. The patch carries the id onto the stored item and
+makes both `appendOrMergeAdjacentText` copies scan back past trailing non-text
+items to the block with the same id. With no id it is byte-for-byte today's
+behaviour, so every other adapter is untouched.
+
+Six hunks, guarded by the installed package version plus each anchor at exactly
+one occurrence. Re-auditing means:
+
+```sh
+grep -n 'appendOrMergeAdjacentText' /tmp/package/dist/index.js   # expect 6 lines, 2 definitions
+grep -n 'messageId' /tmp/package/dist/index.js | head            # the applier must still ignore it
+node packages/box/patches/lody-agent-message-split.mjs /tmp/package/dist/index.js
+```
+
+**If the new version merges by message id itself, DELETE this patch rather than
+updating it.** The daemon already emits the id explicitly for grouping, so this
+is the fix upstream is one step away from.
 
 ## 6. Dependencies and the patch-file audit
 

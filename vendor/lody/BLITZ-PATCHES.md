@@ -1404,12 +1404,13 @@ obligation at every version bump**.
 | `packages/box/patches/lody-local-platform.mjs` | `lody/dist/index.js` | 4× `resolvePlatformKind("cloud")` | `lody@0.88.1` on npm is the CLOUD build: its Vite config inlines the platform as a literal, so the local composition root is unreachable and the daemon blocks on a device-authorization login. The patch restores the `LODY_PLATFORM` env read. Without it a box cannot start the daemon at all. |
 | `packages/box/patches/lody-acp-auth-queue.mjs` | `lody/dist/index.js` | the `extractQueueKey` switch tail in `MessageProcessor` | Every `machine/*` message falls to `extractQueueKey`'s `default: return null`, and `ConcurrentQueue` maps `null` onto ONE serial chain (`__default__`). `machine/acp-authenticate` with `action: 'start'` runs `claude auth login --claudeai`, which blocks on stdin until the member pastes the code back — so the `submit-code` carrying that code queues behind the login waiting for it, and so does `cancel`. The patch gives a `start` its own per-agent chain. Without it an interactive agent sign-in can never be completed, only timed out after 285 s. |
 | `packages/box/patches/lody-code-collab-worktree-root.mjs` | `lody/dist/index.js` | the `project?.kind === "local"` branch of `resolveCodeCollabWorkspaceRoot` | That branch answers with the local project's ROOT PATH and never reads `project.useWorktree` or `meta.isWorktree`, so once no live `Session` object is left the whole Code Collab surface of a worktree session — All Changes, the Files tab, every file chip — resolves to the `/workspace/<repo>` clone instead of the worktree. The clone is clean by design, so the panel renders an empty SUCCESS ("No changes yet.") rather than an error. The patch answers with the worktree when the session is a worktree session and the worktree exists. Without it the side panel of every BlitzOS worktree session is silently empty. |
+| `packages/box/patches/lody-agent-message-split.mjs` | `lody/dist/index.js` | `buildMessageContentFromNotification`'s two chunk arms, both `appendOrMergeAdjacentText` copies, and the two `case "text"` / `case "thought"` arms that call them | The ACP adapter stamps `messageId` on every `agent_message_chunk` / `agent_thought_chunk` — the Anthropic assistant message `id`, emitted explicitly FOR GROUPING — and the schema keeps it (`zContentChunk.messageId`). The history applier throws it away and merges a delta only into `items[items.length - 1]`, so anything appended between two deltas of ONE message ends that text block permanently and the rest of the sentence becomes a second one. Measured on a canary box 2026-09-02: 23 of 375 stored assistant text blocks (~6%) begin mid-sentence directly after a tool card. The corpus is live, so the ratio holds rather than the integers — the same box read 13 of 271 six hours earlier. The patch carries the id onto the stored item and merges into the most recent block that shares it, scanning back past trailing non-text items. Without it a reader sees sentences cut in half around tool cards. |
 
 Applied in that order. **The order is not cosmetic:** `lody-local-platform`
 guards on a sha256 of `dist/index.js` AS PUBLISHED, so nothing may rewrite the
-file before it runs. The other two therefore guard on the installed package's
-version plus their own anchor at exactly one occurrence — a file hash can
-only ever pin the first patch in a chain. All three are idempotent: re-running
+file before it runs. The other three therefore guard on the installed package's
+version plus their own anchors at exactly one occurrence — a file hash can
+only ever pin the first patch in a chain. All four are idempotent: re-running
 any of them on an already-patched bundle reports it and exits 0, which is what
 lets `packages/webapp/test/lody-daemon-harness.ts` copy a real box's bundle and
 re-apply the image build's patches to the copy.
@@ -1448,6 +1449,56 @@ finds the worktree on disk. Every other session, and a worktree session whose
 worktree is gone, keeps the answer it has today.
 `packages/webapp/test/lody-worktree-session.test.ts` measures both directions
 against a real daemon.
+
+`lody-agent-message-split.mjs` is guarded the same two ways, over six anchors
+rather than one. Re-auditing it means confirming that
+`buildMessageContentFromNotification` still drops `update.messageId`, and that
+both copies of `appendOrMergeAdjacentText` — the streaming
+`NotificationOnHistoryApplier` and the batch `applyMessageContentsBatch` — still
+merge only into `items[items.length - 1]`.
+
+**The discriminator is the id and nothing else.** No text heuristic: "starts
+with a space" and "starts with a lowercase letter" both corrupt legitimate
+content, and a genuine `text → tool → text` across TWO API messages carries two
+different ids and must still render as two blocks. The patch is a MERGE-TARGET
+change only — no item is dropped, reordered, or retyped. Its scan stops at the
+first text-or-thought item it meets going backwards, so a thought emitted after
+the text cannot be jumped over and ordering is never rewritten.
+
+**Adjacency still wins first.** A delta landing directly on a block of its own
+kind merges there whatever the ids say, so this patch can only ever JOIN what
+today splits — it can never split what today joins. The two emitted helpers,
+`blitzTextMergeTargetIndex` and `blitzMergedTextItem`, are a behavioural
+transcription of `findStreamedTextMergeIndex` and `mergeStreamedTextItem` in the
+upstream PR below, verified equal over a 69-case matrix (merge target AND the id
+the merged item keeps). Keep them equal: a box must not answer differently from
+the renderer beside it, and when the daemon bump lands this patch is deleted
+rather than re-derived.
+
+It is backward compatible in both directions. A delta with no id gets exactly
+today's answer, and the object written is byte-identical to today's — nothing
+writes `messageId: undefined`, so Codex, Grok, DeepSeek and the batch applier's
+materialized rich content are untouched. A delta WITH an id landing on a stored
+item WITHOUT one — history written by a pre-patch daemon, or a block that
+`postProcessTouchedAssistantEntries` re-parsed out of `<thinking>` tags — also
+gets today's answer, so nothing that predates the patch can be split by it. The
+extra field is safe to persist: `LoroSessionDoc.updateHistory` writes items
+straight into the Loro mirror with no schema in the way, and every zod object
+that reads history back is a stripping `z.object`, not `.strict()`.
+
+**Opened upstream as blitzdotdev/Lody#22, "group streamed text by messageId so
+a tool call cannot split a message". Drop this patch when it merges and the
+daemon bump carries it.**
+The upstream diff is the same six hunks against
+`packages/shared/src/acp/history-apply.ts` (`buildMessageContentFromNotification`
+~1073 and ~1085, `appendOrMergeAdjacentText` ~1606 and ~1915, and their callers
+~1540 and ~2035) plus one field on the `text` and `thought` members of
+`MessageContent` (`packages/shared/src/ai.ts:1419`) and on their
+`NonSystemNoticeMessageContentSchema` entries
+(`packages/shared/src/message-schemas.ts:2922`) — `messageId?: string`, beside
+the `spans?` that the `text` member already carries. Nothing else moves: the id
+is produced, validated and forwarded today, and is only ever discarded at the
+last step.
 
 Re-auditing means: confirm the anchor still selects the platform, confirm the
 count, run `LODY_PLATFORM=local lody start` and see "Starting in local platform
