@@ -727,10 +727,10 @@ write_files:
       'echo "blitz bootstrap: template repo cloner starting in the background (best-effort)"',
     );
     expect(script).toContain(
-      "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
+      "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || git -c http.version=HTTP/1.1 clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
     );
     expect(script).toContain(
-      "[ -d /workspace/tools/.git ] || git clone https://github.com/acme/tools /workspace/tools || cloned=false",
+      "[ -d /workspace/tools/.git ] || git clone https://github.com/acme/tools /workspace/tools || git -c http.version=HTTP/1.1 clone https://github.com/acme/tools /workspace/tools || cloned=false",
     );
     // One nohup'd docker exec running the retry loop as the blitz user: 5s
     // interval, 10-minute deadline, || true overall, logged under
