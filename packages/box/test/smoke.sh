@@ -30,7 +30,10 @@ cleanup() {
     rm -rf "$test_dir"
   fi
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fail() {
   echo "FAIL: $*" >&2
@@ -192,12 +195,21 @@ user_high=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/memory.
 pid1_adj=$(docker exec "$container" cat /proc/1/oom_score_adj)
 [ "$pid1_adj" -lt 0 ] || fail "PID 1 is a normal OOM candidate (oom_score_adj=$pid1_adj)"
 
-# Delegation, and its containment. uid 1000 must be able to move its own work
-# between leaves it owns, and must NOT be able to park work in the reservation.
-owner=$(docker exec "$container" stat -c %u /sys/fs/cgroup/blitz-user.slice/cgroup.procs)
-[ "$owner" = 1000 ] || fail "the user slice is not delegated to uid 1000 (owner $owner)"
-owner=$(docker exec "$container" stat -c %u /sys/fs/cgroup/blitz-system.slice/cgroup.procs)
-[ "$owner" = 0 ] || fail "the system slice is writable by uid $owner; it must stay root-owned"
+# Delegation, and its containment. The configured Blitz identity must be able
+# to move its own work between leaves it owns, even when the host uid/gid is not
+# the image's baked-in 1000:1000. It must NOT be able to enter the reservation.
+blitz_identity=$(docker exec "$container" sh -c \
+  'printf "%s:%s" "$(id -u blitz)" "$(id -g blitz)"')
+for delegated_path in \
+  /sys/fs/cgroup/cgroup.procs \
+  /sys/fs/cgroup/blitz-user.slice/cgroup.procs \
+  /sys/fs/cgroup/blitz-user.slice/cgroup.subtree_control; do
+  owner=$(docker exec "$container" stat -c %u:%g "$delegated_path")
+  [ "$owner" = "$blitz_identity" ] \
+    || fail "$delegated_path belongs to $owner, not the Blitz identity $blitz_identity"
+done
+owner=$(docker exec "$container" stat -c %u:%g /sys/fs/cgroup/blitz-system.slice/cgroup.procs)
+[ "$owner" = 0:0 ] || fail "the system slice is writable by $owner; it must stay root-owned"
 echo "PASS memory boundary layout"
 fi
 
@@ -385,13 +397,18 @@ import { openWebSocket } from "/tmp/ws-client.mjs";
 
 const result = await new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error("preview WebSocket timeout")), 5000);
+  let client;
   openWebSocket("ws://127.0.0.1:7445/preview/31234/socket?probe=1", {
     origin: "http://127.0.0.1",
     onMessage: (message) => {
       clearTimeout(timer);
+      client?.close();
       resolve(message.toString());
     },
-  }).then((socket) => socket.send("hello"), reject);
+  }).then((socket) => {
+    client = socket;
+    socket.send("hello");
+  }, reject);
 });
 if (result !== "preview-ws:/socket?probe=1:hello") throw new Error(`bad preview WebSocket response: ${result}`);
 NODE
