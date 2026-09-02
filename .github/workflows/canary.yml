@@ -151,8 +151,8 @@ jobs:
           # Rebake with the procedure in docs/BOX-IMAGE.md and update all three
           # together: the digest is of the archive the tag names.
           BLITZ_DEPLOY_VAR_BOX_IMAGE_REF: https://blitz-control-plane.minjunesv0.workers.dev/box-image/manifest.json
-          BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: blitz-box:c2b138c7
-          BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: a650d6f55dadf19a01187ff5dcf14f4e1871df3bc1a1ee36f97fe14a1f0ba0ba
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: blitz-box:23b2c707
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: bda6a70884b56b2890f44d5d5f9acd248bd2aec1960326ecc6569bb0c90e203a
           # The Lody session surface, half two (plans/LODY-SESSIONS.md §13.3).
           # Half one is BLITZ_LODY_SESSIONS inside the image above, which is
           # already baked on: the daemon has to be listening before a browser
