@@ -999,8 +999,8 @@ describe("connections: connecting from the webApp", () => {
     expect((await connectHere(app, editor.cookie, workspace.id)).status).toBe(403);
   });
 
-  /** What the box may pull, read live. `blitz-cred list` prints this, and a
-   * Disconnect has to reach the very next pull. */
+  /** What the box may pull, read live. `GET /agent/credentials` lists this,
+   * and a Disconnect has to reach the very next pull. */
   it("lists the manifest to the box, and follows Connect and Disconnect", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
@@ -1730,7 +1730,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     // agent that reads it is the one that has to act.
     const expiredBody = await expiredResponse.json<{ error: { code: string; message: string } }>();
     expect(expiredBody.error.code).toBe("lease_expired");
-    expect(expiredBody.error.message).toContain("blitz-cred get <provider>");
+    expect(expiredBody.error.message).toContain("POST /agent/credentials/<provider>/token");
     // Still value-free: no token, no upstream secret, no vendor detail.
     expect(JSON.stringify(expiredBody)).not.toContain(expired.token);
     expect(fetchMock).not.toHaveBeenCalled();

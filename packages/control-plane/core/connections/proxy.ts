@@ -68,13 +68,13 @@ type ProxyDenial =
 
 const DENIAL_MESSAGE = {
   missing_bearer:
-    "no lease token was presented; send the token `blitz-cred get <provider>` printed",
-  unknown_lease: "no such lease; run `blitz-cred get <provider>` for a current one",
+    "no lease token was presented; send the token POST /agent/credentials/<provider>/token answered",
+  unknown_lease: "no such lease; ask POST /agent/credentials/<provider>/token for a current one",
   bad_token: "the presented token does not match this lease",
   lease_revoked:
     "this lease was revoked; reconnect the provider in the workspace connections panel",
   lease_expired:
-    "the credential behind this lease has expired; run `blitz-cred get <provider>` for a fresh one",
+    "the credential behind this lease has expired; ask POST /agent/credentials/<provider>/token for a fresh one",
   token_in_url:
     "the lease token appeared in the request path or query string; send it in the header instead",
   bad_proxy_path: "the request path is not /proxy/<lease-id>/<upstream-path>",
