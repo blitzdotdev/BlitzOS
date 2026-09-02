@@ -54,6 +54,7 @@ import "../../src/invite-redeem.css";
 import { BoxGlyph, ShareGlyph } from "../../src/files/DriveIcons";
 import { chooseTheme, resolvedTheme } from "../../src/theme";
 import { SurfacePreviewRegion } from "./region";
+import { WorkspaceSigilIcon } from "../../src/shell/WorkspaceStrip";
 
 const WORKSPACE_TITLE = "zesty-swan";
 
@@ -92,11 +93,11 @@ function Strip() {
       <div className="shell-strip__tiles" role="tree">
         <button className="shell-wtile" type="button" role="treeitem" aria-selected="true">
           <span className="shell-wtile__indicator" aria-hidden="true" />
-          <span className="shell-wtile__icon">ZS</span>
+          <span className="shell-wtile__icon"><WorkspaceSigilIcon workspaceId="zesty-swan" /></span>
         </button>
         <button className="shell-wtile" type="button" role="treeitem" aria-selected="false">
           <span className="shell-wtile__indicator" aria-hidden="true" />
-          <span className="shell-wtile__icon">DT</span>
+          <span className="shell-wtile__icon"><WorkspaceSigilIcon workspaceId="design-team" /></span>
         </button>
       </div>
       <span className="shell-strip__spacer" />

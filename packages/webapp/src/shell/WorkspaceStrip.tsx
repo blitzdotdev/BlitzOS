@@ -2,17 +2,24 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import type { TenantMe } from '../api-adapter';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { DriveGlyph, PlusGlyph } from './StripIcons';
-import { workspaceTileStyle } from './workspace-tile';
+import { workspaceSigil } from './workspace-tile';
 import { squareAvatarUrl } from '../avatar-url';
 
-/** The tile legend: initials when the name has several words, otherwise its
- * first two letters. `design-team` reads DT and `engineering` reads EN, as the
- * mockup draws them. */
-export function workspaceCode(title: string): string {
-  const words = title.split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 0);
-  if (words.length === 0) return '··';
-  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
-  return words.slice(0, 3).map((word) => word[0]!).join('').toUpperCase();
+export function WorkspaceSigilIcon({ workspaceId }: { workspaceId: string }) {
+  const sigil = workspaceSigil(workspaceId);
+  return (
+    <svg
+      className="shell-wtile__sigil"
+      viewBox="0 0 5 5"
+      preserveAspectRatio="none"
+      focusable="false"
+    >
+      <rect width="5" height="5" fill={sigil.background} />
+      {sigil.cells.map(([x, y]) => (
+        <rect key={y * 5 + x} x={x} y={y} width="1" height="1" fill={sigil.foreground} />
+      ))}
+    </svg>
+  );
 }
 
 function stateLabel(workspace: CloudWorkspaceModel): string {
@@ -151,9 +158,10 @@ export function WorkspaceStrip({
                 <span
                   className="shell-wtile__icon"
                   data-workspace-status={offline ? 'offline' : 'online'}
-                  style={workspaceTileStyle(workspace.id)}
                   aria-hidden="true"
-                >{workspaceCode(workspace.title)}</span>
+                >
+                  <WorkspaceSigilIcon workspaceId={workspace.id} />
+                </span>
               </button>
             );
           })}

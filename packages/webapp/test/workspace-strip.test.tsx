@@ -1,6 +1,6 @@
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { WorkspaceStrip, workspaceCode } from "../src/shell/WorkspaceStrip.js";
+import { WorkspaceStrip } from "../src/shell/WorkspaceStrip.js";
 import type { TenantMe } from "../src/api-adapter.js";
 import type { CloudWorkspaceModel } from "../src/workspace-store.js";
 import { render } from "./dom.js";
@@ -46,16 +46,6 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
   );
 }
 
-describe("workspaceCode", () => {
-  it("reads initials from a multi-word name and two letters from a single word", () => {
-    expect(workspaceCode("design-team")).toBe("DT");
-    expect(workspaceCode("engineering")).toBe("EN");
-    expect(workspaceCode("research sandbox")).toBe("RS");
-    expect(workspaceCode("a b c d")).toBe("ABC");
-    expect(workspaceCode("  ")).toBe("··");
-  });
-});
-
 describe("workspace strip", () => {
   it("draws one tile per workspace with an accessible Discord-style selection state", async () => {
     const view = await render(strip({
@@ -67,22 +57,19 @@ describe("workspace strip", () => {
     const tiles = [...view.container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="Workspaces"] button',
     )];
-    expect(tiles.map(({ textContent }) => textContent?.trim())).toEqual(["DT", "EN", ""]);
+    expect(tiles).toHaveLength(3);
     expect(tiles[0]?.getAttribute("aria-current")).toBe("page");
     expect(tiles[1]?.getAttribute("aria-current")).toBeNull();
     expect(tiles[0]?.getAttribute("aria-selected")).toBe("true");
     expect(tiles[1]?.getAttribute("aria-selected")).toBe("false");
     expect(tiles[0]?.querySelector(".shell-wtile__indicator")?.getAttribute("aria-hidden")).toBe("true");
     expect(tiles[2]?.getAttribute("aria-label")).toBe("Create workspace");
-    // Each workspace icon wears its own solid pastel; the button is now only
-    // the interaction and accessibility layer around the icon and indicator.
-    // jsdom normalizes hsl() to rgb() on read-back; assert solid + distinct.
-    const icons = tiles.slice(0, 2).map((tile) => tile.querySelector<HTMLElement>(".shell-wtile__icon"));
-    expect(icons[0]?.style.background).toMatch(/^rgb\(/u);
-    expect(icons[1]?.style.background).toMatch(/^rgb\(/u);
-    expect(icons[0]?.style.background).not.toContain("gradient");
-    expect(icons[0]?.style.background).not.toBe(icons[1]?.style.background);
-    expect(tiles[2]?.querySelector<HTMLElement>(".shell-wtile__icon")?.style.background).toBe("");
+    const sigils = tiles.slice(0, 2).map((tile) => tile.querySelector<SVGElement>(".shell-wtile__sigil"));
+    expect(sigils.every((sigil) => sigil !== null)).toBe(true);
+    expect(sigils[0]?.querySelectorAll("rect").length).toBeGreaterThan(1);
+    expect(sigils[0]?.querySelector("rect")?.getAttribute("fill"))
+      .not.toBe(sigils[1]?.querySelector("rect")?.getAttribute("fill"));
+    expect(tiles[2]?.querySelector(".shell-wtile__sigil")).toBeNull();
     await view.unmount();
   });
 
