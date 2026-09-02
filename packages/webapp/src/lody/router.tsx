@@ -40,19 +40,25 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  useMatchRoute,
   useNavigate,
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
+import { useSetAtom } from "jotai";
 import { isJsonNumber, isJsonString, type JsonValue } from "@blitzos/schema";
 import { ChatLanding } from "@lody/components/components/chat/chat-landing";
 import { parseChatLandingSearch } from "@lody/components/components/chat/chat-landing-derived";
 import SessionDetail from "@lody/components/components/sessions/session-detail";
 import { ArchiveView } from "@lody/components/components/archive/archive-view";
 import { AppThemeShell } from "@lody/components/components/app-theme-shell";
+import { mobileWorkspaceBaseContextAtom } from "@lody/components/atoms";
+import { useIsMobile } from "@lody/components/hooks/use-mobile";
 import { useWorkspaceContextAtoms } from "@lody/components/hooks/use-workspace-context-atoms";
 import { WorkspaceRouteTargetProvider } from "@lody/components/providers/workspace-route-target";
+import { MobileSessionStack } from "./MobileSessionStack.js";
+import { LODY_ARCHIVE_ROUTE, LODY_CHAT_ROUTE, LODY_SESSION_ROUTE } from "./route-ids.js";
 import { TerminalTabsHost } from "./TerminalTabsStrip.js";
 import { useSurfaceTabs } from "./surface-tabs.js";
 import { lodyV1SuppressionProps } from "./v1-scope.js";
@@ -181,12 +187,65 @@ function workspaceRouteComponent(workspaceId: string) {
   };
 }
 
-/** Their `routes/$workspaceName/_auth/chat.tsx`, minus the mobile branch. */
+/**
+ * Their `routes/$workspaceName/_auth/_layout`, in the one job BlitzOS needs it
+ * for: on a phone the landing and the session are ONE navigation stack, and the
+ * stack has to outlive the route change between them.
+ *
+ * WHY IT HANGS OFF `_auth` AND NOT OFF EITHER LEAF. `MobileSessionStack` keeps
+ * `ChatLanding` mounted underneath an open session — that is the whole point of
+ * it — so it must live above both addresses. `_auth` is the nearest route both
+ * leaves share, which is exactly where upstream puts it: their
+ * `MobileWorkspaceLayout` wraps the whole `_auth` subtree and renders the stack
+ * beside the `<Outlet/>` (`components/mobile/mobile-workspace-layout.tsx:83-88`).
+ *
+ * WHY THE OUTLET STILL RENDERS ON A PHONE. Their comment on the same lines says
+ * it, and it is not decoration: the leaf components return `null` on mobile but
+ * still RUN, and `ChatRoute`'s effect is what publishes the base context the
+ * stack reads to keep the right page under an open session.
+ *
+ * `matchRoute` is asked with the PATH form, `/$workspaceName/chat`, because that
+ * is what upstream asks and `_auth` contributes no URL segment.
+ */
+function authRouteComponent(readOnly: boolean) {
+  return function AuthRoute() {
+    const isMobile = useIsMobile();
+    // SAFETY: `strict: false` returns the params of every active match; this
+    // component is a descendant of the `$workspaceName` route, which declares
+    // the parameter. `undefined` covers the render before a match resolves.
+    const params = useParams({ strict: false }) as { workspaceName?: string };
+    const matchRoute = useMatchRoute();
+    const workspaceName = params.workspaceName;
+    const onStackRoute =
+      workspaceName !== undefined
+      && (matchRoute({ to: "/$workspaceName/chat" }) !== false
+        || matchRoute({ to: "/$workspaceName/sessions/$sessionId" }) !== false);
+    return (
+      <>
+        {isMobile && onStackRoute && workspaceName !== undefined ? (
+          <MobileSessionStack workspaceName={workspaceName} readOnly={readOnly} />
+        ) : null}
+        <Outlet />
+      </>
+    );
+  };
+}
+
+/** Their `routes/$workspaceName/_auth/chat.tsx`, mobile branch and all.
+ *
+ * ON A PHONE THIS ROUTE DRAWS NOTHING AND IS STILL LOAD-BEARING. The landing a
+ * phone sees is the stack's, so this component returns `null` — but its effect
+ * publishes the machine/project/repo the member was looking at, and the stack
+ * reads that atom to keep the right page beneath an open session. Their route
+ * does the same thing in the same place (`routes/$workspaceName/_auth/chat.tsx:39`).
+ */
 function ChatRoute() {
   const { workspaceName } = useParams({ from: "/$workspaceName" });
-  const search = useSearch({ from: "/$workspaceName/_auth/chat" });
+  const search = useSearch({ from: LODY_CHAT_ROUTE });
   const navigate = useNavigate();
   const surfaceTabs = useSurfaceTabs();
+  const isMobile = useIsMobile();
+  const setMobileBaseContext = useSetAtom(mobileWorkspaceBaseContextAtom);
   // Selection steering corrects the current address in place; it is not a visit
   // to a new page, so the mirror always replaces (their comment, their rule).
   const onSelectionUrlSync = useCallback(
@@ -195,6 +254,16 @@ function ChatRoute() {
     },
     [navigate],
   );
+  useEffect(() => {
+    if (!isMobile) return;
+    setMobileBaseContext({
+      context: search.context,
+      machine: search.machine,
+      project: search.project,
+      repo: search.repo,
+    });
+  }, [isMobile, search.context, search.machine, search.project, search.repo, setMobileBaseContext]);
+  if (isMobile) return null;
   const landing = (
     <ChatLanding
       workspaceSlug={workspaceName}
@@ -226,17 +295,24 @@ function ChatRoute() {
   return <TerminalTabsHost surfaceTabs={surfaceTabs} landing={landing} />;
 }
 
-/** Their `routes/$workspaceName/_auth/sessions/$sessionId.tsx`, minus mobile.
+/** Their `routes/$workspaceName/_auth/sessions/$sessionId.tsx`, mobile branch
+ * and all.
  *
  * `SessionDetail` is deliberately NOT wrapped in `useDeferredValue`: it IS the
  * session identity boundary, and deferring it lets a message typed during a
  * switch be written to the session the member just left. Their comment on that
- * route says so at length; this mount inherits the rule. */
+ * route says so at length; this mount inherits the rule.
+ *
+ * ON A PHONE IT RENDERS NOTHING. `MobileSessionStack` draws the session as a
+ * drawer over the landing, from this route's own params and search, so drawing
+ * it here as well would mount `SessionDetail` twice. Their route returns `null`
+ * for the same reason (`:36`). */
 function sessionDetailRouteComponent(readOnly: boolean) {
   return function SessionDetailRoute() {
-    const { sessionId } = useParams({ from: "/$workspaceName/_auth/sessions/$sessionId" });
-    const search = useSearch({ from: "/$workspaceName/_auth/sessions/$sessionId" });
+    const { sessionId } = useParams({ from: LODY_SESSION_ROUTE });
+    const search = useSearch({ from: LODY_SESSION_ROUTE });
     const surfaceTabs = useSurfaceTabs();
+    const isMobile = useIsMobile();
     // The six props of seam patch 5. Absent when no shell contributes tabs,
     // which is the render every upstream call site does and the one the
     // inertness test pins.
@@ -261,6 +337,7 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           onSessionTabSelect: surfaceTabs.onDeselect,
           onSessionMissing: surfaceTabs.onSessionMissing,
         };
+    if (isMobile) return null;
     return (
       <AppThemeShell>
         <SessionDetail
@@ -371,9 +448,7 @@ export function parseSessionDetailSearch(
   return parsed;
 }
 
-export const LODY_CHAT_ROUTE = "/$workspaceName/_auth/chat";
-export const LODY_SESSION_ROUTE = "/$workspaceName/_auth/sessions/$sessionId";
-export const LODY_ARCHIVE_ROUTE = "/$workspaceName/_auth/archive";
+export { LODY_ARCHIVE_ROUTE, LODY_CHAT_ROUTE, LODY_SESSION_ROUTE } from "./route-ids.js";
 
 /** The router type, stated on our side: `createRouter` is generic over the
  * route tree and the vendor seam erases the component types, so naming the
@@ -431,7 +506,7 @@ export function createLodySessionRouter(
   const authRoute = createRoute({
     getParentRoute: () => workspaceRoute,
     id: "_auth",
-    component: RouteOutlet,
+    component: authRouteComponent(options.readOnly === true),
   });
 
   const chatRoute = createRoute({
