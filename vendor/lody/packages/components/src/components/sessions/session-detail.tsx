@@ -697,6 +697,7 @@ const SessionDetail = ({
   hideCloudMenuItems = false,
   hideNotificationPrompt = false,
   hideAgentRoles = false,
+  hideConnectionStatus = false,
   hideLanguageServiceActions = false,
   keyboardShortcutsAvailable = true,
   surfaceTabs = EMPTY_SURFACE_TABS,
@@ -724,6 +725,18 @@ const SessionDetail = ({
   /** Passed to every chat surface this page mounts; see
    * `SessionChatInterfaceProps.hideAgentRoles`. */
   hideAgentRoles?: boolean;
+  /**
+   * Whether the host reports connectivity itself.
+   *
+   * An embedding shell with its own status line already tells the member that
+   * the machine is unreachable, in words that cover the whole product rather
+   * than this page. This page then draws none of its own: the mobile header's
+   * catch-up spinner and the `titleSyncing` override both go dark here, and the
+   * prop rides on to every chat surface and every file viewer this page mounts —
+   * see `SessionChatInterfaceProps.hideConnectionStatus` and
+   * `SessionFileContentViewProps.hideConnectionStatus`.
+   */
+  hideConnectionStatus?: boolean;
   /**
    * Whether the host serves a language service at all.
    *
@@ -1267,7 +1280,9 @@ const SessionDetail = ({
     }
   );
   const activeSessionDocIsSyncing = useDelayedFlag(
-    activeSessionTabId !== null && isSyncingRoomSyncState(activeSessionDocSyncState),
+    !hideConnectionStatus &&
+      activeSessionTabId !== null &&
+      isSyncingRoomSyncState(activeSessionDocSyncState),
     400
   );
   // Resolve local project metadata for header display
@@ -4730,6 +4745,7 @@ const SessionDetail = ({
         copyMarkdownRequestSeq={viewerTabSaveStates[tab.id]?.copyMarkdownRequestSeq ?? 0}
         preferNativeMarkdownSelection={isMobile}
         lspAvailable={!hideLanguageServiceActions}
+        hideConnectionStatus={hideConnectionStatus}
         fileProvider={activeSessionFileProvider}
         fileProviderPending={activeSessionFileProviderPending}
         fileProviderMessage={activeSessionFileProviderMessage}
@@ -5770,6 +5786,7 @@ const SessionDetail = ({
       hideCloudMenuItems,
       hideNotificationPrompt,
       hideAgentRoles,
+      hideConnectionStatus,
       syncEnabled: isActive || pendingForkSourceId !== undefined,
       isVisible,
       onFileDiffClick: handleOpenFileDiffForChat,

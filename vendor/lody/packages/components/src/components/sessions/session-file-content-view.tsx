@@ -168,6 +168,14 @@ export type SessionFileContentViewProps = {
    * service does not support this file". Defaults to on.
    */
   lspAvailable?: boolean;
+  /**
+   * Whether the host reports connectivity itself. With it on, the status bar
+   * drops its machine-offline glyph and keeps every other item: `Saved`,
+   * `Unsaved`, `Save failed` and the live-sync states are feedback about an edit
+   * the member just made, not a report about the link to the machine. Defaults
+   * to off, so every upstream call site keeps the glyph.
+   */
+  hideConnectionStatus?: boolean;
   className?: string;
   active?: boolean;
   fileProvider?: SessionFileProvider | null;
@@ -221,6 +229,7 @@ function SessionFileContentViewImpl({
   copyMarkdownRequestSeq,
   preferNativeMarkdownSelection = false,
   lspAvailable = true,
+  hideConnectionStatus = false,
   className,
   active = true,
   fileProvider,
@@ -1531,7 +1540,9 @@ function SessionFileContentViewImpl({
           liveStatus={liveStatus}
           showSaveStatus={isProviderFileEditable}
           machineOffline={
-            showProviderConnecting || shouldUseProviderFileContent ? isSessionMachineOffline : false
+            !hideConnectionStatus &&
+            (showProviderConnecting || shouldUseProviderFileContent) &&
+            isSessionMachineOffline
           }
           t={t}
         />

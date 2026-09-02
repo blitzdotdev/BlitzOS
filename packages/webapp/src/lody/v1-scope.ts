@@ -14,6 +14,18 @@
  * | `keyboardShortcuts` | X1-X5, C24, C100, C102, C103, T27 | We mount neither `commands.attach(window)` nor `CommandPalette`, so no chord is answered. |
  * | `cloudSurfaces` | S7-S10, IC60, IC83, IC84, IC88, T25 | Each one advertises Lody's cloud, Lody's Discord, Lody's desktop app, a settings screen we do not serve, or a team scope a one-member workspace cannot switch. |
  * | `languageService` | SP26 | A box runs no language service, so Go to Definition and Find References answer "Host language service does not support this file" for every identifier in every file. |
+ * | `connectionStatus` | IC64, IC65 | BlitzOS reports connectivity itself, in the footer. Lody's own status chip, catch-up spinners and mobile banner describe the same outage in different words. |
+ *
+ * `connectionStatus` IS NOT A "NOT IN V1" DECISION, and it is the one row here
+ * that is not. The other five name a surface BlitzOS does not serve yet. This
+ * one names a surface BlitzOS serves ITSELF: `shell/workspace-status-line.ts`
+ * builds one sentence for the whole workspace — `workspace running · box
+ * unreachable` when the machine runs and the browser cannot reach its gateway —
+ * out of the probe in `box-gateway-health.ts`, and the same gateway carries the
+ * terminal, the files, the previews and this surface. Two reports of one outage
+ * tell a member which to believe and nothing else. So the flag is an OWNERSHIP
+ * boundary: flipping it on is what a host that stopped reporting connectivity
+ * would do, not what BlitzOS does when it grows a feature. Seam patch 15.
  *
  * HOW A FLAG REACHES THE VENDORED RENDERER. Two ways, and which one applies is
  * a property of the flag, not a preference:
@@ -57,6 +69,22 @@ export interface LodyV1Scope {
    * grows a language service flips this and the actions come back.
    */
   readonly languageService: boolean;
+  /**
+   * Every Lody surface that narrates the connection (2 rows). DELETED for v1,
+   * and the reason is ownership rather than scope: the BlitzOS footer says it.
+   *
+   * What goes dark: the composer status chip's browser-offline ("You are
+   * offline. Reconnect to sync.") and machine-offline states, the ambient
+   * catch-up spinner in the session info bar and the mobile session header, the
+   * page header's offline-cloud glyph, the file viewer's offline glyph, and the
+   * mobile home's connection banner.
+   *
+   * What stays, deliberately: the same chip's `machine-removed` state, which is
+   * a membership fact and the only one of the three that blocks sending; and
+   * every message a panel draws INSTEAD of its data ("Connecting to code
+   * session…", "Syncing changes…"), which the footer cannot replace.
+   */
+  readonly connectionStatus: boolean;
 }
 
 /**
@@ -72,6 +100,7 @@ export const LODY_V1_SCOPE = {
   keyboardShortcuts: false,
   cloudSurfaces: false,
   languageService: false,
+  connectionStatus: false,
 } as const satisfies LodyV1Scope;
 
 /**
@@ -91,7 +120,7 @@ export const lodyExtraCapabilities = (): readonly LodyPlatformCapability[] =>
 
 /**
  * The suppression props `router.tsx` passes to the three components it mounts:
- * `ChatLanding`, `SessionDetail` and `ArchiveView` (seam patches 7, 10 and 14).
+ * `ChatLanding`, `SessionDetail` and `ArchiveView` (seam patches 7, 10, 14, 15).
  * Built here so the mounts cannot disagree, and so a test reads the same object
  * the surface does.
  */
@@ -110,6 +139,16 @@ export interface LodyV1SuppressionProps {
    * so there is no prop for it and nothing here to flip.
    */
   readonly hideTeamScope: boolean;
+  /**
+   * Every connection and sync surface Lody draws (IC64, IC65, seam patch 15).
+   * Passed to `SessionDetail` and to `ChatLanding`; the session page rides it on
+   * to every chat surface and every file viewer it mounts.
+   *
+   * NOT the rail's `ConnectionPill`: it renders inside `LoroSidebar`'s workspace
+   * header, which `SessionRailSidebar.tsx` already suppresses with seam patch
+   * 2's `hideHeader`, and our rail passes the pill no state either way.
+   */
+  readonly hideConnectionStatus: boolean;
 }
 
 export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
@@ -120,4 +159,5 @@ export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
   keyboardShortcutsAvailable: LODY_V1_SCOPE.keyboardShortcuts,
   hideLanguageServiceActions: !LODY_V1_SCOPE.languageService,
   hideTeamScope: !LODY_V1_SCOPE.cloudSurfaces,
+  hideConnectionStatus: !LODY_V1_SCOPE.connectionStatus,
 });

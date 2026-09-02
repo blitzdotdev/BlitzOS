@@ -176,6 +176,15 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // argument, so its closing line gains one. This is the ONE `});` in the
       // file the seam declares, which is why the anchor is a line number.
       [3719, "  });"],
+      // Seam patch 15 hunk 11: the page's catch-up flag answers
+      // `hideConnectionStatus`, so the one line the `useDelayedFlag` was built
+      // from is rewritten. This takes the mobile header's spinner and the
+      // `titleSyncing` override together. Its other four hunks in this file add
+      // lines and remove none.
+      [
+        1110,
+        "    activeSessionTabId !== null && isSyncingRoomSyncState(activeSessionDocSyncState),",
+      ],
     ]);
   });
 
