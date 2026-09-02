@@ -77,10 +77,10 @@ if [ "$mode" = ro ]; then
   exec tmux -u attach-session -r -t "=$session"
 fi
 
-# No secret passes through here. Every credential — the workspace's own
-# variables included — is pulled at the moment of use with `blitz-cred get
-# <name>`, so a tab carries nothing that outlives its grant and a Disconnect
-# takes effect without restarting anything.
+# No secret passes through here. Every credential is pulled at the moment of
+# use — the agent's own curl against the control plane's /agent/* API, with a
+# bearer from `blitz-cred api-token` — so a tab carries nothing that outlives
+# its grant and a Disconnect takes effect without restarting anything.
 #
 # tmux gives a NEW session the environment of the client that created it only
 # when that client also STARTS the server; every later session copies the
