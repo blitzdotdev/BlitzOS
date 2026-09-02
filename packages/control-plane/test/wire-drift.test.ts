@@ -353,6 +353,11 @@ const putAgentCredentialRequest: SharedShape<
   schema.PutAgentCredentialRequest
 > = { value: "sk_test_only", comment: "test-mode key, safe for CI" };
 
+const credentialRequestFiledError: SharedShape<
+  wire.CredentialRequestFiledError,
+  schema.CredentialRequestFiledError
+> = { error: "connection linear is not configured", request_id: "request" };
+
 // Grant proposals (§7a). One row per action, and a null-subject change,
 // because each covers ground the others do not.
 const addGrantChange: SharedShape<wire.GrantChange, schema.GrantChange> = {
@@ -893,6 +898,7 @@ const fullFieldValues = [
   agentCredentialsResponse,
   agentCredentialTokenResponse,
   putAgentCredentialRequest,
+  credentialRequestFiledError,
   addGrantChange,
   removeGrantChange,
   proposeGrantChangesRequest,

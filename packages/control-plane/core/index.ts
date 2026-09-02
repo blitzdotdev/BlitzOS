@@ -1,4 +1,13 @@
 export { installControlPlaneRoutes } from "./app.js";
+/** The agent API's own description: what GET /agent/api documents, route by
+ * route. Public here so the coverage gate reads it through the same surface
+ * the Worker does, which also keeps it inside the closed module graph the
+ * managed emitter requires of every core file. */
+export {
+  AGENT_API_SHARED_REFUSALS,
+  AGENT_ROUTES,
+  type AgentApiRoute,
+} from "./agent-api-manifest.js";
 export type { MeResponse } from "./identity/routes.js";
 export type { BlobObject, BlobStore, LogicalBlobLookup } from "./blobs.js";
 export { blobResponse, NullBlobStore, streamBlob } from "./blobs.js";

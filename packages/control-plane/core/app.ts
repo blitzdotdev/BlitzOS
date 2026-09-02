@@ -1,3 +1,4 @@
+import { addAgentApiRoutes } from "./agent-api.js";
 import { addAgentRoutes } from "./agent-routes.js";
 import { addAgentRuleLibraryRoutes, addAgentRulesRoutes } from "./agent-rules.js";
 import { addBoxConfigRoutes } from "./box-config.js";
@@ -130,6 +131,9 @@ export function installControlPlaneRoutes(
   // The agent plane (plans/ORG-CREDENTIALS.md §4): box-authenticated through
   // boxCaller, under /agent/* — its own prefix, colliding with nothing.
   addAgentRoutes(router, runtimeFactory);
+  // The plane's own description (§4): GET /agent/api serves the generated
+  // OpenAPI document, so an agent reads the API from the API.
+  addAgentApiRoutes(router, runtimeFactory);
   // The org credential session plane (§7): /orgs/:id/credentials*.
   addOrgCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addOrgCredentialImportRoutes(router, runtimeFactory, requireMembershipPrincipal);

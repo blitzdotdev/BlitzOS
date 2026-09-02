@@ -135,6 +135,16 @@ export interface PutAgentCredentialRequest {
   comment?: string | null;
 }
 
+/** The 404 of `POST /agent/credentials/:name/token`: the name is not
+ * connected in this workspace, or not granted to the machine's member. The
+ * miss files a `credential_requests` row, and `request_id` names it — the
+ * connect inbox resolves that id once a person connects or grants the name.
+ * The recovery is `blitz connections open <provider>`, then asking again. */
+export interface CredentialRequestFiledError {
+  error: string;
+  request_id: string;
+}
+
 /** Agent-driven grant operations (plans/ORG-CREDENTIALS.md §7a): an agent
  * proposes an explicit change list, a person approves what applies. */
 
