@@ -10,6 +10,9 @@ nothing else.
 |---|---|
 | `session-tab-bar.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx` |
 | `session-detail.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-detail.tsx` |
+| `session-side-panel-tab-bar.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-side-panel-tab-bar.tsx` (seam patch 10) |
+| `session-browser-panel.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-browser-panel.tsx` (seam patch 11) |
+| `managed-preview-surface.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/managed-preview-surface.tsx` (seam patch 11) |
 
 **Taken from `f34748945028ffc04316861ad25edc24535c0235`**, the commit
 `vendor/lody/UPSTREAM.md` pins. The test reads that pin out of `UPSTREAM.md` and
@@ -47,7 +50,7 @@ that has the new upstream commit:
 
 ```sh
 PIN=<the new upstream sha>
-for f in session-tab-bar session-detail; do
+for f in session-tab-bar session-detail session-side-panel-tab-bar session-browser-panel managed-preview-surface; do
   git show "$PIN:packages/components/src/components/sessions/$f.tsx" \
     > packages/webapp/test/upstream-baseline/"$f.tsx.txt"
 done

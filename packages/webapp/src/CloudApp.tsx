@@ -15,19 +15,17 @@ import {
   type V2WorkspaceRecord,
 } from './api-adapter';
 import type { ControlPlaneClient } from './api';
-import type { CredentialRequestView, FolderAttachmentView } from '@blitzos/schema';
+import type { CredentialRequestView } from '@blitzos/schema';
 import {
   SPAWN_SESSION_LABELS,
   type WebAppTabModel,
   type SpawnSessionType,
 } from './WebAppHeader';
-import { FileIcon } from './WebAppIcons';
+import { GenericProviderIcon } from './WebAppIcons';
 import type { DriveRailSession } from './shell/rail-sessions';
 import { workspaceStatusLine } from './shell/workspace-status-line';
 import { useBoxGatewayHealth } from './box-gateway-health';
-import { ShareToDriveDialog } from './files/ShareToDriveDialog';
 import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
-import { ConfirmationDialog } from './ConfirmationDialog';
 import { SessionShareDialog } from './SessionShareDialog';
 import { caughtErrorMessage } from './error-message';
 import {
@@ -47,6 +45,16 @@ import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
 import { LodySessionsRegion, lodySurfaceMounts } from './lody/LodySessionsRegion';
+import {
+  CONNECTIONS_SIDE_PANEL_ID,
+  managedPreviewViewerUrl,
+  sidePanelQuickActionIcon,
+  type SessionHostSidePanelTab,
+  type SessionSidePanelHostState,
+  type SessionSidePanelRequest,
+  type SidePanelBinding,
+  type SidePanelQuickAction,
+} from './lody/side-panel';
 import { SurfaceTabContent } from './lody/SurfaceTabContent';
 import {
   surfaceTabId,
@@ -61,7 +69,6 @@ import { useSharedSessions } from './lody/use-shared-sessions';
 import type { LodySessionSurfaceApi } from './lody/SessionSurface';
 import {
   drivePath,
-  folderPagePath,
   parseAppRoute,
   settingsPath,
   workspacePath,
@@ -82,9 +89,7 @@ import {
 } from './storage';
 import {
   appendTab,
-  closeFileTabsAtPath,
   closeTab as closePaneTab,
-  filesHostRegion,
   moveTab,
   paneRegions,
   panelTab,
@@ -95,12 +100,11 @@ import {
   withRegionActiveId,
 } from './workspace-panes';
 import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
+import { WorkspaceConnectionsPanel } from './WorkspaceConnectionsPanel';
 import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
-import { FilesSidebar } from './FilesSidebar';
-import { fullDavPath, isPathAtOrBelow } from './files';
 import { dropPasteText, uploadDroppedFiles } from './file-drop';
 import {
   initialWorkspaceStore,
@@ -169,14 +173,7 @@ function TerminalIcon() {
 
 export { terminalWebSocketUrl } from './workspace-endpoints';
 
-type FileCloseConfirmation = {
-  id: string;
-  label: string;
-};
-
 const PANEL_LABELS = {
-  files: 'Files',
-  previews: 'teenyapps',
   connections: 'Connections',
 } satisfies Record<WorkspaceDrawerSegment, string>;
 
@@ -210,26 +207,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
-  // The section the member last chose in the mobile sheet, or null while they
-  // have chosen none and a persisted panel still speaks for them.
-  const [mobileSegment, setMobileSegment] = useState<WorkspaceDrawerSegment | null>(null);
+  // Below the mobile breakpoint the workspace panels live in an off-canvas
+  // sheet (`WorkspaceDrawer`); this is whether that sheet is open.
+  const [mobilePanelsOpen, setMobilePanelsOpen] = useState(false);
   const [terminalSignInUrl, setTerminalSignInUrl] = useState<string | null>(null);
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
-  const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
-  const [fileCloseConfirmation, setFileCloseConfirmation] = useState<FileCloseConfirmation | null>(null);
-  const [filesRefreshVersion, setFilesRefreshVersion] = useState(0);
-  const [workspaceAttachments, setWorkspaceAttachments] = useState<{
-    workspaceId: string;
-    folders: FolderAttachmentView[];
-  }>({ workspaceId: '', folders: [] });
-  const [attachmentsVersion, setAttachmentsVersion] = useState(0);
-  const [shareToDrivePath, setShareToDrivePath] = useState<string | null>(null);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
   const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
   // The latest `blitz connections open` focus for the active workspace; a
   // fresh object per event so the panel re-selects on a repeat ask.
   const [connectionsFocus, setConnectionsFocus] = useState<ConnectionsPanelFocus | null>(null);
+  // Lody's side panel as it last reported itself (seam patch 10), and `null`
+  // while no session detail is on screen. The right icon strip draws from it
+  // and drives it through `sidePanelRequest`, one `seq` per press.
+  const [sidePanelState, setSidePanelState] = useState<SessionSidePanelHostState | null>(null);
+  const [sidePanelRequest, setSidePanelRequest] = useState<SessionSidePanelRequest | null>(null);
+  const requestSidePanel = useCallback((tabId: string, action: 'open' | 'close') => {
+    setSidePanelRequest((previous) => ({ tabId, action, seq: (previous?.seq ?? 0) + 1 }));
+  }, []);
   // Which column the keyboard, statusline and rail follow. Not persisted: the
   // panes are, but the focus between them is a per-view detail.
   const [focusedRegion, setFocusedRegion] = useState<WorkspaceRegion>('main');
@@ -260,13 +255,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   useEffect(() => {
     if (!mobileWebApp) {
       setDrawerOpen(false);
-      setFilesDrawerOpen(false);
+      setMobilePanelsOpen(false);
     }
   }, [mobileWebApp]);
 
   useEffect(() => {
     setDrawerOpen(false);
-    setFilesDrawerOpen(false);
+    setMobilePanelsOpen(false);
   }, [route.page, route.workspaceId]);
 
   useEffect(() => {
@@ -274,7 +269,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setDrawerOpen(false);
-        setFilesDrawerOpen(false);
+        setMobilePanelsOpen(false);
       }
     };
     let edgeStart: { x: number; y: number; pointerId: number } | null = null;
@@ -382,41 +377,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // Below the mobile breakpoint the panes never split: the workspace keeps one
   // tab strip and the panels stay an off-canvas sheet.
   const splitEnabled = !mobileWebApp;
-  const openPanels = new Set(
-    (activeWorkspaceTabs?.tabs ?? []).flatMap(
-      (tab) => (tab.type === 'panel' ? [tab.panel] : []),
-    ),
-  );
-  const sidePanelTab = activeWorkspaceTabs === null
+  // Connections is the one panel left, so the mobile sheet has one segment
+  // and nothing to choose between.
+  const drawerSegment: WorkspaceDrawerSegment = 'connections';
+  const connectionsTab = activeWorkspaceTabs === null
     ? null
-    : activeWorkspaceTabs.tabs.find(
-        (tab) => tab.type === 'panel' && tab.id === regionActiveId(activeWorkspaceTabs, 'side'),
-      ) ?? null;
-  // The sheet needs a selected segment even before its panel tab exists.
-  //
-  const storedSegment: WorkspaceDrawerSegment = sidePanelTab?.type === 'panel'
-    ? sidePanelTab.panel
-    : 'files';
-  // On mobile a tap cannot go through the tab model. A panel tab that would be
-  // the only tab collapses into `main` (normalizedWorkspaceTabs refuses a side
-  // pane with an empty main), which leaves `sideActiveId` undefined, and the
-  // mobile strip hides panel tabs anyway — so the sheet read Files forever and
-  // its Connections and teenyapps tabs did nothing.
-  //
-  // A tap is an override, not a replacement: until one happens a panel the
-  // member left open still opens the sheet on its own section.
-  const drawerSegment: WorkspaceDrawerSegment = mobileWebApp
-    ? mobileSegment ?? storedSegment
-    : storedSegment;
-  const filesTab = activeWorkspaceTabs === null
-    ? null
-    : panelTab(activeWorkspaceTabs, 'files');
-  const filesOpen = mobileWebApp ? filesDrawerOpen : filesTab !== null;
-  const filesSegmentVisible = mobileWebApp
-    ? filesDrawerOpen && drawerSegment === 'files'
+    : panelTab(activeWorkspaceTabs, 'connections');
+  // Whether the member is looking at the connections panel right now: the
+  // open sheet on mobile, the panel tab in front of its pane on the desktop.
+  // The pending-request poll hurries while they are.
+  const connectionsTabShowing = mobileWebApp
+    ? mobilePanelsOpen
     : activeWorkspaceTabs !== null
-      && filesTab !== null
-      && regionActiveId(activeWorkspaceTabs, tabRegion(filesTab)) === filesTab.id;
+      && connectionsTab !== null
+      && regionActiveId(activeWorkspaceTabs, tabRegion(connectionsTab)) === connectionsTab.id;
+  const connectionsShowing = connectionsTabShowing
+    || (sidePanelState !== null
+      && sidePanelState.open
+      && sidePanelState.activeTabId === CONNECTIONS_SIDE_PANEL_ID);
   const { livePorts, previewLinks } = useWorkspacePreviewSources(
     route.page === 'webApp' && activeWorkspaceRunning,
     activeWorkspaceId,
@@ -449,10 +427,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       // on a fresh `at`, and a focus replayed from the box must carry the time
       // the box raised it.
       setConnectionsFocus({ provider: focus.provider, at: focus.requestedAt });
-      if (mobileWebApp) setFilesDrawerOpen(true);
-      // `showPanel`, not the pane write it used to make: with the strip drawing
-      // the tabs, a panel tab nothing selects is a panel the member never sees,
-      // and the whole point of this marker is that the agent sent them here.
+      if (mobileWebApp) setMobilePanelsOpen(true);
+      // With a session on screen the panel is a tab of Lody's side panel;
+      // otherwise the native panel tab. `showPanel`, not the pane write it
+      // used to make: with the strip drawing the tabs, a panel tab nothing
+      // selects is a panel the member never sees, and the whole point of this
+      // marker is that the agent sent them here.
+      if (sidePanelDriven) {
+        requestSidePanel(CONNECTIONS_SIDE_PANEL_ID, 'open');
+        return;
+      }
       showPanel('connections');
       if (!mobileWebApp) setFocusedRegion('side');
     },
@@ -463,20 +447,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   useEffect(() => {
     setConnectionsFocus(null);
   }, [activeWorkspaceId]);
-
-  // Drive attachments feed the files view (shared pin count, context-menu
-  // "Open in Drive"); refetched on workspace switch and after a share.
-  useEffect(() => {
-    if (activeWorkspaceId === '' || !filesSegmentVisible) return;
-    let active = true;
-    void client.listWorkspaceFolders(activeWorkspaceId).then(
-      ({ folders }) => {
-        if (active) setWorkspaceAttachments({ workspaceId: activeWorkspaceId, folders });
-      },
-      () => undefined,
-    );
-    return () => { active = false; };
-  }, [activeWorkspaceId, client, filesSegmentVisible, attachmentsVersion]);
 
   useEffect(() => {
     if (route.page !== 'webApp' || !activeWorkspaceId || signedOut) {
@@ -505,25 +475,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }
     };
     void poll();
-    const timer = window.setInterval(() => { void poll(); }, filesOpen ? 5_000 : 15_000);
+    const timer = window.setInterval(() => { void poll(); }, connectionsShowing ? 5_000 : 15_000);
     return () => {
       disposed = true;
       request?.abort();
       window.clearInterval(timer);
     };
-  }, [activeWorkspaceId, client, filesOpen, route.page, signedOut]);
+  }, [activeWorkspaceId, client, connectionsShowing, route.page, signedOut]);
 
+  // The box's dufs WebDAV server, for the drop-to-upload path below.
   const filesClient = useMemo<WebDAVClient | null>(() => {
     if (!activeFilesBase) return null;
     return createClient(activeFilesBase, { withCredentials: true, remoteBasePath: FILES_DAV_ROOT });
   }, [activeFilesBase]);
-  const getFilesClient = useCallback((): WebDAVClient | null => {
-    const workspaceId = activeWorkspaceIdRef.current;
-    const workspace = storeRef.current.workspaces.find(({ id }) => id === workspaceId);
-    const filesBase = workspaceEndpoints.current.get(workspaceId)?.filesBase;
-    if (workspace?.lifecycleStatus !== 'running' || !filesBase) return null;
-    return createClient(filesBase, { withCredentials: true, remoteBasePath: FILES_DAV_ROOT });
-  }, []);
   const [dropActive, setDropActive] = useState(false);
   const [dropBusy, setDropBusy] = useState(false);
   // Drop a screenshot on a tab and its path lands in the TUI. Upload reuses the
@@ -867,20 +831,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }));
   };
 
-  useEffect(() => {
-    setDirtyFileIds(new Set());
-    setFileCloseConfirmation(null);
-    setFilesRefreshVersion(0);
-  }, [activeWorkspaceId]);
-  useEffect(() => {
-    if (dirtyFileIds.size === 0) return;
-    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warnBeforeUnload);
-    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
-  }, [dirtyFileIds.size]);
   const ttydSessions = activeWorkspaceTabs?.tabs ?? NO_WORKSPACE_TABS;
   // The pane a tab is drawn in. Mobile has one column, so a tab parked in the
   // side pane on a desktop still shows up in the single strip there.
@@ -998,80 +948,48 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     openLandingRail();
     lodyApi?.openLanding({ resetDraft: true });
   }, [lodyApi, openLandingRail]);
-  const ttydLabel = (session: WorkspaceTab) => session.type === 'file'
-    ? session.filePath
-    : session.type === 'panel'
-      ? PANEL_LABELS[session.panel]
-      : session.type === 'preview'
-        ? 'port' in session
-          ? `:${session.port}`
-          : previewLinkLabel(session.url, session.title)
-        : (
-          session.type === 'claude'
-          || session.type === 'codex'
-          || session.type === 'terminal'
-            ? session.title ?? SPAWN_SESSION_LABELS[session.type]
-            : session.type
-        );
-  const ttydTabs = useMemo<WebAppTabModel[]>(() => {
-    const basenameCounts = new Map<string, number>();
-    for (const session of ttydSessions) {
-      if (session.type !== 'file') continue;
-      const basename = session.filePath.split('/').at(-1) ?? session.filePath;
-      basenameCounts.set(basename, (basenameCounts.get(basename) ?? 0) + 1);
-    }
-    return ttydSessions.map((session) => {
-      if (session.type === 'panel') {
-        return {
-          id: String(session.id),
-          label: PANEL_LABELS[session.panel],
-          agent: 'panel',
-          panel: session.panel,
-          pending: false,
-        };
-      }
-      if (session.type !== 'file') {
-        const tab: WebAppTabModel = {
-          id: String(session.id),
-          label: ttydLabel(session),
-          agent: session.type,
-          pending: false,
-        };
-        if (isManagedWorkspaceTab(session)) {
-          tab.customTitle = session.title;
-          tab.renameable = true;
-        }
-        return tab;
-      }
-      const parts = session.filePath.split('/');
-      const basename = parts.at(-1) ?? session.filePath;
-      const parent = parts.length > 1 ? parts.at(-2) : '~';
+  const ttydLabel = (session: WorkspaceTab) => session.type === 'panel'
+    ? PANEL_LABELS[session.panel]
+    : session.type === 'preview'
+      ? 'port' in session
+        ? `:${session.port}`
+        : previewLinkLabel(session.url, session.title)
+      : (
+        session.type === 'claude'
+        || session.type === 'codex'
+        || session.type === 'terminal'
+          ? session.title ?? SPAWN_SESSION_LABELS[session.type]
+          : session.type
+      );
+  const ttydTabs = useMemo<WebAppTabModel[]>(() => ttydSessions.map((session) => {
+    if (session.type === 'panel') {
       return {
         id: String(session.id),
-        label: basenameCounts.get(basename) === 1 ? basename : `${basename} ·${parent}`,
-        agent: 'file',
+        label: PANEL_LABELS[session.panel],
+        agent: 'panel',
+        panel: session.panel,
         pending: false,
-        dirty: dirtyFileIds.has(String(session.id)),
-        filePath: session.filePath,
-        title: fullDavPath(session.filePath),
       };
-    });
-  }, [dirtyFileIds, ttydSessions]);
+    }
+    const tab: WebAppTabModel = {
+      id: String(session.id),
+      label: ttydLabel(session),
+      agent: session.type,
+      pending: false,
+    };
+    if (isManagedWorkspaceTab(session)) {
+      tab.customTitle = session.title;
+      tab.renameable = true;
+    }
+    return tab;
+  }), [ttydSessions]);
   const railSessions = useMemo<DriveRailSession[]>(() => ttydTabs
-    .filter((tab) => tab.agent !== 'panel' && tab.agent !== 'file' && tab.agent !== 'preview')
-    .map((tab) => {
-      const session: DriveRailSession = {
-        id: tab.id,
-        label: tab.label,
-        agent: tab.agent,
-      };
-      if (tab.filePath !== undefined) session.filePath = tab.filePath;
-      return session;
-    }), [ttydTabs]);
+    .filter((tab) => tab.agent !== 'panel' && tab.agent !== 'preview')
+    .map((tab) => ({ id: tab.id, label: tab.label, agent: tab.agent })), [ttydTabs]);
   const railActiveSessionId = (() => {
     const railIds = new Set(railSessions.map(({ id }) => id));
     if (ttydActiveId !== null && railIds.has(ttydActiveId)) return ttydActiveId;
-    // Files, previews and utility panels are not rail sessions. When one has
+    // Previews and utility panels are not rail sessions. When one has
     // focus, keep the agent-like session still visible in the other pane
     // highlighted instead of making the rail appear to have no active item.
     const fallback = focusedRegion === 'side'
@@ -1136,6 +1054,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const surfaceTabsEnabled = lodyRail.available
     && lodySurfaceMounts(activeWorkspaceRunning ? activeIngressEntry : null, lodySessions)
     && !mobileWebApp;
+  // The strip drives Lody's side panel only while a session detail is both
+  // mounted (it has reported a state) and on screen (`lodyRail.visible`); a
+  // surface hidden behind the panes would take the request and show nothing.
+  const sidePanelDriven = surfaceTabsEnabled && lodyRail.visible && sidePanelState !== null;
+  useEffect(() => {
+    if (!surfaceTabsEnabled) setSidePanelState(null);
+  }, [surfaceTabsEnabled]);
   const openTerminalTab = lodyRail.openTerminal;
   const selectWorkspaceTab = useCallback((id: string) => {
     if (surfaceTabsEnabled) openTerminalTab(id);
@@ -1244,25 +1169,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     surfaceTabsEnabled,
     updateWorkspaceTabs,
   ]);
-  const toggleFiles = useCallback(() => {
+  // The mobile statusline's sheet toggle. The navigation drawer and the panel
+  // sheet are both off-canvas, and only one of them is open at a time.
+  const toggleMobilePanels = useCallback(() => {
     if (!activeWorkspaceId) return;
-    if (mobileWebApp) {
-      setDrawerOpen(false);
-      setFilesDrawerOpen((open) => !open);
-      return;
-    }
-    togglePanel('files');
-  }, [activeWorkspaceId, mobileWebApp, togglePanel]);
+    setDrawerOpen(false);
+    setMobilePanelsOpen((open) => !open);
+  }, [activeWorkspaceId]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
       const key = event.key.toLowerCase();
-      if (!event.shiftKey && key === 'b') {
-        if (!activeWorkspaceId) return;
-        event.preventDefault();
-        toggleFiles();
-      } else if (!event.shiftKey && key === 'n') {
+      if (!event.shiftKey && key === 'n') {
         event.preventDefault();
         setShowCreateWorkspace(true);
       } else if (!event.shiftKey && /^[1-9]$/.test(key)) {
@@ -1275,23 +1194,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     };
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
-  }, [activeWorkspaceId, selectWorkspace, store.workspaces, toggleFiles]);
-  const openFile = (filePath: string) => {
-    const existing = ttydSessions.find(
-      (session) => session.type === 'file' && session.filePath === filePath,
-    );
-    if (existing) {
-      selectTtydSession(String(existing.id));
-    } else {
-      // Files opens files beside itself. Deliberately unlike IntelliJ: the
-      // tree and what it opens stay in one column.
-      const region = splitEnabled && activeWorkspaceTabs !== null
-        ? filesHostRegion(activeWorkspaceTabs)
-        : 'main';
-      addWorkspaceTab((id) => ({ id, type: 'file', filePath }), region);
-    }
-    if (mobileWebApp) setFilesDrawerOpen(false);
-  };
+  }, [selectWorkspace, store.workspaces]);
   const retargetPreviewTab = useCallback((tabId: number, path: string | undefined) => {
     setWorkspaceTabs((current) => {
       if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
@@ -1355,7 +1258,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const activePendingRequests = pendingRequests.filter(
     ({ workspace_id }) => workspace_id === activeWorkspaceId,
   );
-  const closeTtydSessionNow = (id: string) => {
+  const closeTtydSession = (id: string) => {
     // The one place a terminal tab is CLOSED, from either strip. The tmux
     // session outlives its websocket by design — that is what a reload, a
     // workspace switch and a lost tunnel all re-attach to — so this is also
@@ -1369,37 +1272,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       return tab === undefined ? tabs : closePaneTab(tabs, tab.id);
     });
     retainedSessionIdsRef.current.ids.delete(id);
-    setDirtyFileIds((current) => {
-      if (!current.has(id)) return current;
-      const next = new Set(current);
-      next.delete(id);
-      return next;
-    });
   };
   const renameTtydSession = (id: string, title: string | undefined) => {
     const numericId = Number(id);
     if (!Number.isSafeInteger(numericId)) return;
     updateWorkspaceTabs((tabs) => renameTab(tabs, numericId, title));
-  };
-  const closeTtydSession = (id: string) => {
-    const tab = ttydSessions.find((session) => String(session.id) === id);
-    if (tab?.type === 'file' && dirtyFileIds.has(id)) {
-      setFileCloseConfirmation({
-        id,
-        label: tab.filePath.split('/').at(-1) ?? tab.filePath,
-      });
-      return;
-    }
-    closeTtydSessionNow(id);
-  };
-  const updateFileDirty = (id: string, dirty: boolean) => {
-    setDirtyFileIds((current) => {
-      if (current.has(id) === dirty) return current;
-      const next = new Set(current);
-      if (dirty) next.add(id);
-      else next.delete(id);
-      return next;
-    });
   };
   const {
     tabDrag,
@@ -1441,8 +1318,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     activeWorkspace.lifecycleStatus === 'error'
     || (activeWorkspace.lifecycleStatus === 'parked' && activeWorkspace.errorDetail !== null)
   );
-  // Terminals need a live box; files, previews and panels draw their
-  // own unavailable states and stay mounted while the box wakes.
+  // Terminals need a live box; previews and panels draw their own
+  // unavailable states and stay mounted while the box wakes.
   const sessionsRenderable = !workspaceErrored
     && activeSessionUrl !== null
     && !workspaceProvisioning
@@ -1453,9 +1330,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // terminal survives the move, and an unvisited one still never mounts.
   const renderedSessions = ttydSessions.filter((session) => {
     if (!splitEnabled && session.type === 'panel') return false;
-    const needsBox = session.type !== 'panel'
-      && session.type !== 'file'
-      && session.type !== 'preview';
+    const needsBox = session.type !== 'panel' && session.type !== 'preview';
     if (needsBox && !sessionsRenderable) return false;
     const sessionId = String(session.id);
     return sessionId === paneActiveId(surfaceRegion(session))
@@ -1498,15 +1373,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       ? 'Creating workspace'
       : 'Provisioning workspace'
     : workspaceWaking ? 'Waking workspace' : 'Loading workspace';
-  /** What a column shows when its active tab cannot draw itself yet. Files,
-   * previews and panels always draw themselves, so they never see this. */
+  /** What a column shows when its active tab cannot draw itself yet. Previews
+   * and panels always draw themselves, so they never see this. */
   const paneFallback = (region: WorkspaceRegion): ReactNode => {
     const activeId = paneActiveId(region);
     const session = ttydSessions.find((entry) => String(entry.id) === activeId) ?? null;
-    if (
-      session !== null
-      && (session.type === 'file' || session.type === 'preview' || session.type === 'panel')
-    ) return null;
+    if (session !== null && (session.type === 'preview' || session.type === 'panel')) return null;
     if (workspaceErrored && activeWorkspace) {
       return (
         <WorkspaceErrorState
@@ -1539,71 +1411,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
     return session === null ? <p className="webapp-pane-empty">Empty pane</p> : null;
   };
-  const filesSidebar = activeWorkspace === undefined ? null : (
-    <FilesSidebar
-      key={activeWorkspace.id}
-      client={filesClient}
-      expanded={activeFiles.expanded}
-      getClient={getFilesClient}
-      mobile={mobileWebApp}
-      open={filesOpen}
-      ready={activeWorkspaceRunning}
-      refreshVersion={filesRefreshVersion}
-      visible={filesSegmentVisible}
-      wakingStage={workspaceWakingStage}
-      width={activeFiles.width}
-      sharedFolders={workspaceAttachments.workspaceId === activeWorkspace.id
-        ? workspaceAttachments.folders
-        : []}
-      canShare={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
-      onClose={() => {
-        if (mobileWebApp) setFilesDrawerOpen(false);
-        else updateWorkspaceTabs((tabs) => {
-          const files = panelTab(tabs, 'files');
-          return files === null ? tabs : closePaneTab(tabs, files.id);
-        });
-      }}
-      onExpandedChange={(expanded) => {
-        setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-          ? { ...current, value: { ...current.value, expanded } }
-          : current);
-      }}
-      onOpenFile={openFile}
-      dirtyFilePaths={ttydSessions.flatMap((tab) => (
-        tab.type === 'file' && dirtyFileIds.has(String(tab.id)) ? [tab.filePath] : []
-      ))}
-      onPathMoved={(source, destination) => {
-        updateWorkspaceTabs((tabs) => ({
-          ...tabs,
-          tabs: tabs.tabs.map((tab) => {
-            if (tab.type !== 'file') return tab;
-            if (tab.filePath === source) return { ...tab, filePath: destination };
-            if (tab.filePath.startsWith(`${source}/`)) {
-              return { ...tab, filePath: `${destination}${tab.filePath.slice(source.length)}` };
-            }
-            return tab;
-          }),
-        }));
-      }}
-      onPathDeleted={(path) => {
-        const affectedIds = ttydSessions.flatMap((tab) => (
-          tab.type === 'file' && isPathAtOrBelow(path, tab.filePath) ? [String(tab.id)] : []
-        ));
-        for (const id of affectedIds) retainedSessionIdsRef.current.ids.delete(id);
-        updateWorkspaceTabs((tabs) => closeFileTabsAtPath(tabs, path));
-        setDirtyFileIds((current) => {
-          if (!affectedIds.some((id) => current.has(id))) return current;
-          const next = new Set(current);
-          for (const id of affectedIds) next.delete(id);
-          return next;
-        });
-      }}
-      onOpenDriveFolder={(folderId) => navigateTo(folderPagePath(folderId))}
-      onShareToDrive={setShareToDrivePath}
-      onUnauthorized={handleUnauthorized}
-      onWidthChange={setSidePaneWidth}
-    />
-  );
   const updateNotice = updateAvailableHash && (
     <div className="webapp-notice webapp-notice--update" role="status">
       <span>Updated version available</span>
@@ -1663,25 +1470,79 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         activeWorkspaceRunning={activeWorkspaceRunning}
         activeSessionUrl={activeSessionUrl}
         activeFilesBase={activeFilesBase}
-        filesClient={filesClient}
-        filesSidebar={filesSidebar}
-        orgName={store.viewer?.org.name ?? 'Organization'}
-        workspaceWakingStage={workspaceWakingStage}
-        livePorts={orderedLivePorts}
-        previewLinks={orderedPreviewLinks}
         pendingRequests={activePendingRequests}
         pendingRequestsError={pendingRequestsError}
         connectionsFocus={connectionsFocus}
         onResolveRequest={resolveWorkspaceRequest}
-        onFileDirtyChange={updateFileDirty}
-        onFilesRefresh={() => setFilesRefreshVersion((version) => version + 1)}
-        onUnauthorized={handleUnauthorized}
         onSignInUrl={setTerminalSignInUrl}
         onOpenPreview={openPreviewPort}
-        onOpenPreviewLink={openPreviewLink}
       />
     );
   };
+  // Our Connections panel as a tab of Lody's side panel (seam patch 10). One
+  // host tab, rebuilt only when what it shows changes; the icon is the same
+  // glyph the strip's Connections button wears, in the size Lody's tab bar
+  // draws its own.
+  const connectionsReadOnly = activeWorkspace?.accessRole === 'viewer';
+  const workspaceConnections = activeWorkspace?.connections;
+  const connectionsHostTabs = useMemo<SessionHostSidePanelTab[]>(() => (
+    activeWorkspaceId === ''
+      ? []
+      : [{
+          id: CONNECTIONS_SIDE_PANEL_ID,
+          label: 'Connections',
+          icon: sidePanelQuickActionIcon(CONNECTIONS_SIDE_PANEL_ID, 'h-3.5 w-3.5 opacity-70'),
+          content: (
+            <div className="webapp-side-panel-host">
+              <WorkspaceConnectionsPanel
+                client={client}
+                workspaceId={activeWorkspaceId}
+                readOnly={connectionsReadOnly}
+                pendingRequests={activePendingRequests}
+                pendingRequestsError={pendingRequestsError}
+                workspaceConnections={workspaceConnections ?? []}
+                connectionsFocus={connectionsFocus}
+                onResolveRequest={resolveWorkspaceRequest}
+              />
+            </div>
+          ),
+        }]
+  ), [
+    activePendingRequests,
+    activeWorkspaceId,
+    client,
+    connectionsFocus,
+    connectionsReadOnly,
+    pendingRequestsError,
+    resolveWorkspaceRequest,
+    workspaceConnections,
+  ]);
+  const sidePanel: SidePanelBinding | undefined = surfaceTabsEnabled
+    ? {
+        hostTabs: connectionsHostTabs,
+        request: sidePanelRequest,
+        onStateChange: setSidePanelState,
+        // Seam patch 11: a loopback address in Lody's Browser panel is a port on
+        // this box, and the gateway already proxies those.
+        resolveManagedPreviewViewerUrl: (target) => managedPreviewViewerUrl(activeFilesBase, target),
+      }
+    : undefined;
+  // One press of the right icon strip. With a session on screen every button
+  // is a request to Lody's side panel — a second press on the tab in front
+  // closes it, and Side Chat launches rather than toggles. Without one, only
+  // Connections is offered, on the native panel tab it always had.
+  const runQuickAction = useCallback((action: SidePanelQuickAction) => {
+    if (sidePanelDriven && sidePanelState !== null) {
+      const showing = action !== 'side-session'
+        && sidePanelState.open
+        && sidePanelState.activeTabId === action;
+      requestSidePanel(action, showing ? 'close' : 'open');
+      return;
+    }
+    if (action !== CONNECTIONS_SIDE_PANEL_ID) return;
+    togglePanel('connections');
+    setFocusedRegion('side');
+  }, [requestSidePanel, setFocusedRegion, sidePanelDriven, sidePanelState, togglePanel]);
   const surfaceTabs: SurfaceTabsBinding | undefined = surfaceTabsEnabled
     ? {
         tabs: toSessionSurfaceTabs(ttydTabs, surfaceTabBody),
@@ -1964,6 +1825,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 lodyRail.openSharedSession(row.ownerMembershipId, row.sessionId);
               }}
               {...(surfaceTabs === undefined ? {} : { surfaceTabs })}
+              {...(sidePanel === undefined ? {} : { sidePanel })}
             />
             <WorkPanes
               client={client}
@@ -1989,17 +1851,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               activeWorkspaceRunning={activeWorkspaceRunning}
               activeSessionUrl={activeSessionUrl}
               activeFilesBase={activeFilesBase}
-              filesClient={filesClient}
-              filesSidebar={filesSidebar}
-              orgName={store.viewer?.org.name ?? 'Organization'}
-              workspaceWakingStage={workspaceWakingStage}
               livePorts={orderedLivePorts}
               previewLinks={orderedPreviewLinks}
               pendingRequests={activePendingRequests}
               pendingRequestsError={pendingRequestsError}
               connectionsFocus={connectionsFocus}
               onOpenDrawer={() => {
-                setFilesDrawerOpen(false);
+                setMobilePanelsOpen(false);
                 setDrawerOpen(true);
               }}
               onSelectSession={selectTtydSession}
@@ -2018,9 +1876,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               onOpenPreview={openPreviewPort}
               onOpenPreviewLink={openPreviewLink}
               onResolveRequest={resolveWorkspaceRequest}
-              onFileDirtyChange={updateFileDirty}
-              onFilesRefresh={() => setFilesRefreshVersion((version) => version + 1)}
-              onUnauthorized={handleUnauthorized}
               onSignInUrl={setTerminalSignInUrl}
               onBeginPaneResize={(event: ReactMouseEvent<HTMLDivElement>) => {
                 if (event.button !== 0) return;
@@ -2049,11 +1904,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             />
             {mobileWebApp && activeWorkspace && (
               <button
-                className={`files-drawer-scrim${filesDrawerOpen ? ' files-drawer-scrim--open' : ''}`}
+                className={`files-drawer-scrim${mobilePanelsOpen ? ' files-drawer-scrim--open' : ''}`}
                 type="button"
                 aria-label="Close workspace drawer"
                 tabIndex={-1}
-                onClick={() => setFilesDrawerOpen(false)}
+                onClick={() => setMobilePanelsOpen(false)}
               />
             )}
           </section>
@@ -2169,19 +2024,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   )}
                 </>
               )}
-              {activeWorkspace && (
+              {mobileWebApp && activeWorkspace && (
                 <button
                   className="webapp-statusline__files"
                   type="button"
-                  aria-label={filesOpen ? 'Close workspace drawer' : 'Open workspace drawer'}
-                  aria-controls={mobileWebApp ? 'webapp-workspace-drawer' : undefined}
-                  aria-expanded={mobileWebApp ? filesDrawerOpen : undefined}
-                  aria-pressed={filesOpen}
-                  title={`${filesOpen ? 'Hide' : 'Show'} workspace drawer (Cmd/Ctrl+B)`}
-                  onClick={toggleFiles}
+                  aria-label={mobilePanelsOpen ? 'Close workspace drawer' : 'Open workspace drawer'}
+                  aria-controls="webapp-workspace-drawer"
+                  aria-expanded={mobilePanelsOpen}
+                  aria-pressed={mobilePanelsOpen}
+                  title={`${mobilePanelsOpen ? 'Hide' : 'Show'} connections`}
+                  onClick={toggleMobilePanels}
                 >
-                  <FileIcon aria-hidden="true" />
-                  <span>drawer</span>
+                  <GenericProviderIcon aria-hidden="true" />
+                  <span>Connections</span>
                   {activePendingRequests.length > 0 && (
                     <span className="workspace-pending-badge" aria-label={`${activePendingRequests.length} pending requests`}>
                       {activePendingRequests.length}
@@ -2205,12 +2060,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
       {activeWorkspace && !mobileWebApp && (
         <WorkspaceRailStrip
-          openPanels={openPanels}
+          sidePanel={sidePanelDriven ? sidePanelState : null}
+          connectionsOpen={connectionsTabShowing}
           pendingRequestCount={activePendingRequests.length}
-          onTogglePanel={(panel) => {
-            togglePanel(panel);
-            setFocusedRegion('side');
-          }}
+          onQuickAction={runQuickAction}
         />
       )}
 
@@ -2219,25 +2072,18 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           client={client}
           workspaceId={activeWorkspace.id}
           mobile
-          open={filesOpen}
+          open={mobilePanelsOpen}
           width={activeFiles.width}
           segment={drawerSegment}
-          orgName={store.viewer?.org.name ?? 'Organization'}
           pendingRequests={activePendingRequests}
           pendingRequestsError={pendingRequestsError}
           workspaceConnections={activeWorkspace.connections}
           connectionsFocus={connectionsFocus}
           readOnly={activeWorkspace.accessRole === 'viewer'}
           onWidthChange={setSidePaneWidth}
-          onSegmentChange={setMobileSegment}
+          // One segment: there is nothing to switch to.
+          onSegmentChange={() => undefined}
           onResolveRequest={resolveWorkspaceRequest}
-          livePorts={orderedLivePorts}
-          previewLinks={orderedPreviewLinks}
-          filesBase={activeFilesBase}
-          previewReady={activeWorkspaceRunning}
-          onOpenPreview={(port) => { openPreviewPort(port); }}
-          onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
-          files={filesSidebar}
         />
       )}
 
@@ -2262,20 +2108,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         </>
       )}
 
-      {shareToDrivePath !== null && activeWorkspace && (
-        <ShareToDriveDialog
-          client={client}
-          workspaceId={activeWorkspace.id}
-          path={shareToDrivePath}
-          onCancel={() => setShareToDrivePath(null)}
-          onShared={(folderId) => {
-            setShareToDrivePath(null);
-            setAttachmentsVersion((version) => version + 1);
-            navigateTo(folderPagePath(folderId));
-          }}
-        />
-      )}
-
       {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       {updateNotice}
       {sharingSessionId !== null && activeWorkspace !== undefined && activeWorkspace !== null && store.viewer !== null && (
@@ -2293,19 +2125,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           onClose={() => {
             setSharingSessionId(null);
             setShareRevision((revision) => revision + 1);
-          }}
-        />
-      )}
-      {fileCloseConfirmation && (
-        <ConfirmationDialog
-          title="Discard changes?"
-          description={`Discard unsaved changes to ${fileCloseConfirmation.label}?`}
-          confirmLabel="Discard"
-          cancelLabel="Cancel"
-          onCancel={() => setFileCloseConfirmation(null)}
-          onConfirm={() => {
-            closeTtydSessionNow(fileCloseConfirmation.id);
-            setFileCloseConfirmation(null);
           }}
         />
       )}

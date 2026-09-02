@@ -37,7 +37,7 @@
  */
 .lody-surface,
 .session-list--vendor,
-body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
+body > :where(:not(#root)) {
   --radius: var(--r-item);
   --radius-sm: 6px;
   --radius-md: var(--r-item);

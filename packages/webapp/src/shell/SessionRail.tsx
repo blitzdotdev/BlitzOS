@@ -214,7 +214,6 @@ export function SessionRail({
                 <SessionTypeIcon
                   type={session.agent}
                   className="shell-g__glyph"
-                  filePath={session.filePath}
                 />
               </span>
               <span className="shell-s__t">{session.label}</span>

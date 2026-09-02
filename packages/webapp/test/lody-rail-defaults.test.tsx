@@ -73,7 +73,8 @@ describe("the fresh-workspace default", () => {
   it("keeps today's Claude tab with the flag off", async () => {
     const { defaultWorkspaceTabs } = await loadStorage(false);
     const tabs = defaultWorkspaceTabs();
-    expect(tabs.tabs.map((tab) => tab.type)).toEqual(["claude", "panel"]);
+    // One tab: the Files panel that used to sit beside it is retired.
+    expect(tabs.tabs.map((tab) => tab.type)).toEqual(["claude"]);
     expect(tabs.activeId).toBe(1);
   });
 

@@ -24,6 +24,7 @@ import type { DriveRailSession } from "../shell/rail-sessions.js";
 import type { LodySessionsCapability } from "./box-capability.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 import type { LodyRailBinding, LodySessionSurfaceApi } from "./SessionSurface.js";
+import type { SidePanelBinding } from "./side-panel.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 import { SurfaceLoadBoundary } from "./SurfaceLoadBoundary.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
@@ -80,6 +81,10 @@ export interface LodySessionsRegionProps {
    * (plans/LODY-TERMINAL-TABS.md §3.5). Never reaches a shared surface — see
    * where it is read below. */
   surfaceTabs?: SurfaceTabsBinding;
+  /** The right icon strip's binding onto Lody's side panel (`side-panel.tsx`).
+   * Never reaches a shared surface either — the panel it drives is on the
+   * owner's session, and the strip is a control over this member's own box. */
+  sidePanel?: SidePanelBinding;
   /**
    * The shared session the address names, with the endpoints of the box that
    * runs it. `null` whenever the grantee is looking at their own box.
@@ -220,6 +225,9 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const hostTabs = sharedOpen !== null || props.surfaceTabs === undefined
     ? {}
     : { surfaceTabs: props.surfaceTabs };
+  const sidePanel = sharedOpen !== null || props.sidePanel === undefined
+    ? {}
+    : { sidePanel: props.sidePanel };
   // THE BOUNDARY IS OUTSIDE THE SUSPENSE, so it catches the import's rejection
   // as well as anything the surface throws once it has mounted. Without it a
   // rejected chunk propagates past the whole tree and React unmounts the
@@ -237,6 +245,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
           rail={rail}
           readOnly={surfaceProps.readOnly}
           {...hostTabs}
+          {...sidePanel}
           {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
           {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
           {...(props.onActiveSessionChange === undefined

@@ -9,7 +9,6 @@ import {
   type WorkspaceTab,
   type WorkspaceTabs,
 } from './storage';
-import { isPathAtOrBelow } from './files';
 
 /** Panes render in this order, left to right. */
 export const PANE_REGIONS: readonly WorkspaceRegion[] = ['main', 'side'];
@@ -52,13 +51,6 @@ export function panelTab(
   panel: WorkspaceDrawerSegment,
 ): WorkspaceTab | null {
   return tabs.tabs.find((tab) => tab.type === 'panel' && tab.panel === panel) ?? null;
-}
-
-/** Files opens files beside itself: a file tab joins the pane hosting the Files
- * panel, not whichever pane last had focus. */
-export function filesHostRegion(tabs: WorkspaceTabs): WorkspaceRegion {
-  const files = panelTab(tabs, 'files');
-  return files === null ? 'main' : tabRegion(files);
 }
 
 /** Index just past the region's last tab, so an appended tab lands at the end
@@ -104,14 +96,6 @@ export function closeTab(tabs: WorkspaceTabs, id: number): WorkspaceTabs {
     else next.sideActiveId = successor;
   }
   return normalizedWorkspaceTabs(next);
-}
-
-/** Closes every editor whose file is the deleted path or lives below it. */
-export function closeFileTabsAtPath(tabs: WorkspaceTabs, path: string): WorkspaceTabs {
-  const ids = tabs.tabs
-    .filter((tab) => tab.type === 'file' && isPathAtOrBelow(path, tab.filePath))
-    .map(({ id }) => id);
-  return ids.reduce((current, id) => closeTab(current, id), tabs);
 }
 
 /** Applies a bounded custom label to an active managed session.

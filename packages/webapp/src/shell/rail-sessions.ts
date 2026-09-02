@@ -6,5 +6,4 @@ export type DriveRailSession = {
   id: string;
   label: string;
   agent: WebAppSessionType;
-  filePath?: string;
 };

@@ -183,7 +183,6 @@ const PROBE_MARKUP = `
     <aside class="session-rail"><div class="session-list">
       <div class="shell-s"><span class="shell-s__t">tab</span></div>
     </div></aside>
-    <div class="files-tree"><div class="files-tree-row"><span>file.ts</span></div></div>
     <button id="probe-button">New tab</button>
     <input id="probe-input" />
     <a id="probe-link" href="#">link</a>
@@ -282,29 +281,6 @@ const EXPECTED_BLEED: Record<string, readonly string[]> = {
     "margin-right",
     "margin-top",
     "outline-color",
-    "scroll-behavior",
-    "transition-duration",
-  ],
-  ".files-tree-row": [
-    "-webkit-tap-highlight-color",
-    "-webkit-text-size-adjust",
-    "animation-duration",
-    "animation-iteration-count",
-    "border",
-    "border-color",
-    "border-style",
-    "border-width",
-    "margin",
-    "margin-bottom",
-    "margin-left",
-    "margin-right",
-    "margin-top",
-    "outline-color",
-    "padding",
-    "padding-bottom",
-    "padding-left",
-    "padding-right",
-    "padding-top",
     "scroll-behavior",
     "transition-duration",
   ],
@@ -548,7 +524,6 @@ describe("Lody Tailwind containment", () => {
       body: document.body,
       "#root": document.getElementById("root") as Element,
       ".shell-s": document.querySelector(".shell-s") as Element,
-      ".files-tree-row": document.querySelector(".files-tree-row") as Element,
       button: document.getElementById("probe-button") as Element,
       input: document.getElementById("probe-input") as Element,
       a: document.getElementById("probe-link") as Element,
@@ -585,7 +560,6 @@ describe("Lody Tailwind containment", () => {
       body: document.body,
       "#root": document.getElementById("root") as Element,
       ".shell-s": document.querySelector(".shell-s") as Element,
-      ".files-tree-row": document.querySelector(".files-tree-row") as Element,
       button: document.getElementById("probe-button") as Element,
       input: document.getElementById("probe-input") as Element,
       a: document.getElementById("probe-link") as Element,

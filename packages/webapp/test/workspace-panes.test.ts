@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceTabs } from "../src/storage.js";
 import {
   appendTab,
-  closeFileTabsAtPath,
   closeTab,
-  filesHostRegion,
   moveTab,
   paneRegions,
   regionTabs,
@@ -31,49 +29,45 @@ function tabs(): WorkspaceTabs {
 
 describe("workspace pane model", () => {
   it("opens a panel into the side pane and collapses the split when it closes", () => {
-    const opened = togglePanelTab(tabs(), "files");
+    const opened = togglePanelTab(tabs(), "connections");
     expect(paneRegions(opened)).toEqual(["main", "side"]);
     expect(regionTabs(opened, "side")).toEqual([
-      { id: 3, type: "panel", panel: "files", region: "side" },
+      { id: 3, type: "panel", panel: "connections", region: "side" },
     ]);
     expect(opened.sideActiveId).toBe(3);
 
-    const closed = togglePanelTab(opened, "files");
+    const closed = togglePanelTab(opened, "connections");
     expect(paneRegions(closed)).toEqual(["main"]);
     expect(closed.tabs).toEqual(tabs().tabs);
     expect("sideActiveId" in closed).toBe(false);
   });
 
   it("brings a backgrounded panel forward instead of closing it", () => {
-    const withFiles = togglePanelTab(tabs(), "files");
-    const withBoth = togglePanelTab(withFiles, "previews");
-    expect(withBoth.sideActiveId).toBe(4);
-    // Files is open but behind teenyapps, so its icon selects rather than closes.
-    const refocused = togglePanelTab(withBoth, "files");
+    const withPanel = togglePanelTab(tabs(), "connections");
+    // A terminal dragged into the side pane lands in front of the panel.
+    const withBoth = moveTab(withPanel, 2, "side", null);
+    expect(withBoth.sideActiveId).toBe(2);
+    // Connections is open but behind it, so its icon selects rather than closes.
+    const refocused = togglePanelTab(withBoth, "connections");
     expect(refocused.sideActiveId).toBe(3);
     expect(regionTabs(refocused, "side")).toHaveLength(2);
   });
 
   it("never toggles a panel shut through the mobile segment strip", () => {
-    const opened = showPanelTab(tabs(), "files");
-    expect(showPanelTab(opened, "files").sideActiveId).toBe(3);
-  });
-
-  it("hosts a file beside the Files panel, whichever pane that is", () => {
-    expect(filesHostRegion(tabs())).toBe("main");
-    expect(filesHostRegion(togglePanelTab(tabs(), "files"))).toBe("side");
+    const opened = showPanelTab(tabs(), "connections");
+    expect(showPanelTab(opened, "connections").sideActiveId).toBe(3);
   });
 
   it("appends a tab at the end of its own column, not the flat list", () => {
-    const withPanel = togglePanelTab(tabs(), "files");
-    const withFile = appendTab(withPanel, "main", (id) => ({ id, type: "file", filePath: "a.txt" }));
-    expect(withFile.tabs.map(({ id }) => id)).toEqual([1, 2, 4, 3]);
-    expect(regionTabs(withFile, "main").map(({ id }) => id)).toEqual([1, 2, 4]);
-    expect(withFile.activeId).toBe(4);
+    const withPanel = togglePanelTab(tabs(), "connections");
+    const withPreview = appendTab(withPanel, "main", (id) => ({ id, type: "preview", port: 3000 }));
+    expect(withPreview.tabs.map(({ id }) => id)).toEqual([1, 2, 4, 3]);
+    expect(regionTabs(withPreview, "main").map(({ id }) => id)).toEqual([1, 2, 4]);
+    expect(withPreview.activeId).toBe(4);
   });
 
   it("moves a tab between panes and keeps each pane's own selection", () => {
-    const withPanel = togglePanelTab(tabs(), "files");
+    const withPanel = togglePanelTab(tabs(), "connections");
     const moved = moveTab(withPanel, 1, "side", 3);
     expect(regionTabs(moved, "side").map(({ id }) => id)).toEqual([1, 3]);
     expect(moved.sideActiveId).toBe(1);
@@ -87,10 +81,10 @@ describe("workspace pane model", () => {
   });
 
   it("collapses the split when the last tab leaves the side pane", () => {
-    const withPanel = togglePanelTab(tabs(), "files");
+    const withPanel = togglePanelTab(tabs(), "connections");
     const collapsed = moveTab(withPanel, 3, "main", null);
     expect(paneRegions(collapsed)).toEqual(["main"]);
-    expect(collapsed.tabs.at(-1)).toEqual({ id: 3, type: "panel", panel: "files" });
+    expect(collapsed.tabs.at(-1)).toEqual({ id: 3, type: "panel", panel: "connections" });
   });
 
   it("pushes the neighbours aside when a tab claims the column it is already in", () => {
@@ -118,30 +112,6 @@ describe("workspace pane model", () => {
     const three = appendTab(tabs(), "main", (id) => ({ id, type: "terminal" }));
     expect(closeTab(three, 3).activeId).toBe(2);
     expect(closeTab({ ...three, activeId: 1 }, 2).activeId).toBe(1);
-  });
-
-  it("closes every file tab at or below a deleted path and preserves pane invariants", () => {
-    const withFiles: WorkspaceTabs = {
-      version: 1,
-      tabs: [
-        { id: 1, type: "claude" },
-        { id: 2, type: "file", filePath: "src/index.ts" },
-        { id: 3, type: "file", filePath: "src/components/App.tsx", region: "side" },
-        { id: 4, type: "file", filePath: "README.md", region: "side" },
-      ],
-      activeId: 2,
-      sideActiveId: 3,
-      nextId: 5,
-    };
-
-    const closed = closeFileTabsAtPath(withFiles, "src");
-    expect(closed.tabs).toEqual([
-      { id: 1, type: "claude" },
-      { id: 4, type: "file", filePath: "README.md", region: "side" },
-    ]);
-    expect(closed.activeId).toBe(1);
-    expect(closed.sideActiveId).toBe(4);
-    expect(closed.nextId).toBe(5);
   });
 
   it("renames active sessions and resets empty titles", () => {

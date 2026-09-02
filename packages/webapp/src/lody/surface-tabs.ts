@@ -60,11 +60,8 @@ export function workspaceTabIdFromSurfaceTabId(surfaceId: string): string | null
  * native strip and the rail draw, so a kind looks the same everywhere. */
 export function surfaceTabIcon(tab: WebAppTabModel): ReactNode {
   const className = "h-3 w-3";
-  // A file tab's glyph follows its extension and a panel tab's follows which
-  // panel it is; every other kind reads its icon off `agent` alone.
-  if (tab.filePath !== undefined) {
-    return createElement(SessionTypeIcon, { type: tab.agent, className, filePath: tab.filePath });
-  }
+  // A panel tab's glyph follows which panel it is; every other kind reads its
+  // icon off `agent` alone.
   if (tab.panel !== undefined) {
     return createElement(SessionTypeIcon, { type: tab.agent, className, panel: tab.panel });
   }

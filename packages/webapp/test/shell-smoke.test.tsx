@@ -713,9 +713,10 @@ describe("webapp shell smoke", () => {
     const sessionTabs = [...view.container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="Workspace sessions"] .webapp-tab-cell [role="tab"]',
     )];
-    // The default tab set is Claude alone in the main pane; Files rides in
-    // the side pane. Remote control runs detached with no tab of its own, so
-    // there is no default terminal tab any more.
+    // The default tab set is Claude alone in the main pane (the Files panel
+    // that used to ride in the side pane is retired). Remote control runs
+    // detached with no tab of its own, so there is no default terminal tab
+    // any more.
     expect(sessionTabs).toHaveLength(1);
     expect(sessionTabs[0]?.textContent ?? "").toMatch(/claude/i);
     expect(vi.mocked(wire.putWorkspaceWebAppState)).not.toHaveBeenCalled();
@@ -775,12 +776,11 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  /** The mobile sheet is the only way to reach Files, teenyapps and
-   * Connections on a phone: there is no icon rail below the breakpoint. Its
-   * segment cannot come from the tab model, because a panel tab that would be
-   * the only tab collapses out of the side region, so reading that region
-   * pinned the sheet to Files and the other two tabs did nothing. */
-  it("switches the mobile drawer between all three sections", async () => {
+  /** The mobile sheet is the only way to reach Connections on a phone: there
+   * is no icon rail below the breakpoint. Connections is the one section left
+   * since the Files and teenyapps panels retired, so the sheet has no segment
+   * strip; the statusline button opens and closes it. */
+  it("opens the mobile sheet on Connections from the statusline button", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -806,25 +806,23 @@ describe("webapp shell smoke", () => {
       ".webapp-statusline__files",
     );
     if (drawerButton === null) throw new Error("mobile has no drawer button");
-    await act(async () => drawerButton.click());
+    expect(drawerButton.textContent).toContain("Connections");
+    expect(drawerButton.getAttribute("aria-expanded")).toBe("false");
 
     const drawer = view.container.querySelector<HTMLElement>("#webapp-workspace-drawer");
     if (drawer === null) throw new Error("mobile drawer did not render");
-    const segment = (label: string) => [
-      ...drawer.querySelectorAll<HTMLButtonElement>(".workspace-drawer-segments button"),
-    ].find((button) => (button.textContent ?? "").includes(label));
-    const selected = () => drawer
-      .querySelector<HTMLElement>(".webapp-tab-cell--active")
-      ?.textContent ?? "";
+    expect(drawer.className).not.toContain("workspace-drawer--open");
 
-    expect(selected()).toContain("Files");
+    await act(async () => drawerButton.click());
+    expect(drawer.className).toContain("workspace-drawer--open");
+    expect(drawerButton.getAttribute("aria-expanded")).toBe("true");
+    // One section, so nothing to switch between: no segment strip at all.
+    expect(drawer.querySelector(".workspace-drawer-segments")).toBeNull();
+    expect(drawer.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(drawer.querySelector(".workspace-connections")).not.toBeNull();
 
-    for (const label of ["Connections", "teenyapps", "Files"]) {
-      const tab = segment(label);
-      if (tab === undefined) throw new Error(`no ${label} segment on mobile`);
-      await act(async () => tab.click());
-      expect(selected()).toContain(label);
-    }
+    await act(async () => drawerButton.click());
+    expect(drawer.className).not.toContain("workspace-drawer--open");
 
     await view.unmount();
   });
@@ -904,12 +902,12 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("keeps file tabs out of the workspace session rail", async () => {
+  it("keeps preview tabs out of the workspace session rail", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "claude" },
       { id: 2, type: "terminal" },
-      { id: 3, type: "file", filePath: "getting-started.md" },
+      { id: 3, type: "preview", port: 3000 },
     ], 3);
     const view = await render(
       <CloudApp
@@ -926,11 +924,11 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("keeps the visible agent session highlighted when a side-pane file has focus", async () => {
+  it("keeps the visible agent session highlighted when a side-pane preview has focus", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "claude" },
-      { id: 2, type: "file", filePath: "test1.md", region: "side" },
+      { id: 2, type: "preview", port: 3000, region: "side" },
     ], 1, 2);
     const view = await render(
       <CloudApp
@@ -1063,7 +1061,7 @@ describe("webapp shell smoke", () => {
       "workspace-running",
       [
         { id: 1, type: "terminal" },
-        { id: 2, type: "panel", panel: "previews", region: "side" },
+        { id: 2, type: "panel", panel: "connections", region: "side" },
       ],
       1,
       2,
@@ -1085,11 +1083,9 @@ describe("webapp shell smoke", () => {
       '[aria-label="Workspace sessions"] .webapp-tab-cell',
     )]).toHaveLength(1);
     const drawer = view.container.querySelector('[aria-label="Workspace drawer"]')!;
-    const segments = [...drawer.querySelectorAll('[role="tab"]')]
-      .map((tab) => tab.textContent);
-    expect(segments).toEqual(["Files", "teenyapps", "Connections"]);
-    expect(drawer.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
-      .toBe("teenyapps");
+    // Connections is the sheet's one section, so it draws no segment strip.
+    expect(drawer.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(drawer.querySelector(".workspace-connections")).not.toBeNull();
 
     await view.unmount();
   });
@@ -1133,7 +1129,7 @@ describe("webapp shell smoke", () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "terminal" },
-      { id: 2, type: "panel", panel: "files", region: "side" },
+      { id: 2, type: "panel", panel: "connections", region: "side" },
     ], 1, 2);
     const view = await render(
       <CloudApp
@@ -1178,20 +1174,20 @@ describe("webapp shell smoke", () => {
     await settle();
 
     expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
-    const filesIcon = view.container.querySelector<HTMLButtonElement>(
-      '[aria-label="Workspace panels"] button[aria-label="Files"]',
+    const connectionsIcon = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Workspace panels"] button[aria-label="Connections"]',
     )!;
-    await act(async () => filesIcon.click());
+    await act(async () => connectionsIcon.click());
 
     const sideStrip = view.container.querySelector<HTMLElement>(
       '[aria-label="Workspace side pane sessions"]',
     );
-    expect(sideStrip?.querySelector('[role="tab"]')?.textContent).toContain("Files");
-    expect(filesIcon.getAttribute("aria-pressed")).toBe("true");
+    expect(sideStrip?.querySelector('[role="tab"]')?.textContent).toContain("Connections");
+    expect(connectionsIcon.getAttribute("aria-pressed")).toBe("true");
 
     // Clicking the same icon while its tab is in front closes the panel, and
     // the side pane goes with it.
-    await act(async () => filesIcon.click());
+    await act(async () => connectionsIcon.click());
     expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
       .toEqual([{ id: 1, type: "terminal" }]);
@@ -1203,7 +1199,7 @@ describe("webapp shell smoke", () => {
       "workspace-running",
       [
         { id: 1, type: "terminal" },
-        { id: 2, type: "panel", panel: "files", region: "side" },
+        { id: 2, type: "panel", panel: "connections", region: "side" },
         { id: 3, type: "claude" },
       ],
       1,

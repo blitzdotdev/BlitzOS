@@ -50,8 +50,7 @@
  * The native rows that live INSIDE the vendored zone — the Terminals
  * `.shell-s` buttons `SessionRailSidebar` injects through
  * `afterSessionListContent` — keep their compensation from the unscoped
- * `:where(.shell-s, .files-tree-row)` rules, which the exclusion does not
- * touch.
+ * `:where(.shell-s)` rules, which the exclusion does not touch.
  *
  * `packages/webapp/test/lody-tailwind-containment.test.ts` asserts that every
  * property phase 0 measured as leaking is declared here, per probe. An upstream
@@ -63,7 +62,7 @@
    preflight rules. Named on our roots and our shells, never on `*`: the Lody
    surface lives under `#root` too, and reverting them there would undo their
    own animations. */
-:where(html, body, #root, .shell-s, .files-tree-row) {
+:where(html, body, #root, .shell-s) {
   animation-duration: revert;
   animation-iteration-count: revert;
   outline-color: revert;
@@ -122,9 +121,10 @@ body {
   padding: revert;
 }
 
-/* The two rows the product renders all day (phase 0: "these two matter
-   today"). Neither is inside a shell root in every mount, so both are named. */
-:where(.shell-s, .files-tree-row) {
+/* The row the product renders all day (phase 0: "these two matter today";
+   the Finder's `.files-tree-row` retired with the files panel). It is not
+   inside a shell root in every mount, so it is named. */
+:where(.shell-s) {
   -webkit-tap-highlight-color: revert;
   border: revert;
   margin: revert;

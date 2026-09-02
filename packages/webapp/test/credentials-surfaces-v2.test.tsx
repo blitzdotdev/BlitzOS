@@ -258,41 +258,31 @@ describe('v2 credential surfaces', () => {
     await view.unmount();
   });
 
-  it('switches drawer segments under controlled workspace state', async () => {
+  /** Connections is the one section left in the sheet since the Files and
+   * teenyapps panels retired, so there is no segment strip to switch. */
+  it('hosts connections as its only section and draws no segment strip', async () => {
     const wire = client();
-    function Harness() {
-      const [segment, setSegment] = useState<WorkspaceDrawerSegment>('files');
-      return (
-        <WorkspaceDrawer
-          client={wire}
-          workspaceId="workspace-one"
-          orgName="Example"
-          mobile={false}
-          open
-          width={264}
-          segment={segment}
-          pendingRequests={[]}
-          livePorts={[]}
-          previewLinks={[]}
-          filesBase={null}
-          previewReady={false}
-          onOpenPreview={() => undefined}
-          onOpenPreviewLink={() => undefined}
-          files={<div>File tree</div>}
-          onWidthChange={() => undefined}
-          onSegmentChange={setSegment}
-          onResolveRequest={async () => undefined}
-        />
-      );
-    }
-
-    let view = await render(<Harness />);
-    const credentialsTab = [...view.container.querySelectorAll('[role="tab"]')]
-      .find((tab) => tab.textContent?.includes('Connections'))!;
-    await act(async () => click(credentialsTab));
-    expect(credentialsTab.getAttribute('aria-selected')).toBe('true');
-    expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
-      .toContain('Connections');
+    const segment: WorkspaceDrawerSegment = 'connections';
+    const view = await render(
+      <WorkspaceDrawer
+        client={wire}
+        workspaceId="workspace-one"
+        mobile={false}
+        open
+        width={264}
+        segment={segment}
+        pendingRequests={[]}
+        onWidthChange={() => undefined}
+        onSegmentChange={() => undefined}
+        onResolveRequest={async () => undefined}
+      />,
+    );
+    expect(view.container.querySelector('[role="tablist"]')).toBeNull();
+    expect(view.container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    const panels = [...view.container.querySelectorAll('[role="tabpanel"]')];
+    expect(panels).toHaveLength(1);
+    expect(panels[0]?.hasAttribute('hidden')).toBe(false);
+    expect(panels[0]?.querySelector('.workspace-connections')).not.toBeNull();
     await view.unmount();
   });
 
@@ -312,19 +302,11 @@ describe('v2 credential surfaces', () => {
         <WorkspaceDrawer
           client={client()}
           workspaceId="workspace-one"
-          orgName="Example"
           mobile={false}
           open
           width={264}
           segment="connections"
           pendingRequests={requests}
-          livePorts={[]}
-          previewLinks={[]}
-          filesBase={null}
-          previewReady={false}
-          onOpenPreview={() => undefined}
-          onOpenPreviewLink={() => undefined}
-          files={<div>File tree</div>}
           onWidthChange={() => undefined}
           onSegmentChange={() => undefined}
           onResolveRequest={async (entry, action) => {
@@ -336,7 +318,10 @@ describe('v2 credential surfaces', () => {
     }
     const view = await render(<Harness />);
     await settle();
-    expect(view.container.querySelector('.workspace-pending-badge')?.textContent).toBe('1');
+    // The count lives on the strip's Connections button and the mobile sheet
+    // toggle, outside this panel; the sheet's own segment strip is gone with
+    // the other segments.
+    expect(view.container.querySelector('.workspace-pending-badge')).toBeNull();
     // The inbox states what an agent wanted, not a decision awaiting approval.
     expect(view.container.textContent).toContain('@github');
     expect(view.container.textContent).toContain('An agent asked for');
@@ -346,7 +331,6 @@ describe('v2 credential surfaces', () => {
       .find((button) => button.textContent === 'Dismiss')!));
     await settle();
     expect(dismiss).toHaveBeenCalledWith('request-one');
-    expect(view.container.querySelector('.workspace-pending-badge')).toBeNull();
     // An empty inbox is a success: the section goes away rather than
     // apologising for having nothing to say.
     expect(view.container.textContent).not.toContain('Wanted here');
@@ -376,9 +360,10 @@ describe('v2 credential surfaces', () => {
   it('keeps the pending count on the rail while the panel is closed', async () => {
     const view = await render(
       <WorkspaceRailStrip
-        openPanels={new Set<WorkspaceDrawerSegment>()}
+        sidePanel={null}
+        connectionsOpen={false}
         pendingRequestCount={2}
-        onTogglePanel={() => undefined}
+        onQuickAction={() => undefined}
       />,
     );
     expect(view.container.querySelector('.workspace-pending-badge')?.textContent).toBe('2');

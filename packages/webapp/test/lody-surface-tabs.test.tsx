@@ -138,7 +138,7 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     ]);
   });
 
-  it("removes nothing from session-detail.tsx but seam patches 4, 5, 6 and 7's anchors", () => {
+  it("removes nothing from session-detail.tsx but seam patches 4, 5, 6, 7, 10 and 11's anchors", () => {
     expectSeam("session-detail.tsx", [
       // Seam patch 4's hunks are additive and remove nothing, which is why they
       // are absent from this list and still covered by the subsequence check.
@@ -176,7 +176,45 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // argument, so its closing line gains one. This is the ONE `});` in the
       // file the seam declares, which is why the anchor is a line number.
       [3719, "  });"],
+      // Seam patch 10 hunk 4: the side-panel tab id widens to carry a host id.
+      [287, "type SidebarTab = PersistedSidePanelTab;"],
+      // Seam patch 10 hunk 8: `sidePanelFixedOptions` appends the host tabs,
+      // so its dependency list gains them. The options it pushes are added
+      // lines and remove none.
+      [3344, "  }, [activeBrowserSession, latestPr, latestPrNumber, repoFullName, t]);"],
+      // Seam patch 10 hunk 10: the persisted side-panel state drops host ids,
+      // whose schema is an enum of the fixed panels.
+      [3858, "        tab: activeSidebarTab,"],
+      [3859, "        tabs: openedSidebarTabs,"],
+      // Seam patch 11's hunks in this file — the `PreviewTarget` import, the
+      // prop, and the two `SessionBrowserPanel` pass-throughs — add lines and
+      // remove none, so they are covered by the subsequence check alone.
     ]);
+  });
+
+  it("removes nothing from session-side-panel-tab-bar.tsx but seam patch 10's anchors", () => {
+    expectSeam("session-side-panel-tab-bar.tsx", [
+      // hunk 1: `SessionSidePanelTabItem.kind` gains `'custom'`; `icon` is an added line
+      [25, "  kind: 'files' | 'changes' | 'pr' | 'browser' | 'session' | 'file' | 'diff';"],
+      // hunk 2: `SessionSidePanelOption` may name a host tab
+      [36, "  id: 'files' | 'changes' | 'pr' | 'browser' | 'side-session';"],
+      [37, "  kind: 'files' | 'changes' | 'pr' | 'browser' | 'session';"],
+      // hunk 3, the `custom` arm of `SidePanelTabIcon`, adds lines and removes none.
+    ]);
+  });
+
+  it("removes nothing from session-browser-panel.tsx but seam patch 11's anchor", () => {
+    expectSeam("session-browser-panel.tsx", [
+      // hunk 8: Share is off for a page the host serves — it would mint a tunnel
+      // for it. Every other hunk in this file adds lines and removes none.
+      [966, "        shareAvailable={currentAddress !== null}"],
+    ]);
+  });
+
+  it("removes nothing from managed-preview-surface.tsx", () => {
+    // Seam patch 11's three hunks here — the prop, its default, and the two
+    // `hostViewer` early returns — are all additive.
+    expectSeam("managed-preview-surface.tsx", []);
   });
 
   it("holds a baseline of the commit vendor/lody/UPSTREAM.md pins", () => {

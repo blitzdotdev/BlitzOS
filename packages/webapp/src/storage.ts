@@ -43,11 +43,6 @@ export type ManagedWorkspaceTab = {
 
 export type WorkspaceTab = ManagedWorkspaceTab | {
   id: number;
-  type: 'file';
-  filePath: string;
-  region?: WorkspaceRegion;
-} | {
-  id: number;
   type: 'preview';
   port: number;
   path?: string;
@@ -60,9 +55,10 @@ export type WorkspaceTab = ManagedWorkspaceTab | {
   region?: WorkspaceRegion;
 } | {
   id: number;
-  /** Files / teenyapps / Connections, opened from the right icon strip.
-   * `panel` keeps the drawer segment names as its wire values; legacy
-   * spellings (including 'integrations') fold in parsePanel. */
+  /** Connections, opened from the right icon strip. `panel` keeps the drawer
+   * segment name as its wire value; legacy spellings (including
+   * 'integrations') fold in parsePanel, and the retired Files / teenyapps
+   * panels drop on read. */
   type: 'panel';
   panel: WorkspaceDrawerSegment;
   region?: WorkspaceRegion;
@@ -84,10 +80,11 @@ export type WorkspaceFiles = {
   expanded: string[];
 };
 
-/** Wire value of a panel tab. `previews` is the teenyapps panel: the label
- * changed, the persisted name did not. `connections` replaced the persisted
- * 'integrations' value; readers fold the old spelling below. */
-export type WorkspaceDrawerSegment = 'files' | 'previews' | 'connections';
+/** Wire value of a panel tab. `connections` replaced the persisted
+ * 'integrations' value; readers fold the old spelling below. The Files
+ * (`files`) and teenyapps (`previews`) panels are retired: a persisted tab or
+ * pre-split drawer segment naming one still parses, and yields no tab. */
+export type WorkspaceDrawerSegment = 'connections';
 
 export type GlobalWebAppStateV1 = {
   version: 1;
@@ -152,8 +149,8 @@ export function storedWorkspacePreference(
  * The tab set a fresh workspace held before Lody sessions, and holds again
  * wherever the session plane is not available.
  *
- * A fresh workspace opens straight into Claude; Files rides along in the side
- * pane, the way the drawer used to default open.
+ * A fresh workspace opens straight into Claude. (Files used to ride along in
+ * the side pane; that panel is retired, Lody's side panel browses files now.)
  *
  * There was briefly a third tab holding `claude remote-control`. It never
  * worked: remote-control exits immediately on a logged-out box, so the tmux
@@ -168,13 +165,9 @@ export function storedWorkspacePreference(
 export function terminalFirstWorkspaceTabs(): WorkspaceTabs {
   return {
     version: 1,
-    tabs: [
-      { id: 1, type: 'claude' },
-      { id: 2, type: 'panel', panel: 'files', region: 'side' },
-    ],
+    tabs: [{ id: 1, type: 'claude' }],
     activeId: 1,
-    nextId: 3,
-    sideActiveId: 2,
+    nextId: 2,
   };
 }
 
@@ -394,7 +387,24 @@ function parsePanel(value: OptionalJsonValue): WorkspaceDrawerSegment | null {
     || value === 'integrations'
     || value === 'connections'
   ) return 'connections';
-  return value === 'files' || value === 'previews' ? value : null;
+  return null;
+}
+
+/** The Files and teenyapps panels no longer exist. Documents in the field
+ * still carry them, as panel tabs and as the pre-split drawer segment, and
+ * the control plane still accepts them; here they read as nothing. */
+function isRetiredPanel(value: OptionalJsonValue): boolean {
+  return value === 'files' || value === 'previews';
+}
+
+/** A tab kind this client no longer draws: a 'chat' tab from the retired
+ * native-chat surface, a 'file' editor tab, or a retired panel. Dropped on
+ * read rather than invalidating the whole document. */
+function isRetiredTab(entry: OptionalJsonValue): boolean {
+  const tab = asJsonObject(entry);
+  if (tab === null) return false;
+  if (tab.type === 'chat' || tab.type === 'file') return true;
+  return tab.type === 'panel' && isRetiredPanel(tab.panel);
 }
 
 function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | null {
@@ -408,11 +418,6 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
   }
   const region: WorkspaceRegion = object.region === 'side' ? 'side' : 'main';
   seen.add(id);
-  if (object.type === 'file') {
-    return isSafeRelativePath(object.filePath)
-      ? withRegion({ id, type: 'file', filePath: object.filePath }, region)
-      : null;
-  }
   if (object.type === 'panel') {
     const panel = parsePanel(object.panel);
     return panel === null ? null : withRegion({ id, type: 'panel', panel }, region);
@@ -467,14 +472,12 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
   if (object === null || object.version !== 1 || !Array.isArray(object.tabs)) {
     return null;
   }
-  // 'chat' tabs belonged to the retired native-chat surface. A stored one is
-  // dropped on read rather than invalidating the whole document, and the ids
-  // that pointed at it fall back instead of failing the restore. Mirrors
-  // parseTabs in the control plane.
-  const liveTabs = object.tabs.filter((entry) => {
-    const tab = asJsonObject(entry);
-    return tab === null || tab.type !== 'chat';
-  });
+  // 'chat' tabs belonged to the retired native-chat surface, 'file' tabs and
+  // the Files / teenyapps panel tabs to the retired files panel. A stored one
+  // is dropped on read rather than invalidating the whole document, and the
+  // ids that pointed at it fall back instead of failing the restore. The
+  // control plane's parseTabs keeps accepting every one of them.
+  const liveTabs = object.tabs.filter((entry) => !isRetiredTab(entry));
   const droppedLegacyTab = liveTabs.length !== object.tabs.length;
   const seen = new Set<number>();
   const tabs = liveTabs.flatMap((entry) => {
@@ -536,9 +539,12 @@ function parseDrawer(value: OptionalJsonValue): RestoredDrawer | null {
   if (object.open === undefined && object.segment === undefined) {
     return { drawer, legacy: null };
   }
+  if (!isBoolean(object.open)) return null;
   const segment = parsePanel(object.segment);
-  if (!isBoolean(object.open) || segment === null) return null;
-  return { drawer, legacy: { open: object.open, segment } };
+  if (segment !== null) return { drawer, legacy: { open: object.open, segment } };
+  // A pre-split drawer that showed Files or teenyapps has nothing to become:
+  // the panel is gone, so the document restores with the split collapsed.
+  return isRetiredPanel(object.segment) ? { drawer, legacy: null } : null;
 }
 
 /** Pre-split documents are upgraded, never rejected: the old drawer becomes a

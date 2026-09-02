@@ -230,7 +230,7 @@ describe("the generated stylesheet", () => {
   it("scopes the variables to the surface, the rail and the Radix portals", () => {
     expect(sheet).toContain(".lody-surface");
     expect(sheet).toContain(".session-list--vendor");
-    expect(sheet).toContain("body > :where(:not(#root, .files-context-backdrop, .files-context-menu))");
+    expect(sheet).toContain("body > :where(:not(#root))");
   });
 
   it("points their two font names at ours", () => {
@@ -454,7 +454,6 @@ describe("the reskin reaches nothing outside the vendored zone", () => {
               <span class="shell-s__t">tab</span><span class="shell-s__a"></span></button>
           </div>
         </aside>
-        <div class="files-tree"><div class="files-tree-row"><span>file.ts</span></div></div>
         <div class="cfg-section"><h2 class="cfg-title">Agent rules</h2></div>
         <button>New tab</button><input /><a href="#">link</a>
       </div>

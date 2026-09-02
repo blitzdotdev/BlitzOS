@@ -18,7 +18,7 @@ export type { SpawnSessionType } from './NewTabMenu';
 export type { WebAppSessionType } from './SessionTypeIcon';
 
 function isManagedSessionTab(tab: WebAppTabModel): boolean {
-  return tab.agent !== 'file' && tab.agent !== 'preview' && tab.agent !== 'panel';
+  return tab.agent !== 'preview' && tab.agent !== 'panel';
 }
 
 export type WebAppTabModel = {
@@ -28,11 +28,8 @@ export type WebAppTabModel = {
   pending: boolean;
   customTitle?: string;
   renameable?: boolean;
-  dirty?: boolean;
-  filePath?: string;
-  title?: string;
   /** Which panel a `panel` tab shows, so the strip can pick its icon. */
-  panel?: 'files' | 'previews' | 'connections';
+  panel?: 'connections';
 };
 
 type WebAppHeaderProps = {
@@ -223,7 +220,6 @@ export function WebAppHeader({
                       <SessionTypeIcon
                         type={tab.agent}
                         className="webapp-tab-icon"
-                        filePath={tab.filePath}
                         panel={tab.panel}
                       />
                       <input
@@ -254,7 +250,7 @@ export function WebAppHeader({
                       type="button"
                       role="tab"
                       aria-selected={active}
-                      title={tab.title ?? tab.label}
+                      title={tab.label}
                       draggable={onTabDragStart !== undefined}
                       onDragStart={(event) => onTabDragStart?.(tab.id, event)}
                       onDragEnd={() => onTabDragEnd?.()}
@@ -263,14 +259,12 @@ export function WebAppHeader({
                       <SessionTypeIcon
                         type={tab.agent}
                         className="webapp-tab-icon"
-                        filePath={tab.filePath}
                         panel={tab.panel}
                       />
                       <span
                         className="webapp-tab-label"
                         onDoubleClick={() => beginRename(tab)}
                       >{tab.label}</span>
-                      {tab.dirty && <span className="webapp-tab-dirty" aria-label="Unsaved changes">•</span>}
                     </button>
                   )}
                   {active && renaming?.id !== tab.id && (

@@ -42,8 +42,7 @@ const vendoredSessionDetail = join(
   "vendor/lody/packages/components/src/components/sessions/session-detail.tsx",
 );
 
-// `FilesSidebar` and the vendored sidebar both measure themselves, and jsdom
-// has no `ResizeObserver`.
+// The vendored sidebar measures itself, and jsdom has no `ResizeObserver`.
 installLodyDomStubs();
 
 // A shell case is a real `CloudApp` mount behind a workspace poll, a
@@ -371,50 +370,12 @@ describe("S3 — a spawn selects the tab the spawn created", () => {
 });
 
 describe("S4 — opening a utility panel shows it", () => {
-  const chord = async () => {
-    await act(async () => {
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }),
-      );
-    });
-    await settle();
-  };
-
-  it("selects the Files tab it just created", async () => {
-    const mounted = await mountShell({
-      path: "/workspaces/ws-1/chat/terminal/7",
-      tabs: [{ id: 7, type: "terminal" }],
-      activeId: 7,
-    });
-    await chord();
-    // The tab exists AND the strip is on it. Before the fix `togglePanelTab`
-    // wrote a pane selection the strip does not read, so the chord added a tab
-    // nobody could see and read as dead.
-    expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toContain(
-      "blitz-tab:8",
-    );
-    expect(mounted.surface.surfaceTabs?.activeTabId).toBe("blitz-tab:8");
-    await mounted.view.unmount();
-  });
-
-  it("closes it again when it is the tab on screen", async () => {
-    const mounted = await mountShell({
-      path: "/workspaces/ws-1/chat/terminal/7",
-      tabs: [{ id: 7, type: "terminal" }],
-      activeId: 7,
-    });
-    await chord();
-    await chord();
-    expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toEqual([
-      "blitz-tab:7",
-    ]);
-    await mounted.view.unmount();
-  });
-
-  // THE SAME DEFECT, THREE MORE DOORS. Cmd/Ctrl+B was the one the audit named
-  // first; the right icon strip and the box's own `blitz connections open`
-  // marker took the identical pane-only route and were identically dead.
-  it.each(["Files", "teenyapps", "Connections"] as const)(
+  // THE SAME DEFECT, TWO DOORS. Cmd/Ctrl+B was the one the audit named first
+  // (it opened the Files panel, retired with it); the right icon strip and the
+  // box's own `blitz connections open` marker took the identical pane-only
+  // route and were identically dead. `togglePanelTab` wrote a pane selection
+  // the strip does not read, so each added a tab nobody could see.
+  it.each(["Connections"] as const)(
     "selects the panel the right icon strip's %s button opens",
     async (label) => {
       const mounted = await mountShell({
@@ -428,6 +389,10 @@ describe("S4 — opening a utility panel shows it", () => {
       expect(button, "the right icon strip is mounted").not.toBeNull();
       await act(async () => button?.click());
       await settle();
+      // The tab exists AND the strip is on it.
+      expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toContain(
+        "blitz-tab:8",
+      );
       expect(mounted.surface.surfaceTabs?.activeTabId).toBe("blitz-tab:8");
       // And a second press still closes it, which is what makes it a toggle.
       await act(async () => button?.click());

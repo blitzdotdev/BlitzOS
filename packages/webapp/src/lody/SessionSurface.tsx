@@ -71,6 +71,7 @@ import {
 import type { LodyAtomStore, LodyRuntimeEndpoints } from "./runtime.js";
 import { SessionRailSidebar } from "./SessionRailSidebar.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
+import { SidePanelContext, type SidePanelBinding } from "./side-panel.js";
 import { SurfaceTabsContext, type SurfaceTabsBinding } from "./surface-tabs.js";
 import { useDefaultSessionProjectBackfill } from "./use-session-project-backfill.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
@@ -185,6 +186,9 @@ export interface LodySessionSurfaceProps {
    * shell on the owner's box and no share level grants that (§5.1).
    */
   surfaceTabs?: SurfaceTabsBinding;
+  /** The right icon strip's binding onto the side panel (`side-panel.tsx`).
+   * Absent leaves `SessionDetail` with none of seam patch 10's props. */
+  sidePanel?: SidePanelBinding;
   /** Handed the imperative API once the daemon's identity settles, and `null`
    * on teardown. */
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
@@ -522,20 +526,22 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
                 {railSidebar}
                 {agentAuthNotice(snapshot.machineId)}
                 <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>
-                  {isShared ? (
-                    // A grantee's surface writes no agent configs at all — the
-                    // rows belong to the owner's machine Flock, which the relay
-                    // refuses — so there is nothing to gate on.
-                    <RouterProvider router={router} />
-                  ) : (
-                    <LodyAgentConfigGate
-                      store={store}
-                      machineId={snapshot.machineId}
-                      endpoints={endpoints}
-                    >
+                  <SidePanelContext.Provider value={props.sidePanel ?? null}>
+                    {isShared ? (
+                      // A grantee's surface writes no agent configs at all — the
+                      // rows belong to the owner's machine Flock, which the relay
+                      // refuses — so there is nothing to gate on.
                       <RouterProvider router={router} />
-                    </LodyAgentConfigGate>
-                  )}
+                    ) : (
+                      <LodyAgentConfigGate
+                        store={store}
+                        machineId={snapshot.machineId}
+                        endpoints={endpoints}
+                      >
+                        <RouterProvider router={router} />
+                      </LodyAgentConfigGate>
+                    )}
+                  </SidePanelContext.Provider>
                 </SurfaceTabsContext.Provider>
               </RuntimeProvider>
             </LodySurfaceProviders>
