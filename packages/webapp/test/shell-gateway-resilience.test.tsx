@@ -338,7 +338,6 @@ describe("the platform snapshot poller", () => {
   it("keeps polling through a transport failure, and settles when the box answers", async () => {
     vi.useFakeTimers();
     resetBoxGatewayHealth();
-    const { useLodyPlatformSnapshot } = await import("../src/lody/platform.js");
     let reads = 0;
     const comingUp: typeof fetch = async () => {
       reads += 1;
@@ -369,7 +368,6 @@ describe("the platform snapshot poller", () => {
   it("still settles for good on a catalog it cannot parse", async () => {
     vi.useFakeTimers();
     resetBoxGatewayHealth();
-    const { useLodyPlatformSnapshot } = await import("../src/lody/platform.js");
     let reads = 0;
     // The box answered, in bytes this shell cannot read. Asking again would
     // only hide the cause behind a spinner.
