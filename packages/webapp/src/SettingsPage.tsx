@@ -4,6 +4,7 @@ import type { ControlPlaneClient } from './api';
 import { appliedTheme, chooseTheme, type ThemeChoice } from './theme';
 import type { SettingsSection } from './sessions-page-state';
 import { ConnectionsPanel } from './settings/ConnectionsPanel';
+import { OrgCredentialsPanel } from './settings/OrgCredentialsPanel';
 import { RequestsPanel } from './settings/RequestsPanel';
 import { MembersPanel } from './settings/MembersPanel';
 import { InvitesPanel } from './settings/InvitesPanel';
@@ -151,6 +152,7 @@ export function SettingsPage({
   section,
   onNavigate,
   onOpenWorkspace,
+  onReviewProposal,
   onSignOut,
   onLeftOrg,
 }: {
@@ -161,6 +163,9 @@ export function SettingsPage({
   /** A request row's Connect opens the workspace that wants the connection:
    * connecting happens there, not in settings, since the flow inversion. */
   onOpenWorkspace: (workspaceId: string) => void;
+  /** Reopens the grant-approval dialog on a pending proposal the person
+   * closed without deciding (plans/ORG-CREDENTIALS.md §7a). */
+  onReviewProposal?: (proposalId: string) => void;
   onSignOut: () => Promise<void>;
   onLeftOrg: () => void;
 }) {
@@ -169,6 +174,9 @@ export function SettingsPage({
     { id: 'members', label: 'Members' },
     ...(viewer.membership.role === 'admin' ? [{ id: 'invites' as const, label: 'Invites' }] : []),
     { id: 'connections', label: 'Connections' },
+    // Org credentials (plans/ORG-CREDENTIALS.md §9): any active member may
+    // store one, so the tab is not admin-gated.
+    { id: 'credentials', label: 'Credentials' },
     ...(viewer.membership.role === 'admin' ? [{ id: 'compute' as const, label: 'Compute' }] : []),
     { id: 'requests', label: 'Requests' },
     // The usage-capture routes are admin-only server-side; the tab matches.
@@ -223,11 +231,18 @@ export function SettingsPage({
             admin={viewer.membership.role === 'admin'}
           />
         )}
+        {section === 'credentials' && (
+          <OrgCredentialsPanel client={client} viewer={viewer} />
+        )}
         {section === 'compute' && viewer.membership.role === 'admin' && (
           <ComputeCredentialsPanel client={client} orgId={viewer.org.id} />
         )}
         {section === 'requests' && (
-          <RequestsPanel client={client} onOpenWorkspace={onOpenWorkspace} />
+          <RequestsPanel
+            client={client}
+            onOpenWorkspace={onOpenWorkspace}
+            onReviewProposal={onReviewProposal}
+          />
         )}
         {section === 'usage' && viewer.membership.role === 'admin' && (
           <UsagePanel client={client} />

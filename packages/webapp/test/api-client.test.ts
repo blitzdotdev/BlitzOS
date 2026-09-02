@@ -37,6 +37,38 @@ describe("wire API client", () => {
     expect(fetcher.mock.calls[1]?.[1]?.method).toBe("DELETE");
   });
 
+  it("drives the org credential plane on the session's own organization", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => (
+      init?.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : Response.json({ ok: true })
+    ));
+    vi.stubGlobal("fetch", fetcher);
+    const client = createControlPlaneClient("https://control.example");
+
+    await client.listOrgCredentials();
+    await client.putOrgCredential({ name: "STRIPE_API_KEY", value: "sk", grants: [] });
+    await client.replaceOrgCredentialGrants("STRIPE_API_KEY", {
+      grants: [{ subjectKind: "org", subjectId: null, access: "read" }],
+    });
+    await client.importOrgCredentials({ text: "A=1\n", dryRun: true });
+    await client.revokeOrgCredential("STRIPE_API_KEY");
+    await client.listGrantProposals();
+    await client.resolveGrantProposal("p/1", { approve: false, changes: [] });
+
+    const calls = fetcher.mock.calls.map(([url, init]) => [String(url), init?.method ?? "GET"]);
+    expect(calls).toEqual([
+      ["https://control.example/orgs/self/credentials", "GET"],
+      ["https://control.example/orgs/self/credentials", "PUT"],
+      ["https://control.example/orgs/self/credentials/STRIPE_API_KEY/grants", "PUT"],
+      ["https://control.example/orgs/self/credentials/dotenv", "POST"],
+      ["https://control.example/orgs/self/credentials/STRIPE_API_KEY", "DELETE"],
+      ["https://control.example/orgs/self/grant-proposals?state=pending", "GET"],
+      ["https://control.example/orgs/self/grant-proposals/p%2F1/resolve", "POST"],
+    ]);
+    expect(fetcher.mock.calls[6]?.[1]?.body).toBe(JSON.stringify({ approve: false, changes: [] }));
+  });
+
   it("uses Google login and omits an absent SSH key from create", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       return new Response(JSON.stringify({

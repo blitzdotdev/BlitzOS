@@ -501,6 +501,13 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
     denyCredentialRequest: vi.fn(async () => undefined),
+    listOrgCredentials: vi.fn(async () => ({ credentials: [] })),
+    putOrgCredential: vi.fn(async () => { throw new Error('unused'); }),
+    revokeOrgCredential: vi.fn(async () => undefined),
+    replaceOrgCredentialGrants: vi.fn(async () => { throw new Error('unused'); }),
+    importOrgCredentials: vi.fn(async () => ({ results: [], linesRead: 0 })),
+    listGrantProposals: vi.fn(async () => ({ proposals: [] })),
+    resolveGrantProposal: vi.fn(async () => { throw new Error('unused'); }),
     ...overrides,
   };
 }

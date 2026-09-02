@@ -15,16 +15,17 @@ import {
   WorkspaceMembersEditor,
   type MachineAction,
 } from './WorkspaceMembersEditor';
+import { WorkspaceCredentialsTab } from './WorkspaceCredentialsTab';
 import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
 import type { CloudWorkspaceModel } from './workspace-store';
 
-// TODO(org-credentials-ui): built in a later change — the Credentials tab
-// becomes a filtered view over ORG credentials (plans/ORG-CREDENTIALS.md §9).
-// The workspace credential store it administered is deleted.
-export type WorkspaceDetailsTab = 'members' | 'settings';
+/** Members, the org credentials readable here (plans/ORG-CREDENTIALS.md §9
+ * — a filtered view, not a store), and the settings. */
+export type WorkspaceDetailsTab = 'members' | 'credentials' | 'settings';
 
 const TAB_LABELS = {
   members: 'Members',
+  credentials: 'Credentials',
   settings: 'Settings',
 } satisfies Record<WorkspaceDetailsTab, string>;
 
@@ -74,6 +75,9 @@ export function WorkspaceDetailsDialog({
   refreshWorkspaces,
   initialTab = 'members',
   focusAddMember = false,
+  viewerMembershipId = null,
+  orgName = 'the organization',
+  orgWorkspaces = [],
   onClose,
   onClone,
   onDelete,
@@ -81,6 +85,12 @@ export function WorkspaceDetailsDialog({
   client: ControlPlaneClient;
   workspace: CloudWorkspaceModel;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  /** The signed-in member, so the Credentials tab can tell their own
+   * membership grant from the rest. */
+  viewerMembershipId?: string | null;
+  orgName?: string;
+  /** The org's workspaces, for the grant picker in the credential form. */
+  orgWorkspaces?: ReadonlyArray<{ id: string; name: string }>;
   /** Runs the workspace poll now. The rows this dialog administers are the
    * polled ones, so a settled write asks for the next poll rather than
    * leaving the list stale until the 15 s tick. */
@@ -214,7 +224,7 @@ export function WorkspaceDetailsDialog({
           <button ref={closeButton} type="button" aria-label="Close workspace details" onClick={onClose}>×</button>
         </header>
         <div className="workspace-details-tabs" role="tablist" aria-label="Workspace detail views">
-          {(['members', 'settings'] as const).map((candidate) => (
+          {(['members', 'credentials', 'settings'] as const).map((candidate) => (
             <button
               key={candidate}
               type="button"
@@ -262,6 +272,17 @@ export function WorkspaceDetailsDialog({
                 />
               </div>
             </section>
+          )}
+          {tab === 'credentials' && (
+            <WorkspaceCredentialsTab
+              client={client}
+              workspaceId={workspaceId}
+              workspaceName={workspace.title}
+              orgName={orgName}
+              viewerMembershipId={viewerMembershipId}
+              orgMembers={orgMembers}
+              workspaces={orgWorkspaces}
+            />
           )}
           {tab === 'settings' && (
             <WorkspaceSettingsTab

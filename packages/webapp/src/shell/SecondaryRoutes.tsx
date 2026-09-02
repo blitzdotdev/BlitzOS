@@ -38,6 +38,8 @@ export type SecondaryRoutesProps = {
   onOpenRail: () => void;
   onNavigateToSettings: (section: SettingsSection) => void;
   onOpenWorkspace: (workspaceId: string) => void;
+  /** Reopens a pending grant proposal the person closed without deciding. */
+  onReviewProposal?: (proposalId: string) => void;
   onLeaveSettings: () => void;
   onSignOut: () => Promise<void>;
   onLeftOrg: () => void;
@@ -77,6 +79,7 @@ export function SecondaryRoutes({
   onOpenRail,
   onNavigateToSettings,
   onOpenWorkspace,
+  onReviewProposal,
   onLeaveSettings,
   onSignOut,
   onLeftOrg,
@@ -96,6 +99,7 @@ export function SecondaryRoutes({
             section={route.settingsSection}
             onNavigate={onNavigateToSettings}
             onOpenWorkspace={onOpenWorkspace}
+            onReviewProposal={onReviewProposal}
             onSignOut={onSignOut}
             onLeftOrg={onLeftOrg}
           />

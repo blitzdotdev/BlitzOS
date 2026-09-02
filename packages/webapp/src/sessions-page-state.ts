@@ -3,6 +3,7 @@ export type SettingsSection =
   | 'members'
   | 'invites'
   | 'connections'
+  | 'credentials'
   | 'compute'
   | 'requests'
   | 'usage';
@@ -93,7 +94,7 @@ export type AppRoute =
 const HOME: AppRoute = { workspaceId: null, page: 'drive' };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|compute|requests|usage))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|credentials|compute|requests|usage))?\/?$/u);
   if (settings) {
     // '/settings/integrations' is the pre-rename address; old bookmarks
     // canonicalize to the connections section.

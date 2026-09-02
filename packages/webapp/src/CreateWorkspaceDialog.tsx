@@ -28,9 +28,9 @@ import { TemplateRepoPicker } from './files/TemplateRepoPicker';
 
 export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 
-// TODO(org-credentials-ui): the create dialog lost its credentials section
-// with the workspace credential store; secrets are stored org-wide from the
-// org Credentials panel instead (plans/ORG-CREDENTIALS.md §9).
+// There is no credentials section here, and none is coming back: secrets are
+// stored at organization level from Settings → Credentials, and a workspace
+// reads the ones granted to it (plans/ORG-CREDENTIALS.md §9).
 
 type CreateWorkspaceDialogProps = {
   busy: boolean;

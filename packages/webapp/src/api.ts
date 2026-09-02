@@ -32,6 +32,17 @@ import type {
   CreateWorkspaceResponse,
   CreateWorkspaceTemplateRequest,
   CreateWorkspaceTemplateResponse,
+  GrantProposalState,
+  ImportOrgCredentialsRequest,
+  ImportOrgCredentialsResponse,
+  ListGrantProposalsResponse,
+  ListOrgCredentialsResponse,
+  PutOrgCredentialRequest,
+  PutOrgCredentialResponse,
+  ReplaceOrgCredentialGrantsRequest,
+  ReplaceOrgCredentialGrantsResponse,
+  ResolveGrantProposalRequest,
+  ResolveGrantProposalResponse,
   ListMachineTypesResponse,
   ListRecipesResponse,
   ListWorkspaceTemplatesResponse,
@@ -216,9 +227,34 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
    * Another location is refused until the volume move lands (§5). */
   setMachineType(machineId: string, input: SetMachineTypeRequest): Promise<MachineResponse>;
   destroyMachine(machineId: string): Promise<MachineResponse>;
-  // TODO(org-credentials-ui): org credential client methods
-  // (GET/PUT /orgs/:id/credentials*) land with the new panel
-  // (plans/ORG-CREDENTIALS.md §9). The workspace credential store is deleted.
+  /** The org credential plane's session routes (plans/ORG-CREDENTIALS.md
+   * §7), all on the session's own organization. The list carries names and
+   * metadata only — a value never comes back out of the store. */
+  listOrgCredentials(signal?: AbortSignal): Promise<ListOrgCredentialsResponse>;
+  /** Create or rotate: one live row per name, so a second write replaces the
+   * value. `grants` on a create replaces the set; absent leaves it alone. */
+  putOrgCredential(input: PutOrgCredentialRequest): Promise<PutOrgCredentialResponse>;
+  revokeOrgCredential(name: string): Promise<void>;
+  /** Replaces the grant set atomically: what is sent is what holds. */
+  replaceOrgCredentialGrants(
+    name: string,
+    input: ReplaceOrgCredentialGrantsRequest,
+  ): Promise<ReplaceOrgCredentialGrantsResponse>;
+  /** Dotenv text, key by key, at org scope. `dryRun` is the preview: the same
+   * parser and outcomes without the writes. */
+  importOrgCredentials(input: ImportOrgCredentialsRequest): Promise<ImportOrgCredentialsResponse>;
+  /** The approval feed (§7a): proposals addressed to the caller, plus every
+   * one in the org for an admin. */
+  listGrantProposals(
+    signal?: AbortSignal,
+    state?: GrantProposalState,
+  ): Promise<ListGrantProposalsResponse>;
+  /** The person's answer. On approve, `changes` is the edited set that
+   * applies; on deny it is ignored and nothing changes. */
+  resolveGrantProposal(
+    proposalId: string,
+    input: ResolveGrantProposalRequest,
+  ): Promise<ResolveGrantProposalResponse>;
   getGlobalWebAppState(): Promise<WebAppStateResponse<GlobalWebAppStateV1>>;
   putGlobalWebAppState(
     doc: GlobalWebAppStateV1,
@@ -685,6 +721,37 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       `/machines/${encodeURIComponent(machineId)}`,
       { method: "DELETE" },
     ),
+    listOrgCredentials: (signal) =>
+      request<ListOrgCredentialsResponse>("/orgs/self/credentials", { signal }),
+    putOrgCredential: (input) =>
+      request<PutOrgCredentialResponse>("/orgs/self/credentials", {
+        method: "PUT",
+        headers: jsonHeaders,
+        body: JSON.stringify(input),
+      }),
+    revokeOrgCredential: (name) =>
+      request<void>(`/orgs/self/credentials/${encodeURIComponent(name)}`, { method: "DELETE" }),
+    replaceOrgCredentialGrants: (name, input) =>
+      request<ReplaceOrgCredentialGrantsResponse>(
+        `/orgs/self/credentials/${encodeURIComponent(name)}/grants`,
+        { method: "PUT", headers: jsonHeaders, body: JSON.stringify(input) },
+      ),
+    importOrgCredentials: (input) =>
+      request<ImportOrgCredentialsResponse>("/orgs/self/credentials/dotenv", {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify(input),
+      }),
+    listGrantProposals: (signal, state = "pending") =>
+      request<ListGrantProposalsResponse>(
+        `/orgs/self/grant-proposals?state=${encodeURIComponent(state)}`,
+        { signal },
+      ),
+    resolveGrantProposal: (proposalId, input) =>
+      request<ResolveGrantProposalResponse>(
+        `/orgs/self/grant-proposals/${encodeURIComponent(proposalId)}/resolve`,
+        { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) },
+      ),
     getGlobalWebAppState: () =>
       request<WebAppStateResponse<GlobalWebAppStateV1>>(
         "/webapp-state",

@@ -3,6 +3,7 @@ import type {
   MachineState,
   MachineType,
   MachineView,
+  OrgCredentialView,
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../src/api.js';
@@ -260,8 +261,90 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
-// TODO(org-credentials-ui): the Credentials tab returns as a filtered view
-// over org credentials (plans/ORG-CREDENTIALS.md §9); its tests come back with it.
+  it('filters org credentials to the ones readable in this workspace, values never shown', async () => {
+    const credential = (name: string, grants: OrgCredentialView['grants'], comment: string | null = null): OrgCredentialView => ({
+      id: `cred-${name}`, name, comment, createdByMembershipId: 'membership-1',
+      createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_000, grants,
+    });
+    const listOrgCredentials = vi.fn().mockResolvedValue({ credentials: [
+      credential('STRIPE_API_KEY', [
+        { subjectKind: 'workspace', subjectId: workspace.id, access: 'read' },
+        { subjectKind: 'membership', subjectId: 'membership-1', access: 'write' },
+      ], 'test-mode key, safe for CI'),
+      credential('SENTRY_DSN', [{ subjectKind: 'org', subjectId: null, access: 'read' }]),
+      credential('MY_TOKEN', [{ subjectKind: 'membership', subjectId: 'membership-1', access: 'write' }]),
+      credential('ELSEWHERE', [{ subjectKind: 'workspace', subjectId: 'workspace-other', access: 'read' }]),
+      // A plain reader's view: readable, audience withheld.
+      credential('READ_ONLY', []),
+    ] });
+    const view = await render(dialog({
+      client: client({ listOrgCredentials }),
+      viewerMembershipId: 'membership-1',
+    }));
+    await settle();
+    await act(async () => tab(view.container, 'Credentials')?.click());
+    await settle();
+
+    const rows = [...view.container.querySelectorAll('.workspace-credential-row')]
+      .map((row) => row.textContent);
+    expect(rows).toEqual([
+      'STRIPE_API_KEYtest-mode key, safe for CIgranted to this workspaceRotate',
+      'SENTRY_DSNorg-wideRotate',
+      'MY_TOKENgranted to youRotate',
+      'READ_ONLYreadable by you',
+    ]);
+    expect(view.container.textContent).not.toContain('ELSEWHERE');
+    // Nothing on the tab reads a value back.
+    expect(view.container.querySelector('[aria-label="Credential value"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it('adds and rotates through the org-level form, a new key granted to this workspace', async () => {
+    const putOrgCredential = vi.fn().mockResolvedValue({ credential: null });
+    const listOrgCredentials = vi.fn().mockResolvedValue({ credentials: [{
+      id: 'cred-1', name: 'STRIPE_API_KEY', comment: null, createdByMembershipId: 'membership-1',
+      createdAt: 1, updatedAt: 1,
+      grants: [{ subjectKind: 'workspace', subjectId: workspace.id, access: 'read' }],
+    }] });
+    const view = await render(dialog({ client: client({ listOrgCredentials, putOrgCredential }) }));
+    await settle();
+    await act(async () => tab(view.container, 'Credentials')?.click());
+    await settle();
+
+    const buttonNamed = (text: string) => [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === text);
+    await act(async () => buttonNamed('Add a credential')?.click());
+    const addForm = view.container.querySelector('form[aria-label="Add a credential"]');
+    if (addForm === null) throw new Error('no add form');
+    // The default audience is this workspace, named, not an id.
+    expect(addForm.querySelector('.org-grant-row')?.textContent).toContain('Details test');
+    const name = addForm.querySelector<HTMLInputElement>('[aria-label="Credential name"]');
+    const value = addForm.querySelector<HTMLInputElement>('[aria-label="Credential value"]');
+    if (name === null || value === null) throw new Error('no add fields');
+    expect(value.type).toBe('password');
+    await act(async () => { typeInto(name, 'DATABASE_URL'); typeInto(value, 'postgres://x'); });
+    await act(async () => buttonNamed('Save credential')?.click());
+    expect(putOrgCredential).toHaveBeenCalledWith({
+      name: 'DATABASE_URL',
+      value: 'postgres://x',
+      grants: [{ subjectKind: 'workspace', subjectId: workspace.id, access: 'read' }],
+    });
+    await settle();
+    // The tab re-reads after the write rather than inventing a row.
+    expect(listOrgCredentials).toHaveBeenCalledTimes(2);
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>('button[aria-label="Rotate STRIPE_API_KEY"]')?.click());
+    const rotateForm = view.container.querySelector('form[aria-label="Rotate STRIPE_API_KEY"]');
+    if (rotateForm === null) throw new Error('no rotate form');
+    const newValue = rotateForm.querySelector<HTMLInputElement>('[aria-label="Credential value"]');
+    if (newValue === null) throw new Error('no value field');
+    await act(async () => typeInto(newValue, 'sk_new'));
+    // The form's own verb, not the row's "Rotate" that opened it.
+    await act(async () => rotateForm.querySelector<HTMLButtonElement>('button[type="submit"]')?.click());
+    expect(putOrgCredential).toHaveBeenLastCalledWith({ name: 'STRIPE_API_KEY', value: 'sk_new' });
+    await view.unmount();
+  });
+
   it('offers clone and delete from the footer, and names the default machine type', async () => {
     const onClone = vi.fn();
     const onDelete = vi.fn();
