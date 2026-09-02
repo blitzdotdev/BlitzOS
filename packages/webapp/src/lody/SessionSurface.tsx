@@ -59,6 +59,7 @@ import {
 } from "@lody/components/atoms/workspace-context";
 import { LodyAgentAuthNotice } from "./agent-auth-notice.js";
 import { LodyAgentConfigGate } from "./agent-config-gate.js";
+import { useLodyRuntimeBootRetry } from "./use-runtime-boot-retry.js";
 import { createLodyLocalBridge, installLodyLocalBridge, type LodyLocalBridge } from "./local-bridge.js";
 import { BlitzPlatformProviders, useLodyPlatformSnapshot, type BlitzViewer } from "./platform.js";
 import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
@@ -482,6 +483,15 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     shared: isShared,
   });
 
+  // THE RUNTIME BOOT IS ONE-SHOT AND THE BOX MAY NOT BE READY FOR IT YET.
+  // `RuntimeProvider` creates the runtime once and, on failure, leaves
+  // `runtimeAtom` null with nothing left in its dependency list that can
+  // change — so on a freshly provisioned workspace, where the gateway answers
+  // long before the session daemon does, the gate below never opens. This
+  // counter rebuilds the provider when that specific failure is on the atoms.
+  // See `use-runtime-boot-retry.ts` for why it is a remount and not a patch.
+  const runtimeGeneration = useLodyRuntimeBootRetry(store, snapshot?.machineId ?? null);
+
   // THE AGENT-AUTH BANNER BELONGS TO SESSION CONTENT, NOT TO THE PANE
   // (plans/LODY-TERMINAL-TABS.md wave 3, F8).
   //
@@ -558,7 +568,7 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             workspaceTitle={workspaceTitle}
           >
             <LodySurfaceProviders>
-              <RuntimeProvider>
+              <RuntimeProvider key={runtimeGeneration}>
                 {railSidebar}
                 {agentAuthNotice(snapshot.machineId)}
                 <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>
