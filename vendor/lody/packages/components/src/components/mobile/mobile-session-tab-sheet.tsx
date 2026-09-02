@@ -8,6 +8,7 @@ import {
   Loader2,
   MonitorPlay,
   Plus,
+  SquareDashed,
   Undo2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -55,8 +56,15 @@ export type ArchivedConversationEntry = {
 export type ViewerTabEntry = {
   id: string;
   label: string;
-  kind: 'file' | 'diff' | 'pr' | 'browser' | 'files';
+  /** `custom` is a tab a HOST contributes: the sheet lists it exactly like a
+   * file or a diff tab. It mirrors `ViewerTabItem['type']` on the desktop
+   * strip, which is the list this one is built from. */
+  kind: 'file' | 'diff' | 'pr' | 'browser' | 'files' | 'custom';
   active: boolean;
+  /** The host's own glyph. A `custom` tab has no file path to derive one from,
+   * so it brings its icon with it; every other kind falls back to
+   * `VIEWER_ICON`. */
+  icon?: ReactNode;
 };
 
 export type MobileSessionTabSheetProps = {
@@ -105,6 +113,9 @@ const VIEWER_ICON: Record<ViewerTabEntry['kind'], typeof FileIcon> = {
   pr: GitPullRequest,
   browser: MonitorPlay,
   files: FolderOpen,
+  // The fallback for a host tab that brought no `icon` of its own. The record
+  // is total over `kind`, so this entry is what makes the union compile.
+  custom: SquareDashed,
 };
 
 export function MobileSessionTabSheet({
@@ -230,11 +241,16 @@ export function MobileSessionTabSheet({
                       active={v.active}
                       onSelect={() => select(() => onSelectViewer(v.id))}
                       leading={
-                        <Icon
-                          className="h-4 w-4 shrink-0 text-muted-foreground"
-                          strokeWidth={1.8}
-                          aria-hidden="true"
-                        />
+                        // The host's glyph wins, the kind's is the fallback —
+                        // the same rule the desktop strip applies in
+                        // `session-tab-bar.tsx`'s `ViewerTabContent`.
+                        v.icon ?? (
+                          <Icon
+                            className="h-4 w-4 shrink-0 text-muted-foreground"
+                            strokeWidth={1.8}
+                            aria-hidden="true"
+                          />
+                        )
                       }
                       label={v.label}
                     />

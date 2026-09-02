@@ -565,17 +565,30 @@ const MobileProjectInfo = memo(function MobileProjectInfo({
   session,
   localProjectMeta,
   isSyncing,
+  gitHubAvailable = true,
 }: {
   session: SessionMeta;
   localProjectMeta?: { name?: string; rootPath?: string } | null;
   isSyncing?: boolean;
+  /**
+   * Whether the platform integrates with GitHub at all — the same answer
+   * `getSessionGitHubState` takes as its third argument.
+   *
+   * This header re-derives the repo itself instead of reading that state, so
+   * without this it is the one GitHub surface on the page that a platform
+   * without the capability cannot turn off. A local clone carries a remote, so
+   * `repoFullName` is non-empty and the octocat and the slug both draw.
+   */
+  gitHubAvailable?: boolean;
 }) {
   const project = session.project as
     | { kind: 'github'; repoFullName?: string; branch?: string }
     | { kind: 'local'; localProjectId?: string; branch?: string; githubRepoFullName?: string }
     | undefined;
-  const repoFullName = (resolveProjectGitHubRepo(project) ?? session.repoFullName)?.trim() ?? '';
-  const isGitHub = project?.kind === 'github' || !!repoFullName;
+  const repoFullName = gitHubAvailable
+    ? ((resolveProjectGitHubRepo(project) ?? session.repoFullName)?.trim() ?? '')
+    : '';
+  const isGitHub = gitHubAvailable && (project?.kind === 'github' || !!repoFullName);
   const contextLabel = repoFullName || localProjectMeta?.name || '';
   const sessionTitle = session.title?.trim() ?? '';
 
@@ -4278,6 +4291,14 @@ const SessionDetail = ({
     effectiveActiveViewerTabId !== null && (!isMobile || activeViewerTab?.type !== 'file');
   const mobileSkipTargetId = getSessionDetailSkipTargetId(hasActiveViewerTab);
 
+  /* The mobile counterpart of `activeChatSurfaceId`: an active HOST tab covers
+     the conversation on a phone exactly as it does on a desktop. The desktop
+     rule lives below the mobile return, so it cannot be shared. */
+  const activeMobileSurfaceTab =
+    activeSurfaceTabId === null
+      ? null
+      : (surfaceTabs.find((tab) => tab.id === activeSurfaceTabId) ?? null);
+
   /* ── Mobile tab-switcher sheet (replaces the mobile SessionTabBar) ──
      All hooks live here (above the `if (isMobile)` early return) and after
      every dependency they read (orderedSessionTabIds, viewerTabItems, PR /
@@ -4387,6 +4408,18 @@ const SessionDetail = ({
             : effectiveActiveViewerTabId === v.id,
       });
     }
+    /* Host tabs close the group. They are the same list the desktop strip
+       draws (`surfaceTabItems`), which the mobile sheet never read: a host tab
+       was contributed, mounted on desktop, and unreachable on a phone. */
+    for (const v of surfaceTabItems) {
+      list.push({
+        id: v.id,
+        label: v.label,
+        kind: 'custom',
+        icon: v.icon,
+        active: activeSurfaceTabId === v.id,
+      });
+    }
     return list;
   }, [
     canShowGitHubActions,
@@ -4395,6 +4428,8 @@ const SessionDetail = ({
     latestPrRepoFullName,
     activeBrowserSession,
     viewerTabItems,
+    surfaceTabItems,
+    activeSurfaceTabId,
     effectiveActiveViewerTabId,
     mobileFileViewerOpen,
     mobileFileViewerTabId,
@@ -4453,6 +4488,13 @@ const SessionDetail = ({
         setMobileFilesBrowserOpen(true);
         return;
       }
+      /* A host tab. Selecting it is the host's decision to record — it owns
+         the selection and the address behind it — so this page only reports
+         the tap, exactly as the desktop strip does. */
+      if (surfaceTabs.some((tab) => tab.id === id)) {
+        onSurfaceTabSelect?.(id);
+        return;
+      }
       const viewerTab = viewerTabs.find((tab) => tab.id === id);
       if (viewerTab?.type === 'file') {
         setActiveViewerTabId(null);
@@ -4471,6 +4513,8 @@ const SessionDetail = ({
       handleOpenBrowser,
       handleViewerTabSelect,
       viewerTabs,
+      surfaceTabs,
+      onSurfaceTabSelect,
     ]
   );
 
@@ -4883,7 +4927,7 @@ const SessionDetail = ({
           ),
       });
     }
-    if (activeSessionSharing) {
+    if (activeSessionSharing && !hideCloudMenuItems) {
       mobileMenuInfoRows.push({
         id: 'visibility',
         icon:
@@ -4973,18 +5017,20 @@ const SessionDetail = ({
         disabled: !!activeDraftTab,
       }
     );
-    mobileMenuActions.push({
-      id: 'copy-url',
-      icon: <Link className="h-3.5 w-3.5" />,
-      label: t('sessions.copyUrl', 'Copy URL'),
-      onClick: () => {
-        void handleCopyUrl();
-      },
-    });
+    if (!hideCloudMenuItems) {
+      mobileMenuActions.push({
+        id: 'copy-url',
+        icon: <Link className="h-3.5 w-3.5" />,
+        label: t('sessions.copyUrl', 'Copy URL'),
+        onClick: () => {
+          void handleCopyUrl();
+        },
+      });
+    }
     // Copy URL stays available for private sessions (the link still works for
     // the owner); sharing is a separate action shown only while the
     // conversation isn't team-visible.
-    if (activeSessionSharing && activeSessionSharing.visibility !== 'team') {
+    if (activeSessionSharing && activeSessionSharing.visibility !== 'team' && !hideCloudMenuItems) {
       mobileMenuActions.push({
         id: 'share-with-team',
         icon:
@@ -5071,6 +5117,7 @@ const SessionDetail = ({
               session={activeSession}
               localProjectMeta={resolvedLocalProjectMeta}
               isSyncing={activeSessionDocIsSyncing}
+              gitHubAvailable={githubIntegrationAvailable}
             />
           }
           actions={
@@ -5110,7 +5157,7 @@ const SessionDetail = ({
           infoRows={mobileMenuInfoRows}
           actions={mobileMenuActions}
           owner={
-            isMultiMemberWorkspace && !activeSession.isArchived
+            isMultiMemberWorkspace && !activeSession.isArchived && !hideCloudMenuItems
               ? {
                   members: workspaceMembers,
                   ownerUserId: activeSession.userId,
@@ -5129,7 +5176,10 @@ const SessionDetail = ({
         >
           {/* Keep inactive tabs mounted for fast switching; only the active tab holds room sync. */}
           {[activeSession, ...visibleChildSessions].map((tabSession) => {
-            const isActive = !hasActiveViewerTab && tabSession.id === activeTabSessionId;
+            const isActive =
+              !hasActiveViewerTab &&
+              activeMobileSurfaceTab === null &&
+              tabSession.id === activeTabSessionId;
             const pendingForkSourceId = pendingForkSourceByTargetSessionId.get(tabSession.id);
             const externalHistoryRefresh = externalHistoryRefreshBySessionId[tabSession.id];
             const externalHistoryProviderLabel = externalHistoryRefresh
@@ -5148,6 +5198,16 @@ const SessionDetail = ({
                   className="h-full"
                   hideHeader
                   readOnly={readOnly}
+                  /* The four the desktop gets from `getSharedChatSurfaceProps`,
+                     which is defined below this branch's early return. Without
+                     them a phone showed the notification prompt, the Agent Role
+                     picker and the composer's offline chip that the desktop
+                     hides. `hideConnectionStatus` is seam patch 15's prop; this
+                     is the one of its surfaces the mobile fork still dropped. */
+                  hideCloudMenuItems={hideCloudMenuItems}
+                  hideNotificationPrompt={hideNotificationPrompt}
+                  hideAgentRoles={hideAgentRoles}
+                  hideConnectionStatus={hideConnectionStatus}
                   syncEnabled={isActive || pendingForkSourceId !== undefined}
                   isVisible={isActive}
                   isChildTab={tabSession.id !== sessionId}
@@ -5197,7 +5257,10 @@ const SessionDetail = ({
             );
           })}
           {draftTabs.map((draft) => {
-            const isActive = !hasActiveViewerTab && draft.id === activeTabSessionId;
+            const isActive =
+              !hasActiveViewerTab &&
+              activeMobileSurfaceTab === null &&
+              draft.id === activeTabSessionId;
             return (
               <div
                 key={draft.id}
@@ -5234,6 +5297,23 @@ const SessionDetail = ({
                 </div>
               );
             })}
+          {/* Host tabs. Mounted always and hidden when another tab is active,
+              the same rule the desktop surfaces follow: a terminal must survive
+              a tab switch without a reconnect. */}
+          {surfaceTabs.map((tab) => {
+            const isActive = tab.id === activeSurfaceTabId;
+            return (
+              <div
+                key={tab.id}
+                className={isActive ? 'h-full' : 'hidden h-full'}
+                style={{ paddingTop: 'var(--conversation-top-inset, 0px)' }}
+                aria-hidden={!isActive}
+                data-surface-tab-id={tab.id}
+              >
+                {tab.content}
+              </div>
+            );
+          })}
         </div>
 
         {/* Mobile diff sheet */}
