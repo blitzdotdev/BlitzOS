@@ -23,7 +23,8 @@ const expectedTables = [
   "workspaces",
   "machines",
   "workspace_members",
-  "workspace_credentials",
+  "org_credentials",
+  "org_credential_grants",
   "invites",
   "volume_ownership",
   "folders",
@@ -67,9 +68,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
   });
 
-  it("contains the thirty-four domain tables plus the deny-all file support table", () => {
+  it("contains the thirty-five domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(35);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(36);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -182,11 +183,25 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     });
     // Sealed values only: the ciphertext column is NOT NULL and nothing here
     // stores a plaintext value.
-    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_credentials")).toMatchObject({
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "org_credentials")).toMatchObject({
       fields: expect.arrayContaining([
+        expect.objectContaining({ name: "org_id", foreignKey: { table: "orgs", column: "id" } }),
         expect.objectContaining({ name: "name", notNull: true }),
         expect.objectContaining({ name: "ciphertext", notNull: true }),
         expect.objectContaining({ name: "revoked_at", type: "integer" }),
+      ]),
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "org_credential_grants")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({
+          name: "credential_id",
+          foreignKey: { table: "org_credentials", column: "id" },
+        }),
+        expect.objectContaining({
+          name: "subject_kind",
+          check: "subject_kind IN ('org','workspace','membership')",
+        }),
+        expect.objectContaining({ name: "access", check: "access IN ('read','write')" }),
       ]),
     });
     // The machine's own credential. `box_token_families` beside it is what is
@@ -405,7 +420,8 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       "idx_machines_state",
       "idx_workspace_members_identity",
       "idx_workspace_members_membership",
-      "idx_workspace_credentials_workspace",
+      "idx_org_credentials_org",
+      "idx_org_credential_grants_credential",
       "idx_folders_org",
       "idx_folder_grants_identity",
       "idx_folder_grants_membership",

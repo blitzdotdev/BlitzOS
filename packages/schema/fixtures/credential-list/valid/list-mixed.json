@@ -1,6 +1,0 @@
-{
-  "credentials": [
-    { "name": "CF_TOKEN", "comment": "canary Cloudflare API token; deploys the control plane" },
-    { "name": "PLAIN_KEY" }
-  ]
-}

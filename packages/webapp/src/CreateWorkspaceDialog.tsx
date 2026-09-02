@@ -28,9 +28,9 @@ import { TemplateRepoPicker } from './files/TemplateRepoPicker';
 
 export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 
-/** A credential the create request will carry. This is the only path where a
- * value crosses the wire (plans/MEMBER-MACHINES.md §1 wire types). */
-type DraftCredential = { name: string; comment: string; value: string };
+// There is no credentials section here, and none is coming back: secrets are
+// stored at organization level from Settings → Credentials, and a workspace
+// reads the ones granted to it (plans/ORG-CREDENTIALS.md §9).
 
 type CreateWorkspaceDialogProps = {
   busy: boolean;
@@ -86,7 +86,6 @@ export function CreateWorkspaceDialog({
   );
   const [repos, setRepos] = useState<string[]>(restoredDraft?.repos ?? []);
   const [members, setMembers] = useState<DraftWorkspaceMember[]>([]);
-  const [credentials, setCredentials] = useState<DraftCredential[]>([]);
   const submitted = useRef(false);
   const credentialRequiredProviders = providerStatuses.flatMap(({ providerId, access }) =>
     access === 'credential-required' && isComputeCredentialProvider(providerId)
@@ -170,26 +169,7 @@ export function CreateWorkspaceDialog({
         return row;
       });
     }
-    const namedCredentials = credentials.filter(
-      (credential) => credential.name.trim() !== '' && credential.value !== '',
-    );
-    if (namedCredentials.length > 0) {
-      input.credentials = namedCredentials.map((credential) => (
-        credential.comment.trim() === ''
-          ? { name: credential.name.trim(), value: credential.value }
-          : {
-            name: credential.name.trim(),
-            comment: credential.comment.trim(),
-            value: credential.value,
-          }
-      ));
-    }
     onSubmit(input);
-  };
-
-  const updateCredential = (index: number, patch: Partial<DraftCredential>) => {
-    setCredentials((current) => current.map((credential, at) =>
-      at === index ? { ...credential, ...patch } : credential));
   };
 
   return (
@@ -306,63 +286,6 @@ export function CreateWorkspaceDialog({
               defaultMachineTypeId={selectedMachineType}
               viewerName={viewerName}
             />
-          </section>
-
-          <section className="blueprint-selection">
-            <div className="cfg-section-head">
-              <h2 className="cfg-title">Credentials</h2>
-              <p className="cfg-desc">
-                Names and values every member machine reads with{' '}
-                <code>blitz-cred</code>. This is the only time a value is sent;
-                it never comes back out.
-              </p>
-            </div>
-            {credentials.map((credential, index) => (
-              // The index is the identity here: two blank rows are two rows,
-              // and a name is editable, so neither can key the list.
-              // eslint-disable-next-line react/no-array-index-key
-              <div className="create-credential-row" key={index}>
-                <input
-                  aria-label={`Credential ${String(index + 1)} name`}
-                  placeholder="STRIPE_API_KEY"
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  value={credential.name}
-                  onChange={(event) => updateCredential(index, { name: event.currentTarget.value })}
-                />
-                <input
-                  aria-label={`Credential ${String(index + 1)} comment`}
-                  placeholder="Comment (optional)"
-                  value={credential.comment}
-                  onChange={(event) => updateCredential(index, { comment: event.currentTarget.value })}
-                />
-                <input
-                  aria-label={`Credential ${String(index + 1)} value`}
-                  type="password"
-                  autoComplete="off"
-                  placeholder="Value"
-                  value={credential.value}
-                  onChange={(event) => updateCredential(index, { value: event.currentTarget.value })}
-                />
-                <button
-                  type="button"
-                  aria-label={`Remove credential ${String(index + 1)}`}
-                  onClick={() => setCredentials((current) =>
-                    current.filter((_credential, at) => at !== index))}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <button
-              className="webapp-action"
-              type="button"
-              onClick={() => setCredentials((current) =>
-                [...current, { name: '', comment: '', value: '' }])}
-            >
-              Add credential
-            </button>
           </section>
 
           {/* A clone already carries its source's repository list, and the two

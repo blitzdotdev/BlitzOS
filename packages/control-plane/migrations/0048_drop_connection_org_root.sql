@@ -1,0 +1,21 @@
+-- CONNECTIONS SHED THEIR ORG-ROOT SLOT (plans/ORG-CREDENTIALS.md §6a).
+--
+-- A `connections` row used to carry a second, older org-secret slot: a
+-- sealed org root (`root_ciphertext`, written by the admin
+-- `PUT /connections/:name`) gated by an owner allow-list (`usable_by`) and
+-- surfaced as the `orgCredential` badge — an org-shared static wearing
+-- provider clothes. Org-shared statics live ONLY in `org_credentials` now
+-- (migration 0047), so both columns go.
+--
+-- Existing org roots are NOT migrated. This is a stated data deletion, for
+-- the same reasons the workspace credential store was dropped in 0047: the
+-- root is sealed under a per-connection AAD that SQL cannot re-seal under the
+-- org-credential AAD, the slot was reachable from a template surface that is
+-- disabled product-wide, and pasting the key once into the org Credentials
+-- panel re-creates it as a granted org credential. Rows stay (they are still
+-- the provider declaration every lease, audit and proxy row joins against);
+-- only the secret and its allow-list are dropped. `credential_leases` rows
+-- with `grant_id IS NULL` — leases the root path minted — keep their audit
+-- value; the code path that created them is gone.
+ALTER TABLE connections DROP COLUMN root_ciphertext;
+ALTER TABLE connections DROP COLUMN usable_by;

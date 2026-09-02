@@ -1,8 +1,0 @@
-{
-  "connection": "github",
-  "mode": "inject",
-  "token": "ghu_test-only-user-access-token",
-  "env": [{ "name": "GH_TOKEN", "value": "ghu_test-only-user-access-token" }],
-  "header": { "name": "Authorization", "prefix": "Bearer " },
-  "expiresAt": 0
-}

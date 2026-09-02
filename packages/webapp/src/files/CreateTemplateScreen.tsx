@@ -1,6 +1,5 @@
 import type {
   CatalogEntryView,
-  ConnectionView,
   CreateWorkspaceTemplateRequest,
   ListMachineTypesResponse,
   MachineType,
@@ -27,7 +26,6 @@ import { TemplateRepoPicker } from './TemplateRepoPicker';
 import { TemplateRepoUrls } from './TemplateRepoUrls';
 import { TemplateMachineTypePicker } from './TemplateMachineTypePicker';
 import { useTemplateUploads } from './use-template-uploads';
-import { orgCredentialFor } from '../connections/ProviderAdminForm';
 import { useTemplateConnectDraft } from './use-template-connect-draft';
 
 interface BrowseState {
@@ -94,10 +92,7 @@ export function CreateTemplateScreen({
   const [objectsByFolder, setObjectsByFolder] = useState<Map<string, FolderObjectView[]>>(new Map());
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
   // A template references providers by name. It never carries a grant, so an
-  // instantiating member always supplies their own identity — except the
-  // admin-configured providers below, whose one org credential is stored
-  // right here when the provider gets attached.
-  const [orgConnections, setOrgConnections] = useState<ConnectionView[]>([]);
+  // instantiating member always supplies their own identity.
   const [loading, setLoading] = useState(true);
   const [dropActive, setDropActive] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -141,15 +136,9 @@ export function CreateTemplateScreen({
       client.listMachineTypes(),
       client.listFolders(),
       client.listConnectionCatalog(),
-      client.listConnections(),
-    ]).then(([machineResult, folderResult, catalogResult, connectionsResult]) => {
+    ]).then(([machineResult, folderResult, catalogResult]) => {
       if (!mounted) return;
       if (catalogResult.status === 'fulfilled') setCatalog(catalogResult.value.providers);
-      // Losing this read costs only the configured chips and the config
-      // forms' replace state; the picker itself keeps working.
-      if (connectionsResult.status === 'fulfilled') {
-        setOrgConnections(connectionsResult.value.connections);
-      }
       if (machineResult.status === 'fulfilled') {
         installMachineTypes(machineResult.value);
       } else {
@@ -579,11 +568,7 @@ export function CreateTemplateScreen({
               </div>
             </div>
             <TemplateConnectionsSection
-              client={client}
-              admin={admin}
               catalog={catalog}
-              orgConnections={orgConnections}
-              onOrgConnections={setOrgConnections}
               value={templateConnections}
               onChange={setTemplateConnections}
             />

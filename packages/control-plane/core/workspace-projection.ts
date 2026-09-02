@@ -1,5 +1,4 @@
 import type { Db } from "./db.js";
-import { rows } from "./db.js";
 import type { Principal } from "./principals.js";
 import { accessFor, legacyRole } from "./workspace-access.js";
 import {
@@ -10,7 +9,6 @@ import {
   type WorkspaceMemberRow,
   type WorkspaceRow,
 } from "./workspace-records.js";
-import { workspaceCredentialView, type WorkspaceCredentialRow } from "./workspace-credentials.js";
 import type { WorkspaceMemberRole, WorkspaceView } from "./wire.js";
 
 function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, T[]> {
@@ -24,13 +22,13 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, 
 }
 
 /**
- * Builds the wire view for a set of workspaces in four reads, whatever the
+ * Builds the wire view for a set of workspaces in three reads, whatever the
  * count.
  *
  * `GET /workspaces` returns every workspace in the organization, and each one
- * now carries its members, their machines, and its credential names. Fetching
- * those per workspace would turn one list into 3N reads on a D1 binding whose
- * cost is per statement, so every child set is loaded once and grouped here.
+ * carries its members and their machines. Fetching those per workspace would
+ * turn one list into 2N reads on a D1 binding whose cost is per statement, so
+ * every child set is loaded once and grouped here.
  */
 export async function projectWorkspaces(
   db: Db,
@@ -39,24 +37,12 @@ export async function projectWorkspaces(
 ): Promise<WorkspaceView[]> {
   if (workspaces.length === 0) return [];
   const ids = workspaces.map(({ id }) => id);
-  const placeholders = ids.map((_id, index) => `?${String(index + 1)}`).join(", ");
-  const [members, machines, credentials] = await Promise.all([
+  const [members, machines] = await Promise.all([
     workspaceMembers(db, ids),
     machinesForWorkspaces(db, ids),
-    rows<WorkspaceCredentialRow>(db, {
-      q: `SELECT workspace_id, name, label, comment, created_at
-          FROM workspace_credentials
-          WHERE workspace_id IN (${placeholders}) AND revoked_at IS NULL
-          ORDER BY name`,
-      v: [...ids],
-    }),
   ]);
   const membersByWorkspace = groupBy<WorkspaceMemberRow>(members, ({ workspace_id }) => workspace_id);
   const machinesByWorkspace = groupBy<MachineRow>(machines, ({ workspace_id }) => workspace_id);
-  const credentialsByWorkspace = groupBy<WorkspaceCredentialRow>(
-    credentials,
-    ({ workspace_id }) => workspace_id,
-  );
   const views: WorkspaceView[] = [];
   for (const workspace of workspaces) {
     const workspaceMemberRows = membersByWorkspace.get(workspace.id) ?? [];
@@ -68,7 +54,6 @@ export async function projectWorkspaces(
       workspace,
       members: workspaceMemberRows,
       machines: machinesByWorkspace.get(workspace.id) ?? [],
-      credentials: (credentialsByWorkspace.get(workspace.id) ?? []).map(workspaceCredentialView),
       membershipId: principal.membershipId,
       myRole: stored,
       role: legacyRole(access),

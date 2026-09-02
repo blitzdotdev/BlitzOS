@@ -1,7 +1,6 @@
 import type { TenantMe } from './api-adapter';
 import type {
   RetryAction,
-  WorkspaceCredentialView,
   WorkspaceMemberRole,
   WorkspaceMemberView,
 } from '@blitzos/schema';
@@ -32,7 +31,6 @@ export type CloudWorkspaceModel = {
   connections: string[];
   /** The member-machines view the details dialog administers (§1). */
   members: WorkspaceMemberView[];
-  credentials: WorkspaceCredentialView[];
   defaultMachineTypeId: string;
   autoProvision: boolean;
   agentRuleId: string | null;
@@ -96,7 +94,6 @@ function applyRecord(
     updatedAt: Math.max(existing.updatedAt, record.updatedAt),
     connections: record.connections ?? existing.connections,
     members: record.members,
-    credentials: record.credentials,
     defaultMachineTypeId: record.defaultMachineTypeId,
     autoProvision: record.autoProvision,
     agentRuleId: record.agentRuleId,
@@ -190,7 +187,6 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         // A machine act shows up here: the details dialog reads the rows this
         // poll refreshes rather than tracking lifecycle of its own.
         members: action.record.members,
-        credentials: action.record.credentials,
         autoProvision: action.record.autoProvision,
       }));
     case 'workspace_resume_failed':

@@ -350,7 +350,7 @@ install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
   // repos that already have a .git (idempotent across reboots) and retries
   // every 5s for up to 10 minutes, because cloning can only succeed once
   // registration completes and the baked /etc/gitconfig credential helper
-  // (`blitz-cred git-helper`, CP-direct) can mint. `|| true` overall: a
+  // (`blitz-git-credential`, CP-direct) can mint. `|| true` overall: a
   // failed clone never fails the boot; output lands in
   // /var/lib/blitz/repo-clone.log.
   const repos = options.repos ?? [];

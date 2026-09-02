@@ -49,6 +49,7 @@ import "../../src/workspace-details-dialog.css";
 import "../../src/loading-skeleton.css";
 import "../../src/create-workspace-dialog.css";
 import "../../src/settings.css";
+import "../../src/org-credentials.css";
 import "../../src/invite-redeem.css";
 
 import { BoxGlyph, ShareGlyph } from "../../src/files/DriveIcons";

@@ -39,6 +39,7 @@ export default defineConfig(async () => {
         "test/publish-box-image.test.mjs",
         "test/set-box-image-ref.test.mjs",
         "test/deploy-tooling.test.mjs",
+        "test/agent-api-generate.test.mjs",
       ],
       setupFiles: ["./test/apply-migrations.ts"],
     },

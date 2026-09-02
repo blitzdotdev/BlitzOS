@@ -144,7 +144,6 @@ export function workspaceFromWire(workspace: WorkspaceView): V2WorkspaceRecord {
     updatedAt: workspace.updatedAt,
     connections: workspace.connections,
     members: workspace.members,
-    credentials: workspace.credentials,
     defaultMachineTypeId: workspace.defaultMachineTypeId,
     autoProvision: workspace.autoProvision,
     agentRuleId: workspace.agentRuleId,

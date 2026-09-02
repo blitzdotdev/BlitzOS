@@ -1,6 +1,13 @@
-import type { AgentRuleView, FolderGrantView, UserGrantView } from '@blitzos/schema';
+import type {
+  AgentRuleView,
+  FolderGrantView,
+  OrgCredentialImportResult,
+  OrgCredentialView,
+  UserGrantView,
+} from '@blitzos/schema';
 import { ApiRequestError, type ControlPlaneClient, type InviteView } from '../api';
 import type { ComputeCredentialMetadata } from '../compute-credentials-api';
+import { workspaceReadPath } from '../org-credential-grants';
 import {
   agentRules,
   computeCredentials,
@@ -10,11 +17,13 @@ import {
   delay,
   folderGrants,
   folderState,
+  grantProposals,
   HOUR,
   invites,
   machineFor,
   memberFor,
   orgConnections,
+  orgCredentials,
   orgMembers,
   providerHealth,
   respond,
@@ -50,7 +59,6 @@ type PreviewClientMethods = Pick<
   | 'listProviderHealth'
   | 'connectStartUrl'
   | 'listConnections'
-  | 'deleteConnection'
   | 'listCredentialRequests'
   | 'denyCredentialRequest'
   | 'getComputeCredential'
@@ -73,8 +81,13 @@ type PreviewClientMethods = Pick<
   | 'destroyMachine'
   | 'setMachineType'
   | 'updateWorkspace'
-  | 'putWorkspaceCredential'
-  | 'revokeWorkspaceCredential'
+  | 'poll'
+  | 'listOrgCredentials'
+  | 'putOrgCredential'
+  | 'revokeOrgCredential'
+  | 'replaceOrgCredentialGrants'
+  | 'importOrgCredentials'
+  | 'resolveGrantProposal'
   | 'listGithubInstallations'
   | 'listGithubRepositories'
   | 'listConnectionCatalog'
@@ -158,12 +171,6 @@ const methods: PreviewClientMethods = {
   connectStartUrl: (provider) => `#preview-connect-${provider}`,
 
   listConnections: () => respond({ connections: orgConnections.map((row) => ({ ...row })) }),
-
-  deleteConnection: async (name) => {
-    await delay();
-    const index = orgConnections.findIndex((row) => row.name === name);
-    if (index !== -1) orgConnections.splice(index, 1);
-  },
 
   listCredentialRequests: async (_signal, state) => {
     await delay();
@@ -279,8 +286,101 @@ const methods: PreviewClientMethods = {
 
   updateWorkspace: () => respond({ workspace: workspaceView() }),
 
-  putWorkspaceCredential: () => delay(),
-  revokeWorkspaceCredential: () => delay(),
+  /** The org credential store (plans/ORG-CREDENTIALS.md). Reads answer with
+   * names, comments and grants; a write never echoes the value. */
+  poll: () => respond({ workspaces: [workspaceView()] }),
+
+  listOrgCredentials: async (_signal, workspaceId) => {
+    await delay();
+    const rows = workspaceId === undefined
+      ? orgCredentials
+      : orgCredentials.filter((row) => workspaceReadPath(row, workspaceId, 'm-june') !== 'unknown');
+    return { credentials: rows.map((row) => ({ ...row, grants: [...row.grants] })) };
+  },
+
+  putOrgCredential: async (input) => {
+    await delay();
+    const existing = orgCredentials.find((row) => row.name === input.name);
+    if (existing !== undefined) {
+      existing.updatedAt = Date.now();
+      if (input.comment !== undefined) existing.comment = input.comment;
+      if (input.grants !== undefined) existing.grants = [...input.grants];
+      return { credential: { ...existing, grants: [...existing.grants] } };
+    }
+    const credential: OrgCredentialView = {
+      id: `cred-${input.name.toLowerCase()}`,
+      name: input.name,
+      comment: input.comment ?? null,
+      createdByMembershipId: 'm-june',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      grants: input.grants === undefined
+        ? [{ subjectKind: 'membership', subjectId: 'm-june', access: 'write' }]
+        : [...input.grants],
+    };
+    orgCredentials.push(credential);
+    return { credential: { ...credential, grants: [...credential.grants] } };
+  },
+
+  revokeOrgCredential: async (name) => {
+    await delay();
+    const index = orgCredentials.findIndex((row) => row.name === name);
+    if (index !== -1) orgCredentials.splice(index, 1);
+  },
+
+  replaceOrgCredentialGrants: async (name, input) => {
+    await delay();
+    const found = orgCredentials.find((row) => row.name === name);
+    if (found === undefined) throw new ApiRequestError('No such credential.', 404, null);
+    found.grants = [...input.grants];
+    found.updatedAt = Date.now();
+    return { credential: { ...found, grants: [...found.grants] } };
+  },
+
+  importOrgCredentials: async (input) => {
+    await delay();
+    const results: OrgCredentialImportResult[] = [];
+    const lines = input.text.split('\n');
+    lines.forEach((raw, index) => {
+      const line = raw.trim();
+      if (line === '' || line.startsWith('#')) return;
+      const match = /^(?:export\s+)?([A-Za-z][A-Za-z0-9_]*)=(.*)$/.exec(line);
+      if (match === null) {
+        results.push({ name: line.slice(0, 32), line: index + 1, outcome: 'refused', reason: 'not KEY=value' });
+        return;
+      }
+      // The pattern has both groups, so a match always fills them; the
+      // defaults only satisfy the indexed-access check.
+      const [, name = '', value = ''] = match;
+      const existing = orgCredentials.find((row) => row.name === name);
+      const outcome = existing === undefined ? 'stored' : 'rotated';
+      results.push({ name, line: index + 1, outcome });
+      if (input.dryRun === true || value === '') return;
+      if (existing !== undefined) {
+        existing.updatedAt = Date.now();
+      } else {
+        orgCredentials.push({
+          id: `cred-${name.toLowerCase()}`,
+          name,
+          comment: null,
+          createdByMembershipId: 'm-june',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          grants: [{ subjectKind: 'membership', subjectId: 'm-june', access: 'write' }],
+        });
+      }
+    });
+    return { results, linesRead: lines.length };
+  },
+
+  resolveGrantProposal: async (proposalId, input) => {
+    await delay();
+    const found = grantProposals.find((row) => row.id === proposalId);
+    if (found === undefined) throw new ApiRequestError('No such proposal.', 404, null);
+    found.state = input.approve ? 'approved' : 'denied';
+    found.applied = input.approve ? [...input.changes] : [];
+    return { proposal: { ...found, proposed: [...found.proposed] } };
+  },
 
   listGithubInstallations: () => respond({
     installations: [

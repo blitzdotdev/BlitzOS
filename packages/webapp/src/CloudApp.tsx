@@ -38,6 +38,8 @@ import {
 } from './mobile-webapp';
 import { PasteCodeModal } from './shell/PasteCodeModal';
 import { ShellDialogs, type WebAppConfirmation } from './shell/ShellDialogs';
+import { GrantApprovalDialog } from './GrantApprovalDialog';
+import { useGrantProposals } from './use-grant-proposals';
 import type { WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
 import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
@@ -225,6 +227,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [shareToDrivePath, setShareToDrivePath] = useState<string | null>(null);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
   const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
+  // The grant-approval feed (plans/ORG-CREDENTIALS.md §7a): a pending
+  // proposal addressed to this member pops the dialog on whichever page they
+  // are on, so it polls whenever they are signed in to an org.
+  const grantProposals = useGrantProposals(client, !signedOut && store.viewer !== null);
   // The latest `blitz connections open` focus for the active workspace; a
   // fresh object per event so the panel re-selects on a repeat ask.
   const [connectionsFocus, setConnectionsFocus] = useState<ConnectionsPanelFocus | null>(null);
@@ -1790,6 +1796,23 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     />
   );
   const railOverlays = (
+    <>
+    {grantProposals.active !== null && store.viewer !== null && (
+      <GrantApprovalDialog
+        key={grantProposals.active.id}
+        client={client}
+        proposal={grantProposals.active}
+        viewer={{
+          membershipId: store.viewer.membership.id,
+          orgName: store.viewer.org.name || store.viewer.org.slug,
+        }}
+        workspaces={store.workspaces.map(({ id, title, members }) => ({ id, name: title, members }))}
+        onClose={() => {
+          if (grantProposals.active !== null) grantProposals.dismiss(grantProposals.active.id);
+        }}
+        onResolved={grantProposals.settled}
+      />
+    )}
     <ShellDialogs
       client={client}
       viewer={store.viewer}
@@ -1830,8 +1853,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCancelConfirmation={cancelConfirmation}
       onConfirmDelete={confirmWebAppAction}
     />
+    </>
   );
-
   if (signedOut) {
     return <LoginForm loginUrl={api.googleLoginUrl()} />;
   }
@@ -1857,6 +1880,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         viewer={store.viewer}
         loaded={loaded}
         rail={shellNav(null)}
+        pendingGrantProposals={grantProposals.pending}
         dialogs={railOverlays}
         updateNotice={updateNotice}
         error={error}
@@ -1865,6 +1889,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         onOpenRail={() => setDrawerOpen(true)}
         onNavigateToSettings={navigateToSettings}
         onOpenWorkspace={navigateToWorkspacePage}
+        onReviewProposal={grantProposals.reopen}
         onLeaveSettings={returnToWebApp}
         onSignOut={signOut}
         onLeftOrg={() => window.location.reload()}
