@@ -195,7 +195,7 @@ describe("the capability probe", () => {
     await view.unmount();
   });
 
-  it("settles on noMachine after ONE 409 that names the reason, and never asks again", async () => {
+  it("says noMachine on the first answer, without the retry budget behind it", async () => {
     const fetchImpl = refusing(noMachineRefusal());
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -204,12 +204,50 @@ describe("the capability probe", () => {
     expect(seen.capability).toBe("noMachine");
     // The retry budget is what made this an endless "connecting": five probes,
     // then the optimistic `present`, then a platform poller with nothing behind
-    // the address. One probe now, and the answer is held.
+    // the address. The verdict lands on the first answer instead.
     expect(fetchImpl).toHaveBeenCalledTimes(1);
-    await settle();
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // One line for the verdict, and nothing on the error channel. The poll
+    // below must not turn that into a line every five seconds.
     expect(info).toHaveBeenCalledTimes(1);
     expect(error).not.toHaveBeenCalled();
+    await view.unmount();
+  });
+
+  /**
+   * THE FRESH-WORKSPACE BUG. `noMachine` used to settle beside `absent`, on the
+   * reasoning that it "resolves only when an admin provisions a machine, which
+   * is not something a poller can wait for". True of somebody else's workspace;
+   * false of the one the member just created, where their own machine arrives
+   * in about forty seconds. The verdict outlived the fact, so the rail kept its
+   * flag-off shape — no New session, no terminals `+` — until the member
+   * switched workspaces and back, which is the only thing that re-ran the probe.
+   */
+  it("keeps asking, so a machine that finishes provisioning arrives on its own", async () => {
+    vi.useFakeTimers();
+    const refusal = JSON.stringify({ error: noMachineRefusal(), retryAction: null });
+    let call = 0;
+    const fetchImpl = vi.fn(async () => {
+      call += 1;
+      return call <= 3
+        ? new Response(refusal, { status: 409 })
+        : new Response(CATALOG, { status: 200 });
+    });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const { seen, view } = await mountCapability(fetchImpl);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(seen.capability).toBe("noMachine");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // The machine lands, and the surface converges WITHOUT a workspace switch.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(seen.capability).toBe("present");
+    expect(fetchImpl.mock.calls.length).toBeGreaterThan(1);
+    // Still one line, not one per poll: the verdict is announced on the
+    // transition into it, never on the repeat.
+    expect(info).toHaveBeenCalledTimes(1);
     await view.unmount();
   });
 

@@ -58,17 +58,27 @@
  */
 import { useEffect, useState } from "react";
 import { isJsonObject, isJsonString, parseJson } from "@blitzos/schema";
-import { boxGatewayFetch, resetBoxGatewayHealth } from "../box-gateway-health.js";
+import {
+  boxGatewayFetch,
+  boxGatewayHealth,
+  boxGatewayPollIntervalMs,
+  resetBoxGatewayHealth,
+} from "../box-gateway-health.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 
 /**
  * What the browser believes about one box's session plane.
  *
- * `absent` and `noMachine` are BOTH settled structural answers: the surface does
- * not mount, the chunk is not fetched and the rail goes back to its flag-off
- * shape for either. Read them through `lodySessionsUnavailable` rather than by
- * comparing against `"absent"`, which was the whole set before wave 4 and is
- * now half of it.
+ * `absent` and `noMachine` read the SAME to a surface — it does not mount, the
+ * chunk is not fetched and the rail goes back to its flag-off shape for either.
+ * Read them through `lodySessionsUnavailable` rather than by comparing against
+ * `"absent"`, which was the whole set before wave 4 and is now half of it.
+ *
+ * THEY DIFFER IN WHETHER THE QUESTION IS CLOSED, and only the prober cares.
+ * `absent` is structural: a box image without a session daemon does not grow
+ * one. `noMachine` is a PHASE — on a workspace the member just created their
+ * machine is arriving as they watch — so the prober keeps asking and the
+ * surface converges on its own. See `useLodySessionsCapability`.
  */
 export type LodySessionsCapability = "probing" | "present" | "absent" | "noMachine";
 
@@ -185,6 +195,19 @@ export async function probeLodySessionsDoor(
 const PROBE_RETRY_DELAYS_MS = [500, 1000, 2000, 4000];
 
 /**
+ * How often to ask again while the member holds no machine here.
+ *
+ * Five seconds against a reachable edge, because the case this exists for is a
+ * workspace the member just created and is watching provision — a machine
+ * arrives in about forty. It is not a retry budget: the question stays open for
+ * as long as the answer holds, so this only decides how quickly the surface
+ * converges once the machine lands. `boxGatewayPollIntervalMs` stretches it to
+ * 30 s the moment the box stops being reachable, so a workspace nobody will
+ * provision costs two requests a minute rather than twelve.
+ */
+const NO_MACHINE_REPROBE_INTERVAL_MS = 5_000;
+
+/**
  * The probe, as the shell holds it: one answer per box, for as long as that box
  * is the active workspace's.
  *
@@ -215,20 +238,53 @@ export function useLodySessionsCapability(
     const options: LodyDoorProbeOptions = { signal: controller.signal };
     if (fetchImpl !== undefined) options.fetchImpl = fetchImpl;
 
+    // Said once per verdict, not once per probe: `noMachine` keeps asking now,
+    // and a line per poll for the life of the tab is noise, not a record.
+    let announced: LodySessionsCapability | null = null;
+    const announce = (reading: "absent" | "noMachine"): void => {
+      if (announced === reading) return;
+      announced = reading;
+      // Not an error: an older image and a member without a machine are both
+      // facts about the fleet, and the rail says which in words a member can
+      // act on.
+      console.info(
+        reading === "absent"
+          ? "lody: this box serves no session daemon; using the legacy rail"
+          : "lody: you hold no machine in this workspace; using the legacy rail",
+        { platformUrl },
+      );
+    };
+
     const attempt = async (index: number): Promise<void> => {
       const reading = await probeLodySessionsDoor(platformUrl, options);
       if (cancelled) return;
-      if (reading === "absent" || reading === "noMachine") {
-        // The one line this path is allowed to write. Not an error: an older
-        // image and a member without a machine are both facts about the fleet,
-        // and the rail says which in words a member can act on.
-        console.info(
-          reading === "absent"
-            ? "lody: this box serves no session daemon; using the legacy rail"
-            : "lody: you hold no machine in this workspace; using the legacy rail",
-          { platformUrl },
+      // STRUCTURAL, AND IT STAYS STRUCTURAL. A box image without a session
+      // daemon does not grow one while the tab is open; the effect re-keys on
+      // `platformUrl` when the machine is replaced, which is the only event
+      // that can change this answer.
+      if (reading === "absent") {
+        announce("absent");
+        setCapability("absent");
+        return;
+      }
+      // NOT STRUCTURAL, WHICH IS THE FIX. This reading used to settle beside
+      // `absent`, on the reasoning that it "resolves only when an admin
+      // provisions a machine, which is not something a poller can wait for".
+      // That is true of somebody else's workspace and false of the one the
+      // member just created: their own machine is being provisioned as they
+      // watch, it arrives in seconds, and the settled verdict outlived it — so
+      // the rail kept its flag-off shape until the member switched workspaces
+      // and came back. The notice still renders immediately, because the
+      // capability is set either way; what changes is that the question stays
+      // open. Cost is one request per 30 s while the answer holds, which is
+      // what `boxGatewayPollIntervalMs` already spends on a cold box.
+      if (reading === "noMachine") {
+        announce("noMachine");
+        setCapability("noMachine");
+        timer = window.setTimeout(
+          () => void attempt(index),
+          boxGatewayPollIntervalMs(boxGatewayHealth(), NO_MACHINE_REPROBE_INTERVAL_MS),
         );
-        setCapability(reading);
         return;
       }
       const delay = PROBE_RETRY_DELAYS_MS[index];

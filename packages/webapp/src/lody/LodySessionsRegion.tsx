@@ -161,12 +161,17 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     rail.onSelectSharedSession = props.onSelectSharedSession;
   }
 
-  // Mounted on the FIRST request and never unmounted afterwards: the runtime
-  // owns a WebSocket, an IndexedDB repo and a WASM instance, so a hide has to
-  // stay a hide. Not mounted before the first request either, so a member who
-  // never opens sessions never fetches the chunk. The rail's vendored zone is
-  // part of the surface, so the rail is what raises the first request in
+  // Mounted on the FIRST request, and never unmounted BY A HIDE afterwards: the
+  // runtime owns a WebSocket, an IndexedDB repo and a WASM instance, so a hide
+  // has to stay a hide. Not mounted before the first request either, so a member
+  // who never opens sessions never fetches the chunk. The rail's vendored zone
+  // is part of the surface, so the rail is what raises the first request in
   // practice — see `useLodyRail`.
+  //
+  // A CHANGE OF BOX IS NOT A HIDE. The key below carries the box, so switching
+  // workspaces does unmount and rebuild — that is the point of it, and the
+  // `window.ipc` singleton documented further down means it could not be any
+  // other way while only one bridge can exist at a time.
   const [everRequested, setEverRequested] = useState(false);
   const wanted = props.visible || props.railHost !== null;
   useEffect(() => {
@@ -207,7 +212,32 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const surfaceProps =
     sharedOpen === null
       ? {
-          key: "own",
+          // KEYED BY THE BOX, exactly as the shared branch below is.
+          //
+          // This was the constant `"own"` — one instance covering EVERY
+          // workspace the member owns — and that is a stale-address bug, not a
+          // style choice. `SessionSurface` builds its bridge once per instance
+          // (`useLodyLocalBridge`: `held.current ??= createLodyLocalBridge(...)`)
+          // and that bridge CLOSES OVER the endpoints it was built with: sync,
+          // rpc, control, project, platform, files. With one instance shared
+          // across workspaces, a switch handed the surface new props and left
+          // `window.ipc` pointing at the PREVIOUS box.
+          //
+          // What the member saw: the snapshot poller and the capability probe
+          // both key on `platformUrl`, so they moved to box B and the runtime
+          // rebuilt for workspace B — while its data plane still dialled box A,
+          // which has no rooms for B. Not an error, just a surface that never
+          // populated, until a full page reload rebuilt the ref.
+          //
+          // The ref-once is CORRECT; the key was wrong. One instance per box
+          // makes "build the bridge once" mean what it says, so nothing in
+          // `local-bridge.ts` has to become mutable to fix this.
+          //
+          // Still exactly one surface mounted at a time — a key change unmounts
+          // the old one — which is what the `window.ipc` singleton above
+          // requires. `lodySyncUrl` names the box and cannot drift from the
+          // thing that went stale, because it IS the thing that went stale.
+          key: `own:${endpoints.lodySyncUrl}`,
           endpoints: lodyEndpoints(endpoints),
           shared: undefined,
           readOnly: false,
