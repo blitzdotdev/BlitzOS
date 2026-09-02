@@ -64,7 +64,7 @@ RUN set -eux; \
       git=1:2.39.5-0+deb12u3 \
       iproute2=6.1.0-3 \
       iptables=1.8.9-2 \
-      jq=1.6-2.1 \
+      jq=1.6-2.1+deb12u2 \
       libstdc++6=12.2.0-14+deb12u1 \
       nano=7.2-1+deb12u1 \
       openssh-client=1:9.2p1-2+deb12u10 \
