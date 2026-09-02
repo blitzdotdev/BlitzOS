@@ -66,7 +66,7 @@ working code behind a flag, and one line brings it back.
 
 ## 3. The flags
 
-`W/lody/v1-scope.ts` holds five flags. All five are `false` in v1.
+`W/lody/v1-scope.ts` holds six flags. All six are `false` in v1.
 
 | Flag | Areas | Mechanism |
 |---|---|---|
@@ -75,6 +75,11 @@ working code behind a flag, and one line brings it back.
 | `keyboardShortcuts` | 19 | `keyboardShortcutsAvailable` prop. |
 | `cloudSurfaces` | 22, 25 | `hideCloudMenuItems`, `hideNotificationPrompt`, `hideProductHints`, `hideTeamScope` props. |
 | `languageService` | 13 | `hideLanguageServiceActions` prop. |
+| `connectionStatus` | 23 | `hideConnectionStatus` prop. |
+
+The mobile home header's settings gear reads `cloudSurfaces` through
+`hideSettingsEntry`. It is the same species as the hint band's Go-to-settings
+button, which that flag already covers.
 
 Two tests keep the areas dark: `packages/webapp/test/lody-v1-scope.test.tsx`
 pins the DOM, and `lody-v1-scope-sources.test.ts` pins the wiring.

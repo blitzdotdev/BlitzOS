@@ -58,6 +58,10 @@ import { Drawer, DrawerContent, DrawerTitle } from "@lody/components/ui/drawer";
 import { VaulDrawerBody } from "@lody/components/components/mobile/vaul-drawer-edge-back-zone";
 import { mobileWorkspaceBaseContextAtom } from "@lody/components/atoms";
 import { isNativeAppShell } from "@lody/components/lib/native-platform";
+import {
+  getMobileMainLayoutContentClassName,
+  getMobileMainLayoutRootClassName,
+} from "@lody/components/components/workspace-layout-utils";
 import { LODY_CHAT_ROUTE, LODY_SESSION_ROUTE } from "./route-ids.js";
 import { TerminalTabsHost } from "./TerminalTabsStrip.js";
 import { useSurfaceTabs } from "./surface-tabs.js";
@@ -82,6 +86,16 @@ export interface MobileBaseContext {
   machine?: string;
   project?: string;
   repo?: string;
+  /**
+   * OURS, and upstream's stack drops it.
+   *
+   * The BlitzOS rail's "New session" clears the landing's draft by writing a
+   * fresh key into the address (`use-lody-rail.ts`). Upstream has no such
+   * control, so their stack's search type omits the field and a phone would
+   * take a rail press and do nothing visible. It is read only while the
+   * address IS the landing, which is the only time the landing is on screen.
+   */
+  resetDraftKey?: string;
 }
 
 /** Their `getMobileBaseChatSearch`: the search that re-opens the base page the
@@ -170,8 +184,13 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
       preSelectedMachine={base.machine}
       preSelectedProject={base.project}
       preSelectedRepo={base.repo}
+<<<<<<< HEAD
       // Seam patch 7's two landing props, seam patch 15's connectivity one,
       // and seam patch 16's settings one.
+=======
+      resetDraftKey={base.resetDraftKey}
+      // Seam patch 7's two landing props, and seam patch 15's two more.
+>>>>>>> 1dd1ead3 (lody: pin the mobile mount, and make the seam pin survive a loaded machine)
       //
       // `hideProductHints` reached only the DESKTOP hint band before seam patch
       // 16: the mobile home screen returns above that line and draws its own
@@ -189,11 +208,19 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
 
   // The landing keeps the host tabs' CONTENT and loses their STRIP on a phone;
   // see `TerminalTabsHost`'s `showStrip`.
-  const base_ = surfaceTabs === null
+  const landingHost = surfaceTabs === null
     ? landing
     : <TerminalTabsHost surfaceTabs={surfaceTabs} landing={landing} showStrip={false} />;
 
+  /* Upstream's own containers, reproduced. Their layout wraps the stack in
+     `getMobileMainLayoutRootClassName()` (a full-height flex row that carries
+     the native-keyboard offset), then a content column, then
+     `relative min-h-0 flex-1 overflow-hidden`. The mobile pages size
+     themselves against that chain — a `h-full` page inside an auto-height
+     parent collapses — and BlitzOS does not mount the layout that supplies it,
+     so this mount supplies it instead. */
   return (
+<<<<<<< HEAD
     <>
       {base_}
       <Drawer
@@ -252,5 +279,68 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
         </DrawerContent>
       </Drawer>
     </>
+=======
+    <div className={getMobileMainLayoutRootClassName()}>
+      <div className={getMobileMainLayoutContentClassName()}>
+        <div className="relative min-h-0 flex-1 overflow-hidden">
+          {landingHost}
+          <Drawer
+            direction="right"
+            repositionInputs={isNativeAppShell()}
+            open={open}
+            onOpenChange={(next: boolean) => {
+              if (!next) handleClose();
+            }}
+          >
+            <DrawerContent
+              className="safe-areas w-full! max-w-none! inset-0 border-0 border-l-0! rounded-none"
+              data-sidebar-swipe-open-disabled
+            >
+              <DrawerTitle className="sr-only">
+                {t("sessions.prTab.conversation", "Conversation")}
+              </DrawerTitle>
+              <VaulDrawerBody topInset={SESSION_DRAWER_BODY_TOP_INSET}>
+                {rendered && (
+                  <AppThemeShell>
+                    <SessionDetail
+                      sessionId={rendered.id}
+                      urlTab={rendered.tab}
+                      // Their rule: while the session drawer closes we still mount
+                      // the page so it can slide out, but a nested PR or browser
+                      // drawer must not stay on top of the landing for those frames.
+                      urlPrNumber={open ? rendered.pr : undefined}
+                      urlBrowser={open ? rendered.browser : false}
+                      onMobileBack={handleClose}
+                      readOnly={readOnly}
+                      sideChatRequiresAssistantTurn
+                      hideCloudMenuItems={V1.hideCloudMenuItems}
+                      hideNotificationPrompt={V1.hideNotificationPrompt}
+                      hideAgentRoles={V1.hideAgentRoles}
+                      keyboardShortcutsAvailable={V1.keyboardShortcutsAvailable}
+                      hideLanguageServiceActions={V1.hideLanguageServiceActions}
+                      // Seam patch 15. The four props above are the SAME props the
+                      // desktop mount passes, and before that patch three of them
+                      // reached nothing on a phone: the mobile branch returns 950
+                      // lines above `getSharedChatSurfaceProps`, so it hand-wrote a
+                      // `SessionChatInterface` that took `readOnly` and no `hide*`.
+                      // The mobile "…" sheet builds its own action list too, so Copy
+                      // URL, Share with team and Change owner each need the term the
+                      // desktop menu already has.
+                      //
+                      // `hideConnectionStatus` is the one prop with no desktop twin:
+                      // the mobile header carries the sync indicator BECAUSE the
+                      // desktop info bar refuses it (`syncing={!isMobile && …}`).
+                      hideConnectionStatus={V1.hideConnectionStatus}
+                      {...hostTabs}
+                    />
+                  </AppThemeShell>
+                )}
+              </VaulDrawerBody>
+            </DrawerContent>
+          </Drawer>
+        </div>
+      </div>
+    </div>
+>>>>>>> 1dd1ead3 (lody: pin the mobile mount, and make the seam pin survive a loaded machine)
   );
 }
