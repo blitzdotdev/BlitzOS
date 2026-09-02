@@ -449,7 +449,10 @@ approves it in a panel that shows your proposal as an editable diff.
       --data '{"changes":[...], "reason":"one sentence; the user reads this"}'
 
 Change shapes are in GET /agent/api. A 403 names changes past your user's
-own authority — narrow and retry.
+own authority — narrow and retry. Those changes are somebody else's to
+grant: ask for each such credential by name at
+`POST $CP/agent/credentials/<name>/token` instead. A name not granted to
+you answers 404 and files an access request with whoever can grant it.
 
 Tell the user a proposal is waiting for them, then poll:
 
@@ -525,8 +528,11 @@ The spec the implementation must keep:
   credentials readable in this workspace (via a workspace grant, an org-wide
   grant, or the viewer's own membership grant), with add/rotate opening the
   same org-level forms. No local store, no promote, no shadow states.
-- **Grant-approval dialog** (§7a): pops when a pending proposal targets the
-  signed-in member; mock at `plans/mockups/grant-approval.html`.
+- **Grant-approval dialog** (§7a): pops only when the pending proposal's
+  acting member IS the signed-in member — their own agent asking them. An
+  org admin still gets the whole org's feed, but only as rows in Requests,
+  where Review opens the dialog on purpose; nobody is interrupted by another
+  person's agent. Mock at `plans/mockups/grant-approval.html`.
 - The connect-inbox flow is untouched.
 
 ## 10. Build order

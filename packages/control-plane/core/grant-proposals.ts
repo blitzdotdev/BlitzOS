@@ -259,13 +259,23 @@ function changesPastAuthority(
   });
 }
 
-function refusePastAuthority(offenders: readonly GrantChange[]): void {
+function refusePastAuthority(offenders: readonly GrantChange[], hint = ""): void {
   if (offenders.length === 0) return;
   throw new HttpError(
     403,
-    `changes past your authority: ${offenders.map(describeChange).join("; ")}`,
+    `changes past your authority: ${offenders.map(describeChange).join("; ")}${hint}`,
   );
 }
+
+/** What the proposer hears with a refusal: the changes it cannot carry are
+ * not lost, they are somebody else's to grant. Asking for the credential by
+ * name files an access request with whoever can, so the agent has a second
+ * path and not only a narrower retry. The approver's refusal at resolve
+ * time carries no hint — a person is reading that one. */
+const ESCALATION_HINT =
+  ". These are not yours to propose: ask for each credential by name at"
+  + " POST /agent/credentials/<name>/token, and the 404 files an access request"
+  + " with whoever can grant it; re-propose the rest.";
 
 const subjectKey = (grant: Pick<OrgCredentialGrantView, "subjectKind" | "subjectId">): string =>
   `${grant.subjectKind}:${grant.subjectId ?? ""}`;
@@ -319,7 +329,10 @@ async function proposeGrantChanges(
   now = Date.now(),
 ): Promise<GrantProposal> {
   const credentials = await credentialsNamed(runtime, input.orgId, input.changes);
-  refusePastAuthority(changesPastAuthority(input.changes, credentials, input.caller));
+  refusePastAuthority(
+    changesPastAuthority(input.changes, credentials, input.caller),
+    ESCALATION_HINT,
+  );
   await refuseInvalidSubjects(runtime, input.orgId, input.changes);
   await evictStaleProposals(runtime.db, now);
   const proposal: GrantProposal = {

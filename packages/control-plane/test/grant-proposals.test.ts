@@ -423,6 +423,9 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
     expect(error).toContain("ADMIN_KEY add workspace:" + workspace.id + " read");
     expect(error).toContain("NO_SUCH_KEY remove org read");
     expect(error).not.toContain("MY_KEY");
+    // The refused changes are somebody else's to grant, and the agent is
+    // told where that ask goes instead of only "narrow and retry".
+    expect(error).toContain("POST /agent/credentials/<name>/token");
     // Nothing was stored: the feed is empty for member and admin alike.
     await expect(feed(app, member.cookie)).resolves.toEqual([]);
     await expect(feed(app, admin)).resolves.toEqual([]);
@@ -446,7 +449,11 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
       approve: true, changes: [add("MY_KEY", "org", null, "read")],
     });
     expect(late.status).toBe(403);
-    expect((await late.json<{ error: string }>()).error).toContain("MY_KEY add org read");
+    const lateError = (await late.json<{ error: string }>()).error;
+    expect(lateError).toContain("MY_KEY add org read");
+    // A person reads the approver's refusal; the agent's escalation hint
+    // would only confuse them.
+    expect(lateError).not.toContain("/agent/credentials/");
     // Still pending: the admin, whose authority covers it, can approve.
     expect((await resolve(app, admin, id, {
       approve: true, changes: [add("MY_KEY", "org", null, "read")],
