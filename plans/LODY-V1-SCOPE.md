@@ -75,7 +75,7 @@ working code behind a flag, and one line brings it back.
 | `keyboardShortcuts` | 19 | `keyboardShortcutsAvailable` prop. |
 | `cloudSurfaces` | 22, 25 | `hideCloudMenuItems`, `hideNotificationPrompt`, `hideProductHints`, `hideTeamScope` props. |
 | `languageService` | 13 | `hideLanguageServiceActions` prop. |
-| `connectionStatus` | 23 | `hideConnectionStatus` prop. |
+| `connectionStatus` | (ownership) | `hideConnectionStatus` prop, seam patch 15. |
 
 The mobile home header's settings gear reads `cloudSurfaces` through
 `hideSettingsEntry`. It is the same species as the hint band's Go-to-settings
@@ -105,7 +105,8 @@ An edit inside `vendor/lody` is legal only at a seam declared in
 | 12 | A landing image has no offline fallback. |
 | 13 | `LoroSidebar`'s footer, one entry at a time. |
 | 14 | The archive page's v1 scope cuts. |
-| 15 | The mobile branch: host tabs and the mobile scope cuts. |
+| 15 | The host owns connectivity, so Lody must not narrate it. |
+| 16 | The mobile branch: host tabs and the mobile scope cuts. |
 
 ## 5. Amendments
 
@@ -114,13 +115,20 @@ Each amendment carries a date and the change it records.
 - **2026-09-01 — the archive page ships (#164).** Area 25 said DECIDE. The
   archive page enters v1 with restore and permanent delete. Seam patch 14 hides
   its My Tasks / All Tasks scope control.
+- **2026-09-02 — connection status is Lody-side REMOVED (#173).** BlitzOS chrome
+  owns connection status. The shell footer says it for the whole workspace, so
+  Lody's status chip, its catch-up spinners and its mobile banner go dark. This
+  is an OWNERSHIP boundary, not a "not in v1" cut: the `connectionStatus` flag
+  flips when a host stops reporting connectivity, not when BlitzOS grows a
+  feature. Seam patch 15 carries it.
 - **2026-09-02 — mobile is IN.** Area 23 said KILL, because both real routes
   dropped the mobile branch. Lody's real phone experience now mounts, scrubbed
-  to this scope. A phone gets `MobileWorkspaceStack`, not squeezed desktop UI.
-  Seam patch 15 carries the host tabs into the mobile tab sheet and the scope
-  cuts into the mobile-only components.
-- **2026-09-02 — connection status is Lody-side REMOVED.** BlitzOS chrome owns
-  connection status. The Lody indicators and banners go dark on both layouts.
-  Branch `lody-connection-status-removal` carries that change.
+  to this scope. A phone gets the `MobileWorkspaceStack` shape, not squeezed
+  desktop UI. Seam patch 16 carries the host tabs into the mobile tab sheet and
+  the scope cuts into the mobile-only components.
+  The two amendments meet at one line. `session-detail.tsx` forks for mobile 952
+  lines above the builder that forwards every `hide*` prop, so seam patch 15's
+  own gate could not reach the phone's composer chip. Seam patch 16 hunk 11
+  forwards it. One flag, one prop, one gate story.
 - **Unchanged.** GitHub and PR flows, the command palette and the two pickers
   stay hidden. A v1 revisit flips one field in `W/lody/v1-scope.ts`.

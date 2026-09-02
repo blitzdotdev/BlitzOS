@@ -184,13 +184,9 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
       preSelectedMachine={base.machine}
       preSelectedProject={base.project}
       preSelectedRepo={base.repo}
-<<<<<<< HEAD
+      resetDraftKey={base.resetDraftKey}
       // Seam patch 7's two landing props, seam patch 15's connectivity one,
       // and seam patch 16's settings one.
-=======
-      resetDraftKey={base.resetDraftKey}
-      // Seam patch 7's two landing props, and seam patch 15's two more.
->>>>>>> 1dd1ead3 (lody: pin the mobile mount, and make the seam pin survive a loaded machine)
       //
       // `hideProductHints` reached only the DESKTOP hint band before seam patch
       // 16: the mobile home screen returns above that line and draws its own
@@ -220,66 +216,6 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
      parent collapses — and BlitzOS does not mount the layout that supplies it,
      so this mount supplies it instead. */
   return (
-<<<<<<< HEAD
-    <>
-      {base_}
-      <Drawer
-        direction="right"
-        repositionInputs={isNativeAppShell()}
-        open={open}
-        onOpenChange={(next: boolean) => {
-          if (!next) handleClose();
-        }}
-      >
-        <DrawerContent
-          className="safe-areas w-full! max-w-none! inset-0 border-0 border-l-0! rounded-none"
-          data-sidebar-swipe-open-disabled
-        >
-          <DrawerTitle className="sr-only">
-            {t("sessions.prTab.conversation", "Conversation")}
-          </DrawerTitle>
-          <VaulDrawerBody topInset={SESSION_DRAWER_BODY_TOP_INSET}>
-            {rendered && (
-              <AppThemeShell>
-                <SessionDetail
-                  sessionId={rendered.id}
-                  urlTab={rendered.tab}
-                  // Their rule: while the session drawer closes we still mount
-                  // the page so it can slide out, but a nested PR or browser
-                  // drawer must not stay on top of the landing for those frames.
-                  urlPrNumber={open ? rendered.pr : undefined}
-                  urlBrowser={open ? rendered.browser : false}
-                  onMobileBack={handleClose}
-                  readOnly={readOnly}
-                  sideChatRequiresAssistantTurn
-                  hideCloudMenuItems={V1.hideCloudMenuItems}
-                  hideNotificationPrompt={V1.hideNotificationPrompt}
-                  hideAgentRoles={V1.hideAgentRoles}
-                  keyboardShortcutsAvailable={V1.keyboardShortcutsAvailable}
-                  hideLanguageServiceActions={V1.hideLanguageServiceActions}
-                  // Seam patch 16. The props above are the SAME props the
-                  // desktop mount passes, and before that patch four of them
-                  // reached nothing on a phone: the mobile branch returns 952
-                  // lines above `getSharedChatSurfaceProps`, so it hand-wrote a
-                  // `SessionChatInterface` that took `readOnly` and no `hide*`.
-                  // The mobile "…" sheet builds its own action list too, so Copy
-                  // URL, Share with team and Change owner each need the term the
-                  // desktop menu already has.
-                  //
-                  // `hideConnectionStatus` is seam patch 15's prop, declared and
-                  // mostly wired by it. Its hunk 13 forwards it through that
-                  // shared builder, so the composer status chip is the one
-                  // connection surface the mobile fork still dropped.
-                  hideConnectionStatus={V1.hideConnectionStatus}
-                  {...hostTabs}
-                />
-              </AppThemeShell>
-            )}
-          </VaulDrawerBody>
-        </DrawerContent>
-      </Drawer>
-    </>
-=======
     <div className={getMobileMainLayoutRootClassName()}>
       <div className={getMobileMainLayoutContentClassName()}>
         <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -318,18 +254,19 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
                       hideAgentRoles={V1.hideAgentRoles}
                       keyboardShortcutsAvailable={V1.keyboardShortcutsAvailable}
                       hideLanguageServiceActions={V1.hideLanguageServiceActions}
-                      // Seam patch 15. The four props above are the SAME props the
-                      // desktop mount passes, and before that patch three of them
-                      // reached nothing on a phone: the mobile branch returns 950
+                      // Seam patch 16. The props above are the SAME props the
+                      // desktop mount passes, and before that patch four of them
+                      // reached nothing on a phone: the mobile branch returns 952
                       // lines above `getSharedChatSurfaceProps`, so it hand-wrote a
                       // `SessionChatInterface` that took `readOnly` and no `hide*`.
                       // The mobile "…" sheet builds its own action list too, so Copy
                       // URL, Share with team and Change owner each need the term the
                       // desktop menu already has.
                       //
-                      // `hideConnectionStatus` is the one prop with no desktop twin:
-                      // the mobile header carries the sync indicator BECAUSE the
-                      // desktop info bar refuses it (`syncing={!isMobile && …}`).
+                      // `hideConnectionStatus` is seam patch 15's prop, declared
+                      // and mostly wired by it. Its hunk 13 forwards it through
+                      // that shared builder, so the composer status chip is the
+                      // one connection surface the mobile fork still dropped.
                       hideConnectionStatus={V1.hideConnectionStatus}
                       {...hostTabs}
                     />
@@ -341,6 +278,5 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
         </div>
       </div>
     </div>
->>>>>>> 1dd1ead3 (lody: pin the mobile mount, and make the seam pin survive a loaded machine)
   );
 }
