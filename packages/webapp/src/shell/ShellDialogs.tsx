@@ -129,6 +129,9 @@ export function ShellDialogs({
           refreshWorkspaces={refreshWorkspaces}
           initialTab={details.tab}
           focusAddMember={details.focusAddMember ?? false}
+          viewerMembershipId={viewer?.membership.id ?? null}
+          orgName={viewer?.org.name || viewer?.org.slug || 'the organization'}
+          orgWorkspaces={workspaces.map(({ id, title }) => ({ id, name: title }))}
           onClose={onCloseDetails}
           onClone={() => onCloneWorkspace(detailsWorkspace.id)}
           onDelete={canManageDetails

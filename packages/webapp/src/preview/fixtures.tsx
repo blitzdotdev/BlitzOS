@@ -5,14 +5,15 @@ import type {
   CredentialRequestView,
   FolderGrantView,
   FolderView,
+  GrantProposalView,
   ListMachineTypesResponse,
   MachineType,
   MachineView,
+  OrgCredentialView,
   OrgUsageCaptureResponse,
   ProviderHealthView,
   TemplateRepoView,
   UserGrantView,
-  WorkspaceCredentialView,
   WorkspaceMemberView,
   WorkspaceView,
 } from '@blitzos/schema';
@@ -207,16 +208,6 @@ const workspaceMembers: WorkspaceMemberView[] = [
   { membershipId: 'm-rio', name: 'Rio Tanaka', avatarUrl: null, role: 'viewer', machine: null },
 ];
 
-const workspaceCredentials: WorkspaceCredentialView[] = [
-  {
-    name: 'STRIPE_API_KEY',
-    label: 'test-mode key, safe for CI',
-    comment: 'test-mode key, safe for CI',
-    createdAt: NOW - 9 * DAY,
-  },
-  { name: 'OPENAI_API_KEY', label: null, comment: null, createdAt: NOW - 3 * DAY },
-];
-
 export const previewWorkspace: CloudWorkspaceModel = {
   id: 'ws-preview',
   ownerMembershipId: 'm-june',
@@ -235,7 +226,6 @@ export const previewWorkspace: CloudWorkspaceModel = {
   updatedAt: NOW - 2 * HOUR,
   connections: ['github'],
   members: workspaceMembers,
-  credentials: workspaceCredentials,
   defaultMachineTypeId: 'cx22@hel1',
   autoProvision: true,
   agentRuleId: null,
@@ -268,7 +258,6 @@ export function workspaceView(): WorkspaceView {
     autoProvision: true,
     myRole: 'admin',
     members: [...workspaceMembers],
-    credentials: [...workspaceCredentials],
   };
 }
 
@@ -326,7 +315,6 @@ export const orgConnections: ConnectionView[] = [
     status: 'active',
     createdBy: 'usr-june',
     proxyBaseUrl: null,
-    orgCredential: true,
   },
   {
     name: 'youtrack',
@@ -336,7 +324,6 @@ export const orgConnections: ConnectionView[] = [
     status: 'active',
     createdBy: 'usr-june',
     proxyBaseUrl: 'https://acme.youtrack.cloud',
-    orgCredential: true,
   },
 ];
 
@@ -390,6 +377,64 @@ const linearRequest: CredentialRequestView = {
   created_at: NOW - 20 * MINUTE,
   requester: { boxId: 'box-1', userId: 'usr-ada' },
 };
+
+/* ------------------------------------------------------ org credentials */
+
+/* The org store behind Settings → Credentials and the workspace Credentials
+ * tab (plans/ORG-CREDENTIALS.md §9). Names, comments and grants only: a
+ * value never comes back out, so none is kept here either. One credential
+ * is granted to the preview workspace, one org-wide, one to the admin alone
+ * — the three paths the workspace tab labels. */
+export const orgCredentials: OrgCredentialView[] = [
+  {
+    id: 'cred-stripe',
+    name: 'STRIPE_API_KEY',
+    comment: 'test-mode key, safe for CI',
+    createdByMembershipId: 'm-june',
+    createdAt: NOW - 9 * DAY,
+    updatedAt: NOW - 9 * DAY,
+    grants: [
+      { subjectKind: 'workspace', subjectId: 'ws-preview', access: 'read' },
+      { subjectKind: 'membership', subjectId: 'm-ada', access: 'write' },
+    ],
+  },
+  {
+    id: 'cred-openai',
+    name: 'OPENAI_API_KEY',
+    comment: null,
+    createdByMembershipId: 'm-ada',
+    createdAt: NOW - 3 * DAY,
+    updatedAt: NOW - HOUR,
+    grants: [{ subjectKind: 'org', subjectId: null, access: 'read' }],
+  },
+  {
+    id: 'cred-hetzner',
+    name: 'HCLOUD_TOKEN',
+    comment: 'project token, read-only',
+    createdByMembershipId: 'm-june',
+    createdAt: NOW - DAY,
+    updatedAt: NOW - DAY,
+    grants: [{ subjectKind: 'membership', subjectId: 'm-june', access: 'write' }],
+  },
+];
+
+/** One pending proposal from Ada's machine: the Requests panel lists it and
+ * Review opens the grant-approval dialog on it. */
+export const grantProposals: GrantProposalView[] = [
+  {
+    id: 'prop-1',
+    state: 'pending',
+    machineId: 'machine-ada',
+    membershipId: 'm-ada',
+    reason: 'The billing worker needs the Stripe key to run its integration tests.',
+    proposed: [
+      { name: 'STRIPE_API_KEY', action: 'add', subjectKind: 'workspace', subjectId: 'ws-preview', access: 'write' },
+      { name: 'OPENAI_API_KEY', action: 'add', subjectKind: 'membership', subjectId: 'm-rio', access: 'read' },
+    ],
+    applied: null,
+    createdAt: NOW - 12 * MINUTE,
+  },
+];
 
 /** The connect inbox, one array per state the Requests panel reads. */
 export interface CredentialRequestBuckets {

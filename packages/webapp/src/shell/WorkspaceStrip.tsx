@@ -2,17 +2,24 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import type { TenantMe } from '../api-adapter';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { DriveGlyph, PlusGlyph } from './StripIcons';
-import { workspaceTileStyle } from './workspace-tile';
+import { workspaceSigil } from './workspace-tile';
 import { squareAvatarUrl } from '../avatar-url';
 
-/** The tile legend: initials when the name has several words, otherwise its
- * first two letters. `design-team` reads DT and `engineering` reads EN, as the
- * mockup draws them. */
-export function workspaceCode(title: string): string {
-  const words = title.split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 0);
-  if (words.length === 0) return '··';
-  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
-  return words.slice(0, 3).map((word) => word[0]!).join('').toUpperCase();
+export function WorkspaceSigilIcon({ workspaceId }: { workspaceId: string }) {
+  const sigil = workspaceSigil(workspaceId);
+  return (
+    <svg
+      className="shell-wtile__sigil"
+      viewBox="0 0 5 5"
+      preserveAspectRatio="none"
+      focusable="false"
+    >
+      <rect width="5" height="5" fill={sigil.background} />
+      {sigil.cells.map(([x, y]) => (
+        <rect key={y * 5 + x} x={x} y={y} width="1" height="1" fill={sigil.foreground} />
+      ))}
+    </svg>
+  );
 }
 
 function stateLabel(workspace: CloudWorkspaceModel): string {
@@ -126,35 +133,50 @@ export function WorkspaceStrip({
       >×</button>
 
       <nav className="shell-strip__tiles" aria-label="Workspaces">
-        {workspaces.map((workspace) => {
-          const active = workspace.canControl && workspace.id === activeWorkspaceId;
-          const offline = workspace.lifecycleStatus !== 'running';
-          const owner = workspace.canControl ? null : workspace.owner?.name ?? 'a teammate';
-          return (
-            <button
-              className={`shell-wtile${active ? ' shell-wtile--on' : ''}${
-                offline ? ' shell-wtile--off' : ''}`}
-              type="button"
-              key={workspace.id}
-              aria-label={workspace.title}
-              aria-current={active ? 'page' : undefined}
-              disabled={!workspace.canControl}
-              style={workspaceTileStyle(workspace.id)}
-              title={owner === null
-                ? `${workspace.title} — ${stateLabel(workspace)}`
-                : `${workspace.title} — shared by ${owner}`}
-              onClick={() => onSelectWorkspace(workspace.id)}
-              onContextMenu={(event) => openTileMenu(event, workspace)}
-            >{workspaceCode(workspace.title)}</button>
-          );
-        })}
+        <div className="shell-strip__tree" role="tree" aria-label="Workspaces">
+          {workspaces.map((workspace) => {
+            const active = workspace.canControl && workspace.id === activeWorkspaceId;
+            const offline = workspace.lifecycleStatus !== 'running';
+            const owner = workspace.canControl ? null : workspace.owner?.name ?? 'a teammate';
+            return (
+              <button
+                className="shell-wtile"
+                type="button"
+                key={workspace.id}
+                role="treeitem"
+                aria-label={workspace.title}
+                aria-selected={active}
+                aria-current={active ? 'page' : undefined}
+                disabled={!workspace.canControl}
+                title={owner === null
+                  ? `${workspace.title} — ${stateLabel(workspace)}`
+                  : `${workspace.title} — shared by ${owner}`}
+                onClick={() => onSelectWorkspace(workspace.id)}
+                onContextMenu={(event) => openTileMenu(event, workspace)}
+              >
+                <span className="shell-wtile__indicator" aria-hidden="true" />
+                <span
+                  className="shell-wtile__icon"
+                  data-workspace-status={offline ? 'offline' : 'online'}
+                  aria-hidden="true"
+                >
+                  <WorkspaceSigilIcon workspaceId={workspace.id} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
         <button
-          className="shell-wtile shell-wtile--off shell-wtile--new"
+          className="shell-wtile shell-wtile--new"
           type="button"
           aria-label="Create workspace"
           title="New workspace"
           onClick={onCreateWorkspace}
-        ><PlusGlyph className="shell-wtile__plus" /></button>
+        >
+          <span className="shell-wtile__icon shell-wtile__icon--new" aria-hidden="true">
+            <PlusGlyph className="shell-wtile__plus" />
+          </span>
+        </button>
       </nav>
 
       <div className="shell-strip__spacer" role="presentation" />

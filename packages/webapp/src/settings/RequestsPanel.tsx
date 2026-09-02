@@ -1,4 +1,4 @@
-import type { CredentialRequestView } from '@blitzos/schema';
+import type { CredentialRequestView, GrantProposalView } from '@blitzos/schema';
 import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient, CredentialRequestState } from '../api';
 import { caughtErrorMessage } from '../error-message';
@@ -10,13 +10,19 @@ export type StatefulCredentialRequest = CredentialRequestView & {
 
 export function RequestsPanel({
   client,
+  proposals,
   onOpenWorkspace,
+  onReviewProposal,
 }: {
   client: ControlPlaneClient;
+  proposals: readonly GrantProposalView[];
   /** Connecting happens inside the workspace that filed the request — its
    * connections panel carries the same inbox entry with a Connect that
    * resolves it. This inbox is the org-wide view; the action is a door. */
   onOpenWorkspace: (workspaceId: string) => void;
+  /** A pending grant proposal closed without a decision stays pending
+   * (plans/ORG-CREDENTIALS.md §7a); this reopens its dialog. */
+  onReviewProposal: (proposalId: string) => void;
 }) {
   const [requests, setRequests] = useState<StatefulCredentialRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -26,9 +32,7 @@ export function RequestsPanel({
   const reload = useCallback(async (signal?: AbortSignal) => {
     try {
       const states: CredentialRequestState[] = ['pending', 'approved', 'denied'];
-      const feeds = await Promise.all(
-        states.map((state) => client.listCredentialRequests(signal, state)),
-      );
+      const feeds = await Promise.all(states.map((state) => client.listCredentialRequests(signal, state)));
       if (signal?.aborted) return;
       setRequests(feeds.flatMap((feed, index) => feed.requests.map((request) => ({
         ...request,
@@ -76,6 +80,36 @@ export function RequestsPanel({
         action={<span className="settings-count-badge">{pendingCount} pending</span>}
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
+      {proposals.length > 0 && (
+        <section className="cfg-section" aria-label="Grant proposals">
+          <div className="cfg-section-head">
+            <h2 className="cfg-title">Grant proposals</h2>
+            <p className="cfg-desc">Credential grant changes an agent proposed and nobody has decided on yet.</p>
+          </div>
+          <div className="settings-credential-list">
+            {proposals.map((proposal) => (
+              <article className="settings-credential-row settings-request-row" key={proposal.id}>
+                <div>
+                  <div className="settings-credential-row__title">
+                    <h3>{proposal.proposed.length} grant change{proposal.proposed.length === 1 ? '' : 's'}</h3>
+                    <span className="workspace-state-badge workspace-state-badge--pending">pending</span>
+                  </div>
+                  <p>{[...new Set(proposal.proposed.map(({ name }) => name))].join(', ')}</p>
+                  <small>“{proposal.reason}”</small>
+                  <time dateTime={new Date(proposal.createdAt).toISOString()}>{new Date(proposal.createdAt).toLocaleString()}</time>
+                </div>
+                <div className="settings-row-actions">
+                  <button
+                    className="webapp-action webapp-action--primary"
+                    type="button"
+                    onClick={() => onReviewProposal(proposal.id)}
+                  >Review</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       {loading ? (
         <p className="settings-credential-state">Loading access requests…</p>
       ) : requests.length === 0 ? (

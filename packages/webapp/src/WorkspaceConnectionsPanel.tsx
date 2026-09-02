@@ -241,7 +241,7 @@ export function WorkspaceConnectionsPanel({
 
   /** A provider just became usable here. The inbox entry that asked for it is
    * the same question, so answering one answers the other. Nothing is pushed
-   * at the box: the next `blitz-cred get` reads the allow-list this write just
+   * at the box: the next token ask reads the allow-list this write just
    * changed. */
   const onConnected = useCallback((connectionName: string) => {
     noteConnected(connectionName, true);

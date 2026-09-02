@@ -3,7 +3,6 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
-import { OrgConnectionsSection } from './OrgConnectionsSection';
 import { PanelHeader } from './primitives';
 
 function healthLabel(health: ProviderHealthView | undefined): string | null {
@@ -14,18 +13,11 @@ function healthLabel(health: ProviderHealthView | undefined): string | null {
 }
 
 /** Settings → Connections after the flow inversion: revoke and rotate only.
- * Nothing is added here any more — members connect inside a workspace
- * (the drawer's connections panel), admins configure org credentials on the
- * template page. What remains is one person's grants with revoke, an OAuth
- * re-run for rotation, and the org credential list for admins. */
-export function ConnectionsPanel({
-  client,
-  admin = false,
-}: {
-  client: ControlPlaneClient;
-  /** Shows the org-wide section; the DELETE route enforces the same gate. */
-  admin?: boolean;
-}) {
+ * Nothing is added here any more — members connect inside a workspace (the
+ * drawer's connections panel). What remains is one person's grants with
+ * revoke and an OAuth re-run for rotation. Org-shared secrets are not
+ * connections at all: they live in the org Credentials panel. */
+export function ConnectionsPanel({ client }: { client: ControlPlaneClient }) {
   const [grants, setGrants] = useState<UserGrantView[]>([]);
   const [health, setHealth] = useState<ProviderHealthView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,8 +125,6 @@ export function ConnectionsPanel({
           </div>
         )}
       </section>
-
-      {admin && <OrgConnectionsSection client={client} />}
 
       {revokeTarget && (
         <ConfirmationDialog

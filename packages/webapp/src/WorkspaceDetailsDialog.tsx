@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AddWorkspaceMemberRequest,
-  ImportWorkspaceCredentialsRequest,
-  ImportWorkspaceCredentialsResponse,
   ListMachineTypesResponse,
   MachineType,
-  PutWorkspaceCredentialRequest,
   TemplateRepoView,
   WorkspaceMemberRole,
   WorkspaceMemberView,
@@ -18,9 +15,12 @@ import {
   WorkspaceMembersEditor,
   type MachineAction,
 } from './WorkspaceMembersEditor';
+import { WorkspaceCredentialsTab } from './WorkspaceCredentialsTab';
 import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
 import type { CloudWorkspaceModel } from './workspace-store';
 
+/** Members, the org credentials readable here (plans/ORG-CREDENTIALS.md §9
+ * — a filtered view, not a store), and the settings. */
 export type WorkspaceDetailsTab = 'members' | 'credentials' | 'settings';
 
 const TAB_LABELS = {
@@ -28,14 +28,6 @@ const TAB_LABELS = {
   credentials: 'Credentials',
   settings: 'Settings',
 } satisfies Record<WorkspaceDetailsTab, string>;
-
-function dateLabel(timestamp: number): string {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'Unavailable';
-  return new Intl.DateTimeFormat('en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(timestamp));
-}
 
 /** "Workspace default" travels as an absent field, not as an empty string
  * the server would have to read as a type id. */
@@ -64,308 +56,13 @@ type PendingTypeChange = {
   machineTypeId: string;
 };
 
-/** How long the paste sits still before the preview asks the server. The
- * preview is a real dry run — same parser, same outcomes — so it must not
- * fire per keystroke. */
-export const IMPORT_PREVIEW_DEBOUNCE_MS = 400;
-
-function importCount(preview: ImportWorkspaceCredentialsResponse): number {
-  return preview.results.filter(
-    ({ outcome }) => outcome === 'stored' || outcome === 'rotated',
-  ).length;
-}
-
-function importSummary(response: ImportWorkspaceCredentialsResponse): string {
-  const parts = [`${response.linesRead} lines read`];
-  for (const outcome of ['stored', 'rotated', 'unchanged', 'refused'] as const) {
-    const count = response.results.filter((result) => result.outcome === outcome).length;
-    if (count > 0) parts.push(`${count} ${outcome}`);
-  }
-  return parts.join(' · ');
-}
-
-function CredentialsTab({
-  credentials,
-  canManage,
-  onPut,
-  onRevoke,
-  onImport,
-}: {
-  credentials: CloudWorkspaceModel['credentials'];
-  canManage: boolean;
-  onPut: (input: PutWorkspaceCredentialRequest) => void;
-  onRevoke: (name: string) => void;
-  onImport: (input: ImportWorkspaceCredentialsRequest) => Promise<ImportWorkspaceCredentialsResponse>;
-}) {
-  const [name, setName] = useState('');
-  const [label, setLabel] = useState('');
-  const [comment, setComment] = useState('');
-  const [value, setValue] = useState('');
-  const [importText, setImportText] = useState('');
-  const [importLabel, setImportLabel] = useState('');
-  const [preview, setPreview] = useState<ImportWorkspaceCredentialsResponse | null>(null);
-  const [imported, setImported] = useState<ImportWorkspaceCredentialsResponse | null>(null);
-  const [importError, setImportError] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement | null>(null);
-
-  // The preview IS the import, minus the writes: the same request with
-  // `dryRun` set, so what the rows promise is what the button will do.
-  useEffect(() => {
-    setPreview(null);
-    if (importText.trim() === '') {
-      setImportError(null);
-      return;
-    }
-    let stale = false;
-    const timer = setTimeout(() => {
-      const request: ImportWorkspaceCredentialsRequest = { text: importText, dryRun: true };
-      if (importLabel !== '') request.label = importLabel;
-      onImport(request)
-        .then((response) => {
-          if (stale) return;
-          setImportError(null);
-          setPreview(response);
-        })
-        .catch((caught: Error) => {
-          if (!stale) setImportError(caught.message);
-        });
-    }, IMPORT_PREVIEW_DEBOUNCE_MS);
-    return () => {
-      stale = true;
-      clearTimeout(timer);
-    };
-  }, [importText, importLabel, onImport]);
-
-  const runImport = () => {
-    const request: ImportWorkspaceCredentialsRequest = { text: importText };
-    if (importLabel !== '') request.label = importLabel;
-    onImport(request)
-      .then((response) => {
-        setImportError(null);
-        setImported(response);
-        setImportText('');
-        setImportLabel('');
-      })
-      .catch((caught: Error) => setImportError(caught.message));
-  };
-
-  const chooseFile = (file: File | undefined) => {
-    if (file === undefined) return;
-    void file.text().then((text) => {
-      setImported(null);
-      setImportLabel(file.name);
-      setImportText(text);
-    });
-  };
-  const submit = () => {
-    if (name.trim() === '' || value === '') return;
-    const input: PutWorkspaceCredentialRequest = { name: name.trim(), value };
-    if (label.trim() !== '') input.label = label.trim();
-    // Absent keeps a rotated key's comment; the field left empty is absence,
-    // not a clear, so rotating through this form cannot erase one.
-    if (comment.trim() !== '') input.comment = comment.trim();
-    onPut(input);
-    setName('');
-    setLabel('');
-    setComment('');
-    setValue('');
-  };
-  return (
-    <section
-      id="workspace-details-credentials-panel"
-      role="tabpanel"
-      aria-label="Credentials"
-      className="workspace-details-credentials"
-    >
-      <div className="cfg-section">
-        <div className="cfg-section-head">
-          <h2 className="cfg-title">Credentials</h2>
-          <p className="cfg-desc">
-            Workspace credentials reach every member machine through{' '}
-            <code>blitz-cred</code>. A value is write-only: it never comes back
-            out of the store, so a rotation replaces it rather than editing it.
-          </p>
-        </div>
-        <div className="workspace-credential-rows">
-          {credentials.length === 0 && (
-            <p className="workspace-members-empty">No workspace credentials yet.</p>
-          )}
-          {credentials.map((credential) => (
-            <div className="workspace-credential-row" key={credential.name}>
-              <span className="workspace-credential-name">
-                <strong>{credential.name}</strong>
-                {(credential.comment ?? credential.label) !== null && (
-                  <small>{credential.comment ?? credential.label}</small>
-                )}
-              </span>
-              <span className="workspace-credential-added">{dateLabel(credential.createdAt)}</span>
-              {canManage && (
-                <button
-                  className="webapp-action webapp-action--danger"
-                  type="button"
-                  aria-label={`Revoke ${credential.name}`}
-                  onClick={() => onRevoke(credential.name)}
-                >
-                  Revoke
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-      {canManage && (
-        <div className="credential-import">
-          <div className="credential-import-head">
-            <h2>Import a .env file</h2>
-            <span>each KEY=value line becomes one credential</span>
-          </div>
-          <div className="credential-import-source">
-            <button
-              className="webapp-action"
-              type="button"
-              onClick={() => fileInput.current?.click()}
-            >
-              Choose file…
-            </button>
-            <input
-              ref={fileInput}
-              type="file"
-              hidden
-              aria-label="Choose an env file"
-              onChange={(event) => chooseFile(event.currentTarget.files?.[0])}
-            />
-            <span className="credential-import-summary">
-              {importLabel === '' ? 'or paste below' : importLabel}
-            </span>
-          </div>
-          <textarea
-            aria-label="Env file text"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            placeholder="# paste .env text — values stay here until you import"
-            value={importText}
-            onChange={(event) => {
-              setImported(null);
-              setImportText(event.currentTarget.value);
-            }}
-          />
-          {importError !== null && (
-            <p className="workspace-details-error" role="alert">{importError}</p>
-          )}
-          {preview !== null && (
-            <div className="credential-import-preview" aria-live="polite">
-              {preview.results.map((result) => (
-                <div className="credential-import-row" key={`${result.line}:${result.name}`}>
-                  <span>
-                    <strong>{result.name}</strong>
-                    <small>
-                      {result.reason === undefined
-                        ? `line ${result.line}`
-                        : `line ${result.line} — ${result.reason}`}
-                    </small>
-                  </span>
-                  <span className={`import-chip import-chip--${result.outcome}`}>
-                    {result.outcome === 'rotated' ? 'rotates' : result.outcome}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          {preview !== null && (
-            <p className="credential-import-summary">{importSummary(preview)}</p>
-          )}
-          {imported !== null && (
-            <p className="credential-import-summary" role="status">
-              Imported: {importSummary(imported)}. Every member machine reads the
-              new values on its next <code>blitz-cred</code> pull.
-            </p>
-          )}
-          <div className="credential-import-actions">
-            <p>
-              Agents do the same with <code>blitz-cred import .env</code>. Values
-              never appear in results.
-            </p>
-            <button
-              className="webapp-action webapp-action--primary"
-              type="button"
-              disabled={preview === null || importCount(preview) === 0}
-              onClick={runImport}
-            >
-              {preview === null
-                ? 'Import'
-                : `Import ${importCount(preview)} key${importCount(preview) === 1 ? '' : 's'}`}
-            </button>
-          </div>
-        </div>
-      )}
-      {canManage && (
-        <div className="cfg-section">
-          <div className="cfg-section-head">
-            <h2 className="cfg-title">Add or rotate</h2>
-          </div>
-          <label className="cfg-field">
-            Name
-            <input
-              aria-label="Credential name"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              placeholder="STRIPE_API_KEY"
-              value={name}
-              onChange={(event) => setName(event.currentTarget.value)}
-            />
-          </label>
-          <label className="cfg-field">
-            Label (optional)
-            <input
-              aria-label="Credential label"
-              value={label}
-              onChange={(event) => setLabel(event.currentTarget.value)}
-            />
-          </label>
-          <label className="cfg-field">
-            Comment (optional)
-            <input
-              aria-label="Credential comment"
-              placeholder="what this key is for — agents read this"
-              value={comment}
-              onChange={(event) => setComment(event.currentTarget.value)}
-            />
-          </label>
-          <label className="cfg-field">
-            Value
-            <input
-              aria-label="Credential value"
-              type="password"
-              autoComplete="off"
-              value={value}
-              onChange={(event) => setValue(event.currentTarget.value)}
-            />
-          </label>
-          <div className="cfg-actions">
-            <button
-              className="webapp-action webapp-action--primary"
-              type="button"
-              disabled={name.trim() === '' || value === ''}
-              onClick={submit}
-            >
-              Save credential
-            </button>
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
 /**
  * The workspace administration surface (plans/MEMBER-MACHINES.md §6).
  *
- * Three tabs: who is in the workspace and what machine each of them holds,
- * the workspace credential names, and the settings. The old Compute and
- * Storage panels are gone — a workspace has no single machine to describe,
- * so those facts live on the member rows instead.
+ * Two tabs: who is in the workspace and what machine each of them holds,
+ * and the settings. The old Compute and Storage panels are gone — a
+ * workspace has no single machine to describe, so those facts live on the
+ * member rows instead.
  *
  * The chrome is the pre-#106 one: the header names the workspace, the tab row
  * sits under it, and the two workspace-wide verbs live in the footer rather
@@ -378,6 +75,9 @@ export function WorkspaceDetailsDialog({
   refreshWorkspaces,
   initialTab = 'members',
   focusAddMember = false,
+  viewerMembershipId = null,
+  orgName = 'the organization',
+  orgWorkspaces = [],
   onClose,
   onClone,
   onDelete,
@@ -385,10 +85,15 @@ export function WorkspaceDetailsDialog({
   client: ControlPlaneClient;
   workspace: CloudWorkspaceModel;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  /** The signed-in member, so the Credentials tab can tell their own
+   * membership grant from the rest. */
+  viewerMembershipId?: string | null;
+  orgName?: string;
+  /** The org's workspaces, for the grant picker in the credential form. */
+  orgWorkspaces?: ReadonlyArray<{ id: string; name: string }>;
   /** Runs the workspace poll now. The rows this dialog administers are the
    * polled ones, so a settled write asks for the next poll rather than
-   * leaving the list stale until the 15 s tick. Must be stable: the import
-   * preview's debounce watches the callback it is given. */
+   * leaving the list stale until the 15 s tick. */
   refreshWorkspaces: () => void;
   initialTab?: WorkspaceDetailsTab;
   /** Opens with the add-member field focused, for the tile menu's Invite. */
@@ -442,8 +147,7 @@ export function WorkspaceDetailsDialog({
 
   /** Every write reports its own failure and leaves the poll to refresh the
    * rows, so no edit invents a row the server has not agreed to. A settled
-   * write runs that poll at once: the credential a member just saved, and the
-   * one they just revoked, are rows only the poll can produce. */
+   * write runs that poll at once. */
   const run = useCallback((action: Promise<unknown>) => {
     void action
       .then(() => {
@@ -452,17 +156,6 @@ export function WorkspaceDetailsDialog({
       })
       .catch((caught: Error) => setError(caught.message));
   }, [refreshWorkspaces]);
-
-  /** The import shares one call with its preview, so only the run that writes
-   * asks for a poll — a dry run has nothing for it to find. */
-  const importCredentials = useCallback(
-    async (input: ImportWorkspaceCredentialsRequest) => {
-      const response = await client.importWorkspaceCredentials(workspaceId, input);
-      if (input.dryRun !== true) refreshWorkspaces();
-      return response;
-    },
-    [client, refreshWorkspaces, workspaceId],
-  );
 
   const machineAction = (
     member: WorkspaceMemberView,
@@ -581,12 +274,14 @@ export function WorkspaceDetailsDialog({
             </section>
           )}
           {tab === 'credentials' && (
-            <CredentialsTab
-              credentials={workspace.credentials}
-              canManage={canManage}
-              onPut={(input) => run(client.putWorkspaceCredential(workspace.id, input))}
-              onRevoke={(name) => run(client.revokeWorkspaceCredential(workspace.id, name))}
-              onImport={importCredentials}
+            <WorkspaceCredentialsTab
+              client={client}
+              workspaceId={workspaceId}
+              workspaceName={workspace.title}
+              orgName={orgName}
+              viewerMembershipId={viewerMembershipId}
+              orgMembers={orgMembers}
+              workspaces={orgWorkspaces}
             />
           )}
           {tab === 'settings' && (

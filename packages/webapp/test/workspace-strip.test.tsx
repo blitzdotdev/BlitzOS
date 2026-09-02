@@ -1,10 +1,14 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { WorkspaceStrip, workspaceCode } from "../src/shell/WorkspaceStrip.js";
+import { WorkspaceStrip } from "../src/shell/WorkspaceStrip.js";
 import type { TenantMe } from "../src/api-adapter.js";
 import type { CloudWorkspaceModel } from "../src/workspace-store.js";
 import { render } from "./dom.js";
 import { workspaceModelFixture } from "./workspace-fixtures.js";
+
+const workspaceCss = readFileSync(join(process.cwd(), "src", "webapp-workspace.css"), "utf8");
 
 const acme = { id: "org-one", slug: "acme", name: "Acme", vmLimit: 10 };
 const side = { id: "org-two", slug: "side", name: "Side", vmLimit: 10 };
@@ -46,18 +50,8 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
   );
 }
 
-describe("workspaceCode", () => {
-  it("reads initials from a multi-word name and two letters from a single word", () => {
-    expect(workspaceCode("design-team")).toBe("DT");
-    expect(workspaceCode("engineering")).toBe("EN");
-    expect(workspaceCode("research sandbox")).toBe("RS");
-    expect(workspaceCode("a b c d")).toBe("ABC");
-    expect(workspaceCode("  ")).toBe("··");
-  });
-});
-
 describe("workspace strip", () => {
-  it("draws one tile per workspace, ringing the active one", async () => {
+  it("draws one tile per workspace with an accessible Discord-style selection state", async () => {
     const view = await render(strip({
       workspaces: [
         workspace(),
@@ -67,20 +61,19 @@ describe("workspace strip", () => {
     const tiles = [...view.container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="Workspaces"] button',
     )];
-    expect(tiles.map(({ textContent }) => textContent)).toEqual(["DT", "EN", ""]);
+    expect(tiles).toHaveLength(3);
     expect(tiles[0]?.getAttribute("aria-current")).toBe("page");
     expect(tiles[1]?.getAttribute("aria-current")).toBeNull();
-    expect(tiles[1]?.className).toContain("shell-wtile--off");
+    expect(tiles[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(tiles[1]?.getAttribute("aria-selected")).toBe("false");
+    expect(tiles[0]?.querySelector(".shell-wtile__indicator")?.getAttribute("aria-hidden")).toBe("true");
     expect(tiles[2]?.getAttribute("aria-label")).toBe("Create workspace");
-    // Each workspace tile wears its own solid pastel; the create tile keeps the
-    // dashed outline the stylesheet gives it.
-    // jsdom normalizes hsl() to rgb() on read-back; assert solid + distinct.
-    expect(tiles[0]?.style.background).toMatch(/^rgb\(/u);
-    expect(tiles[1]?.style.background).toMatch(/^rgb\(/u);
-    expect(tiles[0]?.style.background).not.toContain("gradient");
-    expect(tiles[0]?.style.background).not.toBe(tiles[1]?.style.background);
-    expect(tiles[0]?.style.background).not.toBe(tiles[1]?.style.background);
-    expect(tiles[2]?.style.background).toBe("");
+    const sigils = tiles.slice(0, 2).map((tile) => tile.querySelector<SVGElement>(".shell-wtile__sigil"));
+    expect(sigils.every((sigil) => sigil !== null)).toBe(true);
+    expect(sigils[0]?.querySelectorAll("rect").length).toBeGreaterThan(1);
+    expect(sigils[0]?.querySelector("rect")?.getAttribute("fill"))
+      .not.toBe(sigils[1]?.querySelector("rect")?.getAttribute("fill"));
+    expect(tiles[2]?.querySelector(".shell-wtile__sigil")).toBeNull();
     await view.unmount();
   });
 
@@ -146,6 +139,12 @@ describe("workspace strip", () => {
     expect(onSelectWorkspace).not.toHaveBeenCalled();
     expect(view.container.querySelector('[role="menu"][aria-label="Workspace design-team"]')).toBeNull();
     await view.unmount();
+  });
+
+  it("resets native button chrome so the context menu keeps its themed surface", () => {
+    const menuRule = /\.webapp-session-menu button\s*\{(?<body>[^}]*)\}/u.exec(workspaceCss);
+    expect(menuRule?.groups?.body).toMatch(/\bborder:\s*0;/u);
+    expect(menuRule?.groups?.body).toMatch(/\bbackground:\s*transparent;/u);
   });
 
   it("offers a non-admin Settings alone, and renames through the caller's PATCH", async () => {

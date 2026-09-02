@@ -18,14 +18,16 @@ import '../workspace-details-dialog.css';
 import '../loading-skeleton.css';
 import '../create-workspace-dialog.css';
 import '../settings.css';
+import '../org-credentials.css';
 import '../invite-redeem.css';
 import './preview.css';
-import type { CredentialRequestView, FolderView } from '@blitzos/schema';
+import type { CredentialRequestView, FolderView, GrantProposalView } from '@blitzos/schema';
 import { AgentRulesPicker } from '../AgentRulesPicker';
 import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { CreateWorkspaceDialog } from '../CreateWorkspaceDialog';
 import { ShareFolderDialog } from '../files/ShareFolderDialog';
+import { GrantApprovalDialog } from '../GrantApprovalDialog';
 import { MyMachineDialog } from '../MyMachineDialog';
 import type { SettingsSection } from '../sessions-page-state';
 import { SettingsHeader, SettingsPage } from '../SettingsPage';
@@ -34,6 +36,7 @@ import { WorkspaceConnectionsPanel } from '../WorkspaceConnectionsPanel';
 import { WorkspaceDetailsDialog, type WorkspaceDetailsTab } from '../WorkspaceDetailsDialog';
 import {
   adminViewer,
+  grantProposals,
   listMachineTypesFixture,
   memberViewer,
   previewFolder,
@@ -91,6 +94,10 @@ function GalleryHeader() {
 /** One full settings page in a bounded frame, left-rail navigation live. */
 function SettingsFrame({ viewer }: { viewer: TenantMe }) {
   const [section, setSection] = useState<SettingsSection>('profile');
+  const [reviewing, setReviewing] = useState<GrantProposalView | null>(null);
+  // Requests → Review opens the grant-approval dialog on the pending
+  // proposal, as the shell does; a decision takes it off the list.
+  const pending = grantProposals.filter(({ state }) => state === 'pending');
   return (
     <div className="pv-frame">
       <div className="settings-shell">
@@ -98,15 +105,27 @@ function SettingsFrame({ viewer }: { viewer: TenantMe }) {
         <SettingsPage
           client={previewClient}
           viewer={viewer}
+          pendingGrantProposals={pending}
           section={section}
           onNavigate={setSection}
           onOpenWorkspace={noop}
+          onReviewProposal={(id) => setReviewing(pending.find((row) => row.id === id) ?? null)}
           onSignOut={signOutSlowly}
           onLeftOrg={noop}
           onSwitchOrg={noop}
           onCreateOrg={noop}
         />
       </div>
+      {reviewing !== null && (
+        <GrantApprovalDialog
+          client={previewClient}
+          proposal={reviewing}
+          viewer={{ membershipId: viewer.membership.id, orgName: viewer.org.name }}
+          workspaces={[{ id: previewWorkspace.id, name: previewWorkspace.title, members: previewWorkspace.members }]}
+          onClose={() => setReviewing(null)}
+          onResolved={() => setReviewing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -131,6 +150,9 @@ function WorkspaceDetailsSection() {
           listMachineTypes={listMachineTypesFixture}
           refreshWorkspaces={() => undefined}
           initialTab={tab}
+          viewerMembershipId="m-june"
+          orgName="Acme Robotics"
+          orgWorkspaces={[{ id: previewWorkspace.id, name: previewWorkspace.title }]}
           onClose={close}
           onClone={close}
           onDelete={close}
@@ -292,7 +314,7 @@ function Gallery() {
       <GalleryHeader />
       <Section
         title="Settings page (admin)"
-        caption="All seven panels behind a live left rail: Profile, Members, Invites, Connections, Compute, Requests, Usage."
+        caption="All eight panels behind a live left rail: Profile, Members, Invites, Connections, Credentials, Compute, Requests, Usage."
       >
         <SettingsFrame viewer={adminViewer} />
       </Section>

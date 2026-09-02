@@ -186,11 +186,6 @@ const viewerMember: SharedShape<
   machine: null,
 };
 
-const workspaceCredential: SharedShape<
-  wire.WorkspaceCredentialView,
-  schema.WorkspaceCredentialView
-> = { name: "STRIPE_API_KEY", label: "live", comment: "test-mode key, safe for CI", createdAt: 6 };
-
 const machineResponse: SharedShape<
   wire.MachineResponse,
   schema.MachineResponse
@@ -244,31 +239,184 @@ const workspaceMemberResponse: SharedShape<
   schema.WorkspaceMemberResponse
 > = { member: workspaceMember };
 
-const putWorkspaceCredentialRequest: SharedShape<
-  wire.PutWorkspaceCredentialRequest,
-  schema.PutWorkspaceCredentialRequest
+// The org credential plane (plans/ORG-CREDENTIALS.md §4, §7). One row per
+// grant subject kind, because null subjectId covers different ground than a
+// string one.
+const orgWideGrant: SharedShape<
+  wire.OrgCredentialGrantView,
+  schema.OrgCredentialGrantView
+> = { subjectKind: "org", subjectId: null, access: "read" };
+
+const workspaceGrant: SharedShape<
+  wire.OrgCredentialGrantView,
+  schema.OrgCredentialGrantView
+> = { subjectKind: "workspace", subjectId: "workspace", access: "read" };
+
+const membershipGrant: SharedShape<
+  wire.OrgCredentialGrantView,
+  schema.OrgCredentialGrantView
+> = { subjectKind: "membership", subjectId: "membership", access: "write" };
+
+const orgCredential: SharedShape<
+  wire.OrgCredentialView,
+  schema.OrgCredentialView
 > = {
-  name: workspaceCredential.name,
-  label: "live",
+  id: "org-credential",
+  name: "STRIPE_API_KEY",
   comment: "test-mode key, safe for CI",
-  value: "sk_test_only",
+  createdByMembershipId: "membership",
+  createdAt: 6,
+  updatedAt: 7,
+  grants: [orgWideGrant, workspaceGrant, membershipGrant],
 };
 
-const importWorkspaceCredentialsRequest: SharedShape<
-  wire.ImportWorkspaceCredentialsRequest,
-  schema.ImportWorkspaceCredentialsRequest
-> = { text: "STRIPE_API_KEY=sk_test_only\n", label: "blitzos.env", dryRun: true };
+const listOrgCredentialsResponse: SharedShape<
+  wire.ListOrgCredentialsResponse,
+  schema.ListOrgCredentialsResponse
+> = { credentials: [orgCredential] };
 
-const importWorkspaceCredentialsResponse: SharedShape<
-  wire.ImportWorkspaceCredentialsResponse,
-  schema.ImportWorkspaceCredentialsResponse
+const putOrgCredentialRequest: SharedShape<
+  wire.PutOrgCredentialRequest,
+  schema.PutOrgCredentialRequest
+> = {
+  name: orgCredential.name,
+  value: "sk_test_only",
+  comment: "test-mode key, safe for CI",
+  grants: [workspaceGrant],
+};
+
+const putOrgCredentialResponse: SharedShape<
+  wire.PutOrgCredentialResponse,
+  schema.PutOrgCredentialResponse
+> = { credential: orgCredential };
+
+const replaceOrgCredentialGrantsRequest: SharedShape<
+  wire.ReplaceOrgCredentialGrantsRequest,
+  schema.ReplaceOrgCredentialGrantsRequest
+> = { grants: [orgWideGrant, membershipGrant] };
+
+const replaceOrgCredentialGrantsResponse: SharedShape<
+  wire.ReplaceOrgCredentialGrantsResponse,
+  schema.ReplaceOrgCredentialGrantsResponse
+> = { credential: orgCredential };
+
+const importOrgCredentialsRequest: SharedShape<
+  wire.ImportOrgCredentialsRequest,
+  schema.ImportOrgCredentialsRequest
+> = { text: "STRIPE_API_KEY=sk_test_only\n", dryRun: true };
+
+const importOrgCredentialsResponse: SharedShape<
+  wire.ImportOrgCredentialsResponse,
+  schema.ImportOrgCredentialsResponse
 > = {
   results: [
-    { name: workspaceCredential.name, line: 1, outcome: "stored" },
+    { name: orgCredential.name, line: 1, outcome: "stored" },
     { name: "GOOGLE_SA_JSON", line: 2, outcome: "refused", reason: "empty value" },
   ],
   linesRead: 2,
 };
+
+const agentCredentialEntry: SharedShape<
+  wire.AgentCredentialEntry,
+  schema.AgentCredentialEntry
+> = { name: "linear", scope: "connection", comment: null, writable: false };
+
+const agentCredentialsResponse: SharedShape<
+  wire.AgentCredentialsResponse,
+  schema.AgentCredentialsResponse
+> = {
+  credentials: [
+    agentCredentialEntry,
+    {
+      name: orgCredential.name,
+      scope: "org",
+      comment: orgCredential.comment,
+      writable: true,
+    },
+  ],
+};
+
+const agentCredentialTokenResponse: SharedShape<
+  wire.AgentCredentialTokenResponse,
+  schema.AgentCredentialTokenResponse
+> = {
+  name: orgCredential.name,
+  scope: "org",
+  token: "sk_test_only",
+  env: [{ name: orgCredential.name, value: "sk_test_only" }],
+};
+
+const putAgentCredentialRequest: SharedShape<
+  wire.PutAgentCredentialRequest,
+  schema.PutAgentCredentialRequest
+> = { value: "sk_test_only", comment: "test-mode key, safe for CI" };
+
+const credentialRequestFiledError: SharedShape<
+  wire.CredentialRequestFiledError,
+  schema.CredentialRequestFiledError
+> = { error: "connection linear is not configured", request_id: "request" };
+
+// Grant proposals (§7a). One row per action, and a null-subject change,
+// because each covers ground the others do not.
+const addGrantChange: SharedShape<wire.GrantChange, schema.GrantChange> = {
+  name: orgCredential.name,
+  action: "add",
+  subjectKind: "workspace",
+  subjectId: "workspace",
+  access: "read",
+};
+
+const removeGrantChange: SharedShape<wire.GrantChange, schema.GrantChange> = {
+  name: orgCredential.name,
+  action: "remove",
+  subjectKind: "org",
+  subjectId: null,
+  access: "write",
+};
+
+const proposeGrantChangesRequest: SharedShape<
+  wire.ProposeGrantChangesRequest,
+  schema.ProposeGrantChangesRequest
+> = { changes: [addGrantChange, removeGrantChange], reason: "the CI workspace needs it" };
+
+const proposeGrantChangesResponse: SharedShape<
+  wire.ProposeGrantChangesResponse,
+  schema.ProposeGrantChangesResponse
+> = { id: "proposal", state: "pending" };
+
+const pendingGrantProposal: SharedShape<
+  wire.GrantProposalView,
+  schema.GrantProposalView
+> = {
+  id: "proposal",
+  state: "pending",
+  machineId: "machine",
+  membershipId: "membership",
+  reason: "the CI workspace needs it",
+  proposed: [addGrantChange, removeGrantChange],
+  applied: null,
+  createdAt: 9,
+};
+
+const approvedGrantProposal: SharedShape<
+  wire.GrantProposalView,
+  schema.GrantProposalView
+> = { ...pendingGrantProposal, state: "approved", applied: [addGrantChange] };
+
+const listGrantProposalsResponse: SharedShape<
+  wire.ListGrantProposalsResponse,
+  schema.ListGrantProposalsResponse
+> = { proposals: [pendingGrantProposal] };
+
+const resolveGrantProposalRequest: SharedShape<
+  wire.ResolveGrantProposalRequest,
+  schema.ResolveGrantProposalRequest
+> = { approve: true, changes: [addGrantChange] };
+
+const resolveGrantProposalResponse: SharedShape<
+  wire.ResolveGrantProposalResponse,
+  schema.ResolveGrantProposalResponse
+> = { proposal: approvedGrantProposal };
 
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
@@ -300,7 +448,6 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   autoProvision: true,
   myRole: "admin",
   members: [workspaceMember, viewerMember],
-  credentials: [workspaceCredential],
 };
 
 const templateConnection: SharedShape<
@@ -453,7 +600,6 @@ const createWorkspaceRequest: SharedShape<
     machineTypeId: machineType.id,
     persistentVolume: false,
   }],
-  credentials: [{ name: workspaceCredential.name, label: "live", value: "sk_test_only" }],
   cloneFromWorkspaceId: "workspace",
   volumeId: volume.id,
   userData: "#cloud-config\n",
@@ -679,7 +825,6 @@ const connectionView: SharedShape<
   status: "active",
   createdBy: "operator",
   proxyBaseUrl: "https://tracker.example",
-  orgCredential: true,
 };
 
 const credentialLease: SharedShape<
@@ -727,7 +872,6 @@ const fullFieldValues = [
   machineStats,
   workspaceMember,
   viewerMember,
-  workspaceCredential,
   machineResponse,
   setMachineTypeRequest,
   addWorkspaceMemberRequest,
@@ -736,9 +880,31 @@ const fullFieldValues = [
   updateWorkspaceRequest,
   clearAgentRuleRequest,
   workspaceMemberResponse,
-  putWorkspaceCredentialRequest,
-  importWorkspaceCredentialsRequest,
-  importWorkspaceCredentialsResponse,
+  orgWideGrant,
+  workspaceGrant,
+  membershipGrant,
+  orgCredential,
+  listOrgCredentialsResponse,
+  putOrgCredentialRequest,
+  putOrgCredentialResponse,
+  replaceOrgCredentialGrantsRequest,
+  replaceOrgCredentialGrantsResponse,
+  importOrgCredentialsRequest,
+  importOrgCredentialsResponse,
+  agentCredentialEntry,
+  agentCredentialsResponse,
+  agentCredentialTokenResponse,
+  putAgentCredentialRequest,
+  credentialRequestFiledError,
+  addGrantChange,
+  removeGrantChange,
+  proposeGrantChangesRequest,
+  proposeGrantChangesResponse,
+  pendingGrantProposal,
+  approvedGrantProposal,
+  listGrantProposalsResponse,
+  resolveGrantProposalRequest,
+  resolveGrantProposalResponse,
   machineType,
   pricedMachineType,
   machineTypeFailure,
@@ -826,15 +992,37 @@ describe("local wire copies", () => {
     expectTypeOf<wire.MachineResponse>().toEqualTypeOf<schema.MachineResponse>();
     expectTypeOf<wire.SetMachineTypeRequest>().toEqualTypeOf<schema.SetMachineTypeRequest>();
     expectTypeOf<wire.WorkspaceMemberView>().toEqualTypeOf<schema.WorkspaceMemberView>();
-    expectTypeOf<wire.WorkspaceCredentialView>().toEqualTypeOf<schema.WorkspaceCredentialView>();
     expectTypeOf<wire.AddWorkspaceMemberRequest>().toEqualTypeOf<schema.AddWorkspaceMemberRequest>();
     expectTypeOf<wire.UpdateWorkspaceMemberRequest>().toEqualTypeOf<schema.UpdateWorkspaceMemberRequest>();
     expectTypeOf<wire.ProvisionMemberMachineRequest>().toEqualTypeOf<schema.ProvisionMemberMachineRequest>();
     expectTypeOf<wire.UpdateWorkspaceRequest>().toEqualTypeOf<schema.UpdateWorkspaceRequest>();
     expectTypeOf<wire.WorkspaceMemberResponse>().toEqualTypeOf<schema.WorkspaceMemberResponse>();
-    expectTypeOf<wire.PutWorkspaceCredentialRequest>().toEqualTypeOf<schema.PutWorkspaceCredentialRequest>();
-    expectTypeOf<wire.ImportWorkspaceCredentialsRequest>().toEqualTypeOf<schema.ImportWorkspaceCredentialsRequest>();
-    expectTypeOf<wire.ImportWorkspaceCredentialsResponse>().toEqualTypeOf<schema.ImportWorkspaceCredentialsResponse>();
+    expectTypeOf<wire.OrgCredentialGrantSubjectKind>().toEqualTypeOf<schema.OrgCredentialGrantSubjectKind>();
+    expectTypeOf<wire.OrgCredentialAccess>().toEqualTypeOf<schema.OrgCredentialAccess>();
+    expectTypeOf<wire.OrgCredentialGrantView>().toEqualTypeOf<schema.OrgCredentialGrantView>();
+    expectTypeOf<wire.OrgCredentialView>().toEqualTypeOf<schema.OrgCredentialView>();
+    expectTypeOf<wire.ListOrgCredentialsResponse>().toEqualTypeOf<schema.ListOrgCredentialsResponse>();
+    expectTypeOf<wire.PutOrgCredentialRequest>().toEqualTypeOf<schema.PutOrgCredentialRequest>();
+    expectTypeOf<wire.PutOrgCredentialResponse>().toEqualTypeOf<schema.PutOrgCredentialResponse>();
+    expectTypeOf<wire.ReplaceOrgCredentialGrantsRequest>().toEqualTypeOf<schema.ReplaceOrgCredentialGrantsRequest>();
+    expectTypeOf<wire.ReplaceOrgCredentialGrantsResponse>().toEqualTypeOf<schema.ReplaceOrgCredentialGrantsResponse>();
+    expectTypeOf<wire.ImportOrgCredentialsRequest>().toEqualTypeOf<schema.ImportOrgCredentialsRequest>();
+    expectTypeOf<wire.OrgCredentialImportResult>().toEqualTypeOf<schema.OrgCredentialImportResult>();
+    expectTypeOf<wire.ImportOrgCredentialsResponse>().toEqualTypeOf<schema.ImportOrgCredentialsResponse>();
+    expectTypeOf<wire.AgentCredentialScope>().toEqualTypeOf<schema.AgentCredentialScope>();
+    expectTypeOf<wire.AgentCredentialEntry>().toEqualTypeOf<schema.AgentCredentialEntry>();
+    expectTypeOf<wire.AgentCredentialsResponse>().toEqualTypeOf<schema.AgentCredentialsResponse>();
+    expectTypeOf<wire.AgentCredentialTokenResponse>().toEqualTypeOf<schema.AgentCredentialTokenResponse>();
+    expectTypeOf<wire.PutAgentCredentialRequest>().toEqualTypeOf<schema.PutAgentCredentialRequest>();
+    expectTypeOf<wire.GrantChangeAction>().toEqualTypeOf<schema.GrantChangeAction>();
+    expectTypeOf<wire.GrantChange>().toEqualTypeOf<schema.GrantChange>();
+    expectTypeOf<wire.ProposeGrantChangesRequest>().toEqualTypeOf<schema.ProposeGrantChangesRequest>();
+    expectTypeOf<wire.GrantProposalState>().toEqualTypeOf<schema.GrantProposalState>();
+    expectTypeOf<wire.ProposeGrantChangesResponse>().toEqualTypeOf<schema.ProposeGrantChangesResponse>();
+    expectTypeOf<wire.GrantProposalView>().toEqualTypeOf<schema.GrantProposalView>();
+    expectTypeOf<wire.ListGrantProposalsResponse>().toEqualTypeOf<schema.ListGrantProposalsResponse>();
+    expectTypeOf<wire.ResolveGrantProposalRequest>().toEqualTypeOf<schema.ResolveGrantProposalRequest>();
+    expectTypeOf<wire.ResolveGrantProposalResponse>().toEqualTypeOf<schema.ResolveGrantProposalResponse>();
     expectTypeOf<wire.MachinePrice>().toEqualTypeOf<schema.MachinePrice>();
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
@@ -908,12 +1096,6 @@ describe("local wire copies", () => {
     expectTypeOf<connections.TokenHeader>().toEqualTypeOf<schema.TokenHeader>();
     expectTypeOf<connections.ConnectionEnv>().toEqualTypeOf<schema.ConnectionEnv>();
     expectTypeOf<connections.MintResult>().toEqualTypeOf<schema.MintResult>();
-    expectTypeOf<connections.WorkspaceConnectionsResponse>()
-      .toEqualTypeOf<schema.WorkspaceConnectionsResponse>();
-    expectTypeOf<connections.WorkspaceCredentialEntry>()
-      .toEqualTypeOf<schema.WorkspaceCredentialEntry>();
-    expectTypeOf<connections.WorkspaceCredentialsResponse>()
-      .toEqualTypeOf<schema.WorkspaceCredentialsResponse>();
     expectTypeOf<connections.Lease>().toEqualTypeOf<schema.CredentialLeaseView>();
     expectTypeOf<connections.CatalogAdminPlacement>().toEqualTypeOf<schema.CatalogAdminPlacement>();
     expectTypeOf<connections.CatalogAdminFormView>().toEqualTypeOf<schema.CatalogAdminFormView>();

@@ -1,59 +1,51 @@
 import { describe, expect, it } from "vitest";
-import { workspaceTileHue, workspaceTileStyle } from "../src/shell/workspace-tile";
+import { workspaceSigil, workspaceTileHue } from "../src/shell/workspace-tile";
 
-/** WCAG relative luminance of an sRGB channel triple. Computed here from the
- * published formula, independently of the helper's own math. */
-function luminance(red: number, green: number, blue: number): number {
-  const linear = (channel: number): number => {
-    const scaled = channel / 255;
-    return scaled <= 0.04045 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
+function cellKey([x, y]: readonly [number, number]): string {
+  return `${String(x)}:${String(y)}`;
 }
 
-function hslToRgb(hue: number, saturation: number, lightness: number): [number, number, number] {
-  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
-  const sector = hue / 60;
-  const second = chroma * (1 - Math.abs((sector % 2) - 1));
-  const base = lightness - chroma / 2;
-  const channels: [number, number, number] = sector < 1 ? [chroma, second, 0]
-    : sector < 2 ? [second, chroma, 0]
-    : sector < 3 ? [0, chroma, second]
-    : sector < 4 ? [0, second, chroma]
-    : sector < 5 ? [second, 0, chroma]
-    : [chroma, 0, second];
-  return [
-    Math.round((channels[0] + base) * 255),
-    Math.round((channels[1] + base) * 255),
-    Math.round((channels[2] + base) * 255),
-  ];
-}
-
-describe("workspaceTileStyle", () => {
-  it("is deterministic per id", () => {
-    expect(workspaceTileStyle("ws-a")).toEqual(workspaceTileStyle("ws-a"));
-    expect(workspaceTileStyle("ws-a").background).not.toBe(workspaceTileStyle("ws-b").background);
+describe("workspaceSigil", () => {
+  it("is deterministic per workspace id", () => {
+    expect(workspaceSigil("ws-a")).toEqual(workspaceSigil("ws-a"));
+    expect(workspaceSigil("ws-a")).not.toEqual(workspaceSigil("ws-b"));
   });
 
-  it("paints one solid pastel, no gradient", () => {
-    const { background } = workspaceTileStyle("ws-a");
-    expect(background).toMatch(/^hsl\(\d+ 52% 80%\)$/u);
-    expect(background).not.toContain("gradient");
-  });
+  it("builds a mirrored 5 by 5 bitmap with bounded density", () => {
+    for (let index = 0; index < 200; index += 1) {
+      const { cells } = workspaceSigil(`ws-${String(index)}`);
+      const keys = new Set(cells.map(cellKey));
+      expect(keys.size).toBe(cells.length);
+      expect(cells.length).toBeGreaterThanOrEqual(7);
+      expect(cells.length).toBeLessThanOrEqual(20);
 
-  it("keeps the dark ink past WCAG AA on every hue", () => {
-    for (let hue = 0; hue < 360; hue += 1) {
-      const [red, green, blue] = hslToRgb(hue, 0.52, 0.8);
-      const tile = luminance(red, green, blue);
-      const ink = luminance(11, 16, 32);
-      const ratio = (Math.max(tile, ink) + 0.05) / (Math.min(tile, ink) + 0.05);
-      expect(ratio).toBeGreaterThanOrEqual(4.5);
+      for (const [x, y] of cells) {
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(x).toBeLessThanOrEqual(4);
+        expect(y).toBeGreaterThanOrEqual(0);
+        expect(y).toBeLessThanOrEqual(4);
+        expect(keys.has(cellKey([4 - x, y]))).toBe(true);
+      }
     }
   });
 
-  it("spreads ids across the wheel", () => {
+  it("creates a dark base and bright companion color without gradients", () => {
+    const sigil = workspaceSigil("ws-a");
+    expect(sigil.background).toMatch(/^hsl\(\d+ 34% 18%\)$/u);
+    expect(sigil.foreground).toMatch(/^hsl\(\d+ 78% 72%\)$/u);
+    expect(sigil.background).not.toContain("gradient");
+    expect(sigil.foreground).not.toContain("gradient");
+  });
+
+  it("spreads ids across hues and bitmap shapes", () => {
     const hues = new Set<number>();
-    for (let index = 0; index < 200; index += 1) hues.add(workspaceTileHue(`ws-${String(index)}`));
+    const patterns = new Set<string>();
+    for (let index = 0; index < 200; index += 1) {
+      const workspaceId = `ws-${String(index)}`;
+      hues.add(workspaceTileHue(workspaceId));
+      patterns.add(workspaceSigil(workspaceId).cells.map(cellKey).sort().join(","));
+    }
     expect(hues.size).toBeGreaterThan(100);
+    expect(patterns.size).toBeGreaterThan(180);
   });
 });

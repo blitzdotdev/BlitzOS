@@ -38,11 +38,10 @@ export interface CreateWorkspaceRequest {
     /** Default true; false gives that member's machine no volume. */
     persistentVolume?: boolean;
   }[];
-  /** The only path where a credential value is sent. */
-  credentials?: { name: string; label?: string; comment?: string; value: string }[];
-  /** Copies config — default machine type, agent rule, repos, credential
-   * NAMES are not copied and neither are members. The workspace is the
-   * template now, so this is "new workspace from existing". */
+  /** Copies config — default machine type, agent rule, repos — and neither
+   * members nor credentials (credentials are org-scoped now,
+   * plans/ORG-CREDENTIALS.md §3). The workspace is the template now, so this
+   * is "new workspace from existing". */
   cloneFromWorkspaceId?: string;
   /** Retired with the template tables (plans/MEMBER-MACHINES.md §0). Sending
    * one is refused rather than ignored. */

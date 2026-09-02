@@ -18,6 +18,7 @@ import './workspace-details-dialog.css';
 import './loading-skeleton.css';
 import './create-workspace-dialog.css';
 import './settings.css';
+import './org-credentials.css';
 import './invite-redeem.css';
 import { StandaloneWebApp } from './StandaloneWebApp';
 import { LODY_DEV_ORIGIN, lodySessionsRequested } from './lody/flag';

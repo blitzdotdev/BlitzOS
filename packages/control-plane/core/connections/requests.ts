@@ -3,11 +3,7 @@ import { first, rows, transaction } from "../db.js";
 import { HttpError, isRecord, isString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import {
-  type CredentialManifest,
-  parseManifest,
-  usableByAllows,
-} from "./manifest.js";
+import { type CredentialManifest, parseManifest } from "./manifest.js";
 import { connectionByName } from "./registry.js";
 import { isWorkspaceAdmin, workspaceAccess } from "../workspace-access.js";
 
@@ -131,9 +127,6 @@ async function requireGrantableConnection(
   const connection = await connectionByName(db, request.connection_name, request.org_id);
   if (connection === null) {
     throw new HttpError(409, "connection is not configured");
-  }
-  if (!usableByAllows(connection, request.owner_id)) {
-    throw new HttpError(403, "connection is not available to the workspace owner");
   }
 }
 

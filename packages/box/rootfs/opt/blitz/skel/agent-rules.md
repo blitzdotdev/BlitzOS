@@ -50,43 +50,54 @@ configurable per deployment. Any other link opens in a new browser tab.
 ## Using a connected provider
 
 Credentials are **not** in your environment. Nothing is delivered to this box.
-You ask for a token at the moment you need it, and the platform checks this
-workspace's allow-list on every ask.
+You ask for a token at the moment you need it, and the platform checks what
+this machine's member may use on every ask.
 
-Three commands, and no others:
+The box has no credential CLI. You call the control plane over plain HTTP.
+One local helper prints a valid bearer; the origin is on disk:
 
-```
-blitz-cred list              # providers this workspace may use, one per line
-blitz-cred get <provider>    # print that provider's token, and nothing else
-blitz-cred env <provider>    # print eval-able NAME=VALUE lines for that provider
-```
-
-Scope the secret to the one command that needs it:
-
-```
-GH_TOKEN=$(blitz-cred get github) gh pr list
+```sh
+CP=$(cat /var/lib/blitz/origin)
+curl -sS -H "Authorization: Bearer $(blitz-cred api-token)" "$CP/agent/credentials"
 ```
 
-The variable dies with that command. Use `blitz-cred env` when a tool wants
-several names, or when you need the API base URL as well. Keep it inside a
-subshell so it dies there too:
+That lists the names you may ask for — providers and shared keys — and never a
+value. The full endpoint list with schemas and arguments is the API itself:
 
+```sh
+curl -sS -H "Authorization: Bearer $(blitz-cred api-token)" "$CP/agent/api"
+# OpenAPI; always current — read it, then call what it lists
 ```
-( eval "$(blitz-cred env linear)"
+
+Scope a secret to the one command that needs it, and never print one:
+
+```sh
+GH_TOKEN=$(curl -sS -X POST -H "Authorization: Bearer $(blitz-cred api-token)" \
+  "$CP/agent/credentials/github/token" | jq -r .token) gh pr list
+```
+
+The variable dies with that command. Every response carries `env`, one
+`{name, value}` per variable the underlying tooling reads. A connection
+response also carries `header`, which names the header to send — the shape is
+not the same everywhere: Discord wants `Bot `, and some providers want a bare
+`Authorization` value. An org credential has no invented header or expiry.
+When a tool wants several names, or the API base URL as
+well, export `env` inside a subshell so it dies there too:
+
+```sh
+( eval "$(curl -sS -X POST -H "Authorization: Bearer $(blitz-cred api-token)" \
+    "$CP/agent/credentials/linear/token" | jq -r '.env[] | "export \(.name)=\(.value | @sh)"')"
   curl -sS -H "Authorization: Bearer $LINEAR_API_KEY" "$LINEAR_API_URL/graphql" )
 ```
 
-`blitz-cred env` prints one comment line naming the header to send, because the
-shape is not the same everywhere: Discord wants `Bot `, and some providers want
-a bare `Authorization` value. Read that line rather than guessing.
-
-`curl`, `gh`, and `python3` are installed. Use them directly.
+`curl`, `jq`, `gh`, and `python3` are installed. Use them directly.
 
 ## When a connection is not authorized
 
-`blitz-cred get` refuses when this workspace is not connected to the provider,
-or when nobody has supplied a credential for it. The refusal names the reason
-and files a request in the user's connections panel. Then run:
+A token ask answers `404` with a `request_id` when this workspace is not
+connected to the provider, when nobody has supplied a credential for it, or
+when the credential is not granted here. The body names the reason, and the
+refusal files a request in the user's connections panel. Then run:
 
 ```
 blitz connections open <provider>
@@ -96,68 +107,98 @@ This opens the workspace connections panel for the user with that provider
 highlighted. Tell the user you opened it and ask them to connect the provider.
 Do not keep retrying: the provider stays refused until they connect it.
 
-Once the user says they connected it, run `blitz-cred get <provider>` again. It
-works immediately. There is nothing to sync and no session to restart.
+Once the user says they connected it, ask for the token again. It works
+immediately. There is nothing to sync and no session to restart.
 
 ### Do not use `/mcp` here
 
 Workspace sessions have no MCP servers and no claude.ai connectors. Ask for a
-token with `blitz-cred`, nothing else. `/mcp` and a "connector" both answer for
-a different product surface — reaching for them here only costs a turn.
+token at `$CP/agent/credentials/<name>/token`, nothing else. `/mcp` and a
+"connector" both answer for a different product surface — reaching for them
+here only costs a turn.
 
-## Sharing secrets with the workspace
+## Sharing secrets with the organization
 
-A workspace credential is a named secret every member machine can pull.
-`blitz-cred list` shows workspace credentials next to providers; `get` and
-`env` serve them the same way.
+An org credential is a named secret stored once for the organization and
+served to every machine whose workspace or member holds a grant on it.
+`GET /agent/credentials` lists the ones you may read next to the providers
+(`scope: "org"`, with the comment, and `writable` when you may rotate it), and
+the token route serves them the same way.
 
-To move the keys in a dotenv file into the workspace store:
+To store an important key WITH the comment that explains it:
 
-```
-blitz-cred import .env             # store each KEY=value line
-blitz-cred import --check .env     # parse and report, store nothing
-```
-
-Each key becomes one credential, labeled with the file it came from.
-Importing an existing name rotates it: the old value is gone on the next
-pull. Only a workspace admin's machine can import. A value must be one
-line; base64-encode a PEM or JSON key first.
-
-Import exists to get secrets OUT of files. After a successful import,
-delete the file and pull keys at the moment of use:
-
-```
-( eval "$(blitz-cred env STRIPE_API_KEY)"; use it here )
+```sh
+jq -n --arg value "$VALUE" --arg comment "test-mode key, safe for CI" \
+  '{value: $value, comment: $comment}' \
+| curl -sS -X PUT -H "Authorization: Bearer $(blitz-cred api-token)" \
+    -H 'Content-Type: application/json' --data @- "$CP/agent/credentials/STRIPE_API_KEY"
 ```
 
-A credential can carry a comment: one line that says what the key is for.
-`blitz-cred list` prints it after a `#` — read the comments before you
-pick a key. To store an important key WITH its comment, send the value on
-stdin:
+The name must be an environment variable name. Any member may create one;
+rotating an existing name needs write access to it, and a rotation keeps the
+comment the name already has unless you send a new one.
 
-```
-printf '%s' "$VALUE" | blitz-cred put STRIPE_API_KEY --comment "test-mode key, safe for CI"
+To move the keys in a dotenv file into the store, send the file's text:
+
+```sh
+jq -Rs '{text: ., dryRun: true}' .env \
+| curl -sS -X POST -H "Authorization: Bearer $(blitz-cred api-token)" \
+    -H 'Content-Type: application/json' --data @- "$CP/agent/credentials/dotenv"
 ```
 
-Import never reads or writes comments, and a rotation keeps the comment
-the name already has. When you store a key others will use, write the
-comment — it is what the next agent reads instead of asking.
+`dryRun: true` parses and reports every line and stores nothing: read the
+`results`, then send it again without `dryRun` to store. Each key becomes one
+credential. Importing an existing name rotates it: the old value is gone on
+the next pull. A line past your user's authority is refused with its reason,
+and the rest still go in. A value must be one line; base64-encode a PEM or
+JSON key first.
+
+Import exists to get secrets OUT of files. After a successful import, delete
+the file and pull keys at the moment of use, the same way as a provider.
+
+A credential can carry a comment: one line that says what the key is for. The
+list prints it — read the comments before you pick a key. Import never reads
+or writes comments. When you store a key others will use, write the comment —
+it is what the next agent reads instead of asking.
+
+## Sharing a credential (grant changes need a human)
+
+You may propose grant changes — sharing a credential with a workspace or an
+org member, or revoking a grant — but nothing applies until the user
+approves it in a panel that shows your proposal as an editable diff.
+
+    curl -sS -X POST -H "Authorization: Bearer $(blitz-cred api-token)" \
+      "$CP/agent/credentials/grant-proposals" \
+      --data '{"changes":[...], "reason":"one sentence; the user reads this"}'
+
+Change shapes are in GET /agent/api. A 403 names changes past your user's
+own authority — narrow and retry.
+
+Tell the user a proposal is waiting for them, then poll:
+
+    GET /agent/grant-proposals/<id>        # until state leaves "pending"
+
+Continue from the "applied" list, never from what you asked for — the user
+can edit or skip any part of your proposal before approving. "denied" and
+"expired" mean no grants changed — and so does a 404 on the poll, which
+means the control plane restarted and forgot it; re-propose only with a
+narrower ask or a better reason.
 
 ## Never print a credential
 
 Never echo, print, log, or paste the value of a credential — not into a
 message, not into a file, not into a command you show the user. That includes
-every `*_TOKEN`, `*_API_KEY`, and `*_SECRET` variable, and anything
-`blitz-cred` hands back. Use the variable by name (`$GH_TOKEN`), never by
-value. A transcript is not a private place: a token that appears in one has to
-be rotated.
+every `*_TOKEN`, `*_API_KEY`, and `*_SECRET` variable, and anything the token
+route hands back. Use the variable by name (`$GH_TOKEN`), never by value. A
+transcript is not a private place: a token that appears in one has to be
+rotated.
 
 Never write a token into a file, a shell profile, or a `.env`. Ask again
 instead — asking is cheap, and a stored token outlives the permission that
 granted it.
 
-`blitz-cred list` names the providers this workspace may use, without printing
-a single value. Use it instead of dumping the environment.
+`GET /agent/credentials` names what this machine may use, without printing a
+single value. Use it instead of dumping the environment.
 
 ## Getting a machine of your own
 

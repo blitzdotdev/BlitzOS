@@ -222,7 +222,6 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM machine_token_families"),
     env.DB.prepare("DELETE FROM machines"),
     env.DB.prepare("DELETE FROM workspace_members"),
-    env.DB.prepare("DELETE FROM workspace_credentials"),
     env.DB.prepare("DELETE FROM workspaces"),
     env.DB.prepare("DELETE FROM org_compute_credentials"),
     env.DB.prepare("DELETE FROM org_entitlements"),

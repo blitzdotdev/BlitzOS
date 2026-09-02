@@ -49,11 +49,13 @@ import "../../src/workspace-details-dialog.css";
 import "../../src/loading-skeleton.css";
 import "../../src/create-workspace-dialog.css";
 import "../../src/settings.css";
+import "../../src/org-credentials.css";
 import "../../src/invite-redeem.css";
 
 import { BoxGlyph, ShareGlyph } from "../../src/files/DriveIcons";
 import { chooseTheme, resolvedTheme } from "../../src/theme";
 import { SurfacePreviewRegion } from "./region";
+import { WorkspaceSigilIcon } from "../../src/shell/WorkspaceStrip";
 
 const WORKSPACE_TITLE = "zesty-swan";
 
@@ -89,12 +91,14 @@ function RailHead() {
 function Strip() {
   return (
     <aside className="shell-strip">
-      <div className="shell-strip__tiles">
-        <button className="shell-wtile shell-wtile--on" type="button">
-          ZS
+      <div className="shell-strip__tiles" role="tree">
+        <button className="shell-wtile" type="button" role="treeitem" aria-selected="true">
+          <span className="shell-wtile__indicator" aria-hidden="true" />
+          <span className="shell-wtile__icon"><WorkspaceSigilIcon workspaceId="zesty-swan" /></span>
         </button>
-        <button className="shell-wtile" type="button">
-          DT
+        <button className="shell-wtile" type="button" role="treeitem" aria-selected="false">
+          <span className="shell-wtile__indicator" aria-hidden="true" />
+          <span className="shell-wtile__icon"><WorkspaceSigilIcon workspaceId="design-team" /></span>
         </button>
       </div>
       <span className="shell-strip__spacer" />

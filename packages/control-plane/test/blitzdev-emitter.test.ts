@@ -48,7 +48,11 @@ const expected = [
   "core/blobs.ts",
   "core/wire.ts",
   "core/wire-machines.ts",
+  "core/wire-org-credentials.ts",
   "core/wire-sharing.ts",
+  "core/agent-api.ts",
+  "core/agent-api-manifest.ts",
+  "core/agent-routes.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-config.ts",
@@ -58,8 +62,6 @@ const expected = [
   "core/entitlements.ts",
   "core/environment.ts",
   "core/connections/types.ts",
-  "core/connections/pull-routes.ts",
-  "core/connections/pull-wire.ts",
   "core/connections/root-crypto.ts",
   "core/connections/manifest.ts",
   "core/connections/leases.ts",
@@ -71,7 +73,6 @@ const expected = [
   "core/connections/catalog/youtrack.ts",
   "core/connections/catalog/index.ts",
   "core/connections/user-grants.ts",
-  "core/connections/minters/static.ts",
   "core/connections/minters/oauth.ts",
   "core/connections/minters/grant.ts",
   "core/connections/registry.ts",
@@ -105,8 +106,12 @@ const expected = [
   "core/machine-plane.ts",
   "core/machine-stats.ts",
   "core/oauth-state.ts",
+  "core/grant-proposals.ts",
   "core/oauth.ts",
   "core/operator-tokens.ts",
+  "core/org-credential-import.ts",
+  "core/org-credential-routes.ts",
+  "core/org-credentials.ts",
   "core/principals.ts",
   "core/recipes.ts",
   "core/registry.ts",
@@ -123,8 +128,6 @@ const expected = [
   "core/webapp-tickets.ts",
   "core/template-repos.ts",
   "core/workspace-access.ts",
-  "core/workspace-credential-import.ts",
-  "core/workspace-credentials.ts",
   "core/workspace-drain.ts",
   "core/workspace-members.ts",
   "core/workspace-names.ts",
@@ -152,6 +155,7 @@ const expected = [
   "core/compute/aws-xml.ts",
   "core/compute/cloudflare-tunnels.ts",
   "core/agent-rules-doc.ts",
+  "core/agent-api-doc.ts",
 ] as const;
 
 describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
@@ -161,7 +165,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(113);
+    expect(first.files).toHaveLength(117);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
@@ -209,6 +213,20 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     const specifiers = importSpecifiers(importer?.source ?? "").map(({ specifier }) => specifier);
     expect(specifiers.filter((specifier) => specifier.endsWith(".md"))).toEqual([]);
     expect(specifiers).toContain("./agent-rules-doc");
+  });
+
+  // The generated agent API document is a JSON module in the repo source; the
+  // managed platform cannot import one either, so it is inlined as the object
+  // literal its importer expects.
+  it("inlines the agent API document as the object a JSON module yields", () => {
+    const uploadSet = managedUploadSet();
+    const doc = uploadSet.files.find((file) => file.path === "core/agent-api-doc.ts");
+    const importer = uploadSet.files.find((file) => file.path === "core/agent-api.ts");
+
+    expect(doc?.source).toContain('const doc = {\n  "openapi": "3.1.0"');
+    expect(importer?.source).toContain('from "./agent-api-doc"');
+    const specifiers = importSpecifiers(importer?.source ?? "").map(({ specifier }) => specifier);
+    expect(specifiers.filter((specifier) => specifier.endsWith(".json"))).toEqual([]);
   });
 
   it("emits an environment-resolved app URL without deployment URLs", () => {

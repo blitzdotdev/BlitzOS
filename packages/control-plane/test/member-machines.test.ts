@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runOrphanSweep } from "../core/index.js";
 import {
   appRequest,
-  boxTokenFor,
   createWorkspace,
   harness,
   machineIdFor,
@@ -67,7 +66,6 @@ describe("member machines", () => {
           { membershipId: teammate.membershipId, role: "member" },
           { membershipId: watcher.membershipId, role: "viewer" },
         ],
-        credentials: [{ name: "STRIPE_API_KEY", label: "live", value: "sk_test_only" }],
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
     });
@@ -89,11 +87,6 @@ describe("member machines", () => {
       "provisioning",
       null,
     ]);
-    // Names only: a value never comes back out of the store.
-    expect(workspace.credentials).toEqual([
-      { name: "STRIPE_API_KEY", label: "live", comment: null, createdAt: expect.any(Number) },
-    ]);
-    expect(JSON.stringify(workspace)).not.toContain("sk_test_only");
   });
 
   it("keeps the machine row and the volume when a machine stops, and brings it back on start", async () => {
@@ -645,105 +638,6 @@ describe("member machines", () => {
 
     const usage = await appRequest(app, "/orgs/self/usage", { headers: { Cookie: cookie } });
     await expect(usage.json()).resolves.toMatchObject({ vmsUsed: 2, vmLimit: 2 });
-  });
-
-  it("serves a workspace credential through the box pull wire, personal grant first", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    const created = await appRequest(app, "/workspaces", {
-      ...json({
-        machineTypeId: "small",
-        credentials: [{ name: "STRIPE_API_KEY", value: "sk_workspace_value" }],
-      }),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    const workspace = (await created.json<CreatedWorkspace>()).workspace;
-    const token = await boxTokenFor(app, providers, workspace.id);
-    const boxHeaders = { Authorization: `Bearer ${token}` };
-
-    // The allow-list a box reads carries both planes: `blitz-cred` is the one
-    // door to every secret on the machine.
-    const listed = await appRequest(app, "/workspaces/self/connections", { headers: boxHeaders });
-    await expect(listed.json()).resolves.toEqual({ connections: ["STRIPE_API_KEY"] });
-
-    const minted = await appRequest(app, "/workspaces/self/connections/STRIPE_API_KEY/token", {
-      method: "POST",
-      headers: boxHeaders,
-    });
-    expect(minted.status).toBe(200);
-    await expect(minted.json()).resolves.toMatchObject({
-      connection: "STRIPE_API_KEY",
-      mode: "inject",
-      token: "sk_workspace_value",
-      env: [{ name: "STRIPE_API_KEY", value: "sk_workspace_value" }],
-    });
-
-    // A rotate is the same act as an add: the next pull reads the new value
-    // live, with no sync and no restart.
-    expect((await appRequest(app, `/workspaces/${workspace.id}/credentials`, {
-      ...json({ name: "STRIPE_API_KEY", value: "sk_rotated_value" }, "PUT"),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    })).status).toBe(201);
-    await expect(appRequest(app, "/workspaces/self/connections/STRIPE_API_KEY/token", {
-      method: "POST",
-      headers: boxHeaders,
-    }).then((response) => response.json())).resolves.toMatchObject({
-      token: "sk_rotated_value",
-    });
-
-    // A revoke refuses the next call rather than the one after it.
-    expect((await appRequest(app, `/workspaces/${workspace.id}/credentials/STRIPE_API_KEY`, {
-      method: "DELETE",
-      headers: { Cookie: cookie },
-    })).status).toBe(204);
-    expect((await appRequest(app, "/workspaces/self/connections/STRIPE_API_KEY/token", {
-      method: "POST",
-      headers: boxHeaders,
-    })).status).toBe(404);
-  });
-
-  it("gates workspace credentials on the workspace role", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-    const member = await sameOrgSession("cred-member");
-    const viewer = await sameOrgSession("cred-viewer");
-    const created = await appRequest(app, "/workspaces", {
-      ...json({
-        machineTypeId: "small",
-        members: [
-          { membershipId: member.membershipId, role: "member" },
-          { membershipId: viewer.membershipId, role: "viewer" },
-        ],
-        credentials: [{ name: "STRIPE_API_KEY", value: "sk_test_only" }],
-      }),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    const workspace = (await created.json<CreatedWorkspace>()).workspace;
-    const path = `/workspaces/${workspace.id}/credentials`;
-
-    // Use, yes; manage, no. The names reach a member on the workspace view,
-    // and a viewer sees none: they hold no machine and may not use a
-    // credential at all (§3).
-    await expect(appRequest(app, `/workspaces/${workspace.id}`, {
-      headers: { Cookie: member.cookie },
-    }).then((response) => response.json())).resolves.toMatchObject({
-      workspace: {
-        credentials: [{ name: "STRIPE_API_KEY", label: null, createdAt: expect.any(Number) }],
-      },
-    });
-    await expect(appRequest(app, `/workspaces/${workspace.id}`, {
-      headers: { Cookie: viewer.cookie },
-    }).then((response) => response.json())).resolves.toMatchObject({
-      workspace: { credentials: [] },
-    });
-    expect((await appRequest(app, path, {
-      ...json({ name: "OTHER", value: "x" }, "PUT"),
-      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
-    })).status).toBe(403);
-    expect((await appRequest(app, `${path}/STRIPE_API_KEY`, {
-      method: "DELETE",
-      headers: { Cookie: member.cookie },
-    })).status).toBe(403);
   });
 
   it("routes the webApp proxy to the requesting member's own machine", async () => {

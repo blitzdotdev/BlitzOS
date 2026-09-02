@@ -179,19 +179,14 @@ export {
   MACHINE_STATES,
   WORKSPACE_MEMBER_ROLES,
   type AddWorkspaceMemberRequest,
-  type ImportWorkspaceCredentialsRequest,
-  type ImportWorkspaceCredentialsResponse,
   type MachineResponse,
   type MachineState,
   type MachineStatsRequest,
   type MachineView,
   type ProvisionMemberMachineRequest,
-  type PutWorkspaceCredentialRequest,
   type SetMachineTypeRequest,
   type UpdateWorkspaceMemberRequest,
   type UpdateWorkspaceRequest,
-  type WorkspaceCredentialImportResult,
-  type WorkspaceCredentialView,
   type WorkspaceMemberResponse,
   type WorkspaceMemberRole,
   type WorkspaceMemberView,
@@ -203,10 +198,12 @@ export {
   type SessionShareLevel,
   type SessionShareView,
 } from "./wire-sharing.js";
-// The three names the declarations below reference by hand. A re-export does
+// The org-credential plane (plans/ORG-CREDENTIALS.md) lives beside them too.
+// A star export, because that module is types only and every name is wire.
+export * from "./wire-org-credentials.js";
+// The two names the declarations below reference by hand. A re-export does
 // not bind them locally, so they are imported as well as re-exported.
 import type {
-  WorkspaceCredentialView,
   WorkspaceMemberRole,
   WorkspaceMemberView,
 } from "./wire-machines.js";
@@ -318,9 +315,6 @@ export interface WorkspaceView {
   myRole: WorkspaceMemberRole | null;
   /** Empty for a caller who cannot open the workspace. */
   members: WorkspaceMemberView[];
-  /** Names only. Populated for members and admins; empty for a caller who may
-   * not use them. */
-  credentials: WorkspaceCredentialView[];
 }
 
 export interface TemplateConnectionView {
@@ -571,11 +565,10 @@ export interface CreateWorkspaceRequest {
     /** Default true; false gives that member's machine no volume. */
     persistentVolume?: boolean;
   }[];
-  /** The only path where a credential value is sent. */
-  credentials?: { name: string; label?: string; comment?: string; value: string }[];
-  /** Copies config — default machine type, agent rule, repos, credential
-   * NAMES are not copied and neither are members. The workspace is the
-   * template now, so this is "new workspace from existing". */
+  /** Copies config — default machine type, agent rule, repos — and neither
+   * members nor credentials (credentials are org-scoped now,
+   * plans/ORG-CREDENTIALS.md §3). The workspace is the template now, so this
+   * is "new workspace from existing". */
   cloneFromWorkspaceId?: string;
   /** Retired with the template tables (plans/MEMBER-MACHINES.md §0). Sending
    * one is refused rather than ignored. */

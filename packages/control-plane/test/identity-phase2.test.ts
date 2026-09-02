@@ -507,25 +507,26 @@ describe("identity phase 2", () => {
     await expect(appRequest(app, "/volumes", { headers: { Cookie: operatorCookie } }).then((response) => response.json())).resolves.toEqual({ volumes: [] });
     expect((await appRequest(app, `/volumes/${secondVolumeId}`, { method: "DELETE", headers: { Cookie: operatorCookie } })).status).toBe(404);
 
-    const configured = await appRequest(app, "/connections/team-token", {
+    // A pasted key is the person's grant; the connection row it declares
+    // belongs to the org the paste happened in, so the other org lists no row
+    // and switching back finds it where it was.
+    const pasted = await appRequest(app, "/connections/grants/linear", {
       method: "PUT",
       headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: "hetzner", kind: "static", custody: "cp", config: { placements: [] }, root: "secret" }),
+      body: JSON.stringify({ manifestId: "linear", token: "lin_api_test-only-scoping-key" }),
     });
-    expect(configured.status).toBe(204);
+    expect(pasted.status).toBe(204);
     await appRequest(app, "/sessions/switch-org", {
       ...json({ orgId: "second" }),
       headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
     });
     await expect(appRequest(app, "/connections", { headers: { Cookie: operatorCookie } }).then((response) => response.json())).resolves.toEqual({ connections: [] });
-    expect((await appRequest(app, "/connections/team-token", { method: "DELETE", headers: { Cookie: operatorCookie } })).status).toBe(404);
-    expect((await appRequest(app, "/connections/team-token", {
-      method: "PUT",
+    await appRequest(app, "/sessions/switch-org", {
+      ...json({ orgId: "personal" }),
       headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: "hetzner", kind: "static", custody: "cp", config: { placements: [] }, root: "second-secret" }),
-    })).status).toBe(204);
+    });
     await expect(appRequest(app, "/connections", { headers: { Cookie: operatorCookie } }).then((response) => response.json())).resolves.toMatchObject({
-      connections: [{ name: "team-token", createdBy: "operator" }],
+      connections: [{ name: "linear", createdBy: "operator" }],
     });
   });
 
