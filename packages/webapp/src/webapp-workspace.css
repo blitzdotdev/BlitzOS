@@ -198,9 +198,13 @@
   align-items: center;
   gap: 10px;
   padding: 0 11px;
+  border: 0;
   border-radius: var(--r-item);
   color: var(--ink);
+  background: transparent;
+  font: inherit;
   text-align: left;
+  cursor: pointer;
 }
 
 .webapp-session-menu button .codicon {
