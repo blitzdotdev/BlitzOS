@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  AddWorkspaceMemberRequest,
   ImportWorkspaceCredentialsRequest,
   ImportWorkspaceCredentialsResponse,
   ListMachineTypesResponse,
@@ -13,13 +12,16 @@ import type {
 import type { ControlPlaneClient, MemberView } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ModalOverlay } from './ModalOverlay';
-import { WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
-import {
-  WorkspaceMembersEditor,
-  type MachineAction,
-} from './WorkspaceMembersEditor';
+import { WorkspaceMembersEditor } from './WorkspaceMembersEditor';
 import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
 import type { CloudWorkspaceModel } from './workspace-store';
+import { caughtErrorMessage } from './error-message';
+import {
+  useErrorReporter,
+  type ErrorContext,
+  type ReportableError,
+} from './error-dialog/ErrorReporter';
+import { useWorkspaceOptimisticMembers } from './use-workspace-optimistic-members';
 
 export type WorkspaceDetailsTab = 'members' | 'credentials' | 'settings';
 
@@ -35,26 +37,6 @@ function dateLabel(timestamp: number): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(timestamp));
-}
-
-/** "Workspace default" travels as an absent field, not as an empty string
- * the server would have to read as a type id. */
-function addMember(input: {
-  membershipId: string;
-  role: WorkspaceMemberRole;
-  machineTypeId: string;
-  persistentVolume: boolean;
-}): AddWorkspaceMemberRequest {
-  const request: AddWorkspaceMemberRequest = {
-    membershipId: input.membershipId,
-    role: input.role,
-  };
-  if (input.machineTypeId !== WORKSPACE_DEFAULT_MACHINE_TYPE) {
-    request.machineTypeId = input.machineTypeId;
-  }
-  // True is the server's default, so only the refusal travels.
-  if (!input.persistentVolume) request.persistentVolume = false;
-  return request;
 }
 
 /** The `SetMachineType` confirmation of §6: the disk survives, the VM does
@@ -90,12 +72,14 @@ function CredentialsTab({
   onPut,
   onRevoke,
   onImport,
+  onImportError,
 }: {
   credentials: CloudWorkspaceModel['credentials'];
   canManage: boolean;
   onPut: (input: PutWorkspaceCredentialRequest) => void;
   onRevoke: (name: string) => void;
   onImport: (input: ImportWorkspaceCredentialsRequest) => Promise<ImportWorkspaceCredentialsResponse>;
+  onImportError: (caught: ReportableError) => void;
 }) {
   const [name, setName] = useState('');
   const [label, setLabel] = useState('');
@@ -126,8 +110,10 @@ function CredentialsTab({
           setImportError(null);
           setPreview(response);
         })
-        .catch((caught: Error) => {
-          if (!stale) setImportError(caught.message);
+        .catch((caught) => {
+          if (!stale) {
+            setImportError(caughtErrorMessage(caught, 'The credential preview could not be loaded.'));
+          }
         });
     }, IMPORT_PREVIEW_DEBOUNCE_MS);
     return () => {
@@ -146,7 +132,7 @@ function CredentialsTab({
         setImportText('');
         setImportLabel('');
       })
-      .catch((caught: Error) => setImportError(caught.message));
+      .catch(onImportError);
   };
 
   const chooseFile = (file: File | undefined) => {
@@ -408,12 +394,19 @@ export function WorkspaceDetailsDialog({
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<WorkspaceDetailsTab>(initialTab);
   const [pendingTypeChange, setPendingTypeChange] = useState<PendingTypeChange | null>(null);
+  const reportError = useErrorReporter();
 
   // Workspace admin runs the workspace; an org admin passes every ✓ in that
   // column through implicit reach, which the wire reports as a null role on a
   // workspace they can still open (§3).
   const canManage = workspace.myRole === 'admin' || workspace.myRole === null;
   const workspaceId = workspace.id;
+  const optimistic = useWorkspaceOptimisticMembers({
+    client,
+    workspace,
+    orgMembers,
+    refreshWorkspaces,
+  });
 
   // Invite lands on the picker rather than on the close button: the one thing
   // it opened the dialog to do is type a teammate's name.
@@ -433,25 +426,22 @@ export function WorkspaceDetailsDialog({
         setRepos(repoResponse.repos);
         setError(null);
       })
-      .catch((caught: Error) => {
-        if (!cancelled) setError(caught.message || 'Could not load workspace details.');
+      .catch((caught) => {
+        if (!cancelled) {
+          setError(caughtErrorMessage(caught, 'Could not load workspace details.'));
+        }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [client, listMachineTypes, workspaceId]);
 
-  /** Every write reports its own failure and leaves the poll to refresh the
-   * rows, so no edit invents a row the server has not agreed to. A settled
-   * write runs that poll at once: the credential a member just saved, and the
-   * one they just revoked, are rows only the poll can produce. */
-  const run = useCallback((action: Promise<unknown>) => {
+  /** Non-optimistic writes still refresh their polled rows, but every action
+   * failure now goes to the shared copyable dialog instead of the load banner. */
+  const run = useCallback((action: Promise<unknown>, failure: ErrorContext) => {
     void action
-      .then(() => {
-        setError(null);
-        refreshWorkspaces();
-      })
-      .catch((caught: Error) => setError(caught.message));
-  }, [refreshWorkspaces]);
+      .then(refreshWorkspaces)
+      .catch((caught) => reportError(caught, failure));
+  }, [refreshWorkspaces, reportError]);
 
   /** The import shares one call with its preview, so only the run that writes
    * asks for a poll — a dry run has nothing for it to find. */
@@ -464,55 +454,40 @@ export function WorkspaceDetailsDialog({
     [client, refreshWorkspaces, workspaceId],
   );
 
-  const machineAction = (
-    member: WorkspaceMemberView,
-    action: MachineAction,
-    options: { persistentVolume: boolean },
-  ) => {
-    const machine = member.machine;
-    // A member with no machine has no id to act on, so their one verb goes to
-    // the route keyed by the membership instead. The row's type select shows
-    // the workspace default until a machine exists, so nothing overrides it.
-    if (machine === null) {
-      if (action === 'provision') {
-        run(client.provisionMemberMachine(
-          workspaceId,
-          member.membershipId,
-          options.persistentVolume ? {} : { persistentVolume: false },
-        ));
-      }
-      return;
-    }
-    if (action === 'provision') run(client.provisionMachine(machine.id));
-    if (action === 'stop') run(client.stopMachine(machine.id));
-    if (action === 'start') run(client.startMachine(machine.id));
-    if (action === 'recreate') run(client.recreateMachine(machine.id));
-    if (action === 'destroy') run(client.destroyMachine(machine.id));
-  };
-
   /** A repo write answers with the list it produced, so the panel shows what
    * the server holds rather than what the browser hoped for. A remove answers
    * 204, and the row the server agreed to delete is the one dropped here. */
   const addRepo = (repo: string) => {
     void client.addWorkspaceRepo(workspaceId, { repo })
-      .then((response) => { setRepos(response.repos); setError(null); })
-      .catch((caught: Error) => setError(caught.message));
+      .then((response) => { setRepos(response.repos); })
+      .catch((caught) => reportError(caught, {
+        title: 'Couldn’t add repository',
+        action: `Adding ${repo} to ${workspace.title}.`,
+        workspaceId,
+      }));
   };
 
   const removeRepo = (repo: string) => {
     void client.removeWorkspaceRepo(workspaceId, repo)
       .then(() => {
         setRepos((current) => current.filter((entry) => entry.repo !== repo));
-        setError(null);
       })
-      .catch((caught: Error) => setError(caught.message));
+      .catch((caught) => reportError(caught, {
+        title: 'Couldn’t remove repository',
+        action: `Removing ${repo} from ${workspace.title}.`,
+        workspaceId,
+      }));
   };
 
   const changeMachineType = (member: WorkspaceMemberView, machineTypeId: string) => {
     // A machine that does not exist has no type to change; the row's type
     // select only writes once there is a VM behind it.
     if (member.machine === null) {
-      setError('This member has no machine yet, so there is no type to change.');
+      reportError(new Error('This member has no machine yet, so there is no type to change.'), {
+        title: 'Couldn’t change machine type',
+        action: `${member.name}’s machine in ${workspace.title}.`,
+        workspaceId,
+      });
       return;
     }
     setPendingTypeChange({ member, machineTypeId });
@@ -559,22 +534,29 @@ export function WorkspaceDetailsDialog({
                   <h2 className="cfg-title">Who has access</h2>
                 </div>
                 <WorkspaceMembersEditor
-                mode={{
-                  kind: 'live',
-                  members: workspace.members,
-                  readOnly: !canManage,
-                  ownerMembershipId: workspace.ownerMembershipId,
-                  onAdd: (input) => run(client.addWorkspaceMember(workspace.id, addMember(input))),
-                  onRoleChange: (membershipId, role: WorkspaceMemberRole) =>
-                    run(client.updateWorkspaceMember(workspace.id, membershipId, { role })),
-                  onMachineTypeChange: changeMachineType,
-                  onMachineAction: machineAction,
-                  onRemove: (member) =>
-                    run(client.removeWorkspaceMember(workspace.id, member.membershipId)),
-                }}
-                orgMembers={orgMembers}
-                machines={machines}
-                defaultMachineTypeId={workspace.defaultMachineTypeId}
+                  mode={{
+                    kind: 'live',
+                    members: optimistic.displayedMembers,
+                    readOnly: !canManage,
+                    ownerMembershipId: workspace.ownerMembershipId,
+                    pendingMembershipIds: optimistic.pendingMembershipIds,
+                    pendingMachineActions: optimistic.pendingMachineActions,
+                    onAdd: optimistic.addWorkspaceMember,
+                    onRoleChange: (membershipId, role: WorkspaceMemberRole) => run(
+                      client.updateWorkspaceMember(workspace.id, membershipId, { role }),
+                      {
+                        title: 'Couldn’t change member role',
+                        action: `Updating a member in ${workspace.title}.`,
+                        workspaceId,
+                      },
+                    ),
+                    onMachineTypeChange: changeMachineType,
+                    onMachineAction: optimistic.machineAction,
+                    onRemove: optimistic.removeWorkspaceMember,
+                  }}
+                  orgMembers={orgMembers}
+                  machines={machines}
+                  defaultMachineTypeId={workspace.defaultMachineTypeId}
                   autoFocusAdd={focusAddMember}
                 />
               </div>
@@ -584,9 +566,22 @@ export function WorkspaceDetailsDialog({
             <CredentialsTab
               credentials={workspace.credentials}
               canManage={canManage}
-              onPut={(input) => run(client.putWorkspaceCredential(workspace.id, input))}
-              onRevoke={(name) => run(client.revokeWorkspaceCredential(workspace.id, name))}
+              onPut={(input) => run(client.putWorkspaceCredential(workspace.id, input), {
+                title: 'Couldn’t save credential',
+                action: `Saving ${input.name} in ${workspace.title}.`,
+                workspaceId,
+              })}
+              onRevoke={(name) => run(client.revokeWorkspaceCredential(workspace.id, name), {
+                title: 'Couldn’t revoke credential',
+                action: `Revoking ${name} from ${workspace.title}.`,
+                workspaceId,
+              })}
               onImport={importCredentials}
+              onImportError={(caught) => reportError(caught, {
+                title: 'Couldn’t import credentials',
+                action: `Importing credentials into ${workspace.title}.`,
+                workspaceId,
+              })}
             />
           )}
           {tab === 'settings' && (
@@ -596,7 +591,11 @@ export function WorkspaceDetailsDialog({
               machines={machines}
               repos={repos}
               canManage={canManage}
-              onSave={(input) => run(client.updateWorkspace(workspaceId, input))}
+              onSave={(input) => run(client.updateWorkspace(workspaceId, input), {
+                title: 'Couldn’t save workspace settings',
+                action: `Saving settings for ${workspace.title}.`,
+                workspaceId,
+              })}
               onAddRepo={addRepo}
               onRemoveRepo={removeRepo}
             />
@@ -624,12 +623,18 @@ export function WorkspaceDetailsDialog({
           confirmLabel="Yes, change the type"
           onCancel={() => setPendingTypeChange(null)}
           onConfirm={() => {
-            const machine = pendingTypeChange.member.machine;
+            const change = pendingTypeChange;
+            const machine = change.member.machine;
             setPendingTypeChange(null);
             if (machine === null) return;
-            run(client.setMachineType(machine.id, {
-              machineTypeId: pendingTypeChange.machineTypeId,
-            }));
+            optimistic.runMachineAction(
+              change.member,
+              'recreate',
+              () => client.setMachineType(machine.id, {
+                machineTypeId: change.machineTypeId,
+              }).then(({ machine: updated }) => updated),
+              'Couldn’t change machine type',
+            );
           }}
         />
       )}

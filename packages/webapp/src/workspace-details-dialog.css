@@ -66,14 +66,17 @@
 .workspace-member-remove { width: 24px; height: 24px; border: 0; border-radius: 50%; color: var(--faint); background: transparent; font-size: 15px; }
 .workspace-member-remove:hover,
 .workspace-member-remove:focus-visible { color: var(--ansi-red); background: var(--hover); }
+.workspace-member-remove:disabled { cursor: not-allowed; opacity: .5; }
 
-/* The machine state, in the vocabulary of MachineState. Provisioning and
- * destroying are the two that are going somewhere, so they share a colour. */
+/* Provisioning and destroying are the wire states that are going somewhere.
+ * The browser-only pending chip also covers starting, stopping and recreating,
+ * whose transitions have no distinct MachineState value. */
 .machine-chip { padding: 2px 7px; border: 1px solid var(--rule); border-radius: var(--r-pill); color: var(--faint); font-size: 10px; text-transform: capitalize; white-space: nowrap; }
 .machine-chip--running { border-color: color-mix(in oklab, var(--ansi-green) 55%, var(--rule)); color: var(--ansi-green); }
 .machine-chip--error { border-color: color-mix(in oklab, var(--ansi-red) 55%, var(--rule)); color: var(--ansi-red); }
 .machine-chip--provisioning,
-.machine-chip--destroying { border-color: color-mix(in oklab, var(--accent) 55%, var(--rule)); color: var(--accent); }
+.machine-chip--destroying,
+.machine-chip--pending { border-color: color-mix(in oklab, var(--accent) 55%, var(--rule)); color: var(--accent); }
 
 .workspace-credential-rows { border-top: 1px solid var(--rule); }
 .workspace-credential-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 48px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }

@@ -142,6 +142,7 @@ export function ShellDialogs({
           workspace={machineWorkspace}
           membershipId={viewer?.membership.id ?? null}
           listMachineTypes={listMachineTypes}
+          refreshWorkspaces={refreshWorkspaces}
           onClose={onCloseMachine}
         />
       )}
