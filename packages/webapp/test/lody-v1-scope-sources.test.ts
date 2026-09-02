@@ -37,7 +37,7 @@ const read = (path: string): string => readFileSync(path, "utf8");
 const ourSource = (file: string): string => read(join(lodySrc, file));
 
 describe("the v1 scope constant", () => {
-  it("still cuts all four groups", () => {
+  it("still cuts every group", () => {
     // A flip is a product decision, not a refactor. It fails here first.
     expect(LODY_V1_SCOPE).toEqual({
       gitHubIntegration: false,
@@ -45,6 +45,7 @@ describe("the v1 scope constant", () => {
       keyboardShortcuts: false,
       cloudSurfaces: false,
       languageService: false,
+      connectionStatus: false,
     });
   });
 
@@ -61,6 +62,7 @@ describe("the v1 scope constant", () => {
       keyboardShortcutsAvailable: false,
       hideLanguageServiceActions: true,
       hideTeamScope: true,
+      hideConnectionStatus: true,
     });
   });
 });
@@ -81,11 +83,12 @@ describe("router.tsx hands the suppression to all three mounted components", () 
     expect(router).toContain("const V1 = lodyV1SuppressionProps();");
   });
 
-  it("gives ChatLanding the hint and Role suppressions", () => {
+  it("gives ChatLanding the hint, Role and connection suppressions", () => {
     const start = router.indexOf("<ChatLanding");
     const landing = router.slice(start, router.indexOf("<SessionDetail"));
     expect(landing).toContain("hideProductHints={V1.hideProductHints}");
     expect(landing).toContain("hideAgentRoles={V1.hideAgentRoles}");
+    expect(landing).toContain("hideConnectionStatus={V1.hideConnectionStatus}");
   });
 
   it("gives ArchiveView the team-scope suppression, and no prop for the PR badge", () => {
@@ -107,6 +110,8 @@ describe("router.tsx hands the suppression to all three mounted components", () 
       "keyboardShortcutsAvailable",
       // Seam patch 10's one suppression, wired the same way.
       "hideLanguageServiceActions",
+      // Seam patch 15's, likewise.
+      "hideConnectionStatus",
     ]) {
       expect(detail, `SessionDetail receives ${prop}`).toContain(`${prop}={V1.${prop}}`);
     }
@@ -311,5 +316,62 @@ describe("seam patches 13 and 14 are declared where a merge agent reads them", (
     expect(read(join(vendorSrc, "components/archive/archive-view.tsx"))).toContain(
       "useAppCapability('githubIntegration')",
     );
+  });
+});
+
+describe("seam patch 15 is declared where a merge agent reads it", () => {
+  const patches = read(join(repoRoot, "vendor/lody/BLITZ-PATCHES.md"));
+
+  it("names the seam and every file it touches", () => {
+    expect(patches).toContain("### 15. The host owns connectivity");
+    for (const file of [
+      "components/sessions/session-status-strip.tsx",
+      "components/sessions/session-chat-interface.tsx",
+      "components/sessions/session-detail.tsx",
+      "components/sessions/session-file-content-view.tsx",
+      "components/chat/chat-landing.tsx",
+    ]) {
+      expect(patches, `seam patch 15 declares ${file}`).toContain(file);
+    }
+  });
+
+  it("declares the one prop on every level that carries it", () => {
+    for (const file of [
+      "components/sessions/session-chat-interface.tsx",
+      "components/sessions/session-detail.tsx",
+      "components/sessions/session-file-content-view.tsx",
+      "components/chat/chat-landing.tsx",
+    ]) {
+      expect(read(join(vendorSrc, file)), `${file} declares hideConnectionStatus`).toContain(
+        "hideConnectionStatus?: boolean;",
+      );
+    }
+    // The resolver takes the flag by its own name, because it is the one place
+    // that has to distinguish a connection state from `machine-removed`.
+    expect(read(join(vendorSrc, "components/sessions/session-status-strip.tsx"))).toContain(
+      "connectionStatusHidden?: boolean;",
+    );
+  });
+
+  it("leaves the rail's ConnectionPill to seam patch 2's header suppression", () => {
+    // The pill lives inside `LoroSidebar`'s workspace-identity header. If a
+    // future rail stops hiding that header, the pill comes back and this seam
+    // has no prop for it — which is what this assertion is here to catch.
+    const rail = ourSource("SessionRailSidebar.tsx");
+    expect(rail, "the rail still hides the header the pill renders in").toContain("hideHeader");
+    expect(rail, "the rail gives the pill no state either").not.toContain("connectionUiState");
+    expect(rail, "the rail gives the pill no state either").not.toContain("workspaceSyncing");
+  });
+
+  it("mounts no upstream layout, so the stuck-connection banner has no host", () => {
+    // `StuckConnectionBannerContainer` mounts once, in `MainLayout`. We mount
+    // pages, never upstream's roots — the same reason seam patch 15 declares no
+    // hunk for it.
+    expect(read(join(vendorSrc, "components/main-layout.tsx"))).toContain(
+      "StuckConnectionBannerContainer",
+    );
+    for (const file of readdirSync(lodySrc).filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))) {
+      expect(ourSource(file), `${file} mounts no upstream layout`).not.toContain("MainLayout");
+    }
   });
 });

@@ -1224,6 +1224,174 @@ patch 2's. The two new ones are seam patch 14's:
 hunks 1-5 and keep upstream's. If upstream gives the archive page a
 single-member answer of its own, drop hunks 6-12 and pass nothing.
 
+### 15. The host owns connectivity, so Lody must not narrate it (2026-09-02)
+
+**One optional prop, eighteen hunks in five files, and it is a boundary rather
+than a scope cut.** BlitzOS surfaces connectivity itself. The shell footer's left slot
+carries one sentence built by `packages/webapp/src/shell/workspace-status-line.ts`
+— `workspace running · box unreachable` when the machine runs and the browser
+cannot reach its gateway, the lifecycle word otherwise — and
+`packages/webapp/src/box-gateway-health.ts` is the probe behind it. That sentence
+is true about the WHOLE workspace: the terminal, the files, the previews and the
+Lody surface all go through the same gateway.
+
+Lody, mounted inside that shell, tells the same story again from a narrower
+vantage and in different words. The two do not agree, because they cannot: a
+member reading `You are offline. Reconnect to sync.` beside `workspace running`
+learns nothing about which one to believe, and a spinner that says the session
+document is catching up is a fact about a room, not about the box. The ruling is
+that the host says it and the vendored surface says nothing.
+
+| Surface | Where | What renders without this patch |
+|---|---|---|
+| The composer status chip, `browser-offline` | `session-status-strip.tsx:62` through `StatusChip` in the session info bar | `You are offline. Reconnect to sync.` (QA row IC64) |
+| The same chip, `machine-offline` | the same slot | `Machine is offline` / `{{machineName}} is offline` |
+| The info bar's ambient catch-up spinner | `session-info-bar.tsx:339` | `SessionSyncingIndicator`, pinned to the bar's right edge (IC65) |
+| The mobile session header's catch-up spinner | `session-detail.tsx`'s `MobileProjectInfo` | the same indicator beside the session title |
+| The page header's spinner and offline cloud glyph | `SessionProjectInfo` in `session-chat-interface.tsx` | unreachable from BlitzOS today — the page mounts every chat surface with `hideHeader: true` — and gated anyway, so the prop means one thing everywhere |
+| The file viewer's status bar | `session-file-content-view.tsx:1533` | an `Offline` cloud glyph titled `Machine is offline`, beside the save and live-sync items |
+| The mobile home connection banner | `chat-landing.tsx:6300` | `连接中… / 正在重连… / 离线 / 已连接`, which upstream's own comment calls a mirror of the desktop `ConnectionPill` |
+
+**WHAT THIS PATCH DELIBERATELY LEAVES ALONE**, and each one is a decision:
+
+- **`machine-removed` keeps its chip.** `This machine was removed from the
+  workspace. Messages can no longer be sent.` is not connection state — it is a
+  membership fact, and it BLOCKS SENDING. Suppressing it would leave a member
+  with a dead composer and no sentence anywhere explaining why; the footer says
+  nothing about it, because the footer is about reachability.
+- **The file viewer's save and live-sync items stay.** `Saved` / `Unsaved` /
+  `Save failed` / `Live sync delayed` are per-file operation feedback about an
+  edit the member just made, not ambient connectivity. Only the `machine-offline`
+  item of that bar answers the prop.
+- **Every message that REPLACES content stays.** `sessions.codeSession.connecting`
+  — "Connecting to code session…" in both `session-file-content-view.tsx` and
+  `session-file-quick-open.tsx` — `sessions.changes.syncing` ("Syncing changes…",
+  `session-changes-sidebar.tsx`) and `session-file-error-state.tsx`'s
+  `temporarily-unavailable` panel are what a panel draws INSTEAD of its data.
+  Each explains one thing the member asked for, at the place they asked for it.
+  Suppressing them leaves a blank panel, and the footer sentence cannot fill it.
+- **`sessions.externalHistorySyncing`** ("Syncing {{provider}} history") is an
+  agent-history import, not transport, and **`sessions.activity.codexRetrying`**
+  ("Connection interrupted, Codex is retrying", `ai-gui/view.tsx`) is turn data
+  the agent published. Neither is the browser's link to the box.
+- **`chat.localGitStateMachineOffline`** — "Target machine is offline. Start the
+  CLI on that machine to load branches." — stays, for the same reason as the
+  panels: it is why one branch list failed to load. Its second sentence is wrong
+  for a box and belongs to a wrong-product sweep, not to this one.
+- **The mobile chat filter's `Offline` bucket**
+  (`chat.mobileHome.filters.running.offline`) is a filter category over sessions,
+  not a report about this member's connection.
+- **The `ConnectionPill` needed no hunk.** It renders inside `LoroSidebar`'s
+  workspace-identity header, and `packages/webapp/src/lody/SessionRailSidebar.tsx`
+  already passes seam patch 2's `hideHeader`. Our rail also passes neither
+  `connectionUiState` nor `workspaceSyncing`, so the pill has no state to draw
+  even without that. Pinned rather than patched.
+- **`StuckConnectionBannerContainer` needed no hunk.** It mounts once in
+  `MainLayout`, and BlitzOS mounts `ChatLanding`, `SessionDetail` and
+  `ArchiveView` directly. Pinned rather than patched.
+- **Two more render nothing here, and are pinned rather than patched.**
+  `SessionListRow.isOffline` (`session-list.tsx:146`) is a field of the row type
+  that no renderer in that file reads, and our rail never sets it; and every
+  settings screen that prints Online / Offline sits behind the twenty stubbed
+  settings routes in `packages/webapp/src/lody/router.tsx`.
+
+**ONE PROP, FRAMED FOR ANY EMBEDDING HOST.** `hideConnectionStatus` says "this
+surface is embedded in a host that reports connectivity itself"; it is not
+BlitzOS-shaped and needs no capability. Every hunk defaults to today's behaviour
+and no upstream call site passes it. Upstream has no gate to reuse here: unlike
+`githubIntegration`, there is no capability that means "somebody else draws the
+status bar".
+
+#### The hunks
+
+Line numbers are the vendored tree's BEFORE this patch, except for
+`session-detail.tsx`, which is pinned by `packages/webapp/test/upstream-baseline/`
+and is numbered against that baseline.
+
+`packages/components/src/components/sessions/session-status-strip.tsx` — the
+single point every one of these states resolves through
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 34 | `export function resolveSessionStatusStripState(args: {` | adds `connectionStatusHidden?: boolean` to the argument type, with the doc comment that says when a host passes it |
+| 2 | 40, 42 | `if (!args.browserOnline) return { kind: 'browser-offline' };` and `if (args.machineOnlineStatus === 'offline') {` | both answer the flag. The `machine-removed` branch between them does NOT |
+
+Hunk 2 is why the rest of the chip is untouched: `StatusChip` renders `null` for
+a `null` state, so gating the resolver takes the cluster chip and the stage chip
+together, on desktop and on mobile.
+
+`packages/components/src/components/sessions/session-chat-interface.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 3 | 1774 | `hideAgentRoles?: boolean;` in `SessionChatInterfaceProps` (seam patch 7's own anchor) | declares `hideConnectionStatus?: boolean` |
+| 4 | 1947 | `hideAgentRoles = false,` in the destructuring | defaults it to `false` |
+| 5 | 2503, 2509 | the `resolveSessionStatusStripState` memo body and its dependency list | passes `connectionStatusHidden: hideConnectionStatus` |
+| 6 | 5677 | `isSyncing={effectiveTitleSyncing}` on `<SessionProjectInfo>` | adds `!hideConnectionStatus &&` |
+| 7 | 5678 | `isMachineOffline={sessionMachineOnlineStatus === 'offline'}` | the same term |
+| 8 | 5913 | `syncing={!isMobile && effectiveTitleSyncing}` on `<SessionInfoBar>` | the same term |
+
+`packages/components/src/components/sessions/session-detail.tsx` (pinned)
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 9 | 666 | `onMobileBack,` in the destructuring (seam patch 10's own anchor) | defaults `hideConnectionStatus` to `false` |
+| 10 | 672 | `onMobileBack?: () => void;` in the inline props type | declares `hideConnectionStatus?: boolean` |
+| 11 | 1110 | `    activeSessionTabId !== null && isSyncingRoomSyncState(activeSessionDocSyncState),` | adds `!hideConnectionStatus &&`, which takes the mobile header spinner and the `titleSyncing` override together |
+| 12 | 4524 | `preferNativeMarkdownSelection={isMobile}` on `<SessionFileContentView>` (seam patch 10's own anchor) | passes `hideConnectionStatus` |
+| 13 | 5552 | `hideHeader: true,` in the shared chat-surface props builder | forwards `hideConnectionStatus` to every chat surface the page mounts |
+
+Hunk 11 is the ONE line this patch removes from the baseline, and it is declared
+in `packages/webapp/test/lody-surface-tabs.test.tsx`'s anchor table with the
+others. Hunks 9, 10, 12 and 13 add lines and remove none.
+
+`packages/components/src/components/sessions/session-file-content-view.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 14 | 170, 223 | `lspAvailable?: boolean;` and `lspAvailable = true,` (seam patch 10's own anchors) | declares `hideConnectionStatus?: boolean`, defaulted `false` |
+| 15 | 1533 | `machineOffline={` on `<SessionFileRealtimeStatusBar>` | answers it, so the bar keeps its save and live-sync items and drops the offline glyph |
+
+`packages/components/src/components/chat/chat-landing.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 16 | 394 | `hideProductHints?: boolean;` in `ChatLandingProps` (seam patch 7's own anchor) | declares `hideConnectionStatus?: boolean` |
+| 17 | 578 | `hideProductHints = false,` in the destructuring | defaults it to `false` |
+| 18 | 6300 | `connectionUiState={mobileHomeConnectionUiState}` on `<MobileHomeScreen>` | passes `undefined` when hidden |
+
+Hunk 18 needs no change in `mobile-home-screen.tsx`: that prop is already
+optional there and already defaults to `'online'`, the one state at which the
+banner does not render. The atom keeps its value, so flipping the prop back
+restores the banner with no other edit.
+
+Our side is the same constant seam patches 7, 10 and 14 read,
+`packages/webapp/src/lody/v1-scope.ts`: a sixth flag, `connectionStatus`, turns
+into `hideConnectionStatus` in `lodyV1SuppressionProps()`, and `router.tsx`
+passes it to `<SessionDetail>` and `<ChatLanding>`. The flag is not a "not in v1"
+decision like the other five — it is an ownership boundary — so its row in that
+file says so, and flipping it is what a host that stops reporting connectivity
+would do.
+
+`packages/webapp/test/lody-connection-status.test.tsx` asserts every surface from
+both sides: dark with the suppression while the underlying state is ACTIVE, and
+present without it. The same file pins the BlitzOS footer sentence, so a change
+that took Lody's status away and dropped ours too fails there.
+
+Verify this divergence by diffing OUR subtree against the upstream commit it was
+imported from, exactly as seam patch 1 describes. **Expected after seam patch 15:
+one more file than seam patch 14's twenty-eight — TWENTY-NINE.** The new one is
+`components/sessions/session-status-strip.tsx`; the other four were already
+diverged by seam patches 7 and 10.
+
+**Merge conflict drill.** Every hunk is one term added to a boolean, or one
+optional field added to a props type. If upstream restructures a call site,
+re-apply at wherever it went. If upstream grows its own way for an embedding host
+to own connectivity — a capability, a provider, a prop of its own — drop all
+eighteen hunks and answer that instead from `v1-scope.ts`. If the status strip
+gains a FOURTH state, decide it explicitly: connectivity answers the flag,
+anything about membership or a blocked action does not.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.

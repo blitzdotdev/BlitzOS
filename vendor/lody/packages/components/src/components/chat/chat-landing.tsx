@@ -398,6 +398,15 @@ interface ChatLandingProps {
    * session composer.
    */
   hideAgentRoles?: boolean;
+  /**
+   * Drop the mobile home's connection banner.
+   *
+   * For a host that reports connectivity itself. That banner mirrors the desktop
+   * sidebar's `ConnectionPill` on purpose, so a host embedding this landing under
+   * its own status line gets the same outage narrated twice, in two vocabularies.
+   * Off by default, so every upstream call site keeps the banner.
+   */
+  hideConnectionStatus?: boolean;
   resetDraftKey?: string;
   resetDraftOnKeyChange?: boolean;
 }
@@ -577,6 +586,7 @@ function WorkspaceChatLanding({
   onSelectionUrlSync,
   hideProductHints = false,
   hideAgentRoles = false,
+  hideConnectionStatus = false,
   resetDraftKey,
   resetDraftOnKeyChange = true,
 }: ChatLandingProps) {
@@ -6297,7 +6307,7 @@ function WorkspaceChatLanding({
           inboxLoading={showMobileInbox && inboxRows === undefined}
           onInboxItemSelect={handleMobileInboxItemSelect}
           onInboxItemDismiss={handleMobileInboxItemDismiss}
-          connectionUiState={mobileHomeConnectionUiState}
+          connectionUiState={hideConnectionStatus ? undefined : mobileHomeConnectionUiState}
           isInitialDataLoading={isInitialDataLoading}
           onPullToRefresh={handleMobileHomePullToRefresh}
           selectedTab={effectiveMobileHomeTab}

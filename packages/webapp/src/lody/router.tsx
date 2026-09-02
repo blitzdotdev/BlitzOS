@@ -211,6 +211,12 @@ function ChatRoute() {
       // button that flips an atom nothing renders (S9).
       hideProductHints={V1.hideProductHints}
       hideAgentRoles={V1.hideAgentRoles}
+      // Seam patch 15. On a narrow viewport this landing renders Lody's mobile
+      // home, whose connection banner mirrors the desktop `ConnectionPill`:
+      // "Connecting… / Reconnecting… / Offline". The BlitzOS footer already says
+      // whether the box is reachable, for the whole workspace rather than for
+      // this surface.
+      hideConnectionStatus={V1.hideConnectionStatus}
     />
   );
   // No shell around this mount contributes tabs — a headless render, a router
@@ -283,6 +289,15 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           // service, so both answered every identifier with "Host language
           // service does not support this file".
           hideLanguageServiceActions={V1.hideLanguageServiceActions}
+          // Seam patch 15. The page's own connection story goes dark: the
+          // composer status chip's offline states (IC64, "You are offline.
+          // Reconnect to sync."), the catch-up spinners in the info bar and the
+          // mobile header (IC65), and the file viewer's offline glyph. The
+          // footer's `workspace running · box unreachable` covers all of it, and
+          // covers the terminal and the files with it. The chip's
+          // "machine removed" state is NOT taken: it blocks sending, and the
+          // footer says nothing about it.
+          hideConnectionStatus={V1.hideConnectionStatus}
           {...hostTabs}
         />
       </AppThemeShell>
