@@ -57,7 +57,7 @@ describe("workspaceCode", () => {
 });
 
 describe("workspace strip", () => {
-  it("draws one tile per workspace, ringing the active one", async () => {
+  it("draws one tile per workspace with an accessible Discord-style selection state", async () => {
     const view = await render(strip({
       workspaces: [
         workspace(),
@@ -67,20 +67,22 @@ describe("workspace strip", () => {
     const tiles = [...view.container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="Workspaces"] button',
     )];
-    expect(tiles.map(({ textContent }) => textContent)).toEqual(["DT", "EN", ""]);
+    expect(tiles.map(({ textContent }) => textContent?.trim())).toEqual(["DT", "EN", ""]);
     expect(tiles[0]?.getAttribute("aria-current")).toBe("page");
     expect(tiles[1]?.getAttribute("aria-current")).toBeNull();
-    expect(tiles[1]?.className).toContain("shell-wtile--off");
+    expect(tiles[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(tiles[1]?.getAttribute("aria-selected")).toBe("false");
+    expect(tiles[0]?.querySelector(".shell-wtile__indicator")?.getAttribute("aria-hidden")).toBe("true");
     expect(tiles[2]?.getAttribute("aria-label")).toBe("Create workspace");
-    // Each workspace tile wears its own solid pastel; the create tile keeps the
-    // dashed outline the stylesheet gives it.
+    // Each workspace icon wears its own solid pastel; the button is now only
+    // the interaction and accessibility layer around the icon and indicator.
     // jsdom normalizes hsl() to rgb() on read-back; assert solid + distinct.
-    expect(tiles[0]?.style.background).toMatch(/^rgb\(/u);
-    expect(tiles[1]?.style.background).toMatch(/^rgb\(/u);
-    expect(tiles[0]?.style.background).not.toContain("gradient");
-    expect(tiles[0]?.style.background).not.toBe(tiles[1]?.style.background);
-    expect(tiles[0]?.style.background).not.toBe(tiles[1]?.style.background);
-    expect(tiles[2]?.style.background).toBe("");
+    const icons = tiles.slice(0, 2).map((tile) => tile.querySelector<HTMLElement>(".shell-wtile__icon"));
+    expect(icons[0]?.style.background).toMatch(/^rgb\(/u);
+    expect(icons[1]?.style.background).toMatch(/^rgb\(/u);
+    expect(icons[0]?.style.background).not.toContain("gradient");
+    expect(icons[0]?.style.background).not.toBe(icons[1]?.style.background);
+    expect(tiles[2]?.querySelector<HTMLElement>(".shell-wtile__icon")?.style.background).toBe("");
     await view.unmount();
   });
 

@@ -35,6 +35,7 @@
 }
 
 .shell-strip__tiles,
+.shell-strip__tree,
 .shell-strip__surfaces {
   display: flex;
   min-height: 0;
@@ -42,6 +43,9 @@
   align-items: center;
   gap: 6px;
 }
+
+.shell-strip__tiles,
+.shell-strip__tree { width: 100%; }
 
 .shell-strip__tiles {
   overflow-y: auto;
@@ -54,55 +58,66 @@
 .shell-wtile {
   position: relative;
   display: grid;
-  /* 35px is the strip's tile footprint (user ruling 2026-08-29). It was a
-     `--strip-tile` custom property while the org mark had to match it; the
-     tile is the only thing this size now, so it says so directly. */
-  width: 35px;
+  width: 100%;
   height: 35px;
   flex: none;
   place-items: center;
   border: 0;
-  border-radius: 10px;
   color: var(--muted);
-  background: var(--hover);
+  background: transparent;
   font: 700 13px/1 var(--font-ui);
   cursor: pointer;
 }
 
-.shell-wtile:hover:not(:disabled) { color: var(--ink); }
+.shell-wtile__indicator {
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  width: 8px;
+  height: 0;
+  border-radius: 0 4px 4px 0;
+  background: var(--ink);
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: height 200ms ease-out, opacity 200ms ease-out;
+}
 
-.shell-wtile:focus-visible {
+.shell-wtile__icon {
+  display: grid;
+  width: 35px;
+  height: 35px;
+  place-items: center;
+  border-radius: 10px;
+  transition: color 200ms ease-out;
+}
+
+.shell-wtile:hover:not(:disabled) .shell-wtile__indicator {
+  height: 18px;
+  opacity: 1;
+}
+
+.shell-wtile:hover:not(:disabled) .shell-wtile__icon,
+.shell-wtile[aria-selected='true'] .shell-wtile__icon { color: var(--ink); }
+
+.shell-wtile[aria-selected='true'] .shell-wtile__indicator {
+  height: 32px;
+  opacity: 1;
+}
+
+.shell-wtile:focus-visible { outline: none; }
+
+.shell-wtile:focus-visible .shell-wtile__icon {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-/* Selection is the bar at the strip's edge, never a ring: a ring behind a
-   pastel tile reads as a ghost box (user ruling 2026-08-29). */
-.shell-wtile--on { color: var(--ink); }
-.shell-wtile--on::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: -7px;
-  width: 3px;
-  height: 70%;
-  border-radius: 0 3px 3px 0;
-  background: var(--ink);
-  transform: translateY(-50%);
-}
-
-.shell-wtile--off {
+.shell-wtile__icon--new {
   border: 1px dashed var(--rule);
   color: var(--faint);
   background: transparent;
 }
 
-.shell-wtile--off.shell-wtile--on {
-  color: var(--ink);
-  background: color-mix(in oklab, var(--accent) 20%, var(--paper));
-}
-
-.shell-wtile:disabled { cursor: default; }
+.shell-wtile:disabled { cursor: default; opacity: .58; }
 
 .shell-wtile__plus { width: 14px; height: 14px; }
 
@@ -535,7 +550,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .shell-nav { transition: none; }
+  .shell-nav,
+  .shell-wtile__indicator,
+  .shell-wtile__icon { transition: none; }
 }
 
 /* The tile's context menu, in the tab strip's own menu chrome

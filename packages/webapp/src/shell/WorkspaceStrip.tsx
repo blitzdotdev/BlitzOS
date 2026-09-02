@@ -126,35 +126,49 @@ export function WorkspaceStrip({
       >×</button>
 
       <nav className="shell-strip__tiles" aria-label="Workspaces">
-        {workspaces.map((workspace) => {
-          const active = workspace.canControl && workspace.id === activeWorkspaceId;
-          const offline = workspace.lifecycleStatus !== 'running';
-          const owner = workspace.canControl ? null : workspace.owner?.name ?? 'a teammate';
-          return (
-            <button
-              className={`shell-wtile${active ? ' shell-wtile--on' : ''}${
-                offline ? ' shell-wtile--off' : ''}`}
-              type="button"
-              key={workspace.id}
-              aria-label={workspace.title}
-              aria-current={active ? 'page' : undefined}
-              disabled={!workspace.canControl}
-              style={workspaceTileStyle(workspace.id)}
-              title={owner === null
-                ? `${workspace.title} — ${stateLabel(workspace)}`
-                : `${workspace.title} — shared by ${owner}`}
-              onClick={() => onSelectWorkspace(workspace.id)}
-              onContextMenu={(event) => openTileMenu(event, workspace)}
-            >{workspaceCode(workspace.title)}</button>
-          );
-        })}
+        <div className="shell-strip__tree" role="tree" aria-label="Workspaces">
+          {workspaces.map((workspace) => {
+            const active = workspace.canControl && workspace.id === activeWorkspaceId;
+            const offline = workspace.lifecycleStatus !== 'running';
+            const owner = workspace.canControl ? null : workspace.owner?.name ?? 'a teammate';
+            return (
+              <button
+                className="shell-wtile"
+                type="button"
+                key={workspace.id}
+                role="treeitem"
+                aria-label={workspace.title}
+                aria-selected={active}
+                aria-current={active ? 'page' : undefined}
+                disabled={!workspace.canControl}
+                title={owner === null
+                  ? `${workspace.title} — ${stateLabel(workspace)}`
+                  : `${workspace.title} — shared by ${owner}`}
+                onClick={() => onSelectWorkspace(workspace.id)}
+                onContextMenu={(event) => openTileMenu(event, workspace)}
+              >
+                <span className="shell-wtile__indicator" aria-hidden="true" />
+                <span
+                  className="shell-wtile__icon"
+                  data-workspace-status={offline ? 'offline' : 'online'}
+                  style={workspaceTileStyle(workspace.id)}
+                  aria-hidden="true"
+                >{workspaceCode(workspace.title)}</span>
+              </button>
+            );
+          })}
+        </div>
         <button
-          className="shell-wtile shell-wtile--off shell-wtile--new"
+          className="shell-wtile shell-wtile--new"
           type="button"
           aria-label="Create workspace"
           title="New workspace"
           onClick={onCreateWorkspace}
-        ><PlusGlyph className="shell-wtile__plus" /></button>
+        >
+          <span className="shell-wtile__icon shell-wtile__icon--new" aria-hidden="true">
+            <PlusGlyph className="shell-wtile__plus" />
+          </span>
+        </button>
       </nav>
 
       <div className="shell-strip__spacer" role="presentation" />
