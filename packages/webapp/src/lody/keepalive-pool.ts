@@ -1,0 +1,376 @@
+/** Pure state machine for the identity-keyed Lody surface keep-alive pool. */
+
+export const LODY_SURFACE_POOL_CAPACITY = 2;
+export const LODY_KEEPALIVE_STORAGE_KEY = "blitz.lody.keepalive";
+
+export interface LodySurfaceIdentity {
+  machineId: string;
+  lwWorkspaceId: string;
+}
+
+export type LodySurfaceKind = "owned" | "shared";
+export type LodySurfaceState = "booting" | "ready" | "active" | "hidden" | "invalid";
+
+export interface LodyKeepaliveEntry {
+  entryId: string;
+  key: LodySurfaceIdentity | null;
+  /** A URL-derived lookup hint. It is never authoritative identity. */
+  endpointFingerprint: string;
+  kind: LodySurfaceKind;
+  state: LodySurfaceState;
+  /** Bumped whenever a live surface needs a fresh platform identity check. */
+  generation: number;
+  lastUsed: number;
+  continuous: boolean;
+}
+
+export interface LodyKeepalivePool {
+  entries: readonly LodyKeepaliveEntry[];
+  activeEntryId: string | null;
+  capacity: number;
+  clock: number;
+  nextEntrySequence: number;
+}
+
+export interface LodySurfaceTarget {
+  endpointFingerprint: string;
+  kind: LodySurfaceKind;
+}
+
+export interface LodyPoolDecision {
+  pool: LodyKeepalivePool;
+  /** Entry selected by a request/activation, if that operation selects one. */
+  entryId: string | null;
+  mount: readonly string[];
+  hide: readonly string[];
+  dispose: readonly string[];
+  /** Mounted entries that must re-fetch `/lody/platform` concurrently. */
+  validate: readonly string[];
+  reused: boolean;
+}
+
+interface KeepaliveStorage {
+  getItem(key: string): string | null;
+}
+
+function emptyDecision(pool: LodyKeepalivePool, entryId: string | null): LodyPoolDecision {
+  return { pool, entryId, mount: [], hide: [], dispose: [], validate: [], reused: false };
+}
+
+function nextClock(pool: LodyKeepalivePool): number {
+  return pool.clock + 1;
+}
+
+function sameIdentity(left: LodySurfaceIdentity, right: LodySurfaceIdentity): boolean {
+  return left.machineId === right.machineId && left.lwWorkspaceId === right.lwWorkspaceId;
+}
+
+function newest(entries: readonly LodyKeepaliveEntry[]): LodyKeepaliveEntry | undefined {
+  return [...entries].sort((left, right) => right.lastUsed - left.lastUsed)[0];
+}
+
+function withoutEntries(
+  pool: LodyKeepalivePool,
+  disposed: ReadonlySet<string>,
+): LodyKeepalivePool {
+  if (disposed.size === 0) return pool;
+  return {
+    ...pool,
+    entries: pool.entries.filter((entry) => !disposed.has(entry.entryId)),
+    activeEntryId:
+      pool.activeEntryId !== null && disposed.has(pool.activeEntryId)
+        ? null
+        : pool.activeEntryId,
+  };
+}
+
+export function createLodyKeepalivePool(
+  capacity = LODY_SURFACE_POOL_CAPACITY,
+): LodyKeepalivePool {
+  if (!Number.isInteger(capacity) || capacity < 1) {
+    throw new Error("lody_keepalive_capacity_invalid");
+  }
+  return { entries: [], activeEntryId: null, capacity, clock: 0, nextEntrySequence: 1 };
+}
+
+/**
+ * Select a continuous, identity-known hidden entry by endpoint hint, or create
+ * a provisional entry. A provisional entry is never reused after it is hidden.
+ */
+export function requestLodySurface(
+  pool: LodyKeepalivePool,
+  target: LodySurfaceTarget,
+): LodyPoolDecision {
+  const active = pool.entries.find((entry) => entry.entryId === pool.activeEntryId);
+  if (
+    active !== undefined
+    && active.endpointFingerprint === target.endpointFingerprint
+    && active.kind === target.kind
+    && active.state === "active"
+  ) {
+    return { ...emptyDecision(pool, active.entryId), reused: true };
+  }
+
+  const candidate = newest(
+    pool.entries.filter(
+      (entry) =>
+        (entry.state === "hidden" || entry.state === "ready")
+        && entry.key !== null
+        && entry.continuous
+        && entry.endpointFingerprint === target.endpointFingerprint
+        && entry.kind === target.kind,
+    ),
+  );
+  if (candidate !== undefined) {
+    return { ...emptyDecision(pool, candidate.entryId), reused: true };
+  }
+
+  const clock = nextClock(pool);
+  const entryId = `lody-surface-${pool.nextEntrySequence}`;
+  const entry: LodyKeepaliveEntry = {
+    entryId,
+    key: null,
+    endpointFingerprint: target.endpointFingerprint,
+    kind: target.kind,
+    state: "booting",
+    generation: 0,
+    lastUsed: clock,
+    continuous: true,
+  };
+  return {
+    ...emptyDecision({
+      ...pool,
+      entries: [...pool.entries, entry],
+      clock,
+      nextEntrySequence: pool.nextEntrySequence + 1,
+    }, entryId),
+    mount: [entryId],
+  };
+}
+
+/** Activate one requested entry, then enforce transient-sharing and LRU rules. */
+export function activateLodySurface(
+  pool: LodyKeepalivePool,
+  entryId: string,
+): LodyPoolDecision {
+  const selected = pool.entries.find((entry) => entry.entryId === entryId);
+  if (selected === undefined || selected.state === "invalid") {
+    return emptyDecision(pool, null);
+  }
+  if (pool.activeEntryId === entryId && selected.state === "active") {
+    return { ...emptyDecision(pool, entryId), reused: true };
+  }
+
+  const clock = nextClock(pool);
+  const hide: string[] = [];
+  const dispose = new Set<string>();
+  const selectedWasRetained = selected.key !== null
+    && (selected.state === "hidden" || selected.state === "ready");
+
+  let entries = pool.entries.map((entry): LodyKeepaliveEntry => {
+    if (entry.entryId === entryId) {
+      return {
+        ...entry,
+        state: "active",
+        generation: selectedWasRetained ? entry.generation + 1 : entry.generation,
+        lastUsed: clock,
+      };
+    }
+    if (entry.entryId !== pool.activeEntryId) return entry;
+    // Shared and provisional entries are transient. They cannot become a
+    // reusable hidden cache entry, so release them at the hand-off.
+    if (entry.kind === "shared" || entry.key === null || !entry.continuous) {
+      dispose.add(entry.entryId);
+      return { ...entry, state: "invalid" };
+    }
+    hide.push(entry.entryId);
+    return { ...entry, state: "hidden" };
+  });
+
+  const activeEntry = entries.find((entry) => entry.entryId === entryId);
+  if (activeEntry === undefined) return emptyDecision(pool, null);
+
+  if (activeEntry.kind === "owned") {
+    for (const entry of entries) {
+      if (entry.entryId !== entryId && entry.kind === "shared") dispose.add(entry.entryId);
+    }
+  } else {
+    // One active shared surface may coexist only with the most recent owned
+    // surface. A second shared surface and older owned entries are discarded.
+    for (const entry of entries) {
+      if (entry.entryId !== entryId && entry.kind === "shared") dispose.add(entry.entryId);
+    }
+    const ownedToKeep = newest(
+      entries.filter((entry) => entry.kind === "owned" && !dispose.has(entry.entryId)),
+    );
+    for (const entry of entries) {
+      if (
+        entry.kind === "owned"
+        && entry.entryId !== ownedToKeep?.entryId
+        && entry.entryId !== entryId
+      ) {
+        dispose.add(entry.entryId);
+      }
+    }
+  }
+
+  entries = entries.filter((entry) => !dispose.has(entry.entryId));
+  while (entries.length > pool.capacity) {
+    const victim = [...entries]
+      .filter((entry) => entry.entryId !== entryId && entry.state === "hidden")
+      .sort((left, right) => left.lastUsed - right.lastUsed)[0];
+    if (victim === undefined) break;
+    dispose.add(victim.entryId);
+    entries = entries.filter((entry) => entry.entryId !== victim.entryId);
+  }
+
+  const nextPool: LodyKeepalivePool = {
+    ...pool,
+    entries,
+    activeEntryId: entryId,
+    clock,
+  };
+  return {
+    pool: nextPool,
+    entryId,
+    mount: [],
+    hide: hide.filter((id) => !dispose.has(id)),
+    dispose: [...dispose],
+    validate: selectedWasRetained ? [entryId] : [],
+    reused: selectedWasRetained,
+  };
+}
+
+/** Hide the current owned entry while the shell has no eligible surface target. */
+export function deactivateLodySurface(pool: LodyKeepalivePool): LodyPoolDecision {
+  if (pool.activeEntryId === null) return emptyDecision(pool, null);
+  const active = pool.entries.find((entry) => entry.entryId === pool.activeEntryId);
+  if (active === undefined) return emptyDecision({ ...pool, activeEntryId: null }, null);
+  if (active.kind === "shared" || active.key === null || !active.continuous) {
+    return {
+      ...emptyDecision(withoutEntries(pool, new Set([active.entryId])), null),
+      dispose: [active.entryId],
+    };
+  }
+  return {
+    ...emptyDecision({
+      ...pool,
+      activeEntryId: null,
+      entries: pool.entries.map((entry) =>
+        entry.entryId === active.entryId ? { ...entry, state: "hidden" } : entry),
+    }, null),
+    hide: [active.entryId],
+  };
+}
+
+/** Rekey a provisional entry, suppressing every duplicate daemon identity. */
+export function reportLodySurfaceIdentity(
+  pool: LodyKeepalivePool,
+  entryId: string,
+  key: LodySurfaceIdentity,
+): LodyPoolDecision {
+  const reporting = pool.entries.find((entry) => entry.entryId === entryId);
+  if (reporting === undefined) return emptyDecision(pool, null);
+
+  if (reporting.key !== null && !sameIdentity(reporting.key, key)) {
+    const invalidated = {
+      ...pool,
+      entries: pool.entries.map((entry): LodyKeepaliveEntry =>
+        entry.entryId === entryId ? { ...entry, state: "invalid" } : entry),
+    };
+    return {
+      ...emptyDecision(withoutEntries(invalidated, new Set([entryId])), null),
+      dispose: [entryId],
+    };
+  }
+
+  const duplicates = pool.entries.filter(
+    (entry) => entry.entryId !== entryId && entry.key !== null && sameIdentity(entry.key, key),
+  );
+  const contenders = [reporting, ...duplicates];
+  const activeContender = contenders.find((entry) => entry.entryId === pool.activeEntryId);
+  const survivor = activeContender ?? newest(contenders);
+  if (survivor === undefined) return emptyDecision(pool, null);
+  const disposed = new Set(
+    contenders.filter((entry) => entry.entryId !== survivor.entryId).map((entry) => entry.entryId),
+  );
+
+  let nextPool = withoutEntries(pool, disposed);
+  nextPool = {
+    ...nextPool,
+    entries: nextPool.entries.map((entry): LodyKeepaliveEntry => {
+      if (entry.entryId !== survivor.entryId) return entry;
+      return {
+        ...entry,
+        key,
+        continuous: true,
+        state:
+          nextPool.activeEntryId === entry.entryId
+            ? "active"
+            : entry.state === "booting"
+              ? "ready"
+              : entry.state,
+      };
+    }),
+  };
+  return {
+    ...emptyDecision(nextPool, disposed.has(entryId) ? null : survivor.entryId),
+    dispose: [...disposed],
+    reused: reporting.key !== null,
+  };
+}
+
+/**
+ * A hidden discontinuous entry is unrecoverable. An active one remains visible
+ * only long enough to complete a fresh identity validation.
+ */
+export function discontinueLodySurface(
+  pool: LodyKeepalivePool,
+  entryId: string,
+): LodyPoolDecision {
+  const entry = pool.entries.find((item) => item.entryId === entryId);
+  if (entry === undefined) return emptyDecision(pool, null);
+  if (pool.activeEntryId !== entryId || entry.state !== "active") {
+    const invalidated: LodyKeepalivePool = {
+      ...pool,
+      entries: pool.entries.map((item) =>
+        item.entryId === entryId ? { ...item, state: "invalid", continuous: false } : item),
+    };
+    return {
+      ...emptyDecision(withoutEntries(invalidated, new Set([entryId])), null),
+      dispose: [entryId],
+    };
+  }
+
+  const nextPool: LodyKeepalivePool = {
+    ...pool,
+    entries: pool.entries.map((item) =>
+      item.entryId === entryId
+        ? { ...item, continuous: false, generation: item.generation + 1 }
+        : item),
+  };
+  return {
+    ...emptyDecision(nextPool, entryId),
+    validate: [entryId],
+    reused: true,
+  };
+}
+
+/** Release every mounted entry when the region itself unmounts. */
+export function disposeLodyKeepalivePool(pool: LodyKeepalivePool): LodyPoolDecision {
+  const dispose = pool.entries.map((entry) => entry.entryId);
+  return {
+    ...emptyDecision({ ...pool, entries: [], activeEntryId: null }, null),
+    dispose,
+  };
+}
+
+/** Runtime switch: absent or inaccessible storage means retention stays on. */
+export function lodyKeepaliveEnabled(storage?: KeepaliveStorage | null): boolean {
+  try {
+    const source = storage === undefined ? globalThis.localStorage : storage;
+    return source?.getItem(LODY_KEEPALIVE_STORAGE_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}

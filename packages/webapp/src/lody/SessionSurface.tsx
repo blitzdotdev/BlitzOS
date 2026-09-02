@@ -32,11 +32,11 @@
  *   our route tree calls the same vendored hook (`router.tsx`, `WorkspaceRoute`)
  *   with the daemon's own workspace id. They are ALSO seeded above the router by
  *   `seedWorkspaceContext`, because the runtime is built from them and something
- *   above the router now waits for the runtime.
+ *   above the router now waits for the runtime. The owner also repairs the pair
+ *   when Activity runs the hidden route's cleanup.
  *
- * IT STAYS MOUNTED. The runtime owns a WebSocket, an IndexedDB repo and a WASM
- * instance, so the surface is hidden with the `hidden` attribute rather than
- * unmounted — the same rule `shell/WorkPanes.tsx` applies to ttyd sessions.
+ * IT STAYS MOUNTED. The bridge/store/runtime/provider tree remains live; React
+ * Activity hides the route DOM and disconnects route effects until reveal.
  */
 import {
   useCallback,
@@ -53,16 +53,15 @@ import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
 import { IpcClientProvider } from "@lody/components/providers/ipc-client-provider";
 import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
-import {
-  currentWorkspaceIdAtom,
-  currentWorkspaceSlugAtom,
-  setWorkspaceContextAtom,
-} from "@lody/components/atoms/workspace-context";
 import { LodyAgentAuthNotice } from "./agent-auth-notice.js";
 import { LodyAgentConfigGate } from "./agent-config-gate.js";
 import { useLodyRuntimeBootRetry } from "./use-runtime-boot-retry.js";
 import { BlitzPlatformProviders, useLodyPlatformSnapshot, type BlitzViewer } from "./platform.js";
-import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
+import {
+  fetchLodyPlatformSnapshot,
+  type LodyPlatformFetchOptions,
+  type LodyPlatformSnapshot,
+} from "./platform-snapshot.js";
 import {
   activeSessionIdFromPathname,
   createLodySessionRouter,
@@ -80,6 +79,10 @@ import { useLodySurfaceIpc, useLodySurfaceIpcLifecycle } from "./surface-ipc.js"
 import { SurfaceUnavailableNotice } from "./SurfaceLoadBoundary.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { LodySurfaceProviders, LodySurfaceThemeRoot } from "./surface-providers.js";
+import { LodyRouteActivity, LodySurfaceVisibilityRoot } from "./surface-activity.js";
+import type { LodySurfaceIdentity } from "./keepalive-pool.js";
+import { useTrackLodyRuntimeRepo } from "./surface-runtime-stats.js";
+import { seedLodySurfaceWorkspaceContext } from "./surface-workspace-context.js";
 import "./lody-surface.css";
 import "./lody-surface-shell.css";
 import "./blitz-skin.css";
@@ -172,7 +175,7 @@ export interface LodySessionSurfaceProps {
   viewer: BlitzViewer;
   /** The BlitzOS workspace title. Replaces the daemon's own "Lody". */
   workspaceTitle: string;
-  /** Hidden, not unmounted: the runtime must survive a rail click. */
+  /** Hidden route DOM over a still-mounted runtime provider stack. */
   hidden?: boolean;
   /**
    * Owns page-global compatibility, shell callbacks, rail and toast rendering.
@@ -212,6 +215,12 @@ export interface LodySessionSurfaceProps {
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
   /** Fires on every resolved navigation inside the surface. */
   onActiveSessionChange?: (sessionId: string | null) => void;
+  /** Authoritative daemon identity, reported after every validation read. */
+  onIdentity?: (identity: LodySurfaceIdentity) => void;
+  /** The captured bridge lost socket or daemon continuity. */
+  onContinuityLost?: () => void;
+  /** Non-zero generations request a fresh concurrent platform snapshot. */
+  identityValidationGeneration?: number;
   /**
    * This surface is mounted against ANOTHER member's box, for one session they
    * shared (plans/LODY-SHARING.md §10.2).
@@ -279,41 +288,6 @@ function seedLocalMachineIdentity(store: LodyAtomStore, snapshot: LodyPlatformSn
 }
 
 /**
- * Publishes the daemon's workspace into the context atoms, ABOVE the router.
- *
- * WHY IT CANNOT WAIT FOR THE ROUTE. `RuntimeProvider` reads
- * `currentWorkspaceSlugAtom` and creates NO runtime while it is null
- * (`runtime-provider.tsx:190`). Phase 3's only writer of that atom was the
- * vendored `$workspaceName` route, so the runtime's existence depended on a
- * route rendering — which is fine until something upstream of the router has to
- * wait for the runtime, and `LodyAgentConfigGate` is exactly that. Seeding here
- * breaks the cycle and states the dependency where it belongs: the surface knows
- * the workspace before it has an address.
- *
- * THE PAIR IS SET IN ONE TRANSACTION and only the ID is ever repaired.
- * `useWorkspaceContextAtoms` writes `{ slug, workspaceId: null }` in a layout
- * effect on every slug identity change and fills the id back in from its
- * `access` argument in a following effect, so the id is briefly null even with
- * §12.1's fix in place. The subscription below puts it back whenever it lands on
- * null under OUR slug — and it writes through `currentWorkspaceIdAtom`, whose
- * setter spreads the current context and therefore cannot clear the slug. The
- * slug setter is never used, for the reason `mountLodyRuntimeAtoms` states.
- *
- * A route unmount clears BOTH, so the slug check makes the repair inert there
- * rather than resurrecting a workspace the member has left.
- */
-function seedWorkspaceContext(store: LodyAtomStore, snapshot: LodyPlatformSnapshot): () => void {
-  const slug = snapshot.workspace.slug ?? "local";
-  const workspaceId = snapshot.workspace.workspaceId;
-  store.set(setWorkspaceContextAtom, { slug, workspaceId });
-  const repair = (): void => {
-    if (store.get(currentWorkspaceSlugAtom) !== slug) return;
-    if (store.get(currentWorkspaceIdAtom) === null) store.set(currentWorkspaceIdAtom, workspaceId);
-  };
-  return store.sub(currentWorkspaceIdAtom, repair);
-}
-
-/**
  * Seeds `userAtom` with the daemon's own identity, decorated by our auth.
  *
  * The `id` is the daemon's and must stay so: `createLocalCloudPort`'s access
@@ -339,11 +313,43 @@ function seedCurrentUser(
 function SessionSurfaceContent(props: LodySessionSurfaceProps) {
   const { endpoints, viewer, workspaceTitle, onApiReady, onActiveSessionChange } = props;
   const active = props.active !== false;
-  const localBridge = useLodySurfaceIpc(endpoints);
+  const localBridge = useLodySurfaceIpc(endpoints, props.onContinuityLost);
   const { bridge, ipcClient } = localBridge;
   useLodySurfaceIpcLifecycle(localBridge, active);
   const { snapshot, error } = useLodyPlatformSnapshot(endpoints.platformUrl, endpoints.fetchImpl);
   const store = useMemo(() => createStore(), []);
+  useTrackLodyRuntimeRepo(store);
+
+  const onIdentityRef = useRef(props.onIdentity);
+  onIdentityRef.current = props.onIdentity;
+  useEffect(() => {
+    if (snapshot === null) return;
+    onIdentityRef.current?.({
+      machineId: snapshot.machineId,
+      lwWorkspaceId: snapshot.workspace.workspaceId,
+    });
+  }, [snapshot]);
+
+  const validationGeneration = props.identityValidationGeneration ?? 0;
+  useEffect(() => {
+    if (!active || validationGeneration === 0) return undefined;
+    const controller = new AbortController();
+    const options: LodyPlatformFetchOptions = { signal: controller.signal };
+    if (endpoints.fetchImpl !== undefined) options.fetchImpl = endpoints.fetchImpl;
+    void fetchLodyPlatformSnapshot(endpoints.platformUrl, options)
+      .then((validated) => {
+        if (validated === null || controller.signal.aborted) return;
+        onIdentityRef.current?.({
+          machineId: validated.machineId,
+          lwWorkspaceId: validated.workspace.workspaceId,
+        });
+      })
+      .catch(() => {
+        // The continuity flag stays false. If the member leaves before a later
+        // successful validation, the pool evicts this entry instead of reusing it.
+      });
+    return () => controller.abort();
+  }, [active, endpoints.fetchImpl, endpoints.platformUrl, validationGeneration]);
 
   const slug = snapshot?.workspace.slug ?? null;
   const readOnly = props.readOnly === true;
@@ -384,13 +390,18 @@ function SessionSurfaceContent(props: LodySessionSurfaceProps) {
   useEffect(() => {
     if (snapshot === null) return undefined;
     seedCurrentUser(store, snapshot, viewer);
-    const releaseContext = seedWorkspaceContext(store, snapshot);
+    return undefined;
+  }, [store, snapshot, viewer]);
+
+  useEffect(() => {
+    if (snapshot === null) return undefined;
+    const releaseContext = seedLodySurfaceWorkspaceContext(store, snapshot);
     const releaseIdentity = seedLocalMachineIdentity(store, snapshot);
     return () => {
       releaseContext();
       releaseIdentity();
     };
-  }, [store, snapshot, viewer]);
+  }, [store, snapshot]);
 
   const onActiveSessionChangeRef = useRef(onActiveSessionChange);
   onActiveSessionChangeRef.current = onActiveSessionChange;
@@ -567,8 +578,19 @@ function SessionSurfaceContent(props: LodySessionSurfaceProps) {
           railHost,
         );
 
+  const routeActive = active && props.hidden !== true;
+  const routeTree = router === null
+    ? null
+    : (
+      <LodyRouteActivity active={routeActive}>
+        <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>
+          <RouterProvider router={router} />
+        </SurfaceTabsContext.Provider>
+      </LodyRouteActivity>
+    );
+
   return (
-    <div className={LODY_SURFACE_CLASS} hidden={props.hidden === true}>
+    <LodySurfaceVisibilityRoot hidden={props.hidden === true} className={LODY_SURFACE_CLASS}>
       {/* The same notice the load boundary renders, out of the same module, so
           "the chunk never arrived" and "the box never answered" read alike. */}
       {error !== null && <SurfaceUnavailableNotice reason={error} />}
@@ -584,33 +606,32 @@ function SessionSurfaceContent(props: LodySessionSurfaceProps) {
                 <RuntimeProvider key={runtimeGeneration}>
                   {railSidebar}
                   {agentAuthNotice(snapshot.machineId)}
-                  <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>
-                    {isShared ? (
-                      // A grantee's surface writes no agent configs at all — the
-                      // rows belong to the owner's machine Flock, which the relay
-                      // refuses — so there is nothing to gate on.
-                      <RouterProvider router={router} />
-                    ) : (
-                      <LodyAgentConfigGate
-                        store={store}
-                        machineId={snapshot.machineId}
-                        endpoints={endpoints}
-                      >
-                        <RouterProvider router={router} />
-                      </LodyAgentConfigGate>
-                    )}
-                  </SurfaceTabsContext.Provider>
+                  {isShared ? (
+                    // A grantee's surface writes no agent configs at all — the
+                    // rows belong to the owner's machine Flock, which the relay
+                    // refuses — so there is nothing to gate on.
+                    routeTree
+                  ) : (
+                    // The gate stays live above Activity: its successful
+                    // bootstrap is part of the retained provider state.
+                    <LodyAgentConfigGate
+                      store={store}
+                      machineId={snapshot.machineId}
+                      endpoints={endpoints}
+                    >
+                      {routeTree}
+                    </LodyAgentConfigGate>
+                  )}
                 </RuntimeProvider>
               </LodySurfaceProviders>
             </BlitzPlatformProviders>
           </IpcClientProvider>
         </JotaiProvider>
       )}
-    </div>
+    </LodySurfaceVisibilityRoot>
   );
 }
 
-/** Standalone/direct-test composition: one surface under one root theme owner. */
 export function SessionSurface(props: LodySessionSurfaceProps) {
   return (
     <LodySurfaceThemeRoot>
@@ -624,17 +645,20 @@ export interface LodySessionSurfaceHostProps extends LodySessionSurfaceProps {
   surfaceKey: string;
 }
 
-/** Lazy region composition. The theme owner survives per-box surface replacement. */
-function LodySessionSurfaceHost({ surfaceKey, ...props }: LodySessionSurfaceHostProps) {
+export interface LodySessionSurfacePoolHostProps {
+  surfaces: readonly LodySessionSurfaceHostProps[];
+}
+
+function LodySessionSurfacePoolHost({ surfaces }: LodySessionSurfacePoolHostProps) {
   return (
     <LodySurfaceThemeRoot>
-      <SessionSurfaceContent key={surfaceKey} {...props} />
+      {surfaces.map(({ surfaceKey, ...props }) => (
+        <SessionSurfaceContent key={surfaceKey} {...props} />
+      ))}
     </LodySurfaceThemeRoot>
   );
 }
 
-/** Re-exported here because this is the file a reader comes to for the surface's
- * composition, and `surface-providers.tsx` states why the stack lives alone. */
 export { LodySurfaceProviders };
 
-export default LodySessionSurfaceHost;
+export default LodySessionSurfacePoolHost;

@@ -202,15 +202,19 @@ async function mountShell(options: ShellOptions) {
   // the rail — the Terminals `+`, which is the only spawn affordance a
   // flag-on workspace has (§4.1, the native strip being gone).
   vi.doMock("../src/lody/SessionSurface.js", () => ({
-    default: (props: {
-      hidden?: boolean;
-      rail?: { activeTerminalId: string; terminalsAction?: ReactNode };
-      surfaceTabs?: SurfaceRecord["surfaceTabs"];
+    default: (host: {
+      surfaces: Array<{
+        active?: boolean;
+        hidden?: boolean;
+        rail?: { activeTerminalId: string; terminalsAction?: ReactNode };
+        surfaceTabs?: SurfaceRecord["surfaceTabs"];
+      }>;
     }) => {
-      surface.hidden = props.hidden === true;
-      surface.activeTerminalId = props.rail?.activeTerminalId ?? "";
-      surface.surfaceTabs = props.surfaceTabs;
-      return <div data-testid="lody-surface">{props.rail?.terminalsAction}</div>;
+      const current = host.surfaces.find((item) => item.active === true);
+      surface.hidden = current?.hidden === true;
+      surface.activeTerminalId = current?.rail?.activeTerminalId ?? "";
+      surface.surfaceTabs = current?.surfaceTabs;
+      return <div data-testid="lody-surface">{current?.rail?.terminalsAction}</div>;
     },
   }));
 

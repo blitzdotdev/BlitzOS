@@ -676,10 +676,10 @@ describe("mounted Lody IPC conversion inventory", () => {
 
     expect(surfaceIpc).toMatch(/createBoundIpcClient\(bridge\.ipc\)/u);
     expect(surfaceIpc).toMatch(/if \(!active\) return undefined;\s+return publishLodyLocalBridge/u);
-    expect(sessionSurface).toMatch(/useLodySurfaceIpc\(endpoints\)/u);
+    expect(sessionSurface).toMatch(/useLodySurfaceIpc\(endpoints, props\.onContinuityLost\)/u);
     expect(sessionSurface).toMatch(/<IpcClientProvider client=\{ipcClient\} localIpcHost>/u);
     expect(sessionSurface).toMatch(
-      /<LodySurfaceThemeRoot>\s+<SessionSurfaceContent key=\{surfaceKey\}/u,
+      /<LodySurfaceThemeRoot>[\s\S]+surfaces\.map\(\(\{ surfaceKey, \.\.\.props \}\)/u,
     );
     expect(sessionSurface).not.toMatch(/resetLocalPlatformSnapshotState/u);
     expect(headlessRuntime).toMatch(/createBoundIpcClient\(bridge\.ipc\)/u);

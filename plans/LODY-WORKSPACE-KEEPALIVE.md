@@ -1,8 +1,8 @@
 # Lody workspace keep-alive (Tier 2)
 
-Status: Phase A and the non-effect Phase B audit are implemented locally with
-behavioral gates. Phase C remains the active step: it adds the pool and the
-React `Activity` boundary, then proves effect-scoped quiescence while hidden.
+Status: Phases A-C are implemented with behavioral gates. The keep-alive pool
+is enabled by default, but the activation measurement release gate remains red:
+the last valid two-daemon run measured 208.1 ms p95 against a 200 ms target.
 
 ## Goal and measured budget
 
@@ -187,9 +187,9 @@ item delegated to the `Activity` boundary.
 | Page-global boot-clear promise | **Accepted.** Distinct daemon identities use distinct database names and the page promise only coordinates boot clearing; no A/B data leak is demonstrated. |
 | Auth-client singleton | **Accepted inert.** Blitz supplies its auth client directly in `packages/webapp/src/lody/platform.tsx` and never calls `createLodyAuthClient`. |
 | Shared server-time offset | **Accepted inert.** Blitz does not mount `AppInitializer`, the only sync caller. |
-| Monaco URI/model/provider ownership | **Deferred to Phase C hidden-surface tests.** The editor controllers/providers live in route-tree effects; React 19.2 `Activity mode="hidden"` cleans those effects while preserving state/DOM, so an inactive box cannot own the path-keyed provider. |
-| Global keyboard handlers | **Deferred to Phase C hidden-surface tests.** Their route-tree effects are disconnected by the `Activity` boundary. |
-| Session-viewing presence | **Deferred to Phase C hidden-surface tests.** `usePublishSessionViewing` is route-effect scoped; hiding actively runs its cleanup. |
+| Monaco URI/model/provider ownership | **Implemented by the Phase C Activity boundary.** Editor controllers/providers live in route-tree effects, so hiding cleans them up while preserving route DOM and state. |
+| Global keyboard handlers | **Implemented and tested.** A probe listener is removed while hidden and restored on reveal. |
+| Session-viewing presence | **Implemented by the Phase C Activity boundary.** `usePublishSessionViewing` is route-effect scoped and therefore cleans up on hide. |
 | Global Sonner store / per-surface toaster | **Fixed** in `packages/webapp/src/lody/surface-providers.tsx`: only the `active` surface mounts the toast renderer. |
 | Session-mention slug map | **Accepted.** It is wrong only across boxes sharing a slug when a stale draft from the other box is expanded; session IDs remain daemon-minted and Phase C activation replaces the address owner. |
 | Managed-preview frame LRU | **Accepted warm-state loss only.** Cross-box eviction can discard a hidden preview iframe, but does not route work to the wrong box; the session's durable browser state remains authoritative. |
@@ -201,36 +201,87 @@ item delegated to the `Activity` boundary.
 
 ## Phase C: identity-keyed keep-alive pool
 
-Implement an LRU in `LodySessionsRegion`, initially capped at two total live
-surfaces. Owned surfaces are cacheable. A shared surface is initially transient
-and may coexist with only the most-recent owned surface, making the common
-shared-to-own return instant without retaining revocable foreign access.
+`keepalive-pool.ts` is the pure state machine and exports the single capacity
+constant, **2 total live surfaces**. Entries are provisional until the platform
+snapshot reports `(machineId, lw_workspaceId)`. Endpoint fingerprints are only
+lookup hints for continuous, identity-known hidden entries; they are never
+cache keys. Duplicate identity reports keep one entry, and activation performs
+a concurrent platform-snapshot identity check. A mismatch evicts the retained
+entry and mounts the target fresh.
 
-Retain each surface's bridge, store, runtime providers and router. Wrap the
-route tree (`RouterProvider` and below) in React 19.2
-`<Activity mode="hidden">` while inactive. Only the active surface publishes
-shell callbacks, portals its rail, mounts the toaster and installs compatibility
-`window.ipc`; the `active` prop added in Phase B already names that ownership.
+`LodySurfacePool.tsx` keeps the React side to ownership and rendering. Every
+entry has a stable React key and retains its bridge, bound IPC client, Jotai
+store, runtime providers, runtime, repo, router and route DOM. Owned entries use
+LRU eviction. A shared/foreign-grant surface is transient and can coexist only
+with the most recently used owned surface. Capability probing temporarily
+deactivates the current entry rather than losing the cache.
 
-Key retained entries by `(machineId, lw_workspaceId)` and store their bridge,
-IPC client, Jotai store, runtime, router, and last-used sequence together. Never
-key reuse by `lodySyncUrl` or another endpoint URL.
+Inactive route trees (`RouterProvider` and the mobile stack below it) are inside
+React 19.2 `<Activity mode="hidden">`; the store, platform, bridge,
+`RuntimeProvider`, and agent-config gate stay live above it. The route's own
+workspace-context cleanup is countered by a surface owner above Activity, so it
+cannot tear down the retained runtime. The outer surface is also `hidden`,
+`inert`, and `aria-hidden`. Reveal restores the last connected focused element,
+falling back to the composer or surface root. jsdom preserves `scrollTop`
+through Activity hide/reveal and the Activity test pins that behavior. The
+vendored conversation also caches scroll offsets per session; a real-browser
+runner was not available on this box, so browser verification remains a manual
+release check.
 
-Eviction must dispose the bridge socket, runtime transports, repo, listeners,
-and timers. `window.repo` must be ownership-cleared when its repo is disposed so
-the debug global cannot pin an evicted WASM graph.
+Ownership tokens accept API publication, router mirroring, the rail portal,
+toasts and `window.ipc` only from the active entry. Reactivation publishes the
+cached API immediately and reconciles the shell's workspace-chat address by
+navigating the retained router. It does not remount the surface.
+
+The data-plane reports socket close/redial and the bridge reports observed
+identity changes. A discontinuous hidden entry is evicted immediately. An
+active entry becomes non-reusable and re-fetches `/lody/platform`; matching
+identity restores continuity and mismatching identity remounts fresh. Unmount
+then disposes the runtime/repo, bridge/client, socket, intervals and listeners,
+and ownership-clears `window.repo`.
+
+The runtime kill switch is `localStorage["blitz.lody.keepalive"] = "off"`.
+It is read when the region pool mounts, defaults **on**, and reduces the pool to
+exact single-surface replacement behavior.
 
 ## Measurement and release gates
 
-Extend the switch-cost probe to measure A -> B -> A activation at an explicit
-"correct identity rail ready" marker, along with RSS/heap/external memory,
-open bridge sockets, and live repos. The LRU cap stays at two unless those
-measurements justify three.
+`lody-keepalive-activation.probe.test.tsx` uses two independently booted daemon
+harnesses and seeded session titles as identity markers. It measures from the
+target activation render until both the visible route composer and the active
+rail's identity-specific session are present. Five A -> B -> A cycles produce
+ten activation samples. It also records `process.memoryUsage()` and live
+bridge-socket/repo counters before B, with both entries, and after stopping A
+evicts it. The report is written to
+`/tmp/lody-keepalive-activation.json` and stdout.
 
-Before claiming a latency win, run the focused Lody regression floor, then
-`npm run typecheck`, `npm run lint:gate`, and `npm test`. Never enable
-`BLITZ_LODY_LIVE_TURN`. A merge still requires explicit user approval because
-main deploys canary immediately.
+Last valid complete run on 2026-09-02 (two independent daemons):
+
+| Measurement | Result |
+|---|---:|
+| Cold B | 497.4 ms |
+| Retained activation p50 (10 samples) | 184.1 ms |
+| Retained activation p95 (10 samples) | **208.1 ms** |
+| Full A -> B -> A cycle p50 / p95 | 389.9 / 411.3 ms |
+| Before B | RSS 728.2 MB; heap 562.4 MB; external 12.1 MB; 1 socket; 1 repo |
+| Two live | RSS 737.9 MB; heap 574.6 MB; external 12.3 MB; 2 sockets; 2 repos |
+| After hidden A eviction | RSS 793.0 MB; heap 622.8 MB; external 12.6 MB; 1 socket; 1 repo |
+
+The 200 ms p95 release target was therefore **not met** (8.1 ms over). Two
+later diagnostic runs exposed and then fixed the Activity/workspace-context
+ownership edge; the final allowed run was invalidated by a two-daemon rail-ready
+timeout after a harness socket discontinuity, so there is no post-fix latency
+distribution to substitute for the complete result above. The increased RSS
+after eviction is a process high-water sample without forced GC; the socket and
+repo counters are the deterministic cleanup signal. Capacity remains two and
+must not be raised.
+
+Before claiming the latency win, rerun this probe on a stable harness and clear
+p95 < 200 ms, then run the focused Lody floor plus `npm run typecheck`,
+`npm run lint:gate`, and `git diff --check`. Never enable
+`BLITZ_LODY_LIVE_TURN`. A mobile/device-memory gate is still required before
+allowing the second retained entry on low-memory devices. A merge still
+requires explicit user approval because main deploys canary immediately.
 
 ## Upstream/conflict strategy
 

@@ -31,10 +31,15 @@ import { LocalMachineRpcRequestSchema } from "@lody/shared/local-machine-rpc";
 import { LocalProjectControlRequestSchema, LocalSessionControlRequestSchema } from "@lody/shared/message-schemas";
 import {
   createLodyDataPlaneConnection,
+  type LodyDataPlaneContinuityEvent,
   type LodyDataPlaneConnectionHandle,
   type LodyDataPlaneStats,
 } from "./data-plane-connection.js";
-import { fetchLodyPlatformSnapshot, type LodyPlatformFetchOptions } from "./platform-snapshot.js";
+import {
+  fetchLodyPlatformSnapshot,
+  type LodyPlatformFetchOptions,
+  type LodyPlatformSnapshot,
+} from "./platform-snapshot.js";
 import {
   sendMachineRpc,
   sendProjectControl,
@@ -118,7 +123,11 @@ export interface LodyLocalBridgeEndpoints extends LodyHttpPlaneEndpoints {
   /** The box path `filesBase` serves; see `LodyAttachmentEndpoints`. */
   filesRoot?: string;
   webSocketConstructor?: typeof WebSocket;
+  /** The retained surface must revalidate or evict after any broken link. */
+  onContinuity?: (event: LodyBridgeContinuityEvent) => void;
 }
+
+export type LodyBridgeContinuityEvent = LodyDataPlaneContinuityEvent | "identity-change";
 
 interface PushListeners {
   loroEvent: Set<(payload: LodyDataPlaneFrame) => void>;
@@ -153,11 +162,13 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
 
   const openDataPlane = (): LodyDataPlaneConnectionHandle => {
     if (dataPlane !== null) return dataPlane;
-    const handle = createLodyDataPlaneConnection(
-      endpoints.webSocketConstructor === undefined
-        ? { url: endpoints.syncUrl }
-        : { url: endpoints.syncUrl, webSocketConstructor: endpoints.webSocketConstructor },
-    );
+    const connectionOptions = endpoints.webSocketConstructor === undefined
+      ? { url: endpoints.syncUrl }
+      : { url: endpoints.syncUrl, webSocketConstructor: endpoints.webSocketConstructor };
+    const handle = createLodyDataPlaneConnection({
+      ...connectionOptions,
+      onContinuity: (event) => endpoints.onContinuity?.(event),
+    });
     unsubscribeMessages = handle.connection.onMessage((message: LodyDataPlaneFrame) => {
       for (const listener of listeners.loroEvent) listener(message);
     });
@@ -198,12 +209,22 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
    * one.
    */
   let machineId: string | null = null;
+  let daemonIdentity: string | null = null;
+  const observeIdentity = (snapshot: LodyPlatformSnapshot): void => {
+    const next = `${snapshot.machineId}\u0000${snapshot.workspace.workspaceId}`;
+    if (daemonIdentity !== null && daemonIdentity !== next) {
+      endpoints.onContinuity?.("identity-change");
+    }
+    daemonIdentity = next;
+  };
   async function resolveMachineId(): Promise<string | null> {
     if (machineId !== null) return machineId;
     const options: LodyPlatformFetchOptions = {};
     if (endpoints.fetchImpl !== undefined) options.fetchImpl = endpoints.fetchImpl;
     try {
-      machineId = (await fetchLodyPlatformSnapshot(endpoints.platformUrl, options))?.machineId ?? null;
+      const snapshot = await fetchLodyPlatformSnapshot(endpoints.platformUrl, options);
+      if (snapshot !== null) observeIdentity(snapshot);
+      machineId = snapshot?.machineId ?? null;
     } catch {
       // Not cached: a transport failure before the daemon has written its
       // catalog must not make every later call fail too.
@@ -317,6 +338,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
         try {
           const snapshot = await fetchLodyPlatformSnapshot(endpoints.platformUrl, options);
           if (snapshot === null) return null;
+          observeIdentity(snapshot);
           return { userId: snapshot.userId, workspace: snapshot.workspace };
         } catch {
           return null;
@@ -599,18 +621,10 @@ export function publishLodyLocalBridge(
   return () => {
     // ONLY CLEAR THE GLOBAL IF IT IS STILL OURS.
     //
-    // `window.ipc` is a singleton and a workspace switch now HANDS IT OVER:
-    // `LodySessionsRegion` keys the owned surface by box, so one `SessionSurface`
-    // unmounts while another mounts, and React mounts the new subtree before it
-    // runs the departing one's cleanup. An unconditional `delete` therefore
-    // deleted the INCOMING surface's bridge. The new runtime's boot effect runs
-    // before its parent re-asserts the install — React runs child effects first
-    // — so it found no bridge, its local data plane never attached, nothing
-    // synced, and the rail's session list stayed empty until a reload. A reload
-    // has no departing surface, which is why it looked like the cure.
-    //
-    // Before the per-box key one surface owned this for the life of the tab, so
-    // the unconditional delete was always its own. It is not any more.
+    // `window.ipc` is a singleton and activation HANDS IT OVER between retained
+    // surfaces. React may publish the incoming bridge before the outgoing
+    // layout-effect cleanup runs; an unconditional delete would then remove the
+    // incoming owner and leave compatibility callers with no bridge.
     if (target.ipc === bridge.ipc) {
       delete target.ipc;
       delete target.__LODY_LOCAL_BRIDGE__;

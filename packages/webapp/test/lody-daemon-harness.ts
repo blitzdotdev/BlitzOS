@@ -384,6 +384,11 @@ function harnessLockIsStale(): boolean {
  * reaped in the next poll and this timer only ever bounds honest waiting.
  */
 const HARNESS_LOCK_WAIT_MS = 900_000;
+// Cross-process suites remain serialized. One explicit measurement may nest a
+// second harness in the same worker to represent two independently minted box
+// identities; the outer release owns the filesystem lock until both stop.
+let inProcessLockDepth = 0;
+let releaseProcessLock: (() => void) | null = null;
 
 /**
  * What a daemon-backed suite's boot hook must allow.
@@ -398,12 +403,36 @@ const HARNESS_LOCK_WAIT_MS = 900_000;
 export const HARNESS_BOOT_TIMEOUT_MS = HARNESS_LOCK_WAIT_MS + 120_000;
 
 async function acquireHarnessLock(): Promise<() => void> {
+  if (releaseProcessLock !== null) {
+    inProcessLockDepth += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      inProcessLockDepth -= 1;
+      if (inProcessLockDepth !== 0 || releaseProcessLock === null) return;
+      const release = releaseProcessLock;
+      releaseProcessLock = null;
+      release();
+    };
+  }
   const deadline = Date.now() + HARNESS_LOCK_WAIT_MS;
   for (;;) {
     try {
       mkdirSync(HARNESS_LOCK);
       writeFileSync(join(HARNESS_LOCK, "pid"), String(process.pid));
-      return () => rmSync(HARNESS_LOCK, { recursive: true, force: true });
+      releaseProcessLock = () => rmSync(HARNESS_LOCK, { recursive: true, force: true });
+      inProcessLockDepth = 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        inProcessLockDepth -= 1;
+        if (inProcessLockDepth !== 0 || releaseProcessLock === null) return;
+        const release = releaseProcessLock;
+        releaseProcessLock = null;
+        release();
+      };
     } catch {
       if (harnessLockIsStale()) {
         rmSync(HARNESS_LOCK, { recursive: true, force: true });

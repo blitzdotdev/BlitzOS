@@ -1,5 +1,5 @@
 /**
- * SWITCHING WORKSPACES MUST REBUILD THE SURFACE, BECAUSE IT REBUILDS THE BOX.
+ * SWITCHING WORKSPACES BUILDS EACH BOX ONCE AND RETAINS ITS SETTLED SURFACE.
  *
  * The field report: create workspace B, switch A → B → A, and the sessions
  * surface never populates until the page is reloaded once. Terminals work
@@ -23,7 +23,7 @@
  * sessions rebuilds the runtime"). This is the same rule, finally applied to
  * the member's own workspaces.
  */
-import { act, useState } from "react";
+import { act, useEffect, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoxEndpoints } from "../src/resolver.js";
 import { render } from "./dom.js";
@@ -44,6 +44,7 @@ const BOX_A = boxAt("box-a.invalid");
 const BOX_B = boxAt("box-b.invalid");
 
 afterEach(() => {
+  window.localStorage.clear();
   vi.unstubAllEnvs();
   vi.resetModules();
   vi.restoreAllMocks();
@@ -59,7 +60,13 @@ async function mountRegion() {
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
   const mounts: string[] = [];
   vi.doMock("../src/lody/SessionSurface.js", () => {
-    const RecordedSurface = (surfaceProps: { syncUrl: string; active: boolean }) => {
+    const RecordedSurface = (surfaceProps: {
+      entryId: string;
+      syncUrl: string;
+      active: boolean;
+      hidden: boolean;
+      onIdentity: (identity: { machineId: string; lwWorkspaceId: string }) => void;
+    }) => {
       // RECORDED ONCE PER INSTANCE, not once per render. A `useState`
       // initialiser runs exactly when a component instance is created, which is
       // the same lifetime `useLodySurfaceIpc` binds its bridge to — so this
@@ -69,24 +76,50 @@ async function mountRegion() {
         mounts.push(surfaceProps.syncUrl);
         return null;
       });
-      return <div data-testid="surface" data-active={surfaceProps.active} />;
+      useEffect(() => {
+        const box = surfaceProps.syncUrl.includes("box-a") ? "a" : "b";
+        surfaceProps.onIdentity({ machineId: `machine-${box}`, lwWorkspaceId: `lw_${box}` });
+      }, [surfaceProps.syncUrl]);
+      return (
+        <div
+          data-testid="surface"
+          data-entry={surfaceProps.entryId}
+          data-active={surfaceProps.active}
+          data-hidden={surfaceProps.hidden}
+        />
+      );
     };
     return {
-      default: (props: { endpoints: { syncUrl: string }; surfaceKey: string; active: boolean }) => (
+      default: (props: {
+        surfaces: Array<{
+          endpoints: { syncUrl: string };
+          surfaceKey: string;
+          active: boolean;
+          hidden: boolean;
+          onIdentity: (identity: { machineId: string; lwWorkspaceId: string }) => void;
+        }>;
+      }) => props.surfaces.map((surface) => (
         <RecordedSurface
-          key={props.surfaceKey}
-          syncUrl={props.endpoints.syncUrl}
-          active={props.active}
+          key={surface.surfaceKey}
+          entryId={surface.surfaceKey}
+          syncUrl={surface.endpoints.syncUrl}
+          active={surface.active}
+          hidden={surface.hidden}
+          onIdentity={surface.onIdentity}
         />
-      ),
+      )),
     };
   });
   const { LodySessionsRegion } = await import("../src/lody/LodySessionsRegion.js");
 
-  const element = (endpoints: BoxEndpoints, visible = true) => (
+  const element = (
+    endpoints: BoxEndpoints | null,
+    visible = true,
+    sessions: "present" | "probing" = "present",
+  ) => (
     <LodySessionsRegion
       endpoints={endpoints}
-      sessions="present"
+      sessions={sessions}
       viewerName="Me"
       viewerAvatarUrl={null}
       workspaceTitle="Workspace"
@@ -99,8 +132,12 @@ async function mountRegion() {
   );
 
   const view = await render(element(BOX_A));
-  const show = async (endpoints: BoxEndpoints, visible = true): Promise<void> => {
-    await act(async () => view.root.render(element(endpoints, visible)));
+  const show = async (
+    endpoints: BoxEndpoints | null,
+    visible = true,
+    sessions: "present" | "probing" = "present",
+  ): Promise<void> => {
+    await act(async () => view.root.render(element(endpoints, visible, sessions)));
     await act(async () => {
       await Promise.resolve();
     });
@@ -112,7 +149,7 @@ async function mountRegion() {
 }
 
 describe("switching between owned workspaces", () => {
-  it("builds a new surface for a new box, so the bridge is never stale", async () => {
+  it("keeps both settled surfaces mounted and reuses A on return", async () => {
     const { mounts, show, view } = await mountRegion();
     expect(mounts).toEqual([BOX_A.lodySyncUrl]);
 
@@ -121,9 +158,12 @@ describe("switching between owned workspaces", () => {
     await show(BOX_B);
     expect(mounts).toEqual([BOX_A.lodySyncUrl, BOX_B.lodySyncUrl]);
 
-    // B → A, the half of the report that needed a page reload.
+    // B → A retains both React identities and only changes ownership.
     await show(BOX_A);
-    expect(mounts).toEqual([BOX_A.lodySyncUrl, BOX_B.lodySyncUrl, BOX_A.lodySyncUrl]);
+    expect(mounts).toEqual([BOX_A.lodySyncUrl, BOX_B.lodySyncUrl]);
+    expect(view.container.querySelectorAll("[data-testid='surface']")).toHaveLength(2);
+    const active = view.container.querySelector("[data-active='true']");
+    expect(active?.getAttribute("data-entry")).toBe("lody-surface-1");
 
     await view.unmount();
   });
@@ -139,10 +179,24 @@ describe("switching between owned workspaces", () => {
     await show({ ...BOX_A });
     await show({ ...BOX_A }, false);
     expect(mounts).toEqual([BOX_A.lodySyncUrl]);
-    expect(
-      view.container.querySelector("[data-testid='surface']")?.getAttribute("data-active"),
-    ).toBe("false");
+    const surface = view.container.querySelector("[data-testid='surface']");
+    expect(surface?.getAttribute("data-active")).toBe("true");
+    expect(surface?.getAttribute("data-hidden")).toBe("true");
 
+    await view.unmount();
+  });
+
+  it("keeps A through B's capability-probing window", async () => {
+    const { mounts, show, view } = await mountRegion();
+    await show(null, false, "probing");
+    expect(mounts).toEqual([BOX_A.lodySyncUrl]);
+    expect(view.container.querySelector("[data-testid='surface']")?.getAttribute("data-active"))
+      .toBe("false");
+
+    await show(BOX_B);
+    await show(null, false, "probing");
+    await show(BOX_A);
+    expect(mounts).toEqual([BOX_A.lodySyncUrl, BOX_B.lodySyncUrl]);
     await view.unmount();
   });
 });

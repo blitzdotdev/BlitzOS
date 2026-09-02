@@ -20,10 +20,18 @@ export type LodySurfaceIpc = {
 };
 
 /** Capture one bridge/client pair for the full lifetime of a surface. */
-export function useLodySurfaceIpc(endpoints: LodyRuntimeEndpoints): LodySurfaceIpc {
+export function useLodySurfaceIpc(
+  endpoints: LodyRuntimeEndpoints,
+  onContinuityLost?: () => void,
+): LodySurfaceIpc {
   const held = useRef<LodySurfaceIpc | null>(null);
+  const continuityRef = useRef(onContinuityLost);
+  continuityRef.current = onContinuityLost;
   if (held.current === null) {
-    const bridge = createLodyLocalBridge(endpoints);
+    const bridge = createLodyLocalBridge({
+      ...endpoints,
+      onContinuity: () => continuityRef.current?.(),
+    });
     held.current = {
       bridge,
       ipcClient: createBoundIpcClient(bridge.ipc),

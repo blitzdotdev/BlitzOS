@@ -2002,6 +2002,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               )}
               onApiReady={setLodyApi}
               onActiveSessionChange={lodyRail.mirror}
+              desiredSessionId={lodyRail.sessionId}
+              desiredArchive={lodyRail.archive}
               {...(lodyRail.sessionId === null ? {} : { initialSessionId: lodyRail.sessionId })}
               onShareSession={setSharingSessionId}
               sharedSessions={sharedSessions.rows}

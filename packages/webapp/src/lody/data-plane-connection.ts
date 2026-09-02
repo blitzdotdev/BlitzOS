@@ -71,12 +71,23 @@ export interface LodyDataPlaneConnectionOptions {
   url: string;
   /** Injected in tests; defaults to the platform `WebSocket`. */
   webSocketConstructor?: typeof WebSocket;
+  /** Socket continuity edges consumed by the owning keep-alive entry. */
+  onContinuity?: (event: LodyDataPlaneContinuityEvent) => void;
 }
+
+export type LodyDataPlaneContinuityEvent = "socket-close" | "socket-redial";
 
 export interface LodyDataPlaneConnectionHandle {
   connection: LodyDataPlaneConnection;
   stats: () => LodyDataPlaneStats;
   dispose: () => void;
+}
+
+let liveDataPlaneSockets = 0;
+
+/** Test/probe instrumentation: physical sockets currently owned by this page. */
+export function lodyLiveDataPlaneSocketCount(): number {
+  return liveDataPlaneSockets;
 }
 
 /**
@@ -129,6 +140,7 @@ export function createLodyDataPlaneConnection(
     redialTimer = setTimeout(() => {
       redialTimer = null;
       stats.redials += 1;
+      options.onContinuity?.("socket-redial");
       open();
     }, redialDelay);
     redialDelay = Math.min(redialDelay * 2, REDIAL_MAX_DELAY_MS);
@@ -138,6 +150,8 @@ export function createLodyDataPlaneConnection(
     stopTimers();
     const dying = socket;
     socket = null;
+    if (dying !== null) liveDataPlaneSockets -= 1;
+    if (connected) options.onContinuity?.("socket-close");
     setConnected(false);
     if (dying !== null && (dying.readyState === 0 || dying.readyState === 1)) dying.close();
     scheduleRedial();
@@ -173,6 +187,7 @@ export function createLodyDataPlaneConnection(
   function open(): void {
     if (disposed || socket !== null) return;
     const next = new WebSocketImpl(options.url);
+    liveDataPlaneSockets += 1;
     socket = next;
     lastInboundAt = Date.now();
     next.onopen = () => {
@@ -255,6 +270,7 @@ export function createLodyDataPlaneConnection(
       }
       const dying = socket;
       socket = null;
+      if (dying !== null) liveDataPlaneSockets -= 1;
       setConnected(false);
       messageListeners.clear();
       statusListeners.clear();

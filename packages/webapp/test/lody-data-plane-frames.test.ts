@@ -14,7 +14,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   LOCAL_LORO_DATA_PLANE_MAX_FRAME_BYTES,
   LOCAL_LORO_DATA_PLANE_MAX_PAYLOAD_BYTES,
@@ -24,7 +24,10 @@ import {
   LocalLoroDataPlaneClientMessageSchema,
   LocalLoroDataPlaneServerMessageSchema,
 } from "@lody/shared/local-loro-data-plane";
-import { createLodyDataPlaneConnection } from "../src/lody/data-plane-connection.js";
+import {
+  createLodyDataPlaneConnection,
+  lodyLiveDataPlaneSocketCount,
+} from "../src/lody/data-plane-connection.js";
 
 const CORPUS = fileURLToPath(new URL("../../schema/fixtures/lody-data-plane/", import.meta.url));
 
@@ -132,6 +135,10 @@ class ScriptedWebSocket {
   deliver(raw: string): void {
     this.onmessage?.({ data: raw });
   }
+  closeIt(): void {
+    this.readyState = 3;
+    this.onclose?.();
+  }
 }
 
 describe("the browser connection parses the corpus at its boundary", () => {
@@ -145,6 +152,7 @@ describe("the browser connection parses the corpus at its boundary", () => {
       webSocketConstructor: ScriptedWebSocket as unknown as typeof WebSocket,
     });
     const socket = ScriptedWebSocket.instances[0]!;
+    expect(lodyLiveDataPlaneSocketCount()).toBe(1);
     const received: string[] = [];
     handle.connection.onMessage((message: { type: string }) => received.push(message.type));
 
@@ -179,5 +187,31 @@ describe("the browser connection parses the corpus at its boundary", () => {
     expect(JSON.parse(socket.sent.at(-1)!)).toEqual(read("client/ping.json"));
 
     handle.dispose();
+    expect(lodyLiveDataPlaneSocketCount()).toBe(0);
+  });
+
+  it("reports an established socket close and its redial as continuity edges", () => {
+    vi.useFakeTimers();
+    ScriptedWebSocket.instances.length = 0;
+    const continuity: string[] = [];
+    const handle = createLodyDataPlaneConnection({
+      url: "ws://127.0.0.1:1/lody/sync",
+      // SAFETY: ScriptedWebSocket implements every WebSocket member touched by
+      // this module; the DOM declaration contains unrelated browser members.
+      webSocketConstructor: ScriptedWebSocket as unknown as typeof WebSocket,
+      onContinuity: (event) => continuity.push(event),
+    });
+    const socket = ScriptedWebSocket.instances[0];
+    if (socket === undefined) throw new Error("the connection opened no socket");
+    socket.openIt();
+    socket.closeIt();
+    expect(continuity).toEqual(["socket-close"]);
+
+    vi.advanceTimersByTime(1_000);
+    expect(continuity).toEqual(["socket-close", "socket-redial"]);
+    expect(ScriptedWebSocket.instances).toHaveLength(2);
+    handle.dispose();
+    expect(lodyLiveDataPlaneSocketCount()).toBe(0);
+    vi.useRealTimers();
   });
 });
