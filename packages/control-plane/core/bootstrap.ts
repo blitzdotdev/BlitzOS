@@ -196,7 +196,7 @@ with open(parts_path, "w", encoding="utf-8") as parts_file:
 print(f"{total_sha256.lower()}\t{image_tag}")
 PYTHON
     IFS=$'\t' read -r manifest_total_sha256 manifest_image_tag <"$manifest_metadata_path"
-    [ "$manifest_image_tag" = "$BOX_IMAGE_TAG" ] || fail "manifest imageTag does not match BOX_IMAGE_TAG"
+    [ "$manifest_image_tag" = "$BOX_IMAGE_TAG" ] || fail "manifest imageTag $manifest_image_tag does not match BOX_IMAGE_TAG $BOX_IMAGE_TAG"
     manifest_base=${"${BOX_IMAGE_REF%/*}"}
     : >"$image_archive"
     while IFS=$'\t' read -r part_name part_sha256; do
