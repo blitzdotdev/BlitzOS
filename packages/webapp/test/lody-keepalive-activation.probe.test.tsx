@@ -24,7 +24,7 @@ import {
   type LodyActivationPhase,
   type LodyActivationTrace,
 } from "../src/lody/surface-activation-performance.js";
-import { lodyLiveRepoCount } from "../src/lody/surface-runtime-stats.js";
+import { lodyLiveRuntimeHandleCount } from "../src/lody/surface-runtime-stats.js";
 import { installLodyDomStubs } from "./lody-dom-stubs.js";
 import {
   HARNESS_BOOT_TIMEOUT_MS,
@@ -39,7 +39,7 @@ interface MemorySample {
   heapUsed: number;
   external: number;
   sockets: number;
-  repos: number;
+  runtimeHandles: number;
   gcExposed: boolean;
 }
 
@@ -84,7 +84,7 @@ function memorySample(): MemorySample {
     heapUsed: usage.heapUsed,
     external: usage.external,
     sockets: lodyLiveDataPlaneSocketCount(),
-    repos: lodyLiveRepoCount(),
+    runtimeHandles: lodyLiveRuntimeHandleCount(),
     gcExposed,
   };
 }
@@ -242,11 +242,11 @@ function table(report: {
     ...rows.map(([label, value]) => `| ${label} | ${value.toFixed(3)} |`),
     `| address reconciliations that navigated | ${report.addressNavigations} / 10 |`,
     "",
-    "| Memory point | RSS | heap used | external | sockets | repos | forced GC |",
+    "| Memory point | RSS | heap used | external | sockets | runtime handles | forced GC |",
     "|---|---:|---:|---:|---:|---:|---:|",
     ...Object.entries(report.memory).map(([label, sample]) =>
       `| ${label} | ${sample.rss} | ${sample.heapUsed} | ${sample.external} | `
-      + `${sample.sockets} | ${sample.repos} | ${sample.gcExposed ? "yes" : "no"} |`),
+      + `${sample.sockets} | ${sample.runtimeHandles} | ${sample.gcExposed ? "yes" : "no"} |`),
     "",
     `Artifact: ${report.artifactPath}`,
     "",
@@ -261,6 +261,7 @@ describe.skipIf(!lodyDaemonAvailable() || process.env["BLITZ_LODY_SWITCH_PROBE"]
 
     beforeAll(async () => {
       installLodyDomStubs();
+      Object.defineProperty(navigator, "deviceMemory", { configurable: true, value: 8 });
       process.stdout.write("keepalive probe: starting daemon A\n");
       harnessA = await startLodyHarness();
       process.stdout.write("keepalive probe: seeding daemon A\n");
@@ -368,7 +369,7 @@ describe.skipIf(!lodyDaemonAvailable() || process.env["BLITZ_LODY_SWITCH_PROBE"]
       const coldB = await activate(targetB, "B", "identity B marker", false);
       await waitFor(
         "two retained runtimes",
-        () => lodyLiveRepoCount() === 2 && lodyLiveDataPlaneSocketCount() === 2,
+        () => lodyLiveRuntimeHandleCount() === 2 && lodyLiveDataPlaneSocketCount() === 2,
       );
       const twoLive = memorySample();
       await activate(targetA, "A", "identity A marker", true);
@@ -397,7 +398,7 @@ describe.skipIf(!lodyDaemonAvailable() || process.env["BLITZ_LODY_SWITCH_PROBE"]
       harnessA = undefined;
       await waitFor(
         "hidden A eviction",
-        () => lodyLiveRepoCount() === 1 && lodyLiveDataPlaneSocketCount() === 1,
+        () => lodyLiveRuntimeHandleCount() === 1 && lodyLiveDataPlaneSocketCount() === 1,
       );
       await settle();
       const afterEviction = memorySample();
@@ -434,7 +435,7 @@ describe.skipIf(!lodyDaemonAvailable() || process.env["BLITZ_LODY_SWITCH_PROBE"]
       await view.unmount();
       railHost.remove();
       expect(twoLive.sockets).toBe(2);
-      expect(twoLive.repos).toBe(2);
+      expect(twoLive.runtimeHandles).toBe(2);
       expect(report.activationP50.ready).toBeLessThan(100);
       expect(report.activationP95.ready).toBeLessThan(150);
     }, 300_000);

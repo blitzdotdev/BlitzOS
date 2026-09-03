@@ -24,7 +24,7 @@
  * the member's own workspaces.
  */
 import { act, useEffect, useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoxEndpoints } from "../src/resolver.js";
 import { render } from "./dom.js";
 
@@ -43,9 +43,23 @@ function boxAt(host: string): BoxEndpoints {
 const BOX_A = boxAt("box-a.invalid");
 const BOX_B = boxAt("box-b.invalid");
 
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(pointer: fine)",
+    media: query,
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => false,
+  }));
+});
+
 afterEach(() => {
   window.localStorage.clear();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.resetModules();
   vi.restoreAllMocks();
 });
@@ -152,6 +166,8 @@ describe("switching between owned workspaces", () => {
   it("keeps both settled surfaces mounted and reuses A on return", async () => {
     const { mounts, show, view } = await mountRegion();
     expect(mounts).toEqual([BOX_A.lodySyncUrl]);
+    const firstAEntry = view.container.querySelector("[data-active='true']")
+      ?.getAttribute("data-entry");
 
     // A → B. The old instance must not simply be handed B's props: its bridge
     // was built against A and cannot be re-pointed.
@@ -163,7 +179,7 @@ describe("switching between owned workspaces", () => {
     expect(mounts).toEqual([BOX_A.lodySyncUrl, BOX_B.lodySyncUrl]);
     expect(view.container.querySelectorAll("[data-testid='surface']")).toHaveLength(2);
     const active = view.container.querySelector("[data-active='true']");
-    expect(active?.getAttribute("data-entry")).toBe("lody-surface-1");
+    expect(active?.getAttribute("data-entry")).toBe(firstAEntry);
 
     await view.unmount();
   });

@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { EphemeralStore } from "loro-crdt";
+import { LoroRepo } from "loro-repo";
 import { PlatformContext } from "@lody/platform/react";
 import {
   LOCAL_LORO_DATA_PLANE_PROTOCOL_VERSION,
@@ -50,7 +51,11 @@ import {
   mountedSourceClosure,
   workspacePath,
 } from "./lody-ipc-source-closure.js";
-import type { LodyRuntimeLifecycleEvent } from "../src/lody/surface-runtime-lifecycle.js";
+import {
+  createLodySurfaceRuntimeLifecycle,
+  type LodyRuntimeLifecycleEvent,
+} from "../src/lody/surface-runtime-lifecycle.js";
+import { createLodySurfaceIdentityClaims } from "../src/lody/surface-identity-claims.js";
 
 type IpcBridge = NonNullable<Window["ipc"]>;
 type Listener = (payload: unknown) => void;
@@ -333,6 +338,29 @@ afterEach(() => {
 });
 
 describe("per-surface IPC ownership", () => {
+  it("starts no lifecycle attempt without a workspace identity", async () => {
+    const store = createStore();
+    const events: LodyRuntimeLifecycleEvent[] = [];
+    const lifecycle = createLodySurfaceRuntimeLifecycle();
+    const mounted = await render(runtimeTree(
+      "missing-workspace",
+      store,
+      bind(fakeBridge("missing-workspace")),
+      {
+        onRuntimeLifecycle: (event) => {
+          events.push(event);
+          lifecycle.onRuntimeLifecycle(event);
+        },
+      },
+    ));
+    await settle();
+    await mounted.unmount();
+    const release = vi.fn();
+    lifecycle.releaseAfterRuntime(release);
+    expect(events).toEqual([]);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves Electron's lazy page-global default", async () => {
     const bridgeA = fakeBridge("A");
     const bridgeB = fakeBridge("B");
@@ -570,8 +598,8 @@ describe("per-surface IPC ownership", () => {
     expect(poison.invoke).not.toHaveBeenCalled();
     expect(poison.send).not.toHaveBeenCalled();
     expect(poison.on).not.toHaveBeenCalled();
-    expect(lifecycleA).toContainEqual({ phase: "created" });
-    expect(lifecycleB).toContainEqual({ phase: "created" });
+    expect(lifecycleA.some((event) => event.phase === "created")).toBe(true);
+    expect(lifecycleB.some((event) => event.phase === "created")).toBe(true);
 
     await mounted.unmount();
     await Promise.all([
@@ -579,8 +607,8 @@ describe("per-surface IPC ownership", () => {
       waitForLifecycle(lifecycleB, "disposed"),
     ]);
     await Promise.all([runtimeA.dispose(), runtimeB.dispose()]);
-    expect(lifecycleA.at(-1)).toEqual({ phase: "disposed" });
-    expect(lifecycleB.at(-1)).toEqual({ phase: "disposed" });
+    expect(lifecycleA.at(-1)?.phase).toBe("disposed");
+    expect(lifecycleB.at(-1)?.phase).toBe("disposed");
     clientA.dispose();
     clientB.dispose();
     releaseSeedA();
@@ -593,6 +621,91 @@ describe("per-surface IPC ownership", () => {
     expect(readPresenceStates(storeA)).toEqual({});
     expect(readPresenceStates(storeB)).toEqual({});
   }, 30_000);
+
+  it("rolls a partial repo back before failure releases its identity", async () => {
+    const order: string[] = [];
+    let rejectFirstAttach = (_error: Error): void => undefined;
+    const firstAttach = new Promise<void>((_resolve, reject) => {
+      rejectFirstAttach = reject;
+    });
+    let rejectSecondAttach = (_error: Error): void => undefined;
+    const secondAttach = new Promise<void>((_resolve, reject) => {
+      rejectSecondAttach = reject;
+    });
+    const createFakeRepo = (attach: Promise<void>) => {
+      const destroy = vi.fn(async () => {
+        order.push("repo-destroyed");
+      });
+      const repo = {
+        addTransport: vi.fn(async () => await attach),
+        destroy,
+        removeTransport: vi.fn(async () => undefined),
+        watch: vi.fn(() => ({ unsubscribe: vi.fn() })),
+      };
+      // SAFETY: construction reaches only these four LoroRepo members before
+      // the injected addTransport failure; the test asserts that exact rollback path.
+      return { destroy, repo: repo as unknown as LoroRepo };
+    };
+    const firstRepo = createFakeRepo(firstAttach);
+    const secondRepo = createFakeRepo(secondAttach);
+    const createRepo = vi.spyOn(LoroRepo, "create")
+      .mockResolvedValueOnce(firstRepo.repo)
+      .mockResolvedValueOnce(secondRepo.repo);
+    const lifecycle = createLodySurfaceRuntimeLifecycle();
+    const claims = createLodySurfaceIdentityClaims();
+    const identity = { machineId: "machine-retry", lwWorkspaceId: "lw_retry" };
+    expect(await claims.claim(identity, "first", new AbortController().signal)).toBe(true);
+    const firstStore = createStore();
+    const releaseFirstSeed = seedRuntimeStore(firstStore, "retry");
+    const firstEvents: LodyRuntimeLifecycleEvent[] = [];
+    const mounted = await render(runtimeTree("retry", firstStore, bind(fakeBridge("retry")), {
+      onRuntimeLifecycle: (event) => {
+        firstEvents.push(event);
+        lifecycle.onRuntimeLifecycle(event);
+        order.push(event.phase);
+      },
+    }));
+    await waitForLifecycle(firstEvents, "starting");
+    await mounted.unmount();
+    lifecycle.releaseAfterRuntime(() => {
+      order.push("identity-released");
+      claims.release("first");
+    });
+    let secondGranted = false;
+    const secondClaim = claims.claim(identity, "second", new AbortController().signal)
+      .then((granted) => {
+        secondGranted = granted;
+        return granted;
+      });
+    await settle();
+    expect(secondGranted).toBe(false);
+
+    rejectFirstAttach(new Error("post-repo step failed"));
+    await waitForLifecycle(firstEvents, "failed");
+    expect(firstRepo.destroy).toHaveBeenCalledTimes(1);
+    expect(order.indexOf("failed")).toBeGreaterThan(order.indexOf("repo-destroyed"));
+    expect(order.indexOf("identity-released")).toBeGreaterThan(order.indexOf("failed"));
+    expect(await secondClaim).toBe(true);
+
+    const secondStore = createStore();
+    const releaseSecondSeed = seedRuntimeStore(secondStore, "retry");
+    const secondEvents: LodyRuntimeLifecycleEvent[] = [];
+    const remounted = await render(runtimeTree(
+      "retry",
+      secondStore,
+      bind(fakeBridge("retry-remount")),
+      { onRuntimeLifecycle: (event) => secondEvents.push(event) },
+    ));
+    await waitForLifecycle(secondEvents, "starting");
+    rejectSecondAttach(new Error("second attach failed"));
+    await waitForLifecycle(secondEvents, "failed");
+    expect(createRepo).toHaveBeenCalledTimes(2);
+    expect(secondRepo.destroy).toHaveBeenCalledTimes(1);
+    await remounted.unmount();
+    claims.release("second");
+    releaseFirstSeed();
+    releaseSecondSeed();
+  });
 
   it("releases a never-settling platform poll when its client is disposed", async () => {
     vi.useFakeTimers();
@@ -715,7 +828,20 @@ describe("mounted Lody IPC conversion inventory", () => {
     expect(closure.map(workspacePath)).toContain(
       "vendor/lody/packages/components/src/components/sessions/session-browser-panel.tsx",
     );
-    expect(closure.flatMap(findUnscopedIpcCalls)).toEqual([]);
+    expect(closure.flatMap((file) => findUnscopedIpcCalls(file))).toEqual([]);
+  });
+
+  it("rejects an unguarded replacement even when the file/helper count is unchanged", () => {
+    const file = resolve(
+      process.cwd(),
+      "../../vendor/lody/packages/components/src/lib/clear-local-cache.ts",
+    );
+    const source = readFileSync(file, "utf8");
+    const moved = source
+      .replace("if (getIpcServices()) {", "if (true) {")
+      .concat("\nfunction unguardedAmbientIpc() { return getIpcServices(); }\n");
+    const failures = findUnscopedIpcCalls(file, moved);
+    expect(failures.some((failure) => failure.includes("unguardedAmbientIpc"))).toBe(true);
   });
 
   it("binds and provides the client at both Blitz runtime entry points", () => {

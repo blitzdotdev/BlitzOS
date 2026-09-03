@@ -413,6 +413,8 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
     resolveRoomTransports: (room) =>
       resolveRoomTransportsImpl?.(room) ?? { transportIds: ['cloud'] },
   });
+  let rollbackConstruction = async (): Promise<void> => repo.destroy();
+  try {
   // Liveness invariant: opening a workspace must never wait forever on rebuildable
   // local cache. Loro Streams cursors are checkpoints, not source-of-truth data, so
   // a broken IndexedDB cursor store must fail open and let Streams bootstrap/catch up.
@@ -3545,6 +3547,7 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
     });
   }
 
+  rollbackConstruction = async () => teardownTransport().finally(() => repo.destroy());
   if (electronLocalDataPlane) {
     await attachLocalLoroDataPlaneTransport();
     await ensureMetaRoomSynced();
@@ -4498,6 +4501,8 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
     }
     emitControlConnectionState();
   };
+  const codeCollabFileIndexCache = createCodeCollabFileIndexCache(repo);
+  rollbackConstruction = dispose;
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('online', handleOnline);
   window.addEventListener('offline', handleOffline);
@@ -4512,7 +4517,6 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
   }, RECONNECT_BACKSTOP_INTERVAL_MS);
 
   window.repo = repo;
-  const codeCollabFileIndexCache = createCodeCollabFileIndexCache(repo);
   return {
     workspaceSlug: deps.workspaceSlug,
     workspaceId,
@@ -4622,4 +4626,10 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
     requestMachineBugReport,
     dispose,
   };
+  } catch (error) {
+    await rollbackConstruction().catch((rollbackError: unknown) =>
+      console.error('createWorkspaceRuntime: construction rollback failed', { rollbackError })
+    );
+    throw error;
+  }
 }

@@ -47,13 +47,13 @@ import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
  * `.lody-surface` — and Sonner renders in place rather than through a portal, so
  * it inherits them from the surface it lives in.
  *
- * IT CANNOT DOUBLE-MOUNT, and two toasters would show every toast twice. There
+ * ONLY THE ACTIVE SURFACE MOUNTS IT, and two toasters would show every toast
+ * twice. There
  * are exactly two ways to get one: this stack, and upstream's `__root.tsx`. That
  * root route is not in our route tree and cannot be — `createLodySessionRouter`
  * builds its own `createRootRoute` (`router.tsx`) and mounts their PAGES, never
- * their roots — and `LodySessionsRegion` renders ONE `SessionSurface`, swapping
- * between the workspace's own box and a shared one by `key` rather than mounting
- * both.
+ * their roots. The retained region can mount two surfaces, but its active-state
+ * owner renders this host for exactly one of them.
  *
  * THE WRAPPER IS OURS AND THE ELEMENT INSIDE IT IS THEIRS. Sonner's live region
  * is an empty `<section>` — every toast in it is `position: fixed` — and

@@ -1,5 +1,5 @@
 import { act } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   LodySurfacePool,
   type LodySurfacePoolTarget,
@@ -10,6 +10,7 @@ import type {
   LodySessionSurfacePoolHostProps,
 } from "../src/lody/SessionSurface.js";
 import { render, settle } from "./dom.js";
+import { notifyLodyKeepalivePolicyChanged } from "../src/lody/keepalive-pool.js";
 
 interface SurfaceRecorder {
   surfaces: readonly LodySessionSurfaceHostProps[];
@@ -96,8 +97,22 @@ function apiAt(initialSessionId: string | null): LodySessionSurfaceApi & {
   };
 }
 
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(pointer: fine)",
+    media: query,
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => false,
+  }));
+});
+
 afterEach(() => {
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 describe("the React surface pool adapter", () => {
@@ -186,7 +201,7 @@ describe("the React surface pool adapter", () => {
     await view.unmount();
   });
 
-  it("re-reads the kill switch on a request and immediately shrinks to one", async () => {
+  it("shrinks immediately when the same-page kill switch signal fires", async () => {
     const recorder: SurfaceRecorder = { surfaces: [] };
     const Host = RecordingHost(recorder);
     const tree = (next: LodySurfacePoolTarget) => (
@@ -208,9 +223,42 @@ describe("the React surface pool adapter", () => {
     expect(recorder.surfaces).toHaveLength(2);
 
     window.localStorage.setItem("blitz.lody.keepalive", "off");
-    await act(async () => view.root.render(tree(target("a", null))));
+    await act(async () => notifyLodyKeepalivePolicyChanged());
     expect(recorder.surfaces).toHaveLength(1);
-    expect(current(recorder).surfaceKey).not.toBe(firstA.surfaceKey);
+    expect(current(recorder).surfaceKey).toBe(b.surfaceKey);
+    await view.unmount();
+  });
+
+  it("remounts when either bridge-construction function changes", async () => {
+    const recorder: SurfaceRecorder = { surfaces: [] };
+    const Host = RecordingHost(recorder);
+    const first = target("a", null);
+    first.endpoints.fetchImpl = globalThis.fetch.bind(globalThis);
+    const second = target("a", null);
+    second.endpoints.fetchImpl = globalThis.fetch.bind(globalThis);
+    const third = target("a", null);
+    third.endpoints.fetchImpl = second.endpoints.fetchImpl;
+    third.endpoints.webSocketConstructor = class ReplacementWebSocket extends WebSocket {};
+    const tree = (next: LodySurfacePoolTarget) => (
+      <LodySurfacePool
+        Surface={Host}
+        target={next}
+        viewer={{ name: "Me", avatarUrl: null }}
+        visible
+        railHost={null}
+        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+      />
+    );
+    const view = await render(tree(first));
+    const firstSurface = current(recorder);
+    await act(async () => view.root.render(tree(second)));
+    const secondSurface = current(recorder);
+    expect(secondSurface.surfaceKey).not.toBe(firstSurface.surfaceKey);
+    expect(secondSurface.endpoints.fetchImpl).toBe(second.endpoints.fetchImpl);
+    await act(async () => view.root.render(tree(third)));
+    expect(current(recorder).surfaceKey).not.toBe(secondSurface.surfaceKey);
+    expect(current(recorder).endpoints.webSocketConstructor)
+      .toBe(third.endpoints.webSocketConstructor);
     await view.unmount();
   });
 

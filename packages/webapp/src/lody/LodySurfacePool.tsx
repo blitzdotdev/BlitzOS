@@ -19,9 +19,10 @@ import {
   createLodyKeepalivePool,
   deactivateLodySurface,
   discontinueLodySurface,
-  disposeLodyKeepalivePool,
+  LODY_KEEPALIVE_STORAGE_KEY,
   lodyKeepaliveEnabled,
   lodySurfacePoolCapacity,
+  subscribeLodyKeepalivePolicy,
   reportLodySurfaceIdentity,
   requestLodySurface,
   resizeLodyKeepalivePool,
@@ -29,6 +30,7 @@ import {
   type LodySurfaceIdentity,
   type LodySurfaceKind,
 } from "./keepalive-pool.js";
+import { MOBILE_WEBAPP_QUERY } from "../mobile-webapp.js";
 import type { BlitzViewer } from "./platform.js";
 import type { LodyRuntimeEndpoints } from "./runtime.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
@@ -48,6 +50,7 @@ export interface LodySurfacePoolTarget {
 
 interface SurfaceDefinition {
   entryId: string;
+  mountKey: string;
   target: LodySurfacePoolTarget;
 }
 
@@ -91,23 +94,29 @@ export function lodyEndpointFingerprint(endpoints: LodyRuntimeEndpoints): string
   ]);
 }
 
-function tokenFor(target: LodySurfacePoolTarget): string {
-  return `${target.kind}:${lodyEndpointFingerprint(target.endpoints)}`;
+const endpointFunctionIds = new WeakMap<Function, number>();
+let nextEndpointFunctionId = 1;
+
+function endpointFunctionToken(value: Function | undefined): number | null {
+  if (value === undefined) return null;
+  const existing = endpointFunctionIds.get(value);
+  if (existing !== undefined) return existing;
+  const created = nextEndpointFunctionId;
+  nextEndpointFunctionId += 1;
+  endpointFunctionIds.set(value, created);
+  return created;
 }
 
-/** Props that build the retained provider/runtime body, excluding address hints. */
-function sameSurfaceMountTarget(
-  left: LodySurfacePoolTarget,
-  right: LodySurfacePoolTarget,
-): boolean {
-  return left.kind === right.kind
-    && lodyEndpointFingerprint(left.endpoints) === lodyEndpointFingerprint(right.endpoints)
-    && left.endpoints.fetchImpl === right.endpoints.fetchImpl
-    && left.endpoints.webSocketConstructor === right.endpoints.webSocketConstructor
-    && left.workspaceTitle === right.workspaceTitle
-    && left.readOnly === right.readOnly
-    && left.shared?.sessionId === right.shared?.sessionId
-    && left.initialSessionId === right.initialSessionId;
+function tokenFor(target: LodySurfacePoolTarget): string {
+  return JSON.stringify([
+    target.kind,
+    lodyEndpointFingerprint(target.endpoints),
+    endpointFunctionToken(target.endpoints.fetchImpl),
+    endpointFunctionToken(target.endpoints.webSocketConstructor),
+    target.workspaceTitle,
+    target.readOnly,
+    target.shared?.sessionId ?? null,
+  ]);
 }
 
 function retainDefinitions(
@@ -139,11 +148,15 @@ function transitionToTarget(
   let definitions = retainDefinitions(resizedState.definitions, activated.pool);
   const existing = definitions.findIndex((item) => item.entryId === requested.entryId);
   if (existing === -1) {
-    definitions = [...definitions, { entryId: requested.entryId, target }];
+    definitions = [...definitions, {
+      entryId: requested.entryId,
+      mountKey: `${requested.entryId}:${token}`,
+      target,
+    }];
   } else {
     definitions = definitions.map((item) =>
-      item.entryId === requested.entryId && !sameSurfaceMountTarget(item.target, target)
-        ? { ...item, target }
+      item.entryId === requested.entryId && item.mountKey !== `${requested.entryId}:${token}`
+        ? { ...item, mountKey: `${requested.entryId}:${token}`, target }
         : item);
   }
   return { pool: activated.pool, definitions, targetToken: token };
@@ -157,7 +170,9 @@ function currentPoolCapacity(): number {
   const deviceMemory = memory !== undefined && Number.isFinite(memory) && memory > 0
     ? memory
     : undefined;
-  return lodySurfacePoolCapacity(deviceMemory);
+  const desktopClass = window.matchMedia?.("(pointer: fine)").matches === true
+    && window.matchMedia(MOBILE_WEBAPP_QUERY).matches === false;
+  return lodySurfacePoolCapacity({ deviceMemory, desktopClass });
 }
 
 function transitionToNoTarget(state: PoolRenderState): PoolRenderState {
@@ -207,24 +222,6 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
       ? transitionToNoTarget(state)
       : transitionToTarget(state, props.target, tokenFor(props.target), currentPoolCapacity());
     setState(rendered);
-  } else if (props.target !== null && state.pool.activeEntryId !== null) {
-    const nextTarget = props.target;
-    const activeDefinition = state.definitions.find(
-      (definition) => definition.entryId === state.pool.activeEntryId,
-    );
-    if (
-      activeDefinition !== undefined
-      && !sameSurfaceMountTarget(activeDefinition.target, nextTarget)
-    ) {
-      rendered = {
-        ...state,
-        definitions: state.definitions.map((definition) =>
-          definition.entryId === state.pool.activeEntryId
-            ? { ...definition, target: nextTarget }
-            : definition),
-      };
-      setState(rendered);
-    }
   }
   stateRef.current = rendered;
 
@@ -257,7 +254,12 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
 
   const onSurfaceApiReady = useCallback(
     (entryId: string, api: LodySessionSurfaceApi | null): void => {
-      if (api === null || activeEntryIdRef.current !== entryId) return;
+      if (api === null) {
+        apiByEntryRef.current.delete(entryId);
+        if (activeEntryIdRef.current === entryId) onApiReadyRef.current?.(null);
+        return;
+      }
+      if (activeEntryIdRef.current !== entryId) return;
       apiByEntryRef.current.set(entryId, api);
       publish(entryId, api);
     },
@@ -288,12 +290,13 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
 
   const onSurfaceIdentityClaim = useCallback(async (
     entryId: string,
+    mountKey: string,
     identity: LodySurfaceIdentity,
     signal: AbortSignal,
   ): Promise<boolean> => {
     const decision = applyIdentity(entryId, identity);
     if (decision.entryId !== entryId) return false;
-    return await claimsRef.current.claim(identity, entryId, signal);
+    return await claimsRef.current.claim(identity, mountKey, signal);
   }, [applyIdentity]);
 
   const onSurfaceIdentity = useCallback((entryId: string, identity: LodySurfaceIdentity): void => {
@@ -313,18 +316,19 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
   }, []);
 
   const callbacksByEntryRef = useRef(new Map<string, SurfaceCallbacks>());
-  const callbacksFor = (entryId: string): SurfaceCallbacks => {
-    const existing = callbacksByEntryRef.current.get(entryId);
+  const callbacksFor = (entryId: string, mountKey: string): SurfaceCallbacks => {
+    const existing = callbacksByEntryRef.current.get(mountKey);
     if (existing !== undefined) return existing;
     const created: SurfaceCallbacks = {
-      onIdentityClaim: (identity, signal) => onSurfaceIdentityClaim(entryId, identity, signal),
+      onIdentityClaim: (identity, signal) =>
+        onSurfaceIdentityClaim(entryId, mountKey, identity, signal),
       onIdentity: (identity) => onSurfaceIdentity(entryId, identity),
-      onSurfaceReleased: () => claimsRef.current.release(entryId),
+      onSurfaceReleased: () => claimsRef.current.release(mountKey),
       onContinuityLost: () => onSurfaceContinuityLost(entryId),
       onApiReady: (api) => onSurfaceApiReady(entryId, api),
       onActiveSessionChange: (sessionId) => onSurfaceRoute(entryId, sessionId),
     };
-    callbacksByEntryRef.current.set(entryId, created);
+    callbacksByEntryRef.current.set(mountKey, created);
     return created;
   };
 
@@ -346,20 +350,48 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
   }, [activeEntryId, addressToken, publish, wantedToken]);
 
   const liveIds = rendered.pool.entries.map((entry) => entry.entryId).join("\u0000");
+  const liveMountKeys = rendered.definitions.map((definition) => definition.mountKey).join("\u0000");
   useEffect(() => {
     const keep = new Set(liveIds === "" ? [] : liveIds.split("\u0000"));
     for (const entryId of apiByEntryRef.current.keys()) {
       if (!keep.has(entryId)) apiByEntryRef.current.delete(entryId);
     }
-    for (const entryId of callbacksByEntryRef.current.keys()) {
-      if (!keep.has(entryId)) callbacksByEntryRef.current.delete(entryId);
-    }
   }, [liveIds]);
 
-  const poolRef = useRef(rendered.pool);
-  poolRef.current = rendered.pool;
+  useEffect(() => {
+    const keep = new Set(liveMountKeys === "" ? [] : liveMountKeys.split("\u0000"));
+    for (const mountKey of callbacksByEntryRef.current.keys()) {
+      if (!keep.has(mountKey)) callbacksByEntryRef.current.delete(mountKey);
+    }
+  }, [liveMountKeys]);
+
+  useEffect(() => {
+    const applyCapacity = (): void => {
+      setState((current) => {
+        const capacity = currentPoolCapacity();
+        if (capacity === current.pool.capacity) return current;
+        const resized = resizeLodyKeepalivePool(current.pool, capacity);
+        const next = {
+          ...current,
+          pool: resized.pool,
+          definitions: retainDefinitions(current.definitions, resized.pool),
+        };
+        stateRef.current = next;
+        return next;
+      });
+    };
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key === null || event.key === LODY_KEEPALIVE_STORAGE_KEY) applyCapacity();
+    };
+    window.addEventListener("storage", onStorage);
+    const unsubscribe = subscribeLodyKeepalivePolicy(applyCapacity);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      unsubscribe();
+    };
+  }, []);
+
   useEffect(() => () => {
-    disposeLodyKeepalivePool(poolRef.current);
     apiByEntryRef.current.clear();
     callbacksByEntryRef.current.clear();
   }, []);
@@ -372,9 +404,9 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
     // Use the canonical per-entry object so ordinary shell/address renders do
     // not pierce `RetainedSessionSurfaceContent`'s shallow memo comparison.
     const target = definition.target;
-    const callbacks = callbacksFor(entry.entryId);
+    const callbacks = callbacksFor(entry.entryId, definition.mountKey);
     const surface: LodySessionSurfaceHostProps = {
-      surfaceKey: entry.entryId,
+      surfaceKey: definition.mountKey,
       endpoints: target.endpoints,
       viewer,
       workspaceTitle: target.workspaceTitle,

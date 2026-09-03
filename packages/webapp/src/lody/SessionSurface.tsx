@@ -71,13 +71,15 @@ import type { SurfaceTabsBinding } from "./surface-tabs.js";
 import { useDefaultSessionProjectBackfill } from "./use-session-project-backfill.js";
 import {
   LodySurfaceIpcOwner,
-  LodySurfaceRuntimeCycle,
   useLodySurfaceIpc,
 } from "./surface-ipc.js";
 import { SurfaceUnavailableNotice } from "./SurfaceLoadBoundary.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { LodySurfaceProviders, LodySurfaceThemeRoot } from "./surface-providers.js";
-import type { LodySurfaceIdentity } from "./keepalive-pool.js";
+import {
+  lodySurfaceIdentityKey,
+  type LodySurfaceIdentity,
+} from "./keepalive-pool.js";
 import { seedLodySurfaceWorkspaceContext } from "./surface-workspace-context.js";
 import {
   LodySurfaceActiveProvider,
@@ -356,7 +358,10 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
   );
   const snapshotIdentity = snapshot === null
     ? null
-    : JSON.stringify([snapshot.machineId, snapshot.workspace.workspaceId]);
+    : lodySurfaceIdentityKey({
+        machineId: snapshot.machineId,
+        lwWorkspaceId: snapshot.workspace.workspaceId,
+      });
   useEffect(() => {
     if (snapshot === null) return;
     const identity = {
@@ -547,8 +552,7 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
               workspaceTitle={workspaceTitle}
             >
               <LodySurfaceProviders active={false}>
-                <LodySurfaceRuntimeCycle key={runtimeGeneration} held={localBridge}>
-                <RuntimeProvider
+                <RuntimeProvider key={runtimeGeneration}
                   onRuntimeLifecycle={localBridge.runtimeLifecycle.onRuntimeLifecycle}
                 >
                   <LodySurfaceShellOwnership
@@ -597,7 +601,6 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
                     </LodyAgentConfigGate>
                   )}
                 </RuntimeProvider>
-                </LodySurfaceRuntimeCycle>
                 <LodySurfaceToasterOwner />
               </LodySurfaceProviders>
             </BlitzPlatformProviders>

@@ -7,7 +7,6 @@ import {
   createLodyKeepalivePool,
   deactivateLodySurface,
   discontinueLodySurface,
-  disposeLodyKeepalivePool,
   lodyKeepaliveEnabled,
   lodySurfacePoolCapacity,
   reportLodySurfaceIdentity,
@@ -217,15 +216,6 @@ describe("the Lody keep-alive pool", () => {
     expect(mismatch.pool.entries).toEqual([]);
   });
 
-  it("disposes every entry on region teardown", () => {
-    const first = enter(createLodyKeepalivePool(), "endpoint-a");
-    const entryId = selectedId(first);
-    const pool = identify(first.pool, entryId, A);
-    const disposed = disposeLodyKeepalivePool(pool);
-    expect(disposed.dispose).toEqual([entryId]);
-    expect(disposed.pool.entries).toEqual([]);
-  });
-
   it("shrinks a live pool immediately while preserving the active entry", () => {
     let pool = createLodyKeepalivePool(2);
     const first = enter(pool, "endpoint-a");
@@ -260,10 +250,14 @@ describe("the runtime keep-alive kill switch", () => {
     })).toBe(true);
   });
 
-  it("retains two surfaces only with an absent or sufficient device-memory hint", () => {
+  it("retains two surfaces only with sufficient memory or an unknown-memory desktop", () => {
     expect(LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB).toBe(4);
-    expect(lodySurfacePoolCapacity(undefined)).toBe(LODY_SURFACE_POOL_CAPACITY);
-    expect(lodySurfacePoolCapacity(LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB)).toBe(2);
-    expect(lodySurfacePoolCapacity(2)).toBe(1);
+    expect(lodySurfacePoolCapacity({
+      deviceMemory: LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB,
+      desktopClass: false,
+    })).toBe(LODY_SURFACE_POOL_CAPACITY);
+    expect(lodySurfacePoolCapacity({ deviceMemory: 2, desktopClass: true })).toBe(1);
+    expect(lodySurfacePoolCapacity({ deviceMemory: undefined, desktopClass: true })).toBe(2);
+    expect(lodySurfacePoolCapacity({ deviceMemory: undefined, desktopClass: false })).toBe(1);
   });
 });

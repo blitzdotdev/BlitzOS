@@ -5,7 +5,7 @@ import {
   currentWorkspaceSlugAtom,
   setWorkspaceContextAtom,
 } from "@lody/components/atoms/workspace-context";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   LodyRouteActivity,
   LodySurfaceVisibilityRoot,
@@ -51,6 +51,21 @@ function EffectProbe(props: { store: ProbeStore; counts: ProbeCounts }) {
 }
 
 describe("a hidden Lody route Activity", () => {
+  it("schedules no measurement timer when no activation trace is active", async () => {
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    const tree = (active: boolean) => (
+      <LodyRouteActivity active={active} performanceTargetKey="normal-reveal">
+        <div>route</div>
+      </LodyRouteActivity>
+    );
+    const view = await render(tree(false));
+    const callsBeforeReveal = timer.mock.calls.length;
+    await act(async () => view.root.render(tree(true)));
+    expect(timer).toHaveBeenCalledTimes(callsBeforeReveal);
+    await view.unmount();
+    timer.mockRestore();
+  });
+
   it("disconnects route effects while preserving DOM, state, and scroll position", async () => {
     const store = createStore();
     const counts: ProbeCounts = { keydowns: 0, atomChanges: 0, effectMounts: 0, effectCleanups: 0 };
@@ -157,6 +172,34 @@ describe("retained Lody surface focus", () => {
     scroller.scrollTop = 0;
     await act(async () => view.root.render(tree(false)));
     expect(scroller.scrollTop).toBe(73);
+    await view.unmount();
+  });
+
+  it("reapplies a semantic offset to a replacement conversation scroller", async () => {
+    const tree = (hidden: boolean, replacement: boolean) => (
+      <LodySurfaceVisibilityRoot hidden={hidden} className="surface">
+        <div
+          key={replacement ? "replacement" : "original"}
+          className="chat-scrollbar"
+          style={{ overflowY: "auto", height: 20 }}
+        >
+          conversation
+        </div>
+      </LodySurfaceVisibilityRoot>
+    );
+    const view = await render(tree(false, false));
+    const original = view.container.querySelector<HTMLElement>(".chat-scrollbar");
+    if (original === null) throw new Error("conversation scroller did not mount");
+    original.scrollTop = 73;
+
+    await act(async () => view.root.render(tree(true, false)));
+    await act(async () => view.root.render(tree(true, true)));
+    const replacement = view.container.querySelector<HTMLElement>(".chat-scrollbar");
+    if (replacement === null) throw new Error("replacement scroller did not mount");
+    expect(replacement).not.toBe(original);
+    replacement.scrollTop = 0;
+    await act(async () => view.root.render(tree(false, true)));
+    expect(replacement.scrollTop).toBe(73);
     await view.unmount();
   });
 

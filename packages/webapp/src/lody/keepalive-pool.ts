@@ -9,6 +9,10 @@ export interface LodySurfaceIdentity {
   lwWorkspaceId: string;
 }
 
+export function lodySurfaceIdentityKey(identity: LodySurfaceIdentity): string {
+  return JSON.stringify([identity.machineId, identity.lwWorkspaceId]);
+}
+
 export type LodySurfaceKind = "owned" | "shared";
 export type LodySurfaceState = "booting" | "ready" | "active" | "hidden" | "invalid";
 
@@ -54,16 +58,28 @@ interface KeepaliveStorage {
   getItem(key: string): string | null;
 }
 
+export interface LodySurfaceDevicePolicy {
+  deviceMemory: number | undefined;
+  desktopClass: boolean;
+}
+
+const keepalivePolicyListeners = new Set<() => void>();
+
+export function notifyLodyKeepalivePolicyChanged(): void {
+  for (const listener of keepalivePolicyListeners) listener();
+}
+
+export function subscribeLodyKeepalivePolicy(listener: () => void): () => void {
+  keepalivePolicyListeners.add(listener);
+  return () => keepalivePolicyListeners.delete(listener);
+}
+
 function emptyDecision(pool: LodyKeepalivePool, entryId: string | null): LodyPoolDecision {
   return { pool, entryId, mount: [], hide: [], dispose: [], validate: [], reused: false };
 }
 
 function nextClock(pool: LodyKeepalivePool): number {
   return pool.clock + 1;
-}
-
-function sameIdentity(left: LodySurfaceIdentity, right: LodySurfaceIdentity): boolean {
-  return left.machineId === right.machineId && left.lwWorkspaceId === right.lwWorkspaceId;
 }
 
 function newest(entries: readonly LodyKeepaliveEntry[]): LodyKeepaliveEntry | undefined {
@@ -94,9 +110,13 @@ export function createLodyKeepalivePool(
   return { entries: [], activeEntryId: null, capacity, clock: 0, nextEntrySequence: 1 };
 }
 
-/** Low-memory devices retain no neighbor; absent browser hints keep capacity two. */
-export function lodySurfacePoolCapacity(deviceMemory: number | undefined): number {
-  return deviceMemory === undefined || deviceMemory >= LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB
+/** Retain a neighbor only with sufficient reported memory or a known desktop shell. */
+export function lodySurfacePoolCapacity(policy: LodySurfaceDevicePolicy): number {
+  return policy.deviceMemory !== undefined
+    ? policy.deviceMemory >= LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB
+      ? LODY_SURFACE_POOL_CAPACITY
+      : 1
+    : policy.desktopClass
     ? LODY_SURFACE_POOL_CAPACITY
     : 1;
 }
@@ -297,7 +317,7 @@ export function reportLodySurfaceIdentity(
   const reporting = pool.entries.find((entry) => entry.entryId === entryId);
   if (reporting === undefined) return emptyDecision(pool, null);
 
-  if (reporting.key !== null && !sameIdentity(reporting.key, key)) {
+  if (reporting.key !== null && lodySurfaceIdentityKey(reporting.key) !== lodySurfaceIdentityKey(key)) {
     const invalidated = {
       ...pool,
       entries: pool.entries.map((entry): LodyKeepaliveEntry =>
@@ -310,7 +330,9 @@ export function reportLodySurfaceIdentity(
   }
 
   const duplicates = pool.entries.filter(
-    (entry) => entry.entryId !== entryId && entry.key !== null && sameIdentity(entry.key, key),
+    (entry) => entry.entryId !== entryId
+      && entry.key !== null
+      && lodySurfaceIdentityKey(entry.key) === lodySurfaceIdentityKey(key),
   );
   const contenders = [reporting, ...duplicates];
   const activeContender = contenders.find((entry) => entry.entryId === pool.activeEntryId);
@@ -394,15 +416,6 @@ export function discontinueLodySurface(
     ...emptyDecision(nextPool, entryId),
     validate: [entryId],
     reused: true,
-  };
-}
-
-/** Release every mounted entry when the region itself unmounts. */
-export function disposeLodyKeepalivePool(pool: LodyKeepalivePool): LodyPoolDecision {
-  const dispose = pool.entries.map((entry) => entry.entryId);
-  return {
-    ...emptyDecision({ ...pool, entries: [], activeEntryId: null }, null),
-    dispose,
   };
 }
 

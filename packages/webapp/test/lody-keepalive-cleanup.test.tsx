@@ -1,5 +1,5 @@
-import { act, useEffect, useRef } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, StrictMode, useEffect, useRef } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LodySurfacePool, type LodySurfacePoolTarget } from "../src/lody/LodySurfacePool.js";
 import type {
   LodySessionSurfaceHostProps,
@@ -185,10 +185,24 @@ function BarrierHost(ledger: BarrierLedger) {
   };
 }
 
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(pointer: fine)",
+    media: query,
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => false,
+  }));
+});
+
 afterEach(() => {
   delete debugRepoWindow().repo;
   window.localStorage.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("surface eviction cleanup", () => {
@@ -213,29 +227,29 @@ describe("surface eviction cleanup", () => {
     function SlowRuntimeSurface({ surface }: { surface: LodySessionSurfaceHostProps }) {
       const initial = useRef(surface).current;
       const lifecycle = useRef(
-        createLodySurfaceRuntimeLifecycle({ constructionBackstopMs: 1_000 }),
+        createLodySurfaceRuntimeLifecycle({ constructionWarningMs: 1_000 }),
       ).current;
       useEffect(() => {
         const name = boxName(initial);
         const controller = new AbortController();
         let runtime: FakeRuntime | null = null;
         let unmounted = false;
-        lifecycle.startCycle();
         void initial.onIdentityClaim?.(
           { machineId: `machine-${name}`, lwWorkspaceId: `lw_${name}` },
           controller.signal,
         ).then(async (granted) => {
           if (!granted || controller.signal.aborted) return;
           order.push(`construction-started:${name}`);
+          lifecycle.onRuntimeLifecycle({ attemptId: 1, phase: "starting" });
           const created = name === "a"
             ? await construction
             : { dispose: async () => {} };
           runtime = created;
-          lifecycle.onRuntimeLifecycle({ phase: "created" });
+          lifecycle.onRuntimeLifecycle({ attemptId: 1, phase: "created" });
           order.push(`created:${name}`);
           if (!unmounted) return;
           await created.dispose();
-          lifecycle.onRuntimeLifecycle({ phase: "disposed" });
+          lifecycle.onRuntimeLifecycle({ attemptId: 1, phase: "disposed" });
           order.push(`disposed:${name}`);
         });
         return () => {
@@ -243,7 +257,7 @@ describe("surface eviction cleanup", () => {
           unmounted = true;
           if (runtime !== null) {
             void runtime.dispose().finally(() => {
-              lifecycle.onRuntimeLifecycle({ phase: "disposed" });
+              lifecycle.onRuntimeLifecycle({ attemptId: 1, phase: "disposed" });
               order.push(`disposed:${name}`);
             });
           }
@@ -298,6 +312,52 @@ describe("surface eviction cleanup", () => {
     expect(consoleError).not.toHaveBeenCalled();
     await view.unmount();
     await settle();
+  });
+
+  it("releases immediately when RuntimeProvider starts no construction attempt", () => {
+    const lifecycle = createLodySurfaceRuntimeLifecycle();
+    const release = vi.fn();
+    lifecycle.releaseAfterRuntime(release);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("distinguishes StrictMode attempts and never releases at the warning bound", async () => {
+    vi.useFakeTimers();
+    try {
+      const slow = vi.fn();
+      const release = vi.fn();
+      let nextAttemptId = 10;
+      const lifecycle = createLodySurfaceRuntimeLifecycle({
+        constructionWarningMs: 10,
+        onConstructionSlow: slow,
+      });
+      function StrictRuntimeAttempt() {
+        useEffect(() => {
+          nextAttemptId += 1;
+          const attemptId = nextAttemptId;
+          lifecycle.onRuntimeLifecycle({ attemptId, phase: "starting" });
+          return () => lifecycle.onRuntimeLifecycle({ attemptId, phase: "failed" });
+        }, []);
+        return null;
+      }
+      const view = await render(
+        <StrictMode>
+          <StrictRuntimeAttempt />
+        </StrictMode>,
+      );
+      expect(nextAttemptId).toBe(12);
+      lifecycle.releaseAfterRuntime(release);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(slow).toHaveBeenCalledTimes(1);
+      expect(slow).toHaveBeenCalledWith({ attemptId: 12, timeoutMs: 10 });
+      expect(release).not.toHaveBeenCalled();
+      await view.unmount();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(release).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("releases every owned resource and permits the same identity to open again", async () => {

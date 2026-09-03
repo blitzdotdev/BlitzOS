@@ -41,6 +41,10 @@ interface MutableTrace {
 let nextTraceId = 1;
 let currentTrace: MutableTrace | null = null;
 
+export function isLodyActivationTraceActive(targetKey: string): boolean {
+  return currentTrace?.targetKey === targetKey;
+}
+
 /** Start immediately before the state update that changes the active entry. */
 export function beginLodyActivationTrace(targetKey: string, startedAt: number): number {
   const id = nextTraceId;

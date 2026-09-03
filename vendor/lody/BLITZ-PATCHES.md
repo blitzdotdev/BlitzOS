@@ -1625,10 +1625,13 @@ The local-platform state is a client-keyed WeakMap; its abort listener clears a
 never-settling snapshot interval and deletes the entry. The local Loro adapter
 owns every message unsubscribe, not only its status listener.
 `RuntimeProvider` also accepts one optional additive `onRuntimeLifecycle`
-callback. It reports `created` or `failed` after construction settles and
-`disposed` only after awaited runtime cleanup, allowing an embedding surface to
-retain its IPC authority until repo destruction finishes. Omission preserves
-upstream behavior. `RuntimeDeps.localIpcHost` and the matching facade dependency are an explicit
+callback. It reports `starting` immediately before the constructor call, then
+uses the same unique attempt id for `created` or rollback-complete `failed` and
+for `disposed` after awaited runtime cleanup. `createWorkspaceRuntime` catches
+every post-repo construction error, detaches any transport/listener installed
+so far, and awaits `repo.destroy()` before rejecting. This lets an embedding
+surface retain IPC authority until construction or repo destruction finishes.
+Omission preserves upstream behavior. `RuntimeDeps.localIpcHost` and the matching facade dependency are an explicit
 fast-path capability: supplying a client no longer implies a local plane.
 Omission preserves the existing Electron/global-host test.
 
@@ -1639,9 +1642,10 @@ above its keyed surfaces, publishes compatibility `window.ipc` only for the
 active surface, and its bridge explicitly no-ops `app.nativeTheme` and
 `app.setNativeTheme`. Those reads cannot reach a data/session/machine plane.
 
-**Footprint.** The Phase A commit touched exactly **19** vendor source files.
-This follow-up adds exactly two reachable public-browser files; seam 18 now
-touches **21**. No file was removed:
+**Cumulative seam-vs-upstream inventory.** The original Phase A change touched
+exactly **19** vendor source files. The public-browser follow-up added two; seam
+18 cumulatively touches the following **21** upstream files. This table is not
+the smaller `ead5af60..HEAD` branch footprint:
 
 | File | Stable upstream anchor | Mechanical seam change |
 |---|---|---|
@@ -1678,13 +1682,27 @@ the 21 rows above. This pass changes only two already-listed seam files:
 Total vendor source footprint for this follow-up: **+23 / -7** lines across two
 of seam 18's existing 21 files (exactly 30 changed lines).
 
+**Final correctness footprint (2026-09-03).** This pass remains inside two
+already-listed seam files:
+
+| File | Diff lines | Why every line is in the seam |
+|---|---:|---|
+| `packages/components/src/providers/runtime-provider.tsx` | +13 / -6 | Adds `starting` plus attempt ids and carries the id through construction settlement and completed disposal; an absent callback still changes nothing. |
+| `packages/components/src/providers/create-workspace-runtime.ts` | +11 / -1 | Wraps post-repo construction in rollback, upgrades rollback to transport teardown and then the full disposer as those become available, and rejects only after cleanup. |
+
+Total vendor source footprint for the final pass: **+24 / -7** lines (31 changed
+lines). The cumulative `ead5af60..HEAD` aggregate is ten vendor files at
+**+258 / -89**, including nine source files at **+132 / -37**; the tenth file is
+this seam inventory.
+
 `packages/webapp/test/lody-ipc-client-isolation.test.ts` derives its inventory
 from the import closure rooted at Blitz's `SessionSurface.tsx`. It fails every
 unbound `getIpcServices`, `onIpcEvent`, `sendIpc`,
 `sendLocalSessionControl`, `getPublicBrowserBridge`, or `window.ipc` site except
-exact per-helper counts at the call sites represented by this allowlist. An
-additional ambient call in one of these files therefore fails rather than
-inheriting a whole-file exemption:
+exact helper plus enclosing-function sites represented by this allowlist, with
+the expected count inside each named scope. Moving a guarded call to an
+unguarded function in the same file therefore fails even when the file/helper
+count is unchanged:
 
 | File | Why ambient IPC is allowed |
 |---|---|

@@ -1,5 +1,8 @@
 /** Per-daemon runtime leases. A holder releases only after repo/IPC teardown. */
-import type { LodySurfaceIdentity } from "./keepalive-pool.js";
+import {
+  lodySurfaceIdentityKey,
+  type LodySurfaceIdentity,
+} from "./keepalive-pool.js";
 
 interface IdentityWaiter {
   entryId: string;
@@ -16,10 +19,6 @@ interface IdentityClaimSlot {
 export interface LodySurfaceIdentityClaims {
   claim(identity: LodySurfaceIdentity, entryId: string, signal: AbortSignal): Promise<boolean>;
   release(entryId: string): void;
-}
-
-function identityKey(identity: LodySurfaceIdentity): string {
-  return JSON.stringify([identity.machineId, identity.lwWorkspaceId]);
 }
 
 export function createLodySurfaceIdentityClaims(): LodySurfaceIdentityClaims {
@@ -41,7 +40,7 @@ export function createLodySurfaceIdentityClaims(): LodySurfaceIdentityClaims {
   return {
     claim: async (identity, entryId, signal) => {
       if (signal.aborted) return false;
-      const key = identityKey(identity);
+      const key = lodySurfaceIdentityKey(identity);
       const slot = slots.get(key) ?? { holder: null, waiters: [] };
       slots.set(key, slot);
       if (slot.holder === entryId) return true;

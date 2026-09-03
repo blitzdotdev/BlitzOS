@@ -21,6 +21,7 @@ const IPC_HELPER_MIN_ARGUMENTS = new Map([
 interface AmbientIpcAllowance {
   file: string;
   helper: string;
+  scope: string;
   expectedCount: number;
   reason: string;
 }
@@ -36,33 +37,61 @@ const reasons = {
   default: "This is the intentional lazy Electron-compatible window client.",
 };
 
-/** Exact helper counts: a new ambient call in any listed file fails this audit. */
+const allowance = (
+  file: string,
+  helper: string,
+  scope: string,
+  expectedCount: number,
+  reason: string,
+): AmbientIpcAllowance => ({ file, helper, scope, expectedCount, reason });
+
+/** Exact named sites: moving a call to another function fails even if its file count is unchanged. */
 const AMBIENT_IPC_ALLOWLIST: readonly AmbientIpcAllowance[] = [
-  { file: "vendor/lody/packages/components/src/theme-provider.tsx", helper: "getIpcServices", expectedCount: 1, reason: reasons.theme },
-  { file: "vendor/lody/packages/components/src/theme-provider.tsx", helper: "onIpcEvent", expectedCount: 1, reason: reasons.theme },
-  { file: "vendor/lody/packages/components/src/atoms/local-probe.ts", helper: "getIpcServices", expectedCount: 2, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/atoms/local-probe.ts", helper: "sendIpc", expectedCount: 1, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/atoms/local-probe.ts", helper: "onIpcEvent", expectedCount: 1, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", helper: "getIpcServices", expectedCount: 6, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", helper: "sendIpc", expectedCount: 1, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", helper: "onIpcEvent", expectedCount: 1, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts", helper: "getIpcServices", expectedCount: 5, reason: reasons.terminal },
-  { file: "vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts", helper: "sendIpc", expectedCount: 5, reason: reasons.terminal },
-  { file: "vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts", helper: "onIpcEvent", expectedCount: 3, reason: reasons.terminal },
-  { file: "vendor/lody/packages/components/src/components/sessions/session-chat-interface.tsx", helper: "getIpcServices", expectedCount: 3, reason: reasons.path },
-  { file: "vendor/lody/packages/components/src/lib/electron.ts", helper: "getIpcServices", expectedCount: 1, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/lib/electron.ts", helper: "onIpcEvent", expectedCount: 1, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/lib/native-browser.ts", helper: "getIpcServices", expectedCount: 2, reason: reasons.native },
-  { file: "vendor/lody/packages/components/src/lib/image-preview-export.ts", helper: "getIpcServices", expectedCount: 1, reason: reasons.native },
-  { file: "vendor/lody/packages/components/src/lib/clear-local-cache.ts", helper: "getIpcServices", expectedCount: 2, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/components/mobile/mobile-about-settings.tsx", helper: "getIpcServices", expectedCount: 4, reason: reasons.settings },
-  { file: "vendor/lody/packages/components/src/components/mobile/mobile-general-settings.tsx", helper: "getIpcServices", expectedCount: 9, reason: reasons.settings },
-  { file: "vendor/lody/packages/components/src/components/settings/about-setting.tsx", helper: "getIpcServices", expectedCount: 4, reason: reasons.settings },
-  { file: "vendor/lody/packages/components/src/components/settings/general-setting.tsx", helper: "getIpcServices", expectedCount: 9, reason: reasons.settings },
-  { file: "vendor/lody/packages/components/src/hooks/use-electron-updater-state.ts", helper: "getIpcServices", expectedCount: 2, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/hooks/use-electron-updater-state.ts", helper: "onIpcEvent", expectedCount: 1, reason: reasons.electron },
-  { file: "vendor/lody/packages/components/src/lib/native-global-shortcuts.ts", helper: "getIpcServices", expectedCount: 5, reason: reasons.shortcuts },
-  { file: "vendor/lody/packages/components/src/lib/electron-ipc-client.ts", helper: "window.ipc", expectedCount: 1, reason: reasons.default },
+  allowance("vendor/lody/packages/components/src/theme-provider.tsx", "getIpcServices", "LodyThemeProvider", 1, reasons.theme),
+  allowance("vendor/lody/packages/components/src/theme-provider.tsx", "onIpcEvent", "LodyThemeProvider", 1, reasons.theme),
+  allowance("vendor/lody/packages/components/src/atoms/local-probe.ts", "getIpcServices", "localProbeEffectAtom", 2, reasons.electron),
+  allowance("vendor/lody/packages/components/src/atoms/local-probe.ts", "sendIpc", "localProbeEffectAtom", 1, reasons.electron),
+  allowance("vendor/lody/packages/components/src/atoms/local-probe.ts", "onIpcEvent", "localProbeEffectAtom", 1, reasons.electron),
+  allowance("vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", "getIpcServices", "useElectronCliDaemon", 2, reasons.electron),
+  allowance("vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", "getIpcServices", "restart", 2, reasons.electron),
+  allowance("vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", "getIpcServices", "terminate", 2, reasons.electron),
+  allowance("vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", "sendIpc", "useElectronCliDaemon", 1, reasons.electron),
+  allowance("vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", "onIpcEvent", "useElectronCliDaemon", 1, reasons.electron),
+  ...["list", "open", "readClipboardText", "writeClipboardText", "createElectronTerminalChannel"].map(
+    (scope) => allowance("vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts", "getIpcServices", scope, 1, reasons.terminal),
+  ),
+  ...["attach", "input", "resize", "close", "closeSession"].map(
+    (scope) => allowance("vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts", "sendIpc", scope, 1, reasons.terminal),
+  ),
+  ...["onData", "onExit", "onTitle"].map(
+    (scope) => allowance("vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts", "onIpcEvent", scope, 1, reasons.terminal),
+  ),
+  allowance("vendor/lody/packages/components/src/components/sessions/session-chat-interface.tsx", "getIpcServices", "SessionChatInterface", 1, reasons.path),
+  allowance("vendor/lody/packages/components/src/components/sessions/session-chat-interface.tsx", "getIpcServices", "launchPathWithLauncher", 2, reasons.path),
+  allowance("vendor/lody/packages/components/src/lib/electron.ts", "getIpcServices", "ensureFullscreenBridge", 1, reasons.electron),
+  allowance("vendor/lody/packages/components/src/lib/electron.ts", "onIpcEvent", "ensureFullscreenBridge", 1, reasons.electron),
+  allowance("vendor/lody/packages/components/src/lib/native-browser.ts", "getIpcServices", "openExternalUrl", 2, reasons.native),
+  allowance("vendor/lody/packages/components/src/lib/image-preview-export.ts", "getIpcServices", "getImagePreviewExportBridge", 1, reasons.native),
+  allowance("vendor/lody/packages/components/src/lib/clear-local-cache.ts", "getIpcServices", "reloadApp", 2, reasons.electron),
+  allowance("vendor/lody/packages/components/src/components/mobile/mobile-about-settings.tsx", "getIpcServices", "handleCheckForUpdates", 2, reasons.settings),
+  allowance("vendor/lody/packages/components/src/components/mobile/mobile-about-settings.tsx", "getIpcServices", "handleQuitAndInstall", 2, reasons.settings),
+  allowance("vendor/lody/packages/components/src/components/settings/about-setting.tsx", "getIpcServices", "handleCheckForUpdates", 2, reasons.settings),
+  allowance("vendor/lody/packages/components/src/components/settings/about-setting.tsx", "getIpcServices", "handleQuitAndInstall", 2, reasons.settings),
+  ...[
+    ["readElectronNotificationPermission", 2], ["MobileGeneralSettings", 3],
+    ["openSystemNotificationSettings", 2], ["handleToggleAutoLaunch", 2],
+  ].map(([scope, count]) => allowance("vendor/lody/packages/components/src/components/mobile/mobile-general-settings.tsx", "getIpcServices", String(scope), Number(count), reasons.settings)),
+  ...[
+    ["useElectronEnabledSetting", 1], ["readElectronNotificationPermission", 1],
+    ["GeneralSettingsComponent", 2], ["openSystemNotificationSettings", 1],
+    ["handleToggleAutoLaunch", 2], ["handleToggleCliAutoStart", 2],
+  ].map(([scope, count]) => allowance("vendor/lody/packages/components/src/components/settings/general-setting.tsx", "getIpcServices", String(scope), Number(count), reasons.settings)),
+  allowance("vendor/lody/packages/components/src/hooks/use-electron-updater-state.ts", "getIpcServices", "useElectronUpdaterState", 2, reasons.electron),
+  allowance("vendor/lody/packages/components/src/hooks/use-electron-updater-state.ts", "onIpcEvent", "useElectronUpdaterState", 1, reasons.electron),
+  allowance("vendor/lody/packages/components/src/lib/native-global-shortcuts.ts", "getIpcServices", "getGlobalShortcuts", 2, reasons.shortcuts),
+  allowance("vendor/lody/packages/components/src/lib/native-global-shortcuts.ts", "getIpcServices", "setGlobalShortcutsSuspended", 1, reasons.shortcuts),
+  allowance("vendor/lody/packages/components/src/lib/native-global-shortcuts.ts", "getIpcServices", "setGlobalShortcut", 2, reasons.shortcuts),
+  allowance("vendor/lody/packages/components/src/lib/electron-ipc-client.ts", "window.ipc", "readIpcBridge", 1, reasons.default),
 ];
 
 interface InternalAlias {
@@ -190,37 +219,79 @@ function isNode(value: unknown): value is Node {
     && typeof Reflect.get(value, "end") === "number";
 }
 
-function visitNodes(node: Node, visit: (candidate: Node) => void): void {
-  visit(node);
+function identifierName(node: Node): string | null {
+  if (node.type !== "Identifier") return null;
+  const name = Reflect.get(node, "name");
+  return typeof name === "string" ? name : null;
+}
+
+function wrapsFunction(node: Node): boolean {
+  if (node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression") return true;
+  if (node.type !== "CallExpression") return false;
+  if (node.callee.type !== "Identifier"
+    || !["atomEffect", "forwardRef", "memo", "useCallback"].includes(node.callee.name)) {
+    return false;
+  }
+  return node.arguments.some((argument) => isNode(argument) && wrapsFunction(argument));
+}
+
+function childScope(node: Node, scope: string): string {
+  if (node.type === "FunctionDeclaration") {
+    const id = Reflect.get(node, "id");
+    return isNode(id) ? identifierName(id) ?? scope : scope;
+  }
+  if (node.type === "VariableDeclarator") {
+    const id = Reflect.get(node, "id");
+    const init = Reflect.get(node, "init");
+    if (isNode(id) && isNode(init) && wrapsFunction(init)) {
+      return identifierName(id) ?? scope;
+    }
+  }
+  if (node.type === "MethodDefinition" || node.type === "PropertyDefinition") {
+    const key = Reflect.get(node, "key");
+    return isNode(key) ? identifierName(key) ?? scope : scope;
+  }
+  return scope;
+}
+
+function visitNodes(
+  node: Node,
+  visit: (candidate: Node, scope: string) => void,
+  scope = "<module>",
+): void {
+  const nestedScope = childScope(node, scope);
+  visit(node, nestedScope);
   for (const [key, value] of Object.entries(node)) {
     if (key === "parent") continue;
     if (Array.isArray(value)) {
-      for (const item of value) if (isNode(item)) visitNodes(item, visit);
+      for (const item of value) if (isNode(item)) visitNodes(item, visit, nestedScope);
     } else if (isNode(value)) {
-      visitNodes(value, visit);
+      visitNodes(value, visit, nestedScope);
     }
   }
 }
 
-function lineOf(file: string, node: Node): number {
-  return readSource(file).slice(0, node.start).split("\n").length;
-}
-
-export function findUnscopedIpcCalls(file: string): string[] {
-  if (!IPC_CANDIDATE.test(readSource(file))) return [];
-  const source = sourceFiles.get(file);
+export function findUnscopedIpcCalls(file: string, sourceOverride?: string): string[] {
+  const text = sourceOverride ?? readSource(file);
+  if (!IPC_CANDIDATE.test(text)) return [];
+  const source = sourceOverride === undefined
+    ? sourceFiles.get(file)
+    : parseSync(file, text, { astType: "js" }).program;
   if (source === undefined) throw new Error(`Source AST was not loaded for ${workspacePath(file)}`);
   const relativePath = workspacePath(file);
-  const sites = new Map<string, number[]>();
-  const add = (helper: string, node: Node): void => {
+  const sites = new Map<string, Array<{ line: number; scope: string }>>();
+  const add = (helper: string, node: Node, scope: string): void => {
     const lines = sites.get(helper) ?? [];
-    lines.push(lineOf(file, node));
+    const line = text.slice(0, node.start).split("\n").length;
+    lines.push({ line, scope });
     sites.set(helper, lines);
   };
-  visitNodes(source, (node) => {
+  visitNodes(source, (node, scope) => {
     if (node.type === "CallExpression" && node.callee.type === "Identifier") {
       const minimum = IPC_HELPER_MIN_ARGUMENTS.get(node.callee.name);
-      if (minimum !== undefined && node.arguments.length < minimum) add(node.callee.name, node);
+      if (minimum !== undefined && node.arguments.length < minimum) {
+        add(node.callee.name, node, scope);
+      }
     }
     if (node.type === "MemberExpression"
       && !node.computed
@@ -228,23 +299,30 @@ export function findUnscopedIpcCalls(file: string): string[] {
       && node.object.name === "window"
       && node.property.type === "Identifier"
       && node.property.name === "ipc") {
-      add("window.ipc", node);
+      add("window.ipc", node, scope);
     }
   });
 
   const failures: string[] = [];
   const allowances = AMBIENT_IPC_ALLOWLIST.filter((entry) => entry.file === relativePath);
   for (const allowance of allowances) {
-    const actual = sites.get(allowance.helper)?.length ?? 0;
-    if (actual !== allowance.expectedCount) {
+    const helperSites = sites.get(allowance.helper) ?? [];
+    const allowedSites = helperSites.filter((site) => site.scope === allowance.scope);
+    if (allowedSites.length !== allowance.expectedCount) {
       failures.push(
-        `${relativePath} ${allowance.helper}: expected ${allowance.expectedCount} ambient call(s), found ${actual}; ${allowance.reason}`,
+        `${relativePath} ${allowance.helper} in ${allowance.scope}: expected `
+        + `${allowance.expectedCount} ambient call(s), found ${allowedSites.length}; ${allowance.reason}`,
       );
     }
-    sites.delete(allowance.helper);
+    sites.set(
+      allowance.helper,
+      helperSites.filter((site) => site.scope !== allowance.scope),
+    );
   }
-  for (const [helper, lines] of sites) {
-    for (const line of lines) failures.push(`${relativePath}:${line} ${helper}`);
+  for (const [helper, remaining] of sites) {
+    for (const site of remaining) {
+      failures.push(`${relativePath}:${site.line} ${helper} in ${site.scope}`);
+    }
   }
   return failures;
 }

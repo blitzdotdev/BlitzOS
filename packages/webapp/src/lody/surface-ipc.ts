@@ -1,5 +1,5 @@
 /** One surface's captured IPC authority and compatibility-global ownership. */
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { createBoundIpcClient } from "@lody/components/lib/electron-ipc-client";
 import {
   createLodyLocalBridge,
@@ -23,7 +23,7 @@ export type LodySurfaceIpc = {
   ipcClient: SurfaceIpcClient;
   runtimeLifecycle: LodySurfaceRuntimeLifecycle;
   releaseSurface: () => void;
-  lifecycleGeneration: number;
+  pendingTerminalRelease: { cancelled: boolean } | null;
 };
 
 /** Capture one bridge/client pair for the full lifetime of a surface. */
@@ -46,15 +46,16 @@ export function useLodySurfaceIpc(
       bridge,
       ipcClient: createBoundIpcClient(bridge.ipc),
       runtimeLifecycle: createLodySurfaceRuntimeLifecycle({
-        onConstructionTimeout: ({ timeoutMs }) => {
-          console.warn("lody: runtime construction exceeded the surface teardown backstop", {
+        onConstructionSlow: ({ attemptId, timeoutMs }) => {
+          console.warn("lody: runtime construction is still pending", {
+            attemptId,
             platformUrl: endpoints.platformUrl,
             timeoutMs,
           });
         },
       }),
       releaseSurface: () => releaseRef.current?.(),
-      lifecycleGeneration: 0,
+      pendingTerminalRelease: null,
     };
   }
   return held.current;
@@ -69,13 +70,17 @@ export function useLodySurfaceIpcLifecycle(held: LodySurfaceIpc, active: boolean
   }, [active, bridge]);
 
   useEffect(() => {
-    held.lifecycleGeneration += 1;
-    const generation = held.lifecycleGeneration;
+    const pending = held.pendingTerminalRelease;
+    if (pending !== null) pending.cancelled = true;
+    held.pendingTerminalRelease = null;
     return () => {
       // StrictMode cleans and remounts effects on the same component instance.
       // A real eviction has no next generation and terminally releases both.
+      const terminalRelease = { cancelled: false };
+      held.pendingTerminalRelease = terminalRelease;
       queueMicrotask(() => {
-        if (held.lifecycleGeneration !== generation) return;
+        if (terminalRelease.cancelled) return;
+        held.pendingTerminalRelease = null;
         held.runtimeLifecycle.releaseAfterRuntime(() => {
           ipcClient.dispose();
           try {
@@ -87,17 +92,6 @@ export function useLodySurfaceIpcLifecycle(held: LodySurfaceIpc, active: boolean
       });
     };
   }, [bridge, held, ipcClient]);
-}
-
-/** Counts each RuntimeProvider effect cycle, including StrictMode rehearsal. */
-export function LodySurfaceRuntimeCycle(props: {
-  held: LodySurfaceIpc;
-  children: ReactNode;
-}) {
-  useEffect(() => {
-    props.held.runtimeLifecycle.startCycle();
-  }, [props.held]);
-  return props.children;
 }
 
 /** Only this tiny subscriber changes when page-global IPC ownership flips. */

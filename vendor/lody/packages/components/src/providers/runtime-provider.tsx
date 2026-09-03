@@ -62,7 +62,9 @@ const resolveRuntimeEagerSyncSurface = (): EagerSyncSurface => {
   return 'web';
 };
 
-export type RuntimeLifecycleEvent = { phase: 'created' | 'failed' | 'disposed' };
+export type RuntimeLifecycleEvent = { attemptId: number; phase: 'starting' | 'created' | 'failed' | 'disposed' };
+
+let nextRuntimeAttemptId = 1;
 
 export function RuntimeProvider({ children, onRuntimeLifecycle }: {
   children: ReactNode;
@@ -234,6 +236,7 @@ export function RuntimeProvider({ children, onRuntimeLifecycle }: {
     }
 
     let disposed = false;
+    let attemptId: number | null = null;
     let workspaceRuntime: Awaited<ReturnType<typeof createWorkspaceRuntime>> | null = null;
     // Logging-only workspace id resolution inputs intentionally stay out of
     // this effect's dependency list. A cached id can create the runtime before
@@ -251,7 +254,6 @@ export function RuntimeProvider({ children, onRuntimeLifecycle }: {
           `lody-loro-stream-cursors-${effectiveWorkspaceId}`,
         ]);
         if (disposed) {
-          onRuntimeLifecycle?.({ phase: 'failed' });
           return;
         }
         const eagerSyncSurface = resolveRuntimeEagerSyncSurface();
@@ -261,6 +263,9 @@ export function RuntimeProvider({ children, onRuntimeLifecycle }: {
           workspaceIdSource,
           eagerSyncSurface,
         });
+        attemptId = nextRuntimeAttemptId;
+        nextRuntimeAttemptId += 1;
+        onRuntimeLifecycle?.({ attemptId, phase: 'starting' });
         workspaceRuntime = await createWorkspaceRuntime({
           workspaceSlug,
           workspaceId: effectiveWorkspaceId,
@@ -311,14 +316,14 @@ export function RuntimeProvider({ children, onRuntimeLifecycle }: {
             setPresenceSyncState(state);
           },
         });
-        onRuntimeLifecycle?.({ phase: 'created' });
+        onRuntimeLifecycle?.({ attemptId, phase: 'created' });
         if (disposed) {
           try {
             await workspaceRuntime.dispose();
           } catch (error) {
             logRuntimeOperationError('dispose after late initialization', error);
           } finally {
-            onRuntimeLifecycle?.({ phase: 'disposed' });
+            onRuntimeLifecycle?.({ attemptId, phase: 'disposed' });
           }
           return;
         }
@@ -339,7 +344,7 @@ export function RuntimeProvider({ children, onRuntimeLifecycle }: {
           workspaceIdSource,
         });
       } catch (error) {
-        onRuntimeLifecycle?.({ phase: 'failed' });
+        if (attemptId !== null) onRuntimeLifecycle?.({ attemptId, phase: 'failed' });
         logRuntimeOperationError('runtime initialization', error);
         if (disposed) return;
         setRuntime(null);
@@ -362,7 +367,9 @@ export function RuntimeProvider({ children, onRuntimeLifecycle }: {
       if (workspaceRuntime) {
         void workspaceRuntime.dispose().catch((error: unknown) => {
           logRuntimeOperationError('cleanup dispose', error);
-        }).finally(() => onRuntimeLifecycle?.({ phase: 'disposed' }));
+        }).finally(() => {
+          if (attemptId !== null) onRuntimeLifecycle?.({ attemptId, phase: 'disposed' });
+        });
       }
     };
   }, [

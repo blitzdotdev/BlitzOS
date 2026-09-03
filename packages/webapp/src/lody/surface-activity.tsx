@@ -7,14 +7,16 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { markLodyActivationPhase } from "./surface-activation-performance.js";
+import {
+  isLodyActivationTraceActive,
+  markLodyActivationPhase,
+} from "./surface-activation-performance.js";
 
-function LodyActivityRevealMarker({ targetKey }: { targetKey?: string }) {
+function LodyActivityRevealMarker({ targetKey }: { targetKey: string }) {
   useLayoutEffect(() => {
-    if (targetKey !== undefined) markLodyActivationPhase(targetKey, "activity-reveal-commit");
+    markLodyActivationPhase(targetKey, "activity-reveal-commit");
   }, [targetKey]);
   useEffect(() => {
-    if (targetKey === undefined) return undefined;
     const timer = setTimeout(() => {
       markLodyActivationPhase(targetKey, "effects-settled");
     }, 0);
@@ -30,7 +32,9 @@ export function LodyRouteActivity(props: {
 }) {
   return (
     <Activity mode={props.active ? "visible" : "hidden"}>
-      <LodyActivityRevealMarker targetKey={props.performanceTargetKey} />
+      {props.performanceTargetKey !== undefined
+        && isLodyActivationTraceActive(props.performanceTargetKey)
+        && <LodyActivityRevealMarker targetKey={props.performanceTargetKey} />}
       {props.children}
     </Activity>
   );
@@ -41,15 +45,34 @@ function composerIn(root: HTMLElement): HTMLElement | null {
 }
 
 interface ScrollPosition {
-  element: HTMLElement;
+  selector: string;
+  index: number;
   top: number;
   left: number;
 }
 
-function scrollableDescendants(root: HTMLElement): HTMLElement[] {
-  const selector = ".chat-scrollbar, [data-radix-scroll-area-viewport], [data-lody-preserve-scroll]";
+const PRESERVED_SCROLL_SELECTORS = [
+  ".chat-scrollbar",
+  "[data-radix-scroll-area-viewport]",
+  "[data-lody-preserve-scroll]",
+] as const;
+
+function elementsMatching(root: HTMLElement, selector: string): HTMLElement[] {
   const descendants = [...root.querySelectorAll<HTMLElement>(selector)];
   return root.matches(selector) ? [root, ...descendants] : descendants;
+}
+
+function captureScrollPositions(root: HTMLElement): ScrollPosition[] {
+  const captured = new Set<HTMLElement>();
+  const positions: ScrollPosition[] = [];
+  for (const selector of PRESERVED_SCROLL_SELECTORS) {
+    elementsMatching(root, selector).forEach((element, index) => {
+      if (captured.has(element)) return;
+      captured.add(element);
+      positions.push({ selector, index, top: element.scrollTop, left: element.scrollLeft });
+    });
+  }
+  return positions;
 }
 
 /**
@@ -73,11 +96,7 @@ export function LodySurfaceVisibilityRoot(props: {
     return () => {
       const root = rootRef.current;
       if (root === null) return;
-      scrollPositionsRef.current = scrollableDescendants(root).map((element) => ({
-        element,
-        top: element.scrollTop,
-        left: element.scrollLeft,
-      }));
+      scrollPositionsRef.current = captureScrollPositions(root);
     };
   }, [props.hidden]);
 
@@ -98,9 +117,10 @@ export function LodySurfaceVisibilityRoot(props: {
     if (!wasHiddenRef.current) return undefined;
     wasHiddenRef.current = false;
     for (const position of scrollPositionsRef.current) {
-      if (!position.element.isConnected || !root.contains(position.element)) continue;
-      position.element.scrollTop = position.top;
-      position.element.scrollLeft = position.left;
+      const element = elementsMatching(root, position.selector)[position.index];
+      if (element === undefined) continue;
+      element.scrollTop = position.top;
+      element.scrollLeft = position.left;
     }
     let cancelled = false;
     queueMicrotask(() => {
