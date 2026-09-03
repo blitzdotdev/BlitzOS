@@ -150,6 +150,17 @@ RUN set -eux; \
     ln -s /workspace /srv/blitz-files/workspace; \
     chown -R blitz:blitz /opt/blitz/npm
 
+# Canary ships Lody on while env.defaults keeps it off for self-hosters. This
+# build argument replaces a manual sed that once let a clean rebake silently
+# ship canary with Lody off.
+ARG BLITZ_LODY_SESSIONS=
+RUN set -eu; \
+    if [ -n "$BLITZ_LODY_SESSIONS" ]; then \
+      case "$BLITZ_LODY_SESSIONS" in 0|1) ;; *) echo "BLITZ_LODY_SESSIONS must be 0 or 1" >&2; exit 1 ;; esac; \
+      sed -i "s/^BLITZ_LODY_SESSIONS=.*/BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS/" /etc/blitz/env.defaults; \
+      grep -qx "BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS" /etc/blitz/env.defaults; \
+    fi
+
 # /usr/local/bin comes FIRST, ahead of the npm prefix, so the PATH shims at
 # /usr/local/bin/claude and /usr/local/bin/codex win over the real binaries they
 # exec — and so a copy a member installs into their own writable prefix cannot

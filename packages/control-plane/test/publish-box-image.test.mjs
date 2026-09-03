@@ -209,6 +209,77 @@ test("CLI --dry-run stages, verifies, and prints the wrangler.toml values withou
   assert.match(rerun.stderr, /refusing to overwrite an already staged release/u);
 });
 
+test("a versioned prefix changes every logical path while keeping the manifest last", async () => {
+  const payload = randomBytes(5000);
+  const outDir = temporaryDirectory("blitz-publish-prefix-stage-");
+  const staged = await stageBoxImageRelease({
+    source: chunked(payload, 1000),
+    outDir,
+    imageTag: "blitz-box:abc123def456",
+    partSizeBytes: 4096,
+    prefix: "box-image/abc123def456",
+  });
+
+  assert.deepEqual(
+    staged.assetSet.files.map(({ logicalPath }) => logicalPath),
+    [
+      "box-image/abc123def456/part-000",
+      "box-image/abc123def456/part-001",
+      "box-image/abc123def456/manifest.json",
+    ],
+  );
+});
+
+test("CLI --prefix and --json report the versioned dry-run release", () => {
+  const archiveDir = temporaryDirectory("blitz-publish-prefix-src-");
+  const outDir = temporaryDirectory("blitz-publish-prefix-out-");
+  const jsonDir = temporaryDirectory("blitz-publish-prefix-json-");
+  const archivePath = path.join(archiveDir, "synthetic.tar.gz");
+  const jsonPath = path.join(jsonDir, "publish.json");
+  const payload = randomBytes(5000);
+  writeFileSync(archivePath, payload);
+
+  const run = spawnSync(
+    process.execPath,
+    [
+      scriptPath,
+      "--image", "blitz-box:abc123def456",
+      "--archive", archivePath,
+      "--out", outDir,
+      "--app-url", "https://cp.example/",
+      "--prefix", "box-image/abc123def456",
+      "--json", jsonPath,
+      "--dry-run",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(
+    run.stdout,
+    /^BOX_IMAGE_REF = "https:\/\/cp\.example\/box-image\/abc123def456\/manifest\.json"$/mu,
+  );
+  assert.match(run.stderr, /dry run: skipped uploading 2 objects/u);
+  assert.deepEqual(JSON.parse(readFileSync(jsonPath, "utf8")), {
+    ref: "https://cp.example/box-image/abc123def456/manifest.json",
+    tag: "blitz-box:abc123def456",
+    sha256: sha256Hex(payload),
+    prefix: "box-image/abc123def456",
+  });
+});
+
+test("CLI rejects prefixes outside the R2 logical-key grammar before packaging", () => {
+  for (const prefix of ["/box-image/release", "box image", "box-image/release/"]) {
+    const run = spawnSync(
+      process.execPath,
+      [scriptPath, "--image", "blitz-box:abc123def456", "--prefix", prefix, "--dry-run"],
+      { encoding: "utf8" },
+    );
+    assert.equal(run.status, 1, prefix);
+    assert.match(run.stderr, /--prefix is invalid/u, prefix);
+    assert.match(run.stderr, /Usage:/u, prefix);
+  }
+});
+
 test("CLI rejects a tag the manifest contract rejects, before any work happens", () => {
   const run = spawnSync(
     process.execPath,
@@ -230,5 +301,7 @@ test("CLI --help prints the option list and succeeds", () => {
     assert.equal(run.stderr, "", flag);
     assert.match(run.stdout, /Usage:/u);
     assert.match(run.stdout, /--part-size-mb/u);
+    assert.match(run.stdout, /--prefix/u);
+    assert.match(run.stdout, /--json/u);
   }
 });

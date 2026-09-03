@@ -9,6 +9,7 @@ set -euo pipefail
 script_dir=$(realpath "$(dirname "$0")")
 repo_root=$(realpath "$script_dir/../../..")
 image="${IMAGE:-blitz-box:smoke}"
+lody_sessions_image="blitz-box:smoke-lody-sessions-on-$$"
 container="blitz-box-smoke-$$"
 state_volume="blitz-box-smoke-state-$$"
 unprivileged_container="blitz-box-smoke-unprivileged-$$"
@@ -26,6 +27,7 @@ cleanup() {
   docker rm -f "$unprivileged_container" >/dev/null 2>&1 || true
   docker volume rm "$state_volume" >/dev/null 2>&1 || true
   docker volume rm "$unprivileged_volume" >/dev/null 2>&1 || true
+  docker image rm "$lody_sessions_image" >/dev/null 2>&1 || true
   if [ "$preserve_test_dir" != true ]; then
     rm -rf "$test_dir"
   fi
@@ -64,6 +66,15 @@ if [ -z "${IMAGE:-}" ]; then
     --file "$repo_root/packages/box/Dockerfile" \
     --tag "$image" \
     "$repo_root"
+  docker run --rm --entrypoint grep "$image" \
+    -x 'BLITZ_LODY_SESSIONS=0' /etc/blitz/env.defaults
+  docker build --progress=plain \
+    --build-arg BLITZ_LODY_SESSIONS=1 \
+    --file "$repo_root/packages/box/Dockerfile" \
+    --tag "$lody_sessions_image" \
+    "$repo_root"
+  docker run --rm --entrypoint grep "$lody_sessions_image" \
+    -x 'BLITZ_LODY_SESSIONS=1' /etc/blitz/env.defaults
 fi
 
 install -d -m 0755 "$test_dir/workspace"

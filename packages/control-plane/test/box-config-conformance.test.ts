@@ -103,6 +103,7 @@ describe("box-config control-plane conformance", () => {
       "config-valid-minimal.json",
       "config-valid-tarball-ref.json",
       "config-valid-update-requested.json",
+      "config-valid-versioned-ref.json",
     ]);
     expect(fixtures<ResultFixture>("result-").map(([name]) => name)).toEqual([
       "result-missing-outcome.json",
