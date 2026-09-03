@@ -39,6 +39,7 @@
  * Activity hides the route DOM and disconnects route effects until reveal.
  */
 import {
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -46,22 +47,16 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { RouterProvider } from "@tanstack/react-router";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
 import { IpcClientProvider } from "@lody/components/providers/ipc-client-provider";
 import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
-import { LodyAgentAuthNotice } from "./agent-auth-notice.js";
 import { LodyAgentConfigGate } from "./agent-config-gate.js";
 import { useLodyRuntimeBootRetry } from "./use-runtime-boot-retry.js";
 import { BlitzPlatformProviders, useLodyPlatformSnapshot, type BlitzViewer } from "./platform.js";
-import {
-  fetchLodyPlatformSnapshot,
-  type LodyPlatformFetchOptions,
-  type LodyPlatformSnapshot,
-} from "./platform-snapshot.js";
+import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
 import {
   activeSessionIdFromPathname,
   createLodySessionRouter,
@@ -70,19 +65,29 @@ import {
   type LodySessionRouterOptions,
 } from "./router.js";
 import type { LodyAtomStore, LodyRuntimeEndpoints } from "./runtime.js";
-import { SessionRailSidebar } from "./SessionRailSidebar.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
-import { SurfaceTabsContext, type SurfaceTabsBinding } from "./surface-tabs.js";
+import type { SurfaceTabsBinding } from "./surface-tabs.js";
 import { useDefaultSessionProjectBackfill } from "./use-session-project-backfill.js";
-import { LODY_SURFACE_CLASS } from "./surface-class.js";
-import { useLodySurfaceIpc, useLodySurfaceIpcLifecycle } from "./surface-ipc.js";
+import { LodySurfaceIpcOwner, useLodySurfaceIpc } from "./surface-ipc.js";
 import { SurfaceUnavailableNotice } from "./SurfaceLoadBoundary.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { LodySurfaceProviders, LodySurfaceThemeRoot } from "./surface-providers.js";
-import { LodyRouteActivity, LodySurfaceVisibilityRoot } from "./surface-activity.js";
 import type { LodySurfaceIdentity } from "./keepalive-pool.js";
 import { useTrackLodyRuntimeRepo } from "./surface-runtime-stats.js";
 import { seedLodySurfaceWorkspaceContext } from "./surface-workspace-context.js";
+import {
+  LodySurfaceActiveProvider,
+} from "./surface-active-context.js";
+import {
+  LodySurfaceAgentAuthNotice,
+  LodySurfaceRailActivity,
+  LodySurfaceRouteActivity,
+  LodySurfaceShellOwnership,
+  LodySurfaceToasterOwner,
+  LodySurfaceVisibilityOwner,
+} from "./surface-active-owners.js";
+import { LodySurfaceIdentityRevalidation } from "./surface-identity-revalidation.js";
+import { LodySurfaceRailPortal } from "./surface-rail-portal.js";
 import "./lody-surface.css";
 import "./lody-surface-shell.css";
 import "./blitz-skin.css";
@@ -310,12 +315,20 @@ function seedCurrentUser(
   });
 }
 
-function SessionSurfaceContent(props: LodySessionSurfaceProps) {
-  const { endpoints, viewer, workspaceTitle, onApiReady, onActiveSessionChange } = props;
-  const active = props.active !== false;
+type LodySessionSurfaceStableProps = Omit<
+  LodySessionSurfaceProps,
+  | "active"
+  | "hidden"
+  | "railHost"
+  | "rail"
+  | "surfaceTabs"
+  | "identityValidationGeneration"
+>;
+
+function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
+  const { endpoints, viewer, workspaceTitle } = props;
   const localBridge = useLodySurfaceIpc(endpoints, props.onContinuityLost);
   const { bridge, ipcClient } = localBridge;
-  useLodySurfaceIpcLifecycle(localBridge, active);
   const { snapshot, error } = useLodyPlatformSnapshot(endpoints.platformUrl, endpoints.fetchImpl);
   const store = useMemo(() => createStore(), []);
   useTrackLodyRuntimeRepo(store);
@@ -329,27 +342,6 @@ function SessionSurfaceContent(props: LodySessionSurfaceProps) {
       lwWorkspaceId: snapshot.workspace.workspaceId,
     });
   }, [snapshot]);
-
-  const validationGeneration = props.identityValidationGeneration ?? 0;
-  useEffect(() => {
-    if (!active || validationGeneration === 0) return undefined;
-    const controller = new AbortController();
-    const options: LodyPlatformFetchOptions = { signal: controller.signal };
-    if (endpoints.fetchImpl !== undefined) options.fetchImpl = endpoints.fetchImpl;
-    void fetchLodyPlatformSnapshot(endpoints.platformUrl, options)
-      .then((validated) => {
-        if (validated === null || controller.signal.aborted) return;
-        onIdentityRef.current?.({
-          machineId: validated.machineId,
-          lwWorkspaceId: validated.workspace.workspaceId,
-        });
-      })
-      .catch(() => {
-        // The continuity flag stays false. If the member leaves before a later
-        // successful validation, the pool evicts this entry instead of reusing it.
-      });
-    return () => controller.abort();
-  }, [active, endpoints.fetchImpl, endpoints.platformUrl, validationGeneration]);
 
   const slug = snapshot?.workspace.slug ?? null;
   const readOnly = props.readOnly === true;
@@ -403,17 +395,6 @@ function SessionSurfaceContent(props: LodySessionSurfaceProps) {
     };
   }, [store, snapshot]);
 
-  const onActiveSessionChangeRef = useRef(onActiveSessionChange);
-  onActiveSessionChangeRef.current = onActiveSessionChange;
-  useEffect(() => {
-    if (!active || router === null) return undefined;
-    return router.subscribe("onResolved", () => {
-      onActiveSessionChangeRef.current?.(
-        activeSessionIdFromPathname(router.state.location.pathname),
-      );
-    });
-  }, [active, router]);
-
   const openSession = useCallback(
     (sessionId: string) => {
       if (router === null || slug === null) return;
@@ -443,22 +424,6 @@ function SessionSurfaceContent(props: LodySessionSurfaceProps) {
     if (router === null || slug === null) return;
     void router.navigate({ to: "/$workspaceName/archive", params: { workspaceName: slug } });
   }, [router, slug]);
-
-  const onApiReadyRef = useRef(onApiReady);
-  onApiReadyRef.current = onApiReady;
-  useEffect(() => {
-    if (!active || router === null || slug === null) return undefined;
-    const api: LodySessionSurfaceApi = {
-      openSession,
-      openLanding,
-      openArchive,
-      activeSessionId: () => activeSessionIdFromPathname(router.state.location.pathname),
-      isArchiveOpen: () => isArchivePathname(router.state.location.pathname),
-      unsupportedIpcChannels: () => bridge.unsupportedChannels(),
-    };
-    onApiReadyRef.current?.(api);
-    return () => onApiReadyRef.current?.(null);
-  }, [active, router, slug, bridge, openSession, openLanding, openArchive]);
 
   // The rail's own copy of the address. `onActiveSessionChange` tells `CloudApp`
   // (which drives routing and persistence); this drives the highlight inside the
@@ -515,82 +480,25 @@ function SessionSurfaceContent(props: LodySessionSurfaceProps) {
   // See `use-runtime-boot-retry.ts` for why it is a remount and not a patch.
   const runtimeGeneration = useLodyRuntimeBootRetry(store, snapshot?.machineId ?? null);
 
-  // THE AGENT-AUTH BANNER BELONGS TO SESSION CONTENT, NOT TO THE PANE
-  // (plans/LODY-TERMINAL-TABS.md wave 3, F8).
-  //
-  // It says a CONVERSATION's agent is signed out and it carries that
-  // conversation's sign-in panel. Drawn above the strip while a TERMINAL tab
-  // owns the pane, it is a band about something the member is not looking at,
-  // sitting on top of the tab they chose. A host tab owning the pane is exactly
-  // `activeTabId !== null` — the same address the strip draws its selection
-  // from — so the banner is scoped to the chat surfaces and nothing else.
-  const hostTabOwnsPane =
-    props.surfaceTabs !== undefined && props.surfaceTabs.activeTabId !== null;
-  const agentAuthNotice = (machineId: string): ReactNode => hostTabOwnsPane
-    ? null
-    : (
-      <LodyAgentAuthNotice
-        store={store}
-        sessionId={activeSessionId}
-        // A GRANTEE gets the explanation and no sign-in button. The machine is
-        // somebody else's, and the bridge refuses `/session-control` for a
-        // shared request outright (`blitz-lody-bridge`,
-        // plans/LODY-SHARING.md §2.2) — so the panel could only ever answer
-        // `share_forbidden`.
-        {...(isShared ? {} : { machineId })}
-      />
-    );
-
-  const { railHost, rail } = props;
-  const railSidebar =
-    !active || railHost === null || railHost === undefined || rail === undefined
-      ? null
-      : createPortal(
-          <SessionRailSidebar
-            terminals={rail.terminals}
-            activeTerminalId={rail.activeTerminalId}
-            activeSessionId={activeSessionId}
-            archiveActive={archiveOpen}
-            surfaceVisible={props.hidden !== true}
-            onSelectTerminal={rail.onSelectTerminal}
-            {...(rail.onCloseTerminal === undefined
-              ? {}
-              : { onCloseTerminal: rail.onCloseTerminal })}
-            onSelectSession={rail.onOpenSession ?? openSession}
-            onOpenLanding={rail.onOpenLanding ?? openLanding}
-            onOpenArchive={rail.onOpenArchive ?? openArchive}
-            {...(rail.terminalsAction === undefined
-              ? {}
-              : { terminalsAction: rail.terminalsAction })}
-            {...(rail.onShareSession === undefined
-              ? {}
-              : { onShareSession: rail.onShareSession })}
-            {...(rail.sharedSessions === undefined
-              ? {}
-              : { sharedSessions: rail.sharedSessions })}
-            {...(rail.activeSharedSessionId === undefined
-              ? {}
-              : { activeSharedSessionId: rail.activeSharedSessionId })}
-            {...(rail.onSelectSharedSession === undefined
-              ? {}
-              : { onSelectSharedSession: rail.onSelectSharedSession })}
-          />,
-          railHost,
-        );
-
-  const routeActive = active && props.hidden !== true;
   const routeTree = router === null
     ? null
     : (
-      <LodyRouteActivity active={routeActive}>
-        <SurfaceTabsContext.Provider value={props.surfaceTabs ?? null}>
-          <RouterProvider router={router} />
-        </SurfaceTabsContext.Provider>
-      </LodyRouteActivity>
+      <LodySurfaceRouteActivity targetKey={endpoints.platformUrl}>
+        <RouterProvider router={router} />
+      </LodySurfaceRouteActivity>
     );
+  const unsupportedIpcChannels = useCallback(
+    () => bridge.unsupportedChannels(),
+    [bridge],
+  );
 
   return (
-    <LodySurfaceVisibilityRoot hidden={props.hidden === true} className={LODY_SURFACE_CLASS}>
+    <LodySurfaceVisibilityOwner targetKey={endpoints.platformUrl}>
+      <LodySurfaceIpcOwner held={localBridge} />
+      <LodySurfaceIdentityRevalidation
+        endpoints={endpoints}
+        {...(props.onIdentity === undefined ? {} : { onIdentity: props.onIdentity })}
+      />
       {/* The same notice the load boundary renders, out of the same module, so
           "the chunk never arrived" and "the box never answered" read alike. */}
       {error !== null && <SurfaceUnavailableNotice reason={error} />}
@@ -602,10 +510,37 @@ function SessionSurfaceContent(props: LodySessionSurfaceProps) {
               viewer={viewer}
               workspaceTitle={workspaceTitle}
             >
-              <LodySurfaceProviders active={active}>
+              <LodySurfaceProviders active={false}>
                 <RuntimeProvider key={runtimeGeneration}>
-                  {railSidebar}
-                  {agentAuthNotice(snapshot.machineId)}
+                  <LodySurfaceShellOwnership
+                    router={router}
+                    openSession={openSession}
+                    openLanding={openLanding}
+                    openArchive={openArchive}
+                    unsupportedIpcChannels={unsupportedIpcChannels}
+                    {...(props.onApiReady === undefined
+                      ? {}
+                      : { onApiReady: props.onApiReady })}
+                    {...(props.onActiveSessionChange === undefined
+                      ? {}
+                      : { onActiveSessionChange: props.onActiveSessionChange })}
+                  />
+                  <LodySurfaceRailActivity targetKey={endpoints.platformUrl}>
+                    <LodySurfaceRailPortal
+                      targetKey={endpoints.platformUrl}
+                      activeSessionId={activeSessionId}
+                      archiveOpen={archiveOpen}
+                      openSession={openSession}
+                      openLanding={openLanding}
+                      openArchive={openArchive}
+                    />
+                  </LodySurfaceRailActivity>
+                  <LodySurfaceAgentAuthNotice
+                    store={store}
+                    machineId={snapshot.machineId}
+                    sessionId={activeSessionId}
+                    shared={isShared}
+                  />
                   {isShared ? (
                     // A grantee's surface writes no agent configs at all — the
                     // rows belong to the owner's machine Flock, which the relay
@@ -623,19 +558,46 @@ function SessionSurfaceContent(props: LodySessionSurfaceProps) {
                     </LodyAgentConfigGate>
                   )}
                 </RuntimeProvider>
+                <LodySurfaceToasterOwner />
               </LodySurfaceProviders>
             </BlitzPlatformProviders>
           </IpcClientProvider>
         </JotaiProvider>
       )}
-    </LodySurfaceVisibilityRoot>
+    </LodySurfaceVisibilityOwner>
+  );
+}
+
+const RetainedSessionSurfaceContent = memo(SessionSurfaceContent);
+
+function LodySessionSurfaceEntry(props: LodySessionSurfaceProps) {
+  const {
+    active,
+    hidden,
+    railHost,
+    rail,
+    surfaceTabs,
+    identityValidationGeneration,
+    ...stableProps
+  } = props;
+  return (
+    <LodySurfaceActiveProvider
+      active={active}
+      hidden={hidden}
+      railHost={railHost}
+      rail={rail}
+      surfaceTabs={surfaceTabs}
+      identityValidationGeneration={identityValidationGeneration}
+    >
+      <RetainedSessionSurfaceContent {...stableProps} />
+    </LodySurfaceActiveProvider>
   );
 }
 
 export function SessionSurface(props: LodySessionSurfaceProps) {
   return (
     <LodySurfaceThemeRoot>
-      <SessionSurfaceContent {...props} />
+      <LodySessionSurfaceEntry {...props} />
     </LodySurfaceThemeRoot>
   );
 }
@@ -653,7 +615,7 @@ function LodySessionSurfacePoolHost({ surfaces }: LodySessionSurfacePoolHostProp
   return (
     <LodySurfaceThemeRoot>
       {surfaces.map(({ surfaceKey, ...props }) => (
-        <SessionSurfaceContent key={surfaceKey} {...props} />
+        <LodySessionSurfaceEntry key={surfaceKey} {...props} />
       ))}
     </LodySurfaceThemeRoot>
   );

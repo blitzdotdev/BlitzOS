@@ -1,8 +1,8 @@
 # Lody workspace keep-alive (Tier 2)
 
 Status: Phases A-C are implemented with behavioral gates. The keep-alive pool
-is enabled by default, but the activation measurement release gate remains red:
-the last valid two-daemon run measured 208.1 ms p95 against a 200 ms target.
+is enabled by default and the attributed two-daemon activation gate is green:
+the final 10-sample run measured 6.9 ms p50 / 14.3 ms p95 to ready.
 
 ## Goal and measured budget
 
@@ -228,10 +228,25 @@ vendored conversation also caches scroll offsets per session; a real-browser
 runner was not available on this box, so browser verification remains a manual
 release check.
 
-Ownership tokens accept API publication, router mirroring, the rail portal,
-toasts and `window.ipc` only from the active entry. Reactivation publishes the
-cached API immediately and reconciles the shell's workspace-chat address by
-navigating the retained router. It does not remount the surface.
+Ownership tokens accept API publication, router mirroring, the visible rail
+wrapper, toasts and `window.ipc` only from the active entry. Every retained
+surface keeps its rail subtree mounted in its own hidden/inert wrapper under a
+matching Activity boundary, so activation reveals the existing rows rather
+than rebuilding their projections. Reactivation publishes the cached API
+immediately, compares the shell's workspace-chat address, and navigates the
+retained router only on a real difference. It does not remount the surface.
+
+The active/hidden values live in a small context consumed only by the ownership,
+Activity, rail-wrapper, toaster, identity-validation and focus leaves. The
+provider/router body is memoized, so flipping ownership does not re-render the
+whole runtime tree. Identity revalidation remains fire-and-forget, and the
+agent-config gate remains mounted and ready above Activity.
+
+The pool canonicalizes each entry's mount-only target values, and the shell
+memoizes its rail binding. This matters outside the probe: `LodySessionsRegion`
+constructs target descriptions while rendering, and fresh-but-equivalent
+endpoint objects must not pierce the retained body's shallow memo comparison.
+The surface-pool adapter test pins endpoint-object reuse across reactivation.
 
 The data-plane reports socket close/redial and the bridge reports observed
 identity changes. A discontinuous hidden entry is evicted immediately. An
@@ -247,41 +262,75 @@ exact single-surface replacement behavior.
 ## Measurement and release gates
 
 `lody-keepalive-activation.probe.test.tsx` uses two independently booted daemon
-harnesses and seeded session titles as identity markers. It measures from the
-target activation render until both the visible route composer and the active
-rail's identity-specific session are present. Five A -> B -> A cycles produce
-ten activation samples. It also records `process.memoryUsage()` and live
-bridge-socket/repo counters before B, with both entries, and after stopping A
-evicts it. The report is written to
-`/tmp/lody-keepalive-activation.json` and stdout.
+harnesses and seeded session titles as identity markers. `performance.now()` is
+captured immediately before the root update. A `MutationObserver` validates the
+target's active/non-hidden root and then the conjunction of its composer plus
+the active rail wrapper's identity-specific session. Layout-effect marks give
+the exact commit time; this avoids charging the endpoint for Vitest `act()`
+delaying MutationObserver delivery until after passive effects. The artifact
+also retains that later observer-delivery time for audit. A zero-delay
+act/microtask loop drives React without quantizing either endpoint.
 
-Last valid complete run on 2026-09-02 (two independent daemons):
+Five A -> B -> A cycles produce ten retained activation samples. Every sample
+collects active flip, Activity reveal, next-macrotask effects settled, rail
+commit, address reconciliation plus its navigation decision, identity
+revalidation start/end, surface reveal, and focus restore. The probe records
+`process.memoryUsage()` and live bridge-socket/repo counters before B, with both
+entries, and after stopping A evicts it. Every execution writes a new exclusive
+`/tmp/codex/perf-run-<n>.json` and prints its tables to stdout.
+
+The earlier 184.1/208.1 ms claim had no surviving artifact and is withdrawn.
+The fixed-path artifact that did survive showed 357.3 ms p50 / 414.6 ms p95,
+not the claimed values. The first newly attributed pre-optimization run is
+`/tmp/codex/perf-run-1.json`; its shared-box p95 includes a multi-second stall,
+but its phase marks still locate the synchronous work:
+
+| Pre-optimization milestone (10 retained samples) | Median ms from activation |
+|---|---:|
+| Rail portal mount/commit | 52.6 |
+| Activity reveal commit | 52.9 |
+| Surface visible commit | 53.8 |
+| Active-flip commit | 53.8 |
+| Address reconciliation (0/10 navigated) | 53.9 |
+| Identity revalidation start / end | 90.9 / 238.7 |
+| Focus restore | 199.3 |
+| Effects re-run settled | 202.4 |
+| Observer-ready p50 / p95 | 195.3 / 10,547.6 |
+
+The rail retention and active-context/memo split paid: in the final run the
+rail commit fell from 52.6 to 6.0 ms median and the active-flip commit from 53.8
+to 6.9 ms. Moving identity validation to its leaf made its 153.3 ms median end
+occur well after ready instead of gating any ownership or DOM. Address compare
+already paid before this pass—both runs navigated 0/10 times—so no router change
+was needed. The agent-config gate also needed no change: it remains mounted
+above Activity, its ready state persists, and no bootstrap await occurs during
+activation. Every retained timing optimization is reflected in the phase-mark
+comparison above; target canonicalization is separately pinned as a production
+path correctness condition.
+
+Final clean run on 2026-09-03, two independent daemons, artifact
+`/tmp/codex/perf-run-3.json`:
 
 | Measurement | Result |
 |---|---:|
-| Cold B | 497.4 ms |
-| Retained activation p50 (10 samples) | 184.1 ms |
-| Retained activation p95 (10 samples) | **208.1 ms** |
-| Full A -> B -> A cycle p50 / p95 | 389.9 / 411.3 ms |
-| Before B | RSS 728.2 MB; heap 562.4 MB; external 12.1 MB; 1 socket; 1 repo |
-| Two live | RSS 737.9 MB; heap 574.6 MB; external 12.3 MB; 2 sockets; 2 repos |
-| After hidden A eviction | RSS 793.0 MB; heap 622.8 MB; external 12.6 MB; 1 socket; 1 repo |
+| Cold B visible / ready | 35.4 / 340.4 ms |
+| Retained visible p50 / p95 (10 samples) | **6.9 / 14.3 ms** |
+| Retained ready p50 / p95 (10 samples) | **6.9 / 14.3 ms** |
+| Full A -> B -> A cycle p50 / p95 | 14.8 / 20.6 ms |
+| Observer delivery p50 / p95 (audit only) | 111.4 / 144.5 ms |
+| Before B | RSS 692.2 MiB; heap 531.4 MiB; external 11.6 MiB; 1 socket; 1 repo |
+| Two live | RSS 702.1 MiB; heap 545.0 MiB; external 11.6 MiB; 2 sockets; 2 repos |
+| After hidden A eviction | RSS 739.7 MiB; heap 578.3 MiB; external 12.1 MiB; 1 socket; 1 repo |
 
-The 200 ms p95 release target was therefore **not met** (8.1 ms over). Two
-later diagnostic runs exposed and then fixed the Activity/workspace-context
-ownership edge; the final allowed run was invalidated by a two-daemon rail-ready
-timeout after a harness socket discontinuity, so there is no post-fix latency
-distribution to substitute for the complete result above. The increased RSS
-after eviction is a process high-water sample without forced GC; the socket and
-repo counters are the deterministic cleanup signal. Capacity remains two and
-must not be raised.
-
-Before claiming the latency win, rerun this probe on a stable harness and clear
-p95 < 200 ms, then run the focused Lody floor plus `npm run typecheck`,
-`npm run lint:gate`, and `git diff --check`. Never enable
-`BLITZ_LODY_LIVE_TURN`. A mobile/device-memory gate is still required before
-allowing the second retained entry on low-memory devices. A merge still
-requires explicit user approval because main deploys canary immediately.
+Vitest did not expose `global.gc`, so RSS and heap are allocator high-water
+samples; socket and retained-repo counts are the deterministic cleanup signal.
+Capacity remains two and must not be raised. The jsdom margin gates are p50 <
+100 ms and p95 < 150 ms; both pass. A real browser still adds layout and paint
+for the revealed DOM, so release verification should retain a browser trace.
+Never enable `BLITZ_LODY_LIVE_TURN`. A mobile/device-memory gate is still
+required before allowing the second retained entry on low-memory devices. A
+merge still requires explicit user approval because main deploys canary
+immediately.
 
 ## Upstream/conflict strategy
 

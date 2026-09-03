@@ -75,6 +75,10 @@ export function LodySurfaceThemeRoot(props: { children: ReactNode }) {
   return <BlitzThemedLodyTree theme={theme}>{props.children}</BlitzThemedLodyTree>;
 }
 
+export function LodySurfaceToaster() {
+  return <div className={LODY_TOASTER_HOST_CLASS}><Toaster /></div>;
+}
+
 export function LodySurfaceProviders(props: { children: ReactNode; active?: boolean }) {
   const i18n = useMemo(() => initLodyI18n(), []);
   // This writes a key vendored code reads on first render, so it must happen
@@ -83,9 +87,7 @@ export function LodySurfaceProviders(props: { children: ReactNode; active?: bool
   return (
     <I18nextProvider i18n={i18n}>
       <TooltipProvider>{props.children}</TooltipProvider>
-      {props.active !== false && (
-        <div className={LODY_TOASTER_HOST_CLASS}><Toaster /></div>
-      )}
+      {props.active !== false && <LodySurfaceToaster />}
     </I18nextProvider>
   );
 }

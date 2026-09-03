@@ -17,7 +17,15 @@
  * `main.tsx`, where there is no control plane and therefore no address to
  * parse.
  */
-import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { SessionShareLevel } from "@blitzos/schema";
 import type { BoxEndpoints } from "../resolver.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
@@ -158,22 +166,38 @@ function lodyEndpoints(endpoints: BoxEndpoints) {
 
 export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const sharedOpen = props.sharedOpen ?? null;
-  const rail: LodyRailBinding = {
-    terminals: props.terminals,
-    activeTerminalId: props.activeTerminalId,
-    onSelectTerminal: props.onSelectTerminal,
-    activeSharedSessionId: sharedOpen === null ? null : sharedOpen.sessionId,
-  };
-  if (props.onCloseTerminal !== undefined) rail.onCloseTerminal = props.onCloseTerminal;
-  if (props.onOpenSession !== undefined) rail.onOpenSession = props.onOpenSession;
-  if (props.onOpenLanding !== undefined) rail.onOpenLanding = props.onOpenLanding;
-  if (props.onOpenArchive !== undefined) rail.onOpenArchive = props.onOpenArchive;
-  if (props.terminalsAction !== undefined) rail.terminalsAction = props.terminalsAction;
-  if (props.onShareSession !== undefined) rail.onShareSession = props.onShareSession;
-  if (props.sharedSessions !== undefined) rail.sharedSessions = props.sharedSessions;
-  if (props.onSelectSharedSession !== undefined) {
-    rail.onSelectSharedSession = props.onSelectSharedSession;
-  }
+  const rail = useMemo<LodyRailBinding>(() => {
+    const binding: LodyRailBinding = {
+      terminals: props.terminals,
+      activeTerminalId: props.activeTerminalId,
+      onSelectTerminal: props.onSelectTerminal,
+      activeSharedSessionId: sharedOpen === null ? null : sharedOpen.sessionId,
+    };
+    if (props.onCloseTerminal !== undefined) binding.onCloseTerminal = props.onCloseTerminal;
+    if (props.onOpenSession !== undefined) binding.onOpenSession = props.onOpenSession;
+    if (props.onOpenLanding !== undefined) binding.onOpenLanding = props.onOpenLanding;
+    if (props.onOpenArchive !== undefined) binding.onOpenArchive = props.onOpenArchive;
+    if (props.terminalsAction !== undefined) binding.terminalsAction = props.terminalsAction;
+    if (props.onShareSession !== undefined) binding.onShareSession = props.onShareSession;
+    if (props.sharedSessions !== undefined) binding.sharedSessions = props.sharedSessions;
+    if (props.onSelectSharedSession !== undefined) {
+      binding.onSelectSharedSession = props.onSelectSharedSession;
+    }
+    return binding;
+  }, [
+    props.activeTerminalId,
+    props.onCloseTerminal,
+    props.onOpenArchive,
+    props.onOpenLanding,
+    props.onOpenSession,
+    props.onSelectSharedSession,
+    props.onSelectTerminal,
+    props.onShareSession,
+    props.sharedSessions,
+    props.terminals,
+    props.terminalsAction,
+    sharedOpen,
+  ]);
 
   // Mounted on the FIRST request, and never unmounted BY A HIDE afterwards: the
   // runtime owns a WebSocket, an IndexedDB repo and a WASM instance, so a hide

@@ -164,7 +164,7 @@ function waitFor(what: string, check: () => boolean, timeoutMs: number): Promise
     const tick = (): void => {
       if (check()) return resolve();
       if (Date.now() > deadline) return reject(new Error(`timed out waiting for ${what}`));
-      setTimeout(tick, 100);
+      setTimeout(tick, 10);
     };
     tick();
   });
@@ -540,6 +540,7 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   mkdirSync(filesRoot, { recursive: true });
   const shareClaims = new Map<string, LodyShareClaim>();
   const gateway = startGatewayShim(bridgeSocket, port, filesRoot, shareClaims, (line) => (daemonLog += line));
+  await waitFor("the gateway shim to listen", () => gateway.listening, 10_000);
   const origin = `http://127.0.0.1:${port}`;
 
   // An ordinary crash or a failed assertion must not leave a daemon holding the

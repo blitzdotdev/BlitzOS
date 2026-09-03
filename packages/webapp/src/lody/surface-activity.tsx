@@ -1,8 +1,32 @@
 /** Visibility mechanics shared by the retained Lody route trees. */
-import { Activity, useLayoutEffect, useRef, type ReactNode } from "react";
+import { Activity, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { markLodyActivationPhase } from "./surface-activation-performance.js";
 
-export function LodyRouteActivity(props: { active: boolean; children: ReactNode }) {
-  return <Activity mode={props.active ? "visible" : "hidden"}>{props.children}</Activity>;
+function LodyActivityRevealMarker({ targetKey }: { targetKey?: string }) {
+  useLayoutEffect(() => {
+    if (targetKey !== undefined) markLodyActivationPhase(targetKey, "activity-reveal-commit");
+  }, [targetKey]);
+  useEffect(() => {
+    if (targetKey === undefined) return undefined;
+    const timer = setTimeout(() => {
+      markLodyActivationPhase(targetKey, "effects-settled");
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [targetKey]);
+  return null;
+}
+
+export function LodyRouteActivity(props: {
+  active: boolean;
+  performanceTargetKey?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Activity mode={props.active ? "visible" : "hidden"}>
+      <LodyActivityRevealMarker targetKey={props.performanceTargetKey} />
+      {props.children}
+    </Activity>
+  );
 }
 
 function composerIn(root: HTMLElement): HTMLElement | null {
@@ -15,6 +39,8 @@ function composerIn(root: HTMLElement): HTMLElement | null {
  */
 export function LodySurfaceVisibilityRoot(props: {
   hidden: boolean;
+  active?: boolean;
+  performanceTargetKey?: string;
   className: string;
   children: ReactNode;
 }) {
@@ -33,6 +59,9 @@ export function LodySurfaceVisibilityRoot(props: {
       wasHiddenRef.current = true;
       return undefined;
     }
+    if (props.active !== false && props.performanceTargetKey !== undefined) {
+      markLodyActivationPhase(props.performanceTargetKey, "surface-visible-commit");
+    }
     if (!wasHiddenRef.current) return undefined;
     wasHiddenRef.current = false;
     let cancelled = false;
@@ -44,16 +73,21 @@ export function LodySurfaceVisibilityRoot(props: {
           ? previous
           : composerIn(root) ?? root;
       target.focus({ preventScroll: true });
+      if (props.performanceTargetKey !== undefined) {
+        markLodyActivationPhase(props.performanceTargetKey, "focus-restore");
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [props.hidden]);
+  }, [props.active, props.hidden, props.performanceTargetKey]);
 
   return (
     <div
       ref={rootRef}
       className={props.className}
+      data-lody-active={props.active === false ? "false" : "true"}
+      data-lody-performance-target={props.performanceTargetKey}
       hidden={props.hidden}
       inert={props.hidden}
       aria-hidden={props.hidden ? "true" : undefined}

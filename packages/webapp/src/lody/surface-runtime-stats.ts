@@ -11,19 +11,22 @@ export function lodyLiveRepoCount(): number {
 
 export function useTrackLodyRuntimeRepo(store: LodyAtomStore): void {
   useEffect(() => {
-    let tracked: LodyWorkspaceRuntime | null = null;
+    // A retained surface owns at most one live repo. `runtimeAtom` itself may
+    // briefly clear while Activity disconnects the route context, even though
+    // the surface owner and repo remain mounted. Count the owning surface from
+    // its first published runtime until that surface unmounts.
+    let ownsRepo = false;
     const sync = (): void => {
       const next = store.get<LodyWorkspaceRuntime | null>(runtimeAtom);
-      if (next === tracked) return;
-      if (tracked !== null) liveRepos -= 1;
-      tracked = next;
-      if (tracked !== null) liveRepos += 1;
+      if (next === null || ownsRepo) return;
+      ownsRepo = true;
+      liveRepos += 1;
     };
     const unsubscribe = store.sub(runtimeAtom, sync);
     sync();
     return () => {
       unsubscribe();
-      if (tracked !== null) liveRepos -= 1;
+      if (ownsRepo) liveRepos -= 1;
     };
   }, [store]);
 }

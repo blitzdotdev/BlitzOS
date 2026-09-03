@@ -31,6 +31,7 @@ import {
 import type { BlitzViewer } from "./platform.js";
 import type { LodyRuntimeEndpoints } from "./runtime.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
+import { markLodyActivationPhase } from "./surface-activation-performance.js";
 
 export interface LodySurfacePoolTarget {
   kind: LodySurfaceKind;
@@ -52,6 +53,13 @@ interface PoolRenderState {
   pool: LodyKeepalivePool;
   definitions: readonly SurfaceDefinition[];
   targetToken: string | null;
+}
+
+interface SurfaceCallbacks {
+  onIdentity: (identity: LodySurfaceIdentity) => void;
+  onContinuityLost: () => void;
+  onApiReady: (api: LodySessionSurfaceApi | null) => void;
+  onActiveSessionChange: (sessionId: string | null) => void;
 }
 
 export interface LodySurfacePoolProps {
@@ -83,6 +91,21 @@ function tokenFor(target: LodySurfacePoolTarget): string {
   return `${target.kind}:${lodyEndpointFingerprint(target.endpoints)}`;
 }
 
+/** Props that build the retained provider/runtime body, excluding address hints. */
+function sameSurfaceMountTarget(
+  left: LodySurfacePoolTarget,
+  right: LodySurfacePoolTarget,
+): boolean {
+  return left.kind === right.kind
+    && lodyEndpointFingerprint(left.endpoints) === lodyEndpointFingerprint(right.endpoints)
+    && left.endpoints.fetchImpl === right.endpoints.fetchImpl
+    && left.endpoints.webSocketConstructor === right.endpoints.webSocketConstructor
+    && left.workspaceTitle === right.workspaceTitle
+    && left.readOnly === right.readOnly
+    && left.shared?.sessionId === right.shared?.sessionId
+    && left.initialSessionId === right.initialSessionId;
+}
+
 function retainDefinitions(
   definitions: readonly SurfaceDefinition[],
   pool: LodyKeepalivePool,
@@ -108,7 +131,9 @@ function transitionToTarget(
     definitions = [...definitions, { entryId: requested.entryId, target }];
   } else {
     definitions = definitions.map((item) =>
-      item.entryId === requested.entryId ? { ...item, target } : item);
+      item.entryId === requested.entryId && !sameSurfaceMountTarget(item.target, target)
+        ? { ...item, target }
+        : item);
   }
   return { pool: activated.pool, definitions, targetToken: token };
 }
@@ -160,6 +185,24 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
       ? transitionToNoTarget(state)
       : transitionToTarget(state, props.target, tokenFor(props.target));
     setState(rendered);
+  } else if (props.target !== null && state.pool.activeEntryId !== null) {
+    const nextTarget = props.target;
+    const activeDefinition = state.definitions.find(
+      (definition) => definition.entryId === state.pool.activeEntryId,
+    );
+    if (
+      activeDefinition !== undefined
+      && !sameSurfaceMountTarget(activeDefinition.target, nextTarget)
+    ) {
+      rendered = {
+        ...state,
+        definitions: state.definitions.map((definition) =>
+          definition.entryId === state.pool.activeEntryId
+            ? { ...definition, target: nextTarget }
+            : definition),
+      };
+      setState(rendered);
+    }
   }
 
   const activeEntryId = rendered.pool.activeEntryId;
@@ -178,7 +221,11 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
     const target = targetRef.current;
     if (target === null) return;
     onApiReadyRef.current?.(api);
-    if (!routeMatches(api, target)) {
+    const matches = routeMatches(api, target);
+    markLodyActivationPhase(target.endpoints.platformUrl, "address-reconciliation", {
+      navigated: !matches,
+    });
+    if (!matches) {
       navigateToTarget(api, target);
       return;
     }
@@ -223,10 +270,28 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
     });
   }, []);
 
+  const callbacksByEntryRef = useRef(new Map<string, SurfaceCallbacks>());
+  const callbacksFor = (entryId: string): SurfaceCallbacks => {
+    const existing = callbacksByEntryRef.current.get(entryId);
+    if (existing !== undefined) return existing;
+    const created: SurfaceCallbacks = {
+      onIdentity: (identity) => onSurfaceIdentity(entryId, identity),
+      onContinuityLost: () => onSurfaceContinuityLost(entryId),
+      onApiReady: (api) => onSurfaceApiReady(entryId, api),
+      onActiveSessionChange: (sessionId) => onSurfaceRoute(entryId, sessionId),
+    };
+    callbacksByEntryRef.current.set(entryId, created);
+    return created;
+  };
+
   useLayoutEffect(() => {
     if (activeEntryId === null) {
       onApiReadyRef.current?.(null);
       return;
+    }
+    const target = targetRef.current;
+    if (target !== null) {
+      markLodyActivationPhase(target.endpoints.platformUrl, "active-flip-commit");
     }
     const api = apiByEntryRef.current.get(activeEntryId);
     if (api === undefined) {
@@ -242,6 +307,9 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
     for (const entryId of apiByEntryRef.current.keys()) {
       if (!keep.has(entryId)) apiByEntryRef.current.delete(entryId);
     }
+    for (const entryId of callbacksByEntryRef.current.keys()) {
+      if (!keep.has(entryId)) callbacksByEntryRef.current.delete(entryId);
+    }
   }, [liveIds]);
 
   const poolRef = useRef(rendered.pool);
@@ -249,6 +317,7 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
   useEffect(() => () => {
     disposeLodyKeepalivePool(poolRef.current);
     apiByEntryRef.current.clear();
+    callbacksByEntryRef.current.clear();
   }, []);
 
   const definitions = new Map(rendered.definitions.map((item) => [item.entryId, item]));
@@ -256,7 +325,10 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
     const definition = definitions.get(entry.entryId);
     if (definition === undefined) return [];
     const current = entry.entryId === activeEntryId && props.target !== null;
-    const target = current && props.target !== null ? props.target : definition.target;
+    // Use the canonical per-entry object so ordinary shell/address renders do
+    // not pierce `RetainedSessionSurfaceContent`'s shallow memo comparison.
+    const target = definition.target;
+    const callbacks = callbacksFor(entry.entryId);
     const surface: LodySessionSurfaceHostProps = {
       surfaceKey: entry.entryId,
       endpoints: target.endpoints,
@@ -264,15 +336,11 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
       workspaceTitle: target.workspaceTitle,
       hidden: !current || !props.visible,
       active: current,
-      railHost: current ? props.railHost : null,
+      railHost: props.railHost,
       rail: props.rail,
       readOnly: target.readOnly,
       identityValidationGeneration: entry.generation,
-      onIdentity: (identity: LodySurfaceIdentity) => onSurfaceIdentity(entry.entryId, identity),
-      onContinuityLost: () => onSurfaceContinuityLost(entry.entryId),
-      onApiReady: (api: LodySessionSurfaceApi | null) => onSurfaceApiReady(entry.entryId, api),
-      onActiveSessionChange: (sessionId: string | null) =>
-        onSurfaceRoute(entry.entryId, sessionId),
+      ...callbacks,
     };
     if (current && props.surfaceTabs !== undefined) surface.surfaceTabs = props.surfaceTabs;
     if (target.initialSessionId !== undefined) surface.initialSessionId = target.initialSessionId;

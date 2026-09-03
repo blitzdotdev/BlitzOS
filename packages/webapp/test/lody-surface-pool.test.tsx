@@ -125,7 +125,7 @@ describe("the React surface pool adapter", () => {
     expect(bSurface.surfaceKey).not.toBe(aSurface.surfaceKey);
     const retainedA = recorder.surfaces.find((item) => item.surfaceKey === aSurface.surfaceKey);
     expect(retainedA?.active).toBe(false);
-    expect(retainedA?.railHost).toBeNull();
+    expect(retainedA?.railHost).toBe(railHost);
     expect(bSurface.railHost).toBe(railHost);
     const publishedBeforePoison = apis.length;
     const routesBeforePoison = routes.length;
@@ -144,6 +144,7 @@ describe("the React surface pool adapter", () => {
 
     await act(async () => view.root.render(tree(target("a", "session-a"))));
     expect(current(recorder).surfaceKey).toBe(aSurface.surfaceKey);
+    expect(current(recorder).endpoints).toBe(aSurface.endpoints);
     expect(apis.at(-1)).toBe(apiA);
     expect(routes.at(-1)).toBe("session-a");
     await view.unmount();

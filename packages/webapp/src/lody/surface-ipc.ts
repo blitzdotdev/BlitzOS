@@ -7,6 +7,7 @@ import {
   type LodyLocalBridge,
 } from "./local-bridge.js";
 import type { LodyRuntimeEndpoints } from "./runtime.js";
+import { useLodySurfaceActiveState } from "./surface-active-context.js";
 
 type SurfaceIpcClient = {
   readonly signal: AbortSignal;
@@ -62,4 +63,11 @@ export function useLodySurfaceIpcLifecycle(held: LodySurfaceIpc, active: boolean
       });
     };
   }, [bridge, held, ipcClient]);
+}
+
+/** Only this tiny subscriber changes when page-global IPC ownership flips. */
+export function LodySurfaceIpcOwner({ held }: { held: LodySurfaceIpc }) {
+  const { active } = useLodySurfaceActiveState();
+  useLodySurfaceIpcLifecycle(held, active);
+  return null;
 }
