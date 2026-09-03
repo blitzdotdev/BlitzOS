@@ -69,16 +69,19 @@ import {
   makeLodyError,
   normalizeSessionPullRequestMeta,
   resolveActiveAssistantTurnId,
+  resolveProjectGitHubRepo,
   type LodyOperationItemResult,
   type SessionTurnInputConfig,
   REVIEW_SEVERITY_VALUES,
   REVIEW_VERDICT_VALUES,
   ReviewSubmissionSchema,
+  hasPendingUserTurnActivation,
 } from '@lody/shared';
 import { makeLocalControlClientAuto } from '@lody/shared/node/local-ipc';
 import {
   type AuthContext,
   getAuthContextOrThrow as getCliAuthContextOrThrow,
+  ensureWorkspaceMetaSynced,
   listAliveDocMetas,
   listAliveSessionMetas,
   LocalDaemonAvailabilityError,
@@ -130,6 +133,7 @@ import type {
 } from '@/commands/session-output';
 import { MAX_AGENT_FEEDBACK_LENGTH, submitAgentFeedback } from '@/lib/feedback';
 import {
+  getLodyOperationStorePath,
   LodyOperationStore,
   LodyOperationStoreError,
   runWithOperationStoreBusyRetry,
@@ -160,6 +164,8 @@ const SESSION_HISTORY_TOOL_NAME = 'lody_session_history';
 const SESSION_CREATE_MANY_TOOL_NAME = 'lody_session_create_many';
 const SESSION_CHAT_MANY_TOOL_NAME = 'lody_session_chat_many';
 const SESSION_ARCHIVE_TOOL_NAME = 'lody_session_archive';
+const SESSION_RENAME_TOOL_NAME = 'lody_session_rename';
+const SESSION_RENAME_MANY_TOOL_NAME = 'lody_session_rename_many';
 const OPERATION_GET_TOOL_NAME = 'lody_operation_get';
 const OPERATION_CANCEL_TOOL_NAME = 'lody_operation_cancel';
 const TASK_LIST_TOOL_NAME = 'lody_task_list';
@@ -184,6 +190,7 @@ const MAX_MCP_SESSION_LIST_LIMIT = 100;
 const DEFAULT_MCP_SESSION_HISTORY_LIMIT = 10;
 const MAX_MCP_SESSION_HISTORY_LIMIT = 50;
 const MAX_MCP_SESSION_HISTORY_BYTES = 128 * 1024;
+const MAX_MCP_SESSION_TITLE_CHARS = 200;
 // A task body has no length limit in the document (the web editor is a free-form
 // markdown field), so reading one must be bounded like session history is or a
 // long task blows the caller's context. Head-and-tail keeps both ends, which is
@@ -536,7 +543,9 @@ const SessionCreateToolInputSchema = z
     useCurrentSessionAsParent: z
       .boolean()
       .optional()
-      .describe('Create a child of the current Session; cannot be combined with workContext.'),
+      .describe(
+        'Create a child of the current Session that reuses the exact same workspace directory; cannot be combined with workContext.'
+      ),
     workContext: SessionWorkContextInputSchema.optional().describe(
       'Execution context for an independent Session; cannot be combined with useCurrentSessionAsParent=true.'
     ),
@@ -719,7 +728,9 @@ const SessionCreateBatchPublishedItemSchema = z
     useCurrentSessionAsParent: z
       .boolean()
       .optional()
-      .describe('Create a child of the current Session; cannot be combined with workContext.'),
+      .describe(
+        'Create a child of the current Session that reuses the exact same workspace directory; cannot be combined with workContext.'
+      ),
     workContext: SessionWorkContextInputSchema.optional().describe(
       'Execution context for an independent Session; cannot be combined with useCurrentSessionAsParent=true.'
     ),
@@ -756,6 +767,45 @@ const OperationGetToolInputSchema = z.object({ operationId: LodyOperationIdSchem
 const OperationCancelToolInputSchema = z.object({ operationId: LodyOperationIdSchema }).strict();
 
 const SessionArchiveToolInputSchema = z.object({ sessionId: z.string().trim().min(1) }).strict();
+
+const SessionTitleToolInputSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_MCP_SESSION_TITLE_CHARS)
+  .describe(`New session title, up to ${MAX_MCP_SESSION_TITLE_CHARS} characters.`);
+
+const SessionRenameToolInputSchema = z
+  .object({
+    sessionId: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe('Target session id, or current. Defaults to current.'),
+    title: SessionTitleToolInputSchema,
+  })
+  .strict();
+
+const SessionRenameManyItemSchema = z
+  .object({
+    sessionId: z.string().trim().min(1).describe('Target session id, or current.'),
+    title: SessionTitleToolInputSchema,
+  })
+  .strict();
+
+const SessionRenameManyToolInputSchema = z
+  .object({
+    items: z
+      .array(SessionRenameManyItemSchema)
+      .min(1)
+      .max(MAX_MCP_COMMAND_BATCH_SIZE)
+      .refine(
+        (items) => new Set(items.map((item) => item.sessionId)).size === items.length,
+        'sessionId values must be unique'
+      ),
+  })
+  .strict();
 
 const SessionStatusManyToolInputSchema = z
   .object({
@@ -838,6 +888,8 @@ type TaskImageUploadToolInput = z.infer<typeof TaskImageUploadToolInputSchema>;
 type FileUploadToolInput = z.infer<typeof FileUploadToolInputSchema>;
 type FeedbackToolInput = z.infer<typeof FeedbackToolInputSchema>;
 type SessionCreateOptionsToolInput = z.infer<typeof SessionCreateOptionsToolInputSchema>;
+type SessionRenameToolInput = z.infer<typeof SessionRenameToolInputSchema>;
+type SessionRenameManyToolInput = z.infer<typeof SessionRenameManyToolInputSchema>;
 type SessionCreateToolInput = z.infer<typeof SessionCreateRuntimeInputSchema>;
 type SessionCreateCommandInput = Exclude<SessionCreateToolInput, { resume: true }>;
 type SessionChatToolInput = z.infer<typeof SessionChatToolInputSchema>;
@@ -907,16 +959,31 @@ const getSessionContext = (): McpSessionContext =>
     taskToolsEnabled: readOptionalEnv('LODY_MCP_TASK_TOOLS_ENABLED') === '1',
   };
 
-// One connection for the whole MCP server process, opened without the
-// maintenance writes (the daemon-side coordinator owns those). Per-call
-// open/close made every tool call a burst of write transactions plus a
-// checkpoint-on-close against the shared machine-level WAL store, which is
-// exactly the contention that surfaces as "database is locked".
-let sharedOperationStore: LodyOperationStore | undefined;
+// One connection per machine-level store for the whole MCP server process,
+// opened without the maintenance writes (the daemon-side coordinator owns
+// those). Per-call open/close made every tool call a burst of write
+// transactions plus a checkpoint-on-close against the shared machine-level WAL
+// store, which is exactly the contention that surfaces as "database is locked".
+//
+// The store path MUST come from the session context's machineId, never from
+// this process's environment: the daemon-hosted HTTP transport carries its
+// context in per-request AsyncLocalStorage, and its process has no
+// LODY_MCP_MACHINE_ID, so the env fallback silently selects the 'local' store
+// that no daemon coordinator watches — Operations accepted there are never
+// finalized and their completion is never delivered back to the requester.
+const sharedOperationStores = new Map<string, LodyOperationStore>();
+
+const resolveOperationStorePathForContext = (): string =>
+  getLodyOperationStorePath(getSessionContext().machineId);
 
 const getSharedOperationStore = (): LodyOperationStore => {
-  sharedOperationStore ??= new LodyOperationStore(undefined, undefined, { maintenance: false });
-  return sharedOperationStore;
+  const storePath = resolveOperationStorePathForContext();
+  let store = sharedOperationStores.get(storePath);
+  if (!store) {
+    store = new LodyOperationStore(storePath, undefined, { maintenance: false });
+    sharedOperationStores.set(storePath, store);
+  }
+  return store;
 };
 
 const withOperationStore = <T>(fn: (store: LodyOperationStore) => T): Promise<T> =>
@@ -940,24 +1007,21 @@ const textResult = (text: string, isError = false) => ({
 const jsonTextResult = (value: unknown, isError = false) =>
   textResult(JSON.stringify(value, null, 2), isError);
 
-const mcpErrorResult = (error: unknown) => {
+const normalizeMcpError = (error: unknown) => {
   if (error instanceof LodyOperationStoreError) {
-    return jsonTextResult({ ok: false, error: error.toLodyError() }, true);
+    return error.toLodyError();
   }
   if (error instanceof LocalDaemonAvailabilityError) {
-    return jsonTextResult({ ok: false, error: error.toLodyError() }, true);
+    return error.toLodyError();
   }
   if (error instanceof WorkspaceSyncUnavailableError) {
-    return jsonTextResult({ ok: false, error: error.toLodyError() }, true);
+    return error.toLodyError();
   }
-  return jsonTextResult(
-    {
-      ok: false,
-      error: makeLodyError('INTERNAL_ERROR', formatMcpErrorMessage(error), false),
-    },
-    true
-  );
+  return makeLodyError('INTERNAL_ERROR', formatMcpErrorMessage(error), false);
 };
+
+const mcpErrorResult = (error: unknown) =>
+  jsonTextResult({ ok: false, error: normalizeMcpError(error) }, true);
 const postSessionControl = async (
   request:
     | PreviewCandidateReportRequestPayload
@@ -1489,19 +1553,13 @@ const readSessionExecutionSnapshot = async (
   ]);
   const activeTurnId = resolveActiveAssistantTurnId(history);
   const queuedTurnCount =
-    docState?.mq?.length ?? (hasPendingDispatchPointer(session) && !activeTurnId ? 1 : 0);
+    docState?.mq?.length ?? (hasPendingUserTurnActivation(session) && !activeTurnId ? 1 : 0);
   return resolveSessionExecutionSnapshot({
     live,
     ...(activeTurnId ? { activeTurnId } : {}),
     queuedTurnCount,
   });
 };
-
-const hasPendingDispatchPointer = (session: SessionMeta): boolean =>
-  Boolean(
-    session.processingUserMsgId ||
-    (session.latestUserMsgId && session.latestUserMsgId !== session.lastHandledUserMsgId)
-  );
 
 /**
  * Resolve whether a session is "currently working" by fusing, in precedence order:
@@ -1540,7 +1598,7 @@ const resolveSessionLiveWorking = (
       ...viewedField,
     };
   }
-  if (hasPendingDispatchPointer(session)) {
+  if (hasPendingUserTurnActivation(session)) {
     const dispatchedAtMs = session.lastMessageAt ?? Date.parse(session.createdAt);
     if (Number.isFinite(dispatchedAtMs) && opts.nowMs - dispatchedAtMs < MCP_PRE_START_WINDOW_MS) {
       return { working: true, status: 'initializing', source: 'pointer', ...viewedField };
@@ -2307,6 +2365,7 @@ const buildSessionWorkContext = async (
       projectId: string;
       localProjectName?: string;
       rootPath?: string;
+      githubRepo?: string;
       worktree?: boolean;
     }
 > => {
@@ -2321,11 +2380,17 @@ const buildSessionWorkContext = async (
       session.machineId
     );
     const localProject = localProjects[project.localProjectId];
+    const githubRepo = resolveProjectGitHubRepo(project);
     return {
       kind: 'local',
       projectId: project.localProjectId,
       ...(localProject?.name ? { localProjectName: localProject.name } : {}),
       ...(localProject?.rootPath ? { rootPath: localProject.rootPath } : {}),
+      // Reported so an Agent can tell a local Session that carries an authorized
+      // GitHub identity (PR actions available) from a purely local one. It is
+      // deliberately absent from `summarizeProjectRefForMcp`, whose output must
+      // stay a valid `workContext` create input.
+      ...(githubRepo ? { githubRepo } : {}),
       ...(project.useWorktree === true || session.isWorktree === true ? { worktree: true } : {}),
     };
   }
@@ -2812,6 +2877,83 @@ const mapWithConcurrency = async <T, R>(
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
   return output;
+};
+
+type ResolvedSessionRenameItem = { sessionId: SessionId; title: string };
+
+const resolveSessionRenameItems = (
+  items: readonly z.infer<typeof SessionRenameManyItemSchema>[],
+  ctx: ReturnType<typeof getSessionContext>
+): ResolvedSessionRenameItem[] => {
+  assertBatchSize(items.length, MAX_MCP_COMMAND_BATCH_SIZE);
+  const resolved = items.map((item) => ({
+    sessionId: resolveMcpSessionId(item.sessionId, ctx) as SessionId,
+    title: item.title,
+  }));
+  if (new Set(resolved.map((item) => item.sessionId)).size !== resolved.length) {
+    throw new LodyOperationStoreError(
+      'DUPLICATE_SESSION',
+      'A session may appear only once in a rename batch.',
+      false
+    );
+  }
+  return resolved;
+};
+
+const applySessionRenameItems = async (
+  items: readonly ResolvedSessionRenameItem[],
+  rename: (item: ResolvedSessionRenameItem) => Promise<void>
+) =>
+  await mapWithConcurrency(items, 5, async (item) => {
+    try {
+      await rename(item);
+      return { sessionId: item.sessionId, ok: true as const, title: item.title };
+    } catch (error) {
+      return {
+        sessionId: item.sessionId,
+        ok: false as const,
+        error: normalizeMcpError(error),
+      };
+    }
+  });
+
+const persistSessionRenameItems = async (
+  manager: LoroDocumentManager,
+  items: readonly ResolvedSessionRenameItem[],
+  syncReason: string
+): Promise<Awaited<ReturnType<typeof applySessionRenameItems>>> => {
+  const results = await applySessionRenameItems(items, async (item) => {
+    const session = await readCurrentSessionMeta(manager, item.sessionId);
+    if (!session) {
+      throw new LodyOperationStoreError(
+        'SESSION_NOT_FOUND',
+        `Session not found: ${item.sessionId}`,
+        false
+      );
+    }
+    await manager.repo.upsertDocMeta(getSessionRoomId(item.sessionId), {
+      title: item.title,
+      titleSource: 'user',
+    } satisfies Partial<SessionMeta>);
+  });
+  if (results.some((item) => item.ok)) {
+    await ensureWorkspaceMetaSynced(manager, syncReason);
+  }
+  return results;
+};
+
+const renameSessionItems = async (
+  input: SessionRenameManyToolInput
+): Promise<Awaited<ReturnType<typeof applySessionRenameItems>>> => {
+  const ctx = getSessionContext();
+  const resolved = resolveSessionRenameItems(input.items, ctx);
+  const auth = getCliAuthContextOrThrow('mcp');
+  const workspace = await resolveWorkspaceOrThrow(auth, getMcpWorkspaceId(ctx));
+  return await withWorkspaceManager(auth, workspace, 'mcp', async (manager) => {
+    const reason = `mcp.session_rename_many:${ctx.sessionId}`;
+    await syncWorkspaceMetaForRead(manager, reason);
+    return await persistSessionRenameItems(manager, resolved, reason);
+  });
 };
 
 const buildOperationTargetCancelArgs = (
@@ -3754,6 +3896,8 @@ export const __lodyMcpServerInternals = {
   SessionChatManyToolInputSchema,
   SessionHistoryToolInputSchema,
   SessionListToolInputSchema,
+  SessionRenameToolInputSchema,
+  SessionRenameManyToolInputSchema,
   SessionStatusManyToolInputSchema,
   SessionCancelToolInputSchema,
   mcpErrorResult,
@@ -3768,6 +3912,9 @@ export const __lodyMcpServerInternals = {
   summarizeAgentConfig,
   assertDifferentMcpSession,
   assertBatchSize,
+  resolveSessionRenameItems,
+  applySessionRenameItems,
+  persistSessionRenameItems,
   resolveInvokingHistoryInput,
   buildOperationTargetCancelArgs,
   summarizeProjectRefForMcp,
@@ -3776,6 +3923,7 @@ export const __lodyMcpServerInternals = {
   startSessionChatOperation,
   startSessionChatManyOperation,
   getSessionContext,
+  resolveOperationStorePathForContext,
   postFileUpload,
   postImageUpload,
   postPreviewCandidate,
@@ -4339,6 +4487,46 @@ export function buildLodyMcpServer(config: { taskToolsEnabled?: boolean } = {}):
         return jsonTextResult(
           await withOperationStore((store) => store.snapshot(cancellation.operation))
         );
+      } catch (error) {
+        return mcpErrorResult(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    SESSION_RENAME_TOOL_NAME,
+    {
+      title: 'Rename a Lody session',
+      description:
+        'Set the title of one Session. Omit sessionId (or pass current) to rename the current Session. The durable rename is treated as a user-directed title and is not replaced by later automatic title generation.',
+      inputSchema: SessionRenameToolInputSchema,
+    },
+    async (args: SessionRenameToolInput) => {
+      try {
+        const [item] = await renameSessionItems({
+          items: [{ sessionId: args.sessionId ?? 'current', title: args.title }],
+        });
+        if (!item) {
+          throw new Error('Session rename returned no result.');
+        }
+        return jsonTextResult(item, item.ok === false);
+      } catch (error) {
+        return mcpErrorResult(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    SESSION_RENAME_MANY_TOOL_NAME,
+    {
+      title: 'Rename multiple Lody sessions',
+      description:
+        'Set titles for 1-20 Sessions. Session ids must be unique. Results preserve input order and failures are isolated per item; successful renames remain applied when another item fails.',
+      inputSchema: SessionRenameManyToolInputSchema,
+    },
+    async (args: SessionRenameManyToolInput) => {
+      try {
+        return jsonTextResult({ items: await renameSessionItems(args) });
       } catch (error) {
         return mcpErrorResult(error);
       }

@@ -97,8 +97,8 @@ arrive: context/message-flow.md "Upstream".
   atomic-config, and npx launch wrapper around the `packages/acp-extension-dsh` submodule. It
   publishes Lody's versioned ACP composition beside (without replacing) user Harness config and
   launches the pinned explicit package closure through `dsh-acp-demo`; do not replace it with the
-  all-in-one `@deepseek-ai/dsh` package while that package's unpublished telemetry dependency makes
-  fresh installs fail. CLI production and dev builds copy the extension's pinned official presets
+  all-in-one `@deepseek-ai/dsh` product CLI, because this ACP host deliberately excludes product UI
+  and telemetry packages. CLI production and dev builds copy the extension's pinned official presets
   beside `deepseek-acp.js`; the generated roster also discovers `$DSH_HOME/.agent-presets`. The
   adapter must
   apply model and reasoning selection through the Agent-scoped request waterfall, permissions
@@ -153,7 +153,11 @@ arrive: context/message-flow.md "Upstream".
   crossed the final complete-marker commit may remain as a safe cache hit even though that caller
   observes cancellation. An immediate retry waits for an earlier aborted generation's scratch
   cleanup before starting a new generation for the same artifact.
-- `acp-authentication.ts` — trusted builtin authentication lifecycle. Kimi runs
+- `acp-authentication.ts` — the authentication lifecycle, with ONE slot, timeout,
+  and cancellation policy shared by both of its paths. Which path runs is decided
+  by the provider, not by the caller: a managed builtin runs its pinned login
+  command, and everything else (registry and custom ACP) opens a temporary standard
+  ACP connection in the same bounded lifecycle. Trusted builtin lifecycle: Kimi runs
   `acp --login`; Grok runs the official `login --device-auth`; Claude Code runs
   the official `auth login --claudeai`
   subscription flow; Codex always runs the official `login --device-auth`
@@ -173,7 +177,27 @@ arrive: context/message-flow.md "Upstream".
   ACP session creation because `codex login status` cannot account for custom
   model providers with `requires_openai_auth = false`. The per-agent slot covers async
   launch preparation as well as the child process, so cancel and concurrent start cannot race spawn;
-  timeout/cancel terminate and release the slot for Retry.
+  timeout/cancel terminate and release the slot for Retry. Because protocol authentication
+  spans launch preparation, JSON-RPC requests, and process cleanup, the running
+  slot also carries an `AbortController` that termination raises before any child exists.
+  Registry/custom initialization advertises no terminal capability and supports
+  ACP URL plus form elicitation. Only agent-driven methods are runnable: `env_var`
+  is deprecated and rejected, while `terminal` remains unsupported until Machine
+  RPC has a real interactive-terminal bridge. Multiple methods and every elicitation
+  stay on the original long-running request and permit only one pending interaction;
+  replies carry an interaction id and use the encrypted authentication-input path on
+  remote Machines. URL schemes, method/form sizes, ids, labels, options, and defaults
+  are bounded before they enter progress; the form also has a shared serialized-byte
+  budget so individually valid dimensions cannot multiply into an oversized RPC payload.
+  Never forward raw third-party process output or secret defaults into retained progress.
+  Machine RPC may name only a persisted Provider `configId`; the daemon resolves and freezes
+  machine/CLI/agent/launch/env/runtime fields before spawning. Capability refresh follows the
+  same rule because it also launches an ACP. Later authentication replies identify only the
+  established request and interaction and can never replace its launch target.
+  The real-process authentication test keeps method selection, versioned secret metadata,
+  form submission, URL parsing, protocol stdout integrity, and process cleanup on one
+  spawned ACP connection. The process is always stopped before success returns, and
+  cancellation or timeout during cleanup must still win.
 - `acp-binary-manager.ts` — registry binary-distribution agents. It follows the same
   consumer-lease cancellation rule as managed runtimes: one shared install, abort only after
   the last consumer leaves, and never reuse an aborted generation while it is cleaning up. Tar

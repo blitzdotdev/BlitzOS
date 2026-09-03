@@ -17,6 +17,7 @@ import type { PrStatus, SessionPullRequestCiState } from '@lody/shared';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 import { ContextMenuItem, ContextMenuSeparator } from '@/ui/context-menu';
+import { Skeleton } from '@/ui/skeleton';
 import { PR_STATUS_META } from '@/components/sessions/pull-request-badge';
 import { SidebarConfirmArchiveButton } from '@/components/sidebar-confirm-archive-button';
 import { CachedAvatarImg } from '@/components/cached-avatar-img';
@@ -402,11 +403,11 @@ export function SessionRowLeadingSlot({
   menuLabel,
   openedByTree,
   /** Fade the status while hovering (e.g. 'group-hover/row:opacity-0' for named groups). */
-  fadeClassName = 'group-hover:opacity-0',
+  fadeClassName = 'group-hover:opacity-0 group-data-[menu-open]:opacity-0',
   /** Disable an opener disclosure while its ⋯ replacement is active. */
-  restPointerClassName = 'group-hover:pointer-events-none',
+  restPointerClassName = 'group-hover:pointer-events-none group-data-[menu-open]:pointer-events-none',
   /** Reveal the ⋯ button while hovering. */
-  revealClassName = 'group-hover:opacity-100 group-hover:pointer-events-auto',
+  revealClassName = 'group-hover:opacity-100 group-hover:pointer-events-auto group-data-[menu-open]:opacity-100 group-data-[menu-open]:pointer-events-auto',
 }: {
   isWaitingPermission?: boolean;
   isWorking?: boolean;
@@ -530,6 +531,9 @@ export function SessionRowLeadingSlot({
             controlLeftClassName,
             'text-sidebar-foreground-muted transition-[opacity,color,background-color] duration-100',
             'hover:bg-sidebar-foreground/15 hover:text-sidebar-foreground',
+            // The trigger itself stays pressed-looking while its menu is open,
+            // not just the row around it.
+            'group-data-[menu-open]:bg-sidebar-foreground/15 group-data-[menu-open]:text-sidebar-foreground',
             revealClassName
           )}
         >
@@ -579,7 +583,7 @@ export function SidebarRowArchiveButton({
   confirmLabel,
   onConfirm,
   /** Which group's hover reveals the button — e.g. 'group-hover/row:...' for named groups. */
-  revealClassName = 'group-hover:opacity-100 group-hover:pointer-events-auto',
+  revealClassName = 'group-hover:opacity-100 group-hover:pointer-events-auto group-data-[menu-open]:opacity-100 group-data-[menu-open]:pointer-events-auto',
 }: {
   label: string;
   confirmLabel: string;
@@ -767,6 +771,58 @@ export function SidebarSectionHeader({
         <span className="flex-1" aria-hidden="true" />
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
+  );
+}
+
+const SIDEBAR_SKELETON_ROW_WIDTHS = [
+  'w-[68%]',
+  'w-[56%]',
+  'w-[74%]',
+  'w-[62%]',
+  'w-[70%]',
+] as const;
+
+/**
+ * Loading state for the sidebar lists. Keep this anatomy in sync with the
+ * real section header and single-line rows: the skeleton is intentionally not
+ * a card, because the loaded rows are flat and use the section's own spacing.
+ */
+export function SidebarListSkeleton({
+  className,
+  showHeaderIcon = true,
+  sectionClassName = 'mb-2.5 last:mb-0',
+}: {
+  className?: string;
+  showHeaderIcon?: boolean;
+  sectionClassName?: string;
+}) {
+  return (
+    <div className={cn('flex flex-col', className)} data-sidebar-loading-skeleton="">
+      <div className={cn('flex flex-col gap-0.5', sectionClassName)}>
+        <div className="group flex h-7 items-center">
+          <div className="relative flex h-7 min-w-0 flex-1 items-center gap-1 rounded-md px-2">
+            {showHeaderIcon ? (
+              <span className="flex h-5 w-5 shrink-0 items-center">
+                <Skeleton className="h-3.5 w-3.5 rounded-sm" />
+              </span>
+            ) : null}
+            <Skeleton className="h-3 w-24" />
+          </div>
+        </div>
+        <div className="flex flex-col gap-px">
+          {SIDEBAR_SKELETON_ROW_WIDTHS.map((width, index) => (
+            <div
+              key={index}
+              className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2"
+            >
+              <Skeleton className="h-3.5 w-3.5 shrink-0 rounded-full" />
+              <Skeleton className={cn('h-3 min-w-0', width)} />
+              <Skeleton className="ml-auto h-3 w-8 shrink-0" />
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

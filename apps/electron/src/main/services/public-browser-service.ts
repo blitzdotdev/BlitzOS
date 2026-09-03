@@ -6,7 +6,7 @@ import {
   type ElectronPublicBrowserResult,
   type ElectronPublicBrowserState
 } from '@lody/shared/electron-ipc'
-import { classifyBrowserHostname, parseBrowserAddress } from '@lody/shared/browser-url'
+import { classifyResolvedBrowserAddress, parseBrowserAddress } from '@lody/shared/browser-url'
 import { formatUnknownError } from '../utils'
 import { isNavigationAbortError, mergePublicBrowserState } from './public-browser-state'
 
@@ -54,7 +54,7 @@ const resolvePublicHostname = async (browserSession: Session, hostname: string):
     throw new Error(`Unable to resolve public browser host: ${hostname}`)
   }
   const blocked = endpoints.find(
-    (endpoint) => classifyBrowserHostname(endpoint.address) !== 'public'
+    (endpoint) => classifyResolvedBrowserAddress(endpoint.address) !== 'public'
   )
   if (blocked) {
     throw new Error(`Public browser blocked a non-public destination: ${blocked.address}`)

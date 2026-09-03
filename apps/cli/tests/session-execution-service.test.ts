@@ -13,6 +13,7 @@ import {
   getMachineRoomId,
   SessionStatusFactory,
   type ACPSessionId,
+  type AgentConfigMeta,
   type AgentConfigId,
   type LocalProjectId,
   type MachineId,
@@ -32,6 +33,17 @@ import { AcpAuthenticationManager } from '../src/agent/acp-authentication';
 import { GitExecutableNotFoundError } from '../src/session/worktree/git-process-error';
 
 const capabilityConfigId = 'config-1' as AgentConfigId;
+
+const createLaunchConfig = (overrides: Partial<AgentConfigMeta> = {}): AgentConfigMeta => ({
+  id: capabilityConfigId,
+  machineId: 'machine-1',
+  name: 'Test Provider',
+  description: undefined,
+  cliType: 'registry',
+  agentType: 'codex',
+  env: { TOKEN: 'shared' },
+  ...overrides,
+});
 
 const createSilentLogger = (): Logger => ({
   info: () => {},
@@ -173,6 +185,17 @@ const createBaseDeps = (
       flock: { scan: () => [] },
     }));
   }
+
+  const workspaceWithLaunchConfig = deps.workspaceDocument as unknown as {
+    getAgentConfigForMachineLaunch?: (
+      agentConfigId: AgentConfigId,
+      machineId: MachineId
+    ) => Promise<AgentConfigMeta | null>;
+  };
+  workspaceWithLaunchConfig.getAgentConfigForMachineLaunch ??= vi.fn(
+    async (agentConfigId: AgentConfigId, machineId: MachineId) =>
+      createLaunchConfig({ id: agentConfigId, machineId })
+  );
 
   const workspaceWithDocFactory = deps.workspaceDocument as unknown as {
     getOrCreateSessionDoc: (...args: unknown[]) => Promise<unknown>;
@@ -3815,6 +3838,59 @@ describe('SessionExecutionService', () => {
     expect(deps.turnFinalization.finalizeACPState).toHaveBeenCalledTimes(1);
   });
 
+  it('reports authentication required when a first turn cannot create its session', async () => {
+    const sessionDoc = {
+      getMetaState: vi.fn(async () => undefined),
+      getHistory: vi.fn(async () => []),
+      setStatus: vi.fn(async () => {}),
+      setProject: vi.fn(async () => {}),
+      setBaseBranch: vi.fn(async () => {}),
+      updateHistory: vi.fn(async () => {}),
+      roomId: 'session-session-create-auth',
+    };
+    const sessionManager = {
+      getSession: vi.fn(() => null),
+      getPendingSession: vi.fn(() => null),
+      createSession: vi.fn(async () => {
+        throw new AcpAuthenticationRequiredError([{ id: 'oauth-personal', name: 'Google' }]);
+      }),
+      setSessionError: vi.fn(),
+      terminateSession: vi.fn(),
+      refreshGhTokenForSession: vi.fn(async () => {}),
+    } as unknown as SessionManager;
+    const deps = createBaseDeps({
+      sessionManager,
+      workspaceDocument: {
+        repo: {
+          upsertDocMeta: vi.fn(async () => {}),
+          getDocMeta: vi.fn(async () => undefined),
+        },
+        getOrCreateSessionDoc: vi.fn(async () => sessionDoc),
+        updateAcpCapabilities: vi.fn(async () => {}),
+      } as unknown as LoroDocumentManager,
+    });
+
+    const service = new SessionExecutionService(deps);
+    await service.startSession({
+      type: 'session/create',
+      sessionId: 'session-create-auth' as SessionId,
+      machineId: 'machine-1',
+      workspaceId: 'workspace-1' as WorkspaceId,
+      acpSessionConfig: { prompt: 'hello', cliType: 'registry', agentType: 'antigravity-acp' },
+      userTurnId: 'turn-create-auth',
+      userId: 'user-2',
+      userName: 'User 2',
+      userEmail: 'user2@example.com',
+    });
+
+    // The generic pre-prompt reason would leave the client with no way to sign in.
+    expect(deps.recordChatFailure).toHaveBeenCalledWith(
+      sessionDoc,
+      'acp_auth_required',
+      'Authentication required'
+    );
+  });
+
   it.each([
     {
       name: 'reports an ordinary restore failure',
@@ -5371,18 +5447,25 @@ describe('SessionExecutionService', () => {
     const authenticate = vi
       .spyOn(AcpAuthenticationManager.prototype, 'authenticate')
       .mockResolvedValue({ success: true, disposition: 'authenticated' });
-    const service = new SessionExecutionService(createBaseDeps({}));
-    const refresh = vi.spyOn(service, 'refreshMachineAcpCapabilities').mockResolvedValue({
-      type: 'machine/acp-capabilities-refresh_response',
-      machineId: 'machine-1' as MachineId,
-      configId: capabilityConfigId,
-      cliType: 'builtin',
-      agentType: 'kimi',
-      success: false,
-      authRequired: true,
-      authMethods: [{ type: 'terminal', args: ['--login'] }],
-      error: 'Authentication required',
+    const fetchAcpCapabilities = vi.fn(async () => {
+      throw new AcpAuthenticationRequiredError([{ type: 'terminal', args: ['--login'] }]);
     });
+    const service = new SessionExecutionService(
+      createBaseDeps({
+        fetchAcpCapabilities,
+        workspaceDocument: {
+          getAgentConfigForMachineLaunch: vi.fn(async () =>
+            createLaunchConfig({
+              cliType: 'builtin',
+              agentType: 'kimi',
+              env: {},
+              runtimeOverrides: { kimiPath: '/test/kimi' },
+            })
+          ),
+          updateAcpCapabilities: vi.fn(async () => {}),
+        } as unknown as LoroDocumentManager,
+      })
+    );
 
     try {
       const result = await service.authenticateMachineAcp({
@@ -5392,8 +5475,6 @@ describe('SessionExecutionService', () => {
         requestId: 'auth-1',
         action: 'start',
         configId: capabilityConfigId,
-        cliType: 'builtin',
-        agentType: 'kimi',
       });
 
       expect(result).toEqual(
@@ -5407,8 +5488,133 @@ describe('SessionExecutionService', () => {
         })
       );
     } finally {
-      refresh.mockRestore();
       authenticate.mockRestore();
+    }
+  });
+
+  it('launches authentication only from the daemon-authoritative persisted config', async () => {
+    const authenticate = vi
+      .spyOn(AcpAuthenticationManager.prototype, 'authenticate')
+      .mockResolvedValue({ success: true, disposition: 'cancelled' });
+    const persistedConfig = createLaunchConfig({
+      cliType: 'custom',
+      agentType: 'persisted-custom',
+      customAcp: { command: '/opt/trusted/custom-acp', args: ['--stdio'] },
+      env: { TRUSTED_TOKEN: 'from-local-config' },
+      runtimeOverrides: undefined,
+    });
+    const getAgentConfigForMachineLaunch = vi.fn(async () => persistedConfig);
+    const service = new SessionExecutionService(
+      createBaseDeps({
+        workspaceDocument: {
+          getAgentConfigForMachineLaunch,
+          updateAcpCapabilities: vi.fn(async () => {}),
+        } as unknown as LoroDocumentManager,
+      })
+    );
+
+    try {
+      await expect(
+        service.authenticateMachineAcp({
+          type: 'machine/acp-authenticate',
+          machineId: 'machine-1' as MachineId,
+          workspaceId: 'workspace-1' as WorkspaceId,
+          requestId: 'auth-persisted-custom',
+          action: 'start',
+          configId: capabilityConfigId,
+        })
+      ).resolves.toEqual(
+        expect.objectContaining({
+          success: true,
+          disposition: 'cancelled',
+          agentType: 'persisted-custom',
+        })
+      );
+      expect(getAgentConfigForMachineLaunch).toHaveBeenCalledWith(capabilityConfigId, 'machine-1');
+      expect(authenticate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cliType: 'custom',
+          agentType: 'persisted-custom',
+          customAcp: { command: '/opt/trusted/custom-acp', args: ['--stdio'] },
+          env: { TRUSTED_TOKEN: 'from-local-config' },
+        })
+      );
+    } finally {
+      authenticate.mockRestore();
+    }
+  });
+
+  it('refuses authentication when the config is not persisted on the target machine', async () => {
+    const authenticate = vi.spyOn(AcpAuthenticationManager.prototype, 'authenticate');
+    const service = new SessionExecutionService(
+      createBaseDeps({
+        workspaceDocument: {
+          getAgentConfigForMachineLaunch: vi.fn(async () => null),
+        } as unknown as LoroDocumentManager,
+      })
+    );
+
+    try {
+      await expect(
+        service.authenticateMachineAcp({
+          type: 'machine/acp-authenticate',
+          machineId: 'machine-1' as MachineId,
+          workspaceId: 'workspace-1' as WorkspaceId,
+          requestId: 'auth-missing-config',
+          action: 'start',
+          configId: 'missing-config' as AgentConfigId,
+        })
+      ).resolves.toEqual(
+        expect.objectContaining({
+          success: false,
+          disposition: 'error',
+          error: expect.stringContaining('Provider config not found or invalid'),
+        })
+      );
+      expect(authenticate).not.toHaveBeenCalled();
+    } finally {
+      authenticate.mockRestore();
+    }
+  });
+
+  it('bounds the post-authentication capability proof inside the renderer deadline', async () => {
+    vi.useFakeTimers();
+    const authenticate = vi
+      .spyOn(AcpAuthenticationManager.prototype, 'authenticate')
+      .mockResolvedValue({ success: true, disposition: 'authenticated' });
+    const fetchAcpCapabilities = vi.fn(
+      (...args: unknown[]) =>
+        new Promise<never>((_resolve, reject) => {
+          const signal = (args[5] as { signal?: AbortSignal } | undefined)?.signal;
+          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        })
+    );
+    const service = new SessionExecutionService(createBaseDeps({ fetchAcpCapabilities }));
+
+    try {
+      const resultPromise = service.authenticateMachineAcp({
+        type: 'machine/acp-authenticate',
+        machineId: 'machine-1' as MachineId,
+        workspaceId: 'workspace-1' as WorkspaceId,
+        requestId: 'auth-refresh-timeout',
+        action: 'start',
+        configId: capabilityConfigId,
+      });
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      await expect(resultPromise).resolves.toEqual(
+        expect.objectContaining({
+          success: true,
+          disposition: 'authenticated',
+          capabilitiesRefreshed: false,
+          error: 'Authentication succeeded, but capability verification timed out',
+        })
+      );
+      expect(fetchAcpCapabilities).toHaveBeenCalledOnce();
+    } finally {
+      authenticate.mockRestore();
+      vi.useRealTimers();
     }
   });
 
@@ -5428,13 +5634,44 @@ describe('SessionExecutionService', () => {
           action: 'submit-code',
           authenticationRequestId: 'auth-1',
           authorizationCode: 'browser-code',
-          cliType: 'builtin',
-          agentType: 'claude',
         })
       ).resolves.toEqual(expect.objectContaining({ success: true, disposition: 'input-accepted' }));
-      expect(submitAuthorizationCode).toHaveBeenCalledWith('claude', 'auth-1', 'browser-code');
+      expect(submitAuthorizationCode).toHaveBeenCalledWith('auth-1', 'browser-code');
     } finally {
       submitAuthorizationCode.mockRestore();
+    }
+  });
+
+  it('forwards a Custom ACP form response to the active authentication request', async () => {
+    const submitAuthenticationInput = vi
+      .spyOn(AcpAuthenticationManager.prototype, 'submitAuthenticationInput')
+      .mockReturnValue({ success: true, disposition: 'input-accepted' });
+    const service = new SessionExecutionService(createBaseDeps({}));
+    const authenticationInput = JSON.stringify({
+      action: 'accept',
+      content: { account: 'work', code: 'secret-code' },
+    });
+
+    try {
+      await expect(
+        service.authenticateMachineAcp({
+          type: 'machine/acp-authenticate',
+          machineId: 'machine-1' as MachineId,
+          workspaceId: 'workspace-1' as WorkspaceId,
+          requestId: 'auth-input-2',
+          action: 'submit-input',
+          authenticationRequestId: 'auth-custom',
+          interactionId: 'form-1',
+          authenticationInput,
+        })
+      ).resolves.toEqual(expect.objectContaining({ success: true, disposition: 'input-accepted' }));
+      expect(submitAuthenticationInput).toHaveBeenCalledWith(
+        'auth-custom',
+        'form-1',
+        authenticationInput
+      );
+    } finally {
+      submitAuthenticationInput.mockRestore();
     }
   });
 
@@ -5464,6 +5701,9 @@ describe('SessionExecutionService', () => {
         },
         getOrCreateSessionDoc: vi.fn(),
         updateAcpCapabilities,
+        getAgentConfigForMachineLaunch: vi.fn(async () =>
+          createLaunchConfig({ env: { ACP_PROVIDER_TOKEN: 'secret-token' } })
+        ),
       } as unknown as LoroDocumentManager,
       fetchAcpCapabilities,
     });
@@ -5474,9 +5714,6 @@ describe('SessionExecutionService', () => {
       machineId: 'machine-1',
       workspaceId: 'workspace-1' as WorkspaceId,
       configId: capabilityConfigId,
-      cliType: 'registry',
-      agentType: 'codex',
-      env: { ACP_PROVIDER_TOKEN: 'secret-token' },
     });
 
     expect(fetchAcpCapabilities).toHaveBeenCalledWith(
@@ -5554,14 +5791,11 @@ describe('SessionExecutionService', () => {
       machineId: 'machine-1',
       workspaceId: 'workspace-1' as WorkspaceId,
       configId: capabilityConfigId,
-      cliType: 'registry' as const,
-      agentType: 'codex',
-      env: { TOKEN: 'shared' },
     };
 
     const first = service.refreshMachineAcpCapabilities(request);
     const second = service.refreshMachineAcpCapabilities(request);
-    const third = service.refreshMachineAcpCapabilities({ ...request, env: { TOKEN: 'shared' } });
+    const third = service.refreshMachineAcpCapabilities(request);
     release();
     const [a, b, c] = await Promise.all([first, second, third]);
 
@@ -5611,8 +5845,6 @@ describe('SessionExecutionService', () => {
       machineId: 'machine-1',
       workspaceId: 'workspace-1' as WorkspaceId,
       configId: capabilityConfigId,
-      cliType: 'registry' as const,
-      agentType: 'codex',
     };
     const firstController = new AbortController();
     const secondController = new AbortController();
@@ -5678,8 +5910,6 @@ describe('SessionExecutionService', () => {
         machineId: 'machine-1',
         workspaceId: 'workspace-1' as WorkspaceId,
         configId: capabilityConfigId,
-        cliType: 'registry',
-        agentType: 'codex',
       },
       { signal: controller.signal }
     );
@@ -5734,8 +5964,6 @@ describe('SessionExecutionService', () => {
       machineId: 'machine-1',
       workspaceId: 'workspace-1' as WorkspaceId,
       configId: capabilityConfigId,
-      cliType: 'registry' as const,
-      agentType: 'codex',
     };
     const controller = new AbortController();
 
@@ -5771,9 +5999,6 @@ describe('SessionExecutionService', () => {
       machineId: 'machine-1',
       workspaceId: 'workspace-1' as WorkspaceId,
       configId: capabilityConfigId,
-      cliType: 'registry' as const,
-      agentType: 'codex',
-      env: { TOKEN: 'shared' },
     };
 
     const first = service.refreshMachineAcpCapabilities(request);
@@ -5786,7 +6011,7 @@ describe('SessionExecutionService', () => {
     await Promise.all([first, second]);
   });
 
-  it('does not deduplicate ACP refreshes across different envs', async () => {
+  it('does not deduplicate ACP refreshes across authoritative config revisions', async () => {
     let releaseFirst: () => void = () => {};
     let releaseSecond: () => void = () => {};
     const firstFetched = new Promise<void>((resolve) => {
@@ -5802,25 +6027,27 @@ describe('SessionExecutionService', () => {
       return { modes: [], models: [] };
     });
 
-    const deps = createBaseDeps({ fetchAcpCapabilities });
+    const getAgentConfigForMachineLaunch = vi
+      .fn()
+      .mockResolvedValueOnce(createLaunchConfig({ env: { TOKEN: 'A' } }))
+      .mockResolvedValueOnce(createLaunchConfig({ env: { TOKEN: 'B' } }));
+    const deps = createBaseDeps({
+      fetchAcpCapabilities,
+      workspaceDocument: {
+        getAgentConfigForMachineLaunch,
+        updateAcpCapabilities: vi.fn(async () => {}),
+      } as unknown as LoroDocumentManager,
+    });
     const service = new SessionExecutionService(deps);
     const baseRequest = {
       type: 'machine/acp-capabilities-refresh' as const,
       machineId: 'machine-1',
       workspaceId: 'workspace-1' as WorkspaceId,
       configId: capabilityConfigId,
-      cliType: 'registry' as const,
-      agentType: 'codex',
     };
 
-    const first = service.refreshMachineAcpCapabilities({
-      ...baseRequest,
-      env: { TOKEN: 'A' },
-    });
-    const second = service.refreshMachineAcpCapabilities({
-      ...baseRequest,
-      env: { TOKEN: 'B' },
-    });
+    const first = service.refreshMachineAcpCapabilities(baseRequest);
+    const second = service.refreshMachineAcpCapabilities(baseRequest);
 
     releaseFirst();
     releaseSecond();
@@ -5864,8 +6091,6 @@ describe('SessionExecutionService', () => {
       machineId: 'machine-1',
       workspaceId: 'workspace-1' as WorkspaceId,
       configId: capabilityConfigId,
-      cliType: 'registry' as const,
-      agentType: 'codex',
     };
 
     const failed = await service.refreshMachineAcpCapabilities(request);

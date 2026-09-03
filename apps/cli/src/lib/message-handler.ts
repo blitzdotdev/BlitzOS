@@ -170,6 +170,7 @@ import {
   type LodyOperationItemResult,
   type StoredLodyOperation,
   CURRENT_MACHINE_PROTOCOL_CAPABILITIES,
+  hasPendingUserTurnActivation,
 } from '@lody/shared';
 import { ISession, SessionManager } from '../session/session-manager';
 import { captureCli } from '@/lib/analytics/posthog';
@@ -3259,61 +3260,56 @@ export class MessageHandler {
             this.triggerPendingProcessLifecycleAction(response.requestId);
           }
         },
-        refreshMachineAcpCapabilities: async ({
-          configId,
-          cliType,
-          agentType,
-          customAcp,
-          runtimeOverrides,
-          env,
-          onAcpBinaryProgress,
-          signal,
-        }) =>
+        refreshMachineAcpCapabilities: async ({ configId, onAcpBinaryProgress, signal }) =>
           await this.executionService.refreshMachineAcpCapabilities(
             {
               type: 'machine/acp-capabilities-refresh',
               machineId: this.machineId,
               workspaceId: this.workspaceId,
               configId,
-              cliType,
-              agentType,
-              customAcp,
-              runtimeOverrides,
-              env,
             },
             { onAcpBinaryProgress, signal }
           ),
-        authenticateMachineAcp: async ({
-          requestId,
-          action,
-          authenticationRequestId,
-          authorizationCode,
-          configId,
-          cliType,
-          agentType,
-          customAcp,
-          runtimeOverrides,
-          env,
-          onProgress,
-        }) =>
-          await this.authenticateMachineAcpAndResumeSetup(
-            {
-              type: 'machine/acp-authenticate',
-              machineId: this.machineId,
-              workspaceId: this.workspaceId,
-              requestId,
-              action,
-              authenticationRequestId,
-              authorizationCode,
-              configId,
-              cliType,
-              agentType,
-              customAcp,
-              runtimeOverrides,
-              env,
-            },
-            { onProgress }
-          ),
+        authenticateMachineAcp: async (args) => {
+          const common = {
+            type: 'machine/acp-authenticate' as const,
+            machineId: this.machineId,
+            workspaceId: this.workspaceId,
+            requestId: args.requestId,
+          };
+          const message: MachineAcpAuthenticateRequestValidated = (() => {
+            switch (args.action) {
+              case 'start':
+                return { ...common, action: args.action, configId: args.configId };
+              case 'cancel':
+                return {
+                  ...common,
+                  action: args.action,
+                  authenticationRequestId: args.authenticationRequestId,
+                };
+              case 'submit-code':
+                return {
+                  ...common,
+                  action: args.action,
+                  authenticationRequestId: args.authenticationRequestId,
+                  authorizationCode: args.authorizationCode,
+                };
+              case 'submit-input':
+                return {
+                  ...common,
+                  action: args.action,
+                  authenticationRequestId: args.authenticationRequestId,
+                  interactionId: args.interactionId,
+                  authenticationInput: args.authenticationInput,
+                };
+              default:
+                throw new Error('Unsupported ACP authentication action');
+            }
+          })();
+          return await this.authenticateMachineAcpAndResumeSetup(message, {
+            onProgress: args.onProgress,
+          });
+        },
         getMachineAcpBinaryStatus: async ({ agentType }) =>
           await this.executionService.getMachineAcpBinaryStatus({
             type: 'machine/acp-binary-status',
@@ -6238,24 +6234,79 @@ export class MessageHandler {
     const project = meta.project;
     const ownerSessionId = (meta.parentSessionId ?? sessionId) as SessionId;
     if (project?.kind === 'local') {
-      const workspaceRoot = await resolveWorkspaceLocalProjectRootPath(
+      const originalRootPath = await resolveWorkspaceLocalProjectRootPath(
         this.workspaceDocument.repo,
         this.workspaceId,
         this.machineId,
         project.localProjectId
       );
-      if (!workspaceRoot) {
+      if (!originalRootPath) {
         return {
           ok: false,
           error: 'workspace_unavailable',
           message: `Local project not found in workspace: ${project.localProjectId}`,
         };
       }
+      const isLocalWorktree = meta.isWorktree === true || project.useWorktree === true;
+      if (!isLocalWorktree) {
+        return {
+          ok: true,
+          workspaceRoot: originalRootPath,
+          source: `local-project:${project.localProjectId}`,
+          ...ownerSessionIdField(ownerSessionId),
+        };
+      }
+
+      const worktreeManager = getWorktreeManager({
+        repoId: deriveRepoIdFromLocalProjectPath(originalRootPath),
+        source: { kind: 'local-shared', originalRootPath },
+        logger: this.logger,
+      });
+      if (worktreeManager.hasWorktree(ownerSessionId)) {
+        return {
+          ok: true,
+          workspaceRoot: worktreeManager.getWorktreeHostPath(ownerSessionId),
+          source: `local-worktree-existing:${ownerSessionId}`,
+          ...ownerSessionIdField(ownerSessionId),
+        };
+      }
+
+      // Fork metadata is persisted before asynchronous worktree creation starts. Never fall
+      // back to originalRootPath here: it is the shared main checkout, so All Changes would
+      // show another checkout's edits. Wait for the session, then recheck the worktree manager.
+      this.logCodeCollabDebug(
+        `[${sessionId}] Code Collab v2 workspace resolution waiting for local worktree ownerSessionId=${ownerSessionId} project=${project.localProjectId}`
+      );
+      const waited = await waitForSessionWorkspaceRoot({
+        targetSessionId: ownerSessionId,
+        activeSource:
+          ownerSessionId === sessionId
+            ? 'active-session-after-wait'
+            : `active-parent-session:${ownerSessionId}`,
+        pendingSource:
+          ownerSessionId === sessionId
+            ? 'pending-session-after-wait'
+            : `pending-parent-session:${ownerSessionId}`,
+        timeoutMs: CODE_COLLAB_WORKSPACE_WAIT_TIMEOUT_MS,
+      });
+      if (waited) {
+        return waited.ok ? { ...waited, ...ownerSessionIdField(ownerSessionId) } : waited;
+      }
+
+      if (worktreeManager.hasWorktree(ownerSessionId)) {
+        return {
+          ok: true,
+          workspaceRoot: worktreeManager.getWorktreeHostPath(ownerSessionId),
+          source: `local-worktree-existing-after-wait:${ownerSessionId}`,
+          ...ownerSessionIdField(ownerSessionId),
+        };
+      }
+
       return {
-        ok: true,
-        workspaceRoot,
-        source: `local-project:${project.localProjectId}`,
-        ...ownerSessionIdField(ownerSessionId),
+        ok: false,
+        error: 'session_initializing',
+        message:
+          'Session workspace is still being prepared. Code Collab will start after the session is ready.',
       };
     }
 
@@ -8280,7 +8331,6 @@ export class MessageHandler {
     const response = await this.executionService.authenticateMachineAcp(message, options);
     if (
       message.action === 'start' &&
-      message.configId &&
       response.success &&
       response.disposition === 'authenticated'
     ) {
@@ -9858,11 +9908,10 @@ export class MessageHandler {
       return false;
     }
 
-    if (meta.processingUserMsgId) {
-      return true;
-    }
-
-    return Boolean(meta.latestUserMsgId && meta.latestUserMsgId !== meta.lastHandledUserMsgId);
+    // Same predicate the dispatch watcher uses: a retired activation leaves the
+    // pointers unequal on purpose, and a raw comparison would pin the session
+    // in memory forever.
+    return hasPendingUserTurnActivation(meta);
   }
 
   /**

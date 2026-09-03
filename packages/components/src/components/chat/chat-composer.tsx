@@ -673,18 +673,21 @@ export function ChatComposer({
               onClick={
                 focusOnContainerClick && !promptDisabled
                   ? (event) => {
+                      const target = event.target as HTMLElement | null;
+                      if (!target) return;
                       if (
-                        event.target === event.currentTarget ||
-                        !(event.target as HTMLElement).closest(
-                          'button, a, [data-comment-ref], [data-visual-annotation-ref]'
+                        !event.currentTarget.contains(target) ||
+                        target.closest(
+                          'button, a, input, textarea, select, [role="button"], [role="menuitem"], [role="option"], [data-comment-ref], [data-visual-annotation-ref]'
                         )
                       ) {
-                        const textarea =
-                          promptRef && typeof promptRef === 'object' && 'current' in promptRef
-                            ? promptRef.current
-                            : null;
-                        textarea?.focus();
+                        return;
                       }
+                      const textarea =
+                        promptRef && typeof promptRef === 'object' && 'current' in promptRef
+                          ? promptRef.current
+                          : null;
+                      textarea?.focus();
                     }
                   : undefined
               }

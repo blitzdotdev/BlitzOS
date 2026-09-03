@@ -32,7 +32,6 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/ui/context-menu';
-import { Skeleton } from '@/ui/skeleton';
 import { SwipeActionRow } from '@/components/shared/swipe-action-row';
 import {
   SessionOpenedByTreeRow,
@@ -43,6 +42,7 @@ import {
   SessionRowWorktreeIndicator,
   SidebarRowArchiveButton,
   SidebarRowEndSlot,
+  SidebarListSkeleton,
   SidebarSectionHeader,
   SessionRowOpenedByMenuItems,
   buildSessionRowOpenedByTreeSlot,
@@ -177,34 +177,6 @@ export type SidebarUpdatedContextMenuLabels = {
  */
 function HeaderActionRow({ action }: { action: ReactNode }) {
   return <div className="flex h-7 shrink-0 items-center justify-end">{action}</div>;
-}
-
-function SidebarUpdatedSessionListSkeleton({ className }: { className?: string }) {
-  // Three buckets each with a header and a couple of rows; matches the
-  // SessionListSkeleton density so the two organize modes look the same when
-  // the session list is still loading.
-  const bucketRows: string[][] = [
-    ['w-[68%]', 'w-[58%]', 'w-[74%]'],
-    ['w-[60%]', 'w-[52%]'],
-  ];
-  return (
-    <div className={cn('flex flex-col gap-4', className)}>
-      {bucketRows.map((rows, bucketIndex) => (
-        <div key={bucketIndex} className="space-y-2">
-          <Skeleton className="h-3 w-16" />
-          <div className="space-y-2 rounded-lg border border-border/50 p-2">
-            {rows.map((width, rowIndex) => (
-              <div key={rowIndex} className="flex items-center gap-2 px-1 py-1.5">
-                <Skeleton className="h-7 w-7 rounded-md" />
-                <Skeleton className={cn('h-3', width)} />
-                <Skeleton className="ml-auto h-3 w-10" />
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function parseGitHubPrNumber(url: string): number | null {
@@ -502,7 +474,11 @@ export const SidebarUpdatedSessionList = memo(function SidebarUpdatedSessionList
     return (
       <div className="flex flex-col">
         {headerAction ? <HeaderActionRow action={headerAction} /> : null}
-        <SidebarUpdatedSessionListSkeleton className={className} />
+        <SidebarListSkeleton
+          className={className}
+          showHeaderIcon={false}
+          sectionClassName="mb-4 last:mb-0"
+        />
       </div>
     );
   }
@@ -800,12 +776,19 @@ const UpdatedItemRow = memo(function UpdatedItemRow({
     </span>
   );
 
+  const [rowMenuOpen, setRowMenuOpen] = useState(false);
+
   const row = (
     <div
       role={!useAnchor && onSelect ? 'button' : undefined}
       tabIndex={!useAnchor && onSelect ? 0 : undefined}
+      aria-current={selected ? 'page' : undefined}
+      data-id={`updated:${item.id}`}
+      data-scope-item="row"
+      data-sidebar-session-id={item.id}
       data-sidebar-updated-id={item.id}
       data-sidebar-updated-kind={item.kind}
+      data-menu-open={rowMenuOpen ? '' : undefined}
       // Drag a conversation onto a chat surface to mention it there.
       draggable
       onDragStart={(event) =>
@@ -821,7 +804,7 @@ const UpdatedItemRow = memo(function UpdatedItemRow({
         !showSelectedState &&
           onSelect &&
           !isMobile &&
-          'hover:bg-sidebar-hover hover:text-sidebar-hover-foreground',
+          'hover:bg-sidebar-hover hover:text-sidebar-hover-foreground data-[menu-open]:bg-sidebar-hover data-[menu-open]:text-sidebar-hover-foreground',
         showSelectedState &&
           'border-sidebar-foreground/10 bg-sidebar-foreground/10 text-sidebar-foreground hover:bg-sidebar-foreground/10',
         // Keyboard-only focus ring — see SessionList: plain :focus-within also
@@ -872,7 +855,7 @@ const UpdatedItemRow = memo(function UpdatedItemRow({
           openedByTree={openedByTree}
           fadeClassName="group-hover/row:opacity-0"
           restPointerClassName="group-hover/row:pointer-events-none"
-          revealClassName="group-hover/row:opacity-100 group-hover/row:pointer-events-auto"
+          revealClassName="group-hover/row:opacity-100 group-hover/row:pointer-events-auto group-data-[menu-open]/row:opacity-100 group-data-[menu-open]/row:pointer-events-auto"
         />
         <SessionRowAuthorAvatar author={item.owner} />
         {showPinnedIcon && item.isPinned ? (
@@ -932,7 +915,7 @@ const UpdatedItemRow = memo(function UpdatedItemRow({
                 label={archiveTooltipLabel}
                 confirmLabel={archiveConfirmLabel}
                 onConfirm={() => onArchive?.(item.id)}
-                revealClassName="group-hover/row:opacity-100 group-hover/row:pointer-events-auto"
+                revealClassName="group-hover/row:opacity-100 group-hover/row:pointer-events-auto group-data-[menu-open]/row:opacity-100 group-data-[menu-open]/row:pointer-events-auto"
               />
             ) : undefined
           }
@@ -971,7 +954,7 @@ const UpdatedItemRow = memo(function UpdatedItemRow({
   }
 
   const menuRow = hasMenuActions ? (
-    <ContextMenu>
+    <ContextMenu onOpenChange={setRowMenuOpen}>
       <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
       <ContextMenuContent className="min-w-[180px]">
         <SessionRowOpenedByMenuItems
