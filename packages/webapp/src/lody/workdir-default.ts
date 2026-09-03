@@ -25,6 +25,15 @@
  * and only when it is absent. That leaves both overrides intact: their own
  * per-project write (which is what ticking the pill off does) still wins, and a
  * member who sets the global key by hand is not overwritten on the next mount.
+ *
+ * SAFE WHEN GIT STATE IS UNAVAILABLE (the greyed-send finding, 2026-09-02).
+ * The key is global, so no box-local probe can make the preference safe: a
+ * healthy box can seed it before the same browser visits an old or temporarily
+ * unreachable box. The vendored landing already computes `effectiveWorkdirMode`
+ * as `'local'` when Git state is unavailable and renders the toggle off; seam
+ * patch 18 makes its button and keyboard-submit gates honor that same fallback.
+ * That fixes existing stored values as well as new ones while preserving the
+ * worktree-first render on every healthy box.
  */
 import { FILES_DAV_ROOT } from "../resolver.js";
 import { isJsonObject, isJsonString, type JsonObject, type JsonValue } from "@blitzos/schema";

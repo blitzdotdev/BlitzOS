@@ -1606,6 +1606,48 @@ vendored hook across a box switch and fails without hunk 3.
 bridge (or expose this reset) so a host driving more than one daemon can move
 between them. Until then this is the smallest seam that closes it.
 
+### 18. A failed Git-state probe degrades a worktree selection to local (2026-09-03)
+
+**One idea, three hunks in two files, and it fixes upstream's own mismatch.**
+The chat landing already distinguishes the SELECTED workdir mode from the
+EFFECTIVE one: when local Git state is unavailable,
+`effectiveWorkdirMode` is `local`, the worktree toggle renders off, and the
+session `ProjectRef` omits `useWorktree`. That is a complete and safe fallback
+to editing the selected local project in place.
+
+Two later checks nevertheless read `selectedWorkdirMode === 'worktree'` and
+turn that fallback into a dead end. `getChatLandingSubmitDisabled` permanently
+disables the button after the Git-state load errors, and `handleSubmit` has a
+matching early return for keyboard submission. A persisted worktree preference
+therefore makes a project whose machine cannot answer `local-project/git-state`
+impossible to use, even though the rest of the component has already selected
+the local fallback.
+
+| # | File | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | `packages/components/src/components/chat/chat-landing-derived.ts` | the worktree arm in `getChatLandingSubmitDisabled` | keeps the loading guard, but an answered error no longer disables Send; the effective mode has already fallen back to local |
+| 2 | `packages/components/src/components/chat/chat-landing.tsx` | `local_project_git_state_failed` in `captureSessionInputBlocked`'s reason union | removes the reason that hunk 3 makes unreachable |
+| 3 | same | the `localGitStateError && selectedWorkdirMode === 'worktree'` early return in `handleSubmit` | removes the second block so click and Enter both dispatch with the existing `effectiveWorkdirMode === 'local'` project shape |
+
+Guard: `packages/webapp/test/lody-git-state-fallback.test.ts` reproduces the
+cross-workspace case — a healthy box has already persisted the global worktree
+preference, then a different box's Git-state request fails — and pins both the
+button decision and the submit path.
+
+This is not a BlitzOS-specific behaviour switch. No prop or capability is
+added, and every healthy Git-state path is byte-for-byte unchanged: a worktree
+selection still blocks while state is loading and still dispatches a worktree
+after state resolves. The only changed state is a terminal error, where the UI
+already displays and builds a local session. The upstream PR is drafted in
+`plans/evidence/lody-git-state-fallback-pr.md`; **drop all three hunks when it
+merges.**
+
+**Merge conflict drill.** If upstream consolidates selected/effective workdir
+mode, preserve one rule: loading a requested worktree may block, but a terminal
+Git-state error must allow the already-selected local fallback through both the
+button and the submit handler. If upstream implements that rule itself, delete
+this seam rather than reconciling it.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.

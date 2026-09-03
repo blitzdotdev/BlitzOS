@@ -65,8 +65,10 @@ export const LODY_TOASTER_HOST_CLASS = "lody-surface__toaster";
 export function LodySurfaceProviders(props: { children: ReactNode }) {
   const i18n = useMemo(() => initLodyI18n(), []);
   const theme = useMemo(() => adoptShellTheme(), []);
-  // Beside the theme adoption for the same reason: both write a key their own
-  // code reads on first render, so both have to happen before that render.
+  // Beside theme adoption because both write a key the vendored tree reads on
+  // first render. A failed Git-state load makes the landing's effective mode
+  // local; seam patch 18 keeps both submit paths aligned with that fallback, so
+  // the default is safe even for an old or temporarily unreachable box.
   useMemo(() => seedWorktreeWorkdirDefault(), []);
   return (
     <I18nextProvider i18n={i18n}>

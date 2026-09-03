@@ -554,7 +554,7 @@ export function getChatLandingSubmitDisabled({
     contextType === 'local' &&
     hasSelectedLocalProject &&
     (isRuntimeInitializing ||
-      (workdirMode === 'worktree' && (isLoadingLocalGitState || hasLocalGitStateError)))
+      (workdirMode === 'worktree' && isLoadingLocalGitState && !hasLocalGitStateError))
   );
 }
 
