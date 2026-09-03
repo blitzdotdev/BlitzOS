@@ -96,6 +96,7 @@ export const windowIpcClient: LodyIpcClient = createIpcClient(readIpcBridge);
 /** Capture one bridge for a surface/runtime lifetime. */
 export function createBoundIpcClient(bridge: LodyIpcBridge): LodyIpcClient {
   const controller = new AbortController();
+  const subscriptions = new Set<() => void>();
   const guardedBridge: LodyIpcBridge = {
     ...bridge,
     invoke: (channel, ...args) =>
@@ -103,10 +104,16 @@ export function createBoundIpcClient(bridge: LodyIpcBridge): LodyIpcClient {
         ? Promise.reject(new Error('IPC client is disposed'))
         : bridge.invoke(channel, ...args),
   };
+  const client = createIpcClient(() => (controller.signal.aborted ? null : guardedBridge));
   return {
-    ...createIpcClient(() => (controller.signal.aborted ? null : guardedBridge)),
+    ...client,
     signal: controller.signal,
-    dispose: () => controller.abort(),
+    on: (channel, handler) => {
+      const unsubscribe = client.on(channel, handler);
+      subscriptions.add(unsubscribe);
+      return () => { if (subscriptions.delete(unsubscribe)) unsubscribe(); };
+    },
+    dispose: () => { controller.abort(); subscriptions.forEach((unsubscribe) => unsubscribe()); subscriptions.clear(); },
   };
 }
 

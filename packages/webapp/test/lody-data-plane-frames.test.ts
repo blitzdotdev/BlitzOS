@@ -214,4 +214,31 @@ describe("the browser connection parses the corpus at its boundary", () => {
     expect(lodyLiveDataPlaneSocketCount()).toBe(0);
     vi.useRealTimers();
   });
+
+  it("reports a physical loss before open but not intentional disposal", () => {
+    vi.useFakeTimers();
+    try {
+      ScriptedWebSocket.instances.length = 0;
+      const continuity: string[] = [];
+      const handle = createLodyDataPlaneConnection({
+        url: "ws://127.0.0.1:1/lody/sync",
+        // SAFETY: ScriptedWebSocket implements the complete subset used by
+        // the connection, including the pre-open error callback driven here.
+        webSocketConstructor: ScriptedWebSocket as unknown as typeof WebSocket,
+        onContinuity: (event) => continuity.push(event),
+      });
+      const socket = ScriptedWebSocket.instances[0];
+      if (socket === undefined) throw new Error("the connection opened no socket");
+      socket.onerror?.();
+      expect(continuity).toEqual(["socket-close"]);
+
+      vi.advanceTimersByTime(1_000);
+      expect(continuity).toEqual(["socket-close", "socket-redial"]);
+      handle.dispose();
+      expect(continuity).toEqual(["socket-close", "socket-redial"]);
+      expect(lodyLiveDataPlaneSocketCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

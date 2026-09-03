@@ -93,6 +93,29 @@ function readOnlineMachines(store: ReturnType<typeof createStore>): ReadonlySet<
   return store.get(onlineMachineIdsAtom) as ReadonlySet<string>;
 }
 
+function replaceWithStructurallyEqualInputs(
+  seeded: ReturnType<typeof seedStore>,
+  now: number,
+): void {
+  seeded.store.set(sessionMetaCacheAtom, {
+    [getSessionRoomId(seeded.ids.sessionId)]: { ...seeded.session },
+  });
+  seeded.store.set(machineMetaCacheAtom, {
+    [getMachineRoomId(seeded.ids.machineId)]: {
+      ...seeded.machine,
+      sessions: [...seeded.machine.sessions],
+    },
+  });
+  seeded.store.set(lodyPresenceStatesAtom, {
+    [`machine:${seeded.ids.machineId}:${seeded.ids.instanceId}`]: {
+      kind: "machine",
+      machineId: seeded.ids.machineId,
+      instanceId: seeded.ids.instanceId,
+      updatedAt: now,
+    },
+  });
+}
+
 describe("module memoization across independent Lody stores", () => {
   it("returns each store's values for doc meta, machines and presence", () => {
     const now = Date.now();
@@ -123,5 +146,48 @@ describe("module memoization across independent Lody stores", () => {
     expect(readSessionList(a.store)[0]?.id).toBe(a.ids.sessionId);
     expect(readMachineMap(a.store).get(a.ids.machineId)?.name).toBe(a.machine.name);
     expect(readOnlineMachines(a.store).has(a.ids.machineId)).toBe(true);
+  });
+
+  it("recomputes equal interleaved replacements without borrowing unequal values", () => {
+    const now = Date.now();
+    const a = seedStore("A", now);
+    const b = seedStore("A", now);
+
+    const sessionsA = readSessionList(a.store);
+    const machinesA = readMachineMap(a.store);
+    const onlineA = readOnlineMachines(a.store);
+    const sessionMetaA = readSessionMeta(a.store, getSessionRoomId(a.ids.sessionId));
+    replaceWithStructurallyEqualInputs(b, now);
+    const sessionsB = readSessionList(b.store);
+    const machinesB = readMachineMap(b.store);
+    const onlineB = readOnlineMachines(b.store);
+    const sessionMetaB = readSessionMeta(b.store, getSessionRoomId(b.ids.sessionId));
+
+    // Cross-store reference reuse is permitted here because all visible values
+    // are structurally equal; these identities prove the shared memo branches ran.
+    expect(sessionsB).toBe(sessionsA);
+    expect(machinesB).toBe(machinesA);
+    expect(onlineB).toBe(onlineA);
+    expect(sessionMetaB).toBe(sessionMetaA);
+
+    b.store.set(sessionMetaCacheAtom, {
+      [getSessionRoomId(b.ids.sessionId)]: { ...b.session, title: "Changed only in B" },
+    });
+    b.store.set(machineMetaCacheAtom, {
+      [getMachineRoomId(b.ids.machineId)]: { ...b.machine, name: "Changed machine B" },
+    });
+    b.store.set(lodyPresenceStatesAtom, {});
+    expect(readSessionList(b.store)[0]?.title).toBe("Changed only in B");
+    expect(readMachineMap(b.store).get(b.ids.machineId)?.name).toBe("Changed machine B");
+    expect([...readOnlineMachines(b.store)]).toEqual([]);
+
+    // Invalidating A after B changed the module globals must still return A's
+    // own equal replacement, never B's most recent unequal projection.
+    replaceWithStructurallyEqualInputs(a, now);
+    expect(readSessionList(a.store)[0]?.title).toBe(a.session.title);
+    expect(readMachineMap(a.store).get(a.ids.machineId)?.name).toBe(a.machine.name);
+    expect([...readOnlineMachines(a.store)]).toEqual([a.ids.machineId]);
+    expect(readSessionMeta(a.store, getSessionRoomId(a.ids.sessionId))?.title)
+      .toBe(a.session.title);
   });
 });

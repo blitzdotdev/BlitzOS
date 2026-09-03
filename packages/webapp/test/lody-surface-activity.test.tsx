@@ -139,6 +139,27 @@ describe("a hidden Lody route Activity", () => {
 });
 
 describe("retained Lody surface focus", () => {
+  it("reapplies a captured conversation offset after the reveal commit", async () => {
+    const tree = (hidden: boolean) => (
+      <LodySurfaceVisibilityRoot hidden={hidden} className="surface">
+        <div className="chat-scrollbar" style={{ overflowY: "auto", height: 20 }}>
+          conversation
+        </div>
+      </LodySurfaceVisibilityRoot>
+    );
+    const view = await render(tree(false));
+    const scroller = view.container.querySelector<HTMLElement>(".chat-scrollbar");
+    if (scroller === null) throw new Error("conversation scroller did not mount");
+    scroller.scrollTop = 73;
+
+    await act(async () => view.root.render(tree(true)));
+    // Model the clamp/reflow that jsdom itself cannot perform for display:none.
+    scroller.scrollTop = 0;
+    await act(async () => view.root.render(tree(false)));
+    expect(scroller.scrollTop).toBe(73);
+    await view.unmount();
+  });
+
   it("restores the last focused element, then falls back to the composer", async () => {
     const tree = (hidden: boolean, original = true) => (
       <LodySurfaceVisibilityRoot hidden={hidden} className="surface">

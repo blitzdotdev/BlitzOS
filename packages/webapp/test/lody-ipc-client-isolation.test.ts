@@ -50,6 +50,7 @@ import {
   mountedSourceClosure,
   workspacePath,
 } from "./lody-ipc-source-closure.js";
+import type { LodyRuntimeLifecycleEvent } from "../src/lody/surface-runtime-lifecycle.js";
 
 type IpcBridge = NonNullable<Window["ipc"]>;
 type Listener = (payload: unknown) => void;
@@ -229,10 +230,20 @@ function runtimeTree(
   tag: string,
   store: TestStore,
   client: TestIpcClient,
-  options: { localIpcHost?: boolean; cloudMode?: boolean } = {},
+  options: {
+    localIpcHost?: boolean;
+    cloudMode?: boolean;
+    onRuntimeLifecycle?: (event: LodyRuntimeLifecycleEvent) => void;
+  } = {},
 ) {
   const snapshot = runtimeSnapshotFor(tag);
-  const runtime = createElement(RuntimeProvider, null, null);
+  const runtime = createElement(
+    RuntimeProvider,
+    options.onRuntimeLifecycle === undefined
+      ? null
+      : { onRuntimeLifecycle: options.onRuntimeLifecycle },
+    null,
+  );
   const runtimeForMode = options.cloudMode === true
     ? createElement(
         PlatformContext.Provider,
@@ -266,6 +277,17 @@ function runtimeTree(
       ),
     ),
   );
+}
+
+async function waitForLifecycle(
+  events: readonly LodyRuntimeLifecycleEvent[],
+  phase: LodyRuntimeLifecycleEvent["phase"],
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (events.some((event) => event.phase === phase)) return;
+    await settle();
+  }
+  throw new Error(`timed out waiting for runtime lifecycle ${phase}`);
 }
 
 function presenceFrame(tag: string) {
@@ -472,14 +494,20 @@ describe("per-surface IPC ownership", () => {
     const storeB = createStore();
     const releaseSeedA = seedRuntimeStore(storeA, "A");
     const releaseSeedB = seedRuntimeStore(storeB, "B");
+    const lifecycleA: LodyRuntimeLifecycleEvent[] = [];
+    const lifecycleB: LodyRuntimeLifecycleEvent[] = [];
 
     window.ipc = asIpcBridge(poison);
     const mounted = await render(
       createElement(
         "div",
         null,
-        runtimeTree("A", storeA, clientA),
-        runtimeTree("B", storeB, clientB),
+        runtimeTree("A", storeA, clientA, {
+          onRuntimeLifecycle: (event) => lifecycleA.push(event),
+        }),
+        runtimeTree("B", storeB, clientB, {
+          onRuntimeLifecycle: (event) => lifecycleB.push(event),
+        }),
       ),
     );
     const runtimeA = await waitForRuntime(storeA);
@@ -542,9 +570,17 @@ describe("per-surface IPC ownership", () => {
     expect(poison.invoke).not.toHaveBeenCalled();
     expect(poison.send).not.toHaveBeenCalled();
     expect(poison.on).not.toHaveBeenCalled();
+    expect(lifecycleA).toContainEqual({ phase: "created" });
+    expect(lifecycleB).toContainEqual({ phase: "created" });
 
     await mounted.unmount();
+    await Promise.all([
+      waitForLifecycle(lifecycleA, "disposed"),
+      waitForLifecycle(lifecycleB, "disposed"),
+    ]);
     await Promise.all([runtimeA.dispose(), runtimeB.dispose()]);
+    expect(lifecycleA.at(-1)).toEqual({ phase: "disposed" });
+    expect(lifecycleB.at(-1)).toEqual({ phase: "disposed" });
     clientA.dispose();
     clientB.dispose();
     releaseSeedA();
@@ -581,6 +617,22 @@ describe("per-surface IPC ownership", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("drains bound-client listeners idempotently on dispose", () => {
+    const bridge = fakeBridge("listener-drain");
+    const client = bind(bridge);
+    const received: unknown[] = [];
+    const stop = onIpcEvent("loro.event", (payload: unknown) => received.push(payload), client);
+    bridge.emit("loro.event", detach("lw_before_dispose"));
+    expect(received).toEqual([detach("lw_before_dispose")]);
+
+    client.dispose();
+    client.dispose();
+    stop();
+    bridge.emit("loro.event", detach("lw_after_dispose"));
+    expect(received).toEqual([detach("lw_before_dispose")]);
+    expect(bridge.listenerCount("loro.event")).toBe(0);
   });
 
   it("does not infer a local host from a client supplied to a cloud assembly", async () => {
@@ -676,7 +728,9 @@ describe("mounted Lody IPC conversion inventory", () => {
 
     expect(surfaceIpc).toMatch(/createBoundIpcClient\(bridge\.ipc\)/u);
     expect(surfaceIpc).toMatch(/if \(!active\) return undefined;\s+return publishLodyLocalBridge/u);
-    expect(sessionSurface).toMatch(/useLodySurfaceIpc\(endpoints, props\.onContinuityLost\)/u);
+    expect(sessionSurface).toMatch(
+      /useLodySurfaceIpc\([\s\S]+props\.onContinuityLost,[\s\S]+props\.onSurfaceReleased,/u,
+    );
     expect(sessionSurface).toMatch(/<IpcClientProvider client=\{ipcClient\} localIpcHost>/u);
     expect(sessionSurface).toMatch(
       /<LodySurfaceThemeRoot>[\s\S]+surfaces\.map\(\(\{ surfaceKey, \.\.\.props \}\)/u,

@@ -44,6 +44,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -68,12 +69,15 @@ import type { LodyAtomStore, LodyRuntimeEndpoints } from "./runtime.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
 import { useDefaultSessionProjectBackfill } from "./use-session-project-backfill.js";
-import { LodySurfaceIpcOwner, useLodySurfaceIpc } from "./surface-ipc.js";
+import {
+  LodySurfaceIpcOwner,
+  LodySurfaceRuntimeCycle,
+  useLodySurfaceIpc,
+} from "./surface-ipc.js";
 import { SurfaceUnavailableNotice } from "./SurfaceLoadBoundary.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { LodySurfaceProviders, LodySurfaceThemeRoot } from "./surface-providers.js";
 import type { LodySurfaceIdentity } from "./keepalive-pool.js";
-import { useTrackLodyRuntimeRepo } from "./surface-runtime-stats.js";
 import { seedLodySurfaceWorkspaceContext } from "./surface-workspace-context.js";
 import {
   LodySurfaceActiveProvider,
@@ -222,6 +226,13 @@ export interface LodySessionSurfaceProps {
   onActiveSessionChange?: (sessionId: string | null) => void;
   /** Authoritative daemon identity, reported after every validation read. */
   onIdentity?: (identity: LodySurfaceIdentity) => void;
+  /** Initial identity lease; RuntimeProvider stays absent until this resolves true. */
+  onIdentityClaim?: (
+    identity: LodySurfaceIdentity,
+    signal: AbortSignal,
+  ) => Promise<boolean>;
+  /** Fired after runtime disposal, client abort and bridge disposal complete. */
+  onSurfaceReleased?: () => void;
   /** The captured bridge lost socket or daemon continuity. */
   onContinuityLost?: () => void;
   /** Non-zero generations request a fresh concurrent platform snapshot. */
@@ -327,21 +338,46 @@ type LodySessionSurfaceStableProps = Omit<
 
 function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
   const { endpoints, viewer, workspaceTitle } = props;
-  const localBridge = useLodySurfaceIpc(endpoints, props.onContinuityLost);
+  const localBridge = useLodySurfaceIpc(
+    endpoints,
+    props.onContinuityLost,
+    props.onSurfaceReleased,
+  );
   const { bridge, ipcClient } = localBridge;
   const { snapshot, error } = useLodyPlatformSnapshot(endpoints.platformUrl, endpoints.fetchImpl);
   const store = useMemo(() => createStore(), []);
-  useTrackLodyRuntimeRepo(store);
 
   const onIdentityRef = useRef(props.onIdentity);
+  const onIdentityClaimRef = useRef(props.onIdentityClaim);
   onIdentityRef.current = props.onIdentity;
+  onIdentityClaimRef.current = props.onIdentityClaim;
+  const [claimedIdentity, setClaimedIdentity] = useState<string | null>(
+    props.onIdentityClaim === undefined ? "standalone" : null,
+  );
+  const snapshotIdentity = snapshot === null
+    ? null
+    : JSON.stringify([snapshot.machineId, snapshot.workspace.workspaceId]);
   useEffect(() => {
     if (snapshot === null) return;
-    onIdentityRef.current?.({
+    const identity = {
       machineId: snapshot.machineId,
       lwWorkspaceId: snapshot.workspace.workspaceId,
+    };
+    const claim = onIdentityClaimRef.current;
+    if (claim === undefined) {
+      onIdentityRef.current?.(identity);
+      setClaimedIdentity(snapshotIdentity);
+      return;
+    }
+    const controller = new AbortController();
+    setClaimedIdentity(null);
+    void claim(identity, controller.signal).then((granted) => {
+      if (granted && !controller.signal.aborted) setClaimedIdentity(snapshotIdentity);
     });
-  }, [snapshot]);
+    return () => controller.abort();
+  }, [snapshot, snapshotIdentity]);
+  const identityClaimed = props.onIdentityClaim === undefined
+    || claimedIdentity === snapshotIdentity;
 
   const slug = snapshot?.workspace.slug ?? null;
   const readOnly = props.readOnly === true;
@@ -502,7 +538,7 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
       {/* The same notice the load boundary renders, out of the same module, so
           "the chunk never arrived" and "the box never answered" read alike. */}
       {error !== null && <SurfaceUnavailableNotice reason={error} />}
-      {snapshot !== null && router !== null && error === null && (
+      {snapshot !== null && router !== null && error === null && identityClaimed && (
         <JotaiProvider store={store}>
           <IpcClientProvider client={ipcClient} localIpcHost>
             <BlitzPlatformProviders
@@ -511,7 +547,10 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
               workspaceTitle={workspaceTitle}
             >
               <LodySurfaceProviders active={false}>
-                <RuntimeProvider key={runtimeGeneration}>
+                <LodySurfaceRuntimeCycle key={runtimeGeneration} held={localBridge}>
+                <RuntimeProvider
+                  onRuntimeLifecycle={localBridge.runtimeLifecycle.onRuntimeLifecycle}
+                >
                   <LodySurfaceShellOwnership
                     router={router}
                     openSession={openSession}
@@ -558,6 +597,7 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
                     </LodyAgentConfigGate>
                   )}
                 </RuntimeProvider>
+                </LodySurfaceRuntimeCycle>
                 <LodySurfaceToasterOwner />
               </LodySurfaceProviders>
             </BlitzPlatformProviders>

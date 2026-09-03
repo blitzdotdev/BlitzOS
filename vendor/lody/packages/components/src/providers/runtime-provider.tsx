@@ -62,7 +62,12 @@ const resolveRuntimeEagerSyncSurface = (): EagerSyncSurface => {
   return 'web';
 };
 
-export function RuntimeProvider({ children }: { children: ReactNode }) {
+export type RuntimeLifecycleEvent = { phase: 'created' | 'failed' | 'disposed' };
+
+export function RuntimeProvider({ children, onRuntimeLifecycle }: {
+  children: ReactNode;
+  onRuntimeLifecycle?: (event: RuntimeLifecycleEvent) => void;
+}) {
   const ipcClient = useIpcClient();
   const localIpcHost = useLocalIpcHost();
   const platform = usePlatform();
@@ -246,6 +251,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
           `lody-loro-stream-cursors-${effectiveWorkspaceId}`,
         ]);
         if (disposed) {
+          onRuntimeLifecycle?.({ phase: 'failed' });
           return;
         }
         const eagerSyncSurface = resolveRuntimeEagerSyncSurface();
@@ -305,11 +311,14 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
             setPresenceSyncState(state);
           },
         });
+        onRuntimeLifecycle?.({ phase: 'created' });
         if (disposed) {
           try {
             await workspaceRuntime.dispose();
           } catch (error) {
             logRuntimeOperationError('dispose after late initialization', error);
+          } finally {
+            onRuntimeLifecycle?.({ phase: 'disposed' });
           }
           return;
         }
@@ -330,10 +339,9 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
           workspaceIdSource,
         });
       } catch (error) {
+        onRuntimeLifecycle?.({ phase: 'failed' });
         logRuntimeOperationError('runtime initialization', error);
-        if (disposed) {
-          return;
-        }
+        if (disposed) return;
         setRuntime(null);
         setControlConnectionState('error');
         setRuntimeInitializing(false);
@@ -354,7 +362,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
       if (workspaceRuntime) {
         void workspaceRuntime.dispose().catch((error: unknown) => {
           logRuntimeOperationError('cleanup dispose', error);
-        });
+        }).finally(() => onRuntimeLifecycle?.({ phase: 'disposed' }));
       }
     };
   }, [
@@ -373,6 +381,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     ipcClient,
     localIpcHost,
     localAgentRuntimeReady,
+    onRuntimeLifecycle,
   ]);
 
   useEffect(() => {

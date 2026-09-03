@@ -1,6 +1,7 @@
 /** Pure state machine for the identity-keyed Lody surface keep-alive pool. */
 
 export const LODY_SURFACE_POOL_CAPACITY = 2;
+export const LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB = 4;
 export const LODY_KEEPALIVE_STORAGE_KEY = "blitz.lody.keepalive";
 
 export interface LodySurfaceIdentity {
@@ -91,6 +92,30 @@ export function createLodyKeepalivePool(
     throw new Error("lody_keepalive_capacity_invalid");
   }
   return { entries: [], activeEntryId: null, capacity, clock: 0, nextEntrySequence: 1 };
+}
+
+/** Low-memory devices retain no neighbor; absent browser hints keep capacity two. */
+export function lodySurfacePoolCapacity(deviceMemory: number | undefined): number {
+  return deviceMemory === undefined || deviceMemory >= LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB
+    ? LODY_SURFACE_POOL_CAPACITY
+    : 1;
+}
+
+/** Apply a runtime policy change, evicting oldest non-active entries immediately. */
+export function resizeLodyKeepalivePool(
+  pool: LodyKeepalivePool,
+  capacity: number,
+): LodyPoolDecision {
+  if (!Number.isInteger(capacity) || capacity < 1) {
+    throw new Error("lody_keepalive_capacity_invalid");
+  }
+  const dispose = [...pool.entries]
+    .filter((entry) => entry.entryId !== pool.activeEntryId)
+    .sort((left, right) => left.lastUsed - right.lastUsed)
+    .slice(0, Math.max(0, pool.entries.length - capacity))
+    .map((entry) => entry.entryId);
+  const next = withoutEntries({ ...pool, capacity }, new Set(dispose));
+  return { ...emptyDecision(next, next.activeEntryId), dispose };
 }
 
 /**
@@ -289,7 +314,13 @@ export function reportLodySurfaceIdentity(
   );
   const contenders = [reporting, ...duplicates];
   const activeContender = contenders.find((entry) => entry.entryId === pool.activeEntryId);
-  const survivor = activeContender ?? newest(contenders);
+  // An already-known continuous identity wins over a provisional endpoint.
+  // Its runtime is the only one permitted to exist; the provisional surface
+  // is removed before RuntimeProvider receives a claim.
+  const retained = reporting.key === null
+    ? newest(duplicates.filter((entry) => entry.continuous && entry.state !== "invalid"))
+    : undefined;
+  const survivor = retained ?? activeContender ?? newest(contenders);
   if (survivor === undefined) return emptyDecision(pool, null);
   const disposed = new Set(
     contenders.filter((entry) => entry.entryId !== survivor.entryId).map((entry) => entry.entryId),
@@ -313,6 +344,16 @@ export function reportLodySurfaceIdentity(
       };
     }),
   };
+  if (survivor.entryId !== entryId && pool.activeEntryId === entryId) {
+    const activated = activateLodySurface(nextPool, survivor.entryId);
+    for (const disposedId of activated.dispose) disposed.add(disposedId);
+    return {
+      ...activated,
+      entryId: null,
+      dispose: [...disposed],
+      reused: true,
+    };
+  }
   return {
     ...emptyDecision(nextPool, disposed.has(entryId) ? null : survivor.entryId),
     dispose: [...disposed],

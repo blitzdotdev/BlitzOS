@@ -64,6 +64,14 @@ function identity(name: string) {
   return { machineId: `machine-${name}`, lwWorkspaceId: `lw_${name}` };
 }
 
+async function claimIdentity(
+  surface: LodySessionSurfaceHostProps,
+  value: ReturnType<typeof identity>,
+): Promise<boolean> {
+  if (surface.onIdentityClaim === undefined) throw new Error("surface has no identity claim");
+  return await surface.onIdentityClaim(value, new AbortController().signal);
+}
+
 function apiAt(initialSessionId: string | null): LodySessionSurfaceApi & {
   openSession: ReturnType<typeof vi.fn>;
 } {
@@ -115,7 +123,7 @@ describe("the React surface pool adapter", () => {
     const aSurface = current(recorder);
     const apiA = apiAt("session-a");
     await act(async () => {
-      aSurface.onIdentity?.(identity("a"));
+      await claimIdentity(aSurface, identity("a"));
       aSurface.onApiReady?.(apiA);
     });
     expect(routes.at(-1)).toBe("session-a");
@@ -136,7 +144,7 @@ describe("the React surface pool adapter", () => {
 
     const apiB = apiAt("session-b");
     await act(async () => {
-      bSurface.onIdentity?.(identity("b"));
+      await claimIdentity(bSurface, identity("b"));
       bSurface.onApiReady?.(apiB);
     });
     expect(apis.at(-1)).toBe(apiB);
@@ -167,7 +175,7 @@ describe("the React surface pool adapter", () => {
     const surface = current(recorder);
     const api = apiAt("old-session");
     await act(async () => {
-      surface.onIdentity?.(identity("a"));
+      await claimIdentity(surface, identity("a"));
       surface.onApiReady?.(api);
     });
 
@@ -178,8 +186,7 @@ describe("the React surface pool adapter", () => {
     await view.unmount();
   });
 
-  it("uses exact single-surface replacement when the runtime switch is off", async () => {
-    window.localStorage.setItem("blitz.lody.keepalive", "off");
+  it("re-reads the kill switch on a request and immediately shrinks to one", async () => {
     const recorder: SurfaceRecorder = { surfaces: [] };
     const Host = RecordingHost(recorder);
     const tree = (next: LodySurfacePoolTarget) => (
@@ -194,14 +201,45 @@ describe("the React surface pool adapter", () => {
     );
     const view = await render(tree(target("a", null)));
     const firstA = current(recorder);
-    await act(async () => firstA.onIdentity?.(identity("a")));
+    await act(async () => { await claimIdentity(firstA, identity("a")); });
     await act(async () => view.root.render(tree(target("b", null))));
-    expect(recorder.surfaces).toHaveLength(1);
     const b = current(recorder);
-    await act(async () => b.onIdentity?.(identity("b")));
+    await act(async () => { await claimIdentity(b, identity("b")); });
+    expect(recorder.surfaces).toHaveLength(2);
+
+    window.localStorage.setItem("blitz.lody.keepalive", "off");
     await act(async () => view.root.render(tree(target("a", null))));
     expect(recorder.surfaces).toHaveLength(1);
     expect(current(recorder).surfaceKey).not.toBe(firstA.surfaceKey);
+    await view.unmount();
+  });
+
+  it("reactivates a retained identity when a new endpoint resolves to it", async () => {
+    const recorder: SurfaceRecorder = { surfaces: [] };
+    const Host = RecordingHost(recorder);
+    const tree = (next: LodySurfacePoolTarget) => (
+      <LodySurfacePool
+        Surface={Host}
+        target={next}
+        viewer={{ name: "Me", avatarUrl: null }}
+        visible
+        railHost={null}
+        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+      />
+    );
+    const view = await render(tree(target("old-a", null)));
+    const oldA = current(recorder);
+    await act(async () => { await claimIdentity(oldA, identity("a")); });
+    await act(async () => view.root.render(tree(target("new-a", null))));
+    const provisional = current(recorder);
+    let granted = true;
+    await act(async () => {
+      granted = await claimIdentity(provisional, identity("a"));
+    });
+    expect(granted).toBe(false);
+    expect(current(recorder).surfaceKey).toBe(oldA.surfaceKey);
+    expect(recorder.surfaces.some((surface) => surface.surfaceKey === provisional.surfaceKey))
+      .toBe(false);
     await view.unmount();
   });
 });

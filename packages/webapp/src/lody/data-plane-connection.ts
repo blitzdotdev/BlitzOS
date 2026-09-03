@@ -151,7 +151,7 @@ export function createLodyDataPlaneConnection(
     const dying = socket;
     socket = null;
     if (dying !== null) liveDataPlaneSockets -= 1;
-    if (connected) options.onContinuity?.("socket-close");
+    if (dying !== null) options.onContinuity?.("socket-close");
     setConnected(false);
     if (dying !== null && (dying.readyState === 0 || dying.readyState === 1)) dying.close();
     scheduleRedial();

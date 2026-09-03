@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   LODY_KEEPALIVE_STORAGE_KEY,
   LODY_SURFACE_POOL_CAPACITY,
+  LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB,
   activateLodySurface,
   createLodyKeepalivePool,
   deactivateLodySurface,
   discontinueLodySurface,
   disposeLodyKeepalivePool,
   lodyKeepaliveEnabled,
+  lodySurfacePoolCapacity,
   reportLodySurfaceIdentity,
   requestLodySurface,
+  resizeLodyKeepalivePool,
   type LodyKeepalivePool,
   type LodyPoolDecision,
   type LodySurfaceIdentity,
@@ -90,7 +93,7 @@ describe("the Lody keep-alive pool", () => {
     expect(returnToA.mount).toEqual([returnToA.entryId]);
   });
 
-  it("rekeys a provisional entry and suppresses a duplicate identity", () => {
+  it("keeps a retained identity and suppresses a duplicate provisional endpoint", () => {
     let pool = createLodyKeepalivePool(3);
     const first = enter(pool, "old-endpoint");
     const oldId = first.entryId;
@@ -102,11 +105,32 @@ describe("the Lody keep-alive pool", () => {
     if (newId === null) throw new Error("new surface did not mount");
     const duplicate = reportLodySurfaceIdentity(second.pool, newId, A);
 
-    // The reporting surface is active, so it wins and the stale hidden copy is
-    // released before either endpoint can be reused again.
-    expect(duplicate.dispose).toEqual([oldId]);
+    // The identity-known surface wins before the provisional endpoint can
+    // construct a second runtime for the same IndexedDB name.
+    expect(duplicate.dispose).toEqual([newId]);
     expect(duplicate.pool.entries).toHaveLength(1);
-    expect(duplicate.pool.entries[0]?.entryId).toBe(newId);
+    expect(duplicate.pool.entries[0]?.entryId).toBe(oldId);
+    expect(duplicate.pool.entries[0]?.key).toEqual(A);
+    expect(duplicate.pool.activeEntryId).toBe(oldId);
+    expect(duplicate.entryId).toBeNull();
+  });
+
+  it("lets only the first of two provisional entries resolve one identity", () => {
+    const first = requestLodySurface(createLodyKeepalivePool(3), {
+      endpointFingerprint: "endpoint-one",
+      kind: "owned",
+    });
+    const firstId = selectedId(first);
+    const second = requestLodySurface(first.pool, {
+      endpointFingerprint: "endpoint-two",
+      kind: "owned",
+    });
+    const secondId = selectedId(second);
+    const firstIdentity = reportLodySurfaceIdentity(second.pool, firstId, A);
+    const duplicate = reportLodySurfaceIdentity(firstIdentity.pool, secondId, A);
+
+    expect(duplicate.dispose).toEqual([secondId]);
+    expect(duplicate.pool.entries.map((entry) => entry.entryId)).toEqual([firstId]);
     expect(duplicate.pool.entries[0]?.key).toEqual(A);
   });
 
@@ -201,6 +225,21 @@ describe("the Lody keep-alive pool", () => {
     expect(disposed.dispose).toEqual([entryId]);
     expect(disposed.pool.entries).toEqual([]);
   });
+
+  it("shrinks a live pool immediately while preserving the active entry", () => {
+    let pool = createLodyKeepalivePool(2);
+    const first = enter(pool, "endpoint-a");
+    const aId = selectedId(first);
+    pool = identify(first.pool, aId, A);
+    const second = enter(pool, "endpoint-b");
+    const bId = selectedId(second);
+    pool = identify(second.pool, bId, B);
+
+    const shrunk = resizeLodyKeepalivePool(pool, 1);
+    expect(shrunk.dispose).toEqual([aId]);
+    expect(shrunk.pool.capacity).toBe(1);
+    expect(shrunk.pool.entries.map((entry) => entry.entryId)).toEqual([bId]);
+  });
 });
 
 describe("the runtime keep-alive kill switch", () => {
@@ -219,5 +258,12 @@ describe("the runtime keep-alive kill switch", () => {
         throw new Error("storage denied");
       },
     })).toBe(true);
+  });
+
+  it("retains two surfaces only with an absent or sufficient device-memory hint", () => {
+    expect(LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB).toBe(4);
+    expect(lodySurfacePoolCapacity(undefined)).toBe(LODY_SURFACE_POOL_CAPACITY);
+    expect(lodySurfacePoolCapacity(LODY_SURFACE_POOL_MIN_DEVICE_MEMORY_GIB)).toBe(2);
+    expect(lodySurfacePoolCapacity(2)).toBe(1);
   });
 });

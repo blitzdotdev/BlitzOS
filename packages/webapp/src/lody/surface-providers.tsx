@@ -14,10 +14,11 @@
  * `SessionSurface.tsx` re-exports it, because that is the file every reader
  * comes to first and the stack is still its composition.
  */
-import { useMemo, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, type ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { Toaster } from "@lody/components/ui/sonner";
+import { toast } from "sonner";
 import { initLodyI18n } from "./i18n.js";
 import { BlitzThemedLodyTree, adoptShellTheme } from "./shell-theme.js";
 import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
@@ -76,6 +77,11 @@ export function LodySurfaceThemeRoot(props: { children: ReactNode }) {
 }
 
 export function LodySurfaceToaster() {
+  useLayoutEffect(() => () => {
+    // Lody's producers do not supply Sonner's optional toasterId, so the only
+    // safe handoff is to clear the page-global queue before another host owns it.
+    toast.dismiss();
+  }, []);
   return <div className={LODY_TOASTER_HOST_CLASS}><Toaster /></div>;
 }
 

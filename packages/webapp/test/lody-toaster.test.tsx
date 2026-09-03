@@ -111,6 +111,29 @@ describe("the vendored surface's toast host", () => {
     expect(view.container.querySelector("[data-sonner-toast]")).toBeNull();
   });
 
+  it("dismisses the outgoing surface queue instead of migrating it to active B", async () => {
+    const tree = (active: "a" | "b") => (
+      <LodySurfaceThemeRoot>
+        <div data-surface="a">
+          <LodySurfaceProviders active={active === "a"}><div /></LodySurfaceProviders>
+        </div>
+        <div data-surface="b">
+          <LodySurfaceProviders active={active === "b"}><div /></LodySurfaceProviders>
+        </div>
+      </LodySurfaceThemeRoot>
+    );
+    const view = await render(tree("a"));
+    cleanup = view.unmount;
+    await fireVendoredToast("A failed before handoff");
+    expect(view.container.querySelector("[data-surface='a']")?.textContent)
+      .toContain("A failed before handoff");
+
+    await act(async () => view.root.render(tree("b")));
+    await settle();
+    expect(view.container.querySelector("[data-surface='b']")?.textContent)
+      .not.toContain("A failed before handoff");
+  });
+
   it("puts the toaster below the theme provider, so it paints in the shell's mode", async () => {
     const view = await mountProviders();
     await fireVendoredToast("Unable to close side chat");

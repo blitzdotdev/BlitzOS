@@ -2,7 +2,8 @@
 
 Status: Phases A-C are implemented with behavioral gates. The keep-alive pool
 is enabled by default and the attributed two-daemon activation gate is green:
-the final 10-sample run measured 6.9 ms p50 / 14.3 ms p95 to ready.
+the correctness-pass confirmation measured 18.1 ms p50 / 23.8 ms p95 to ready
+(`/tmp/codex/perf-run-5.json`).
 
 ## Goal and measured budget
 
@@ -10,32 +11,10 @@ An already-visited workspace should return without rebuilding its Lody
 renderer, IndexedDB-backed `LoroRepo`, WASM state, data-plane WebSocket, room
 subscriptions, router, drafts, selection, or scroll position.
 
-The measured warm remount is **541.5 ms**. A bootstrap-stubbed warm remount is
-**502.1 ms**, so React/router/provider reconstruction accounts for roughly 500
-ms; runtime/socket/bootstrap work accounts for roughly **39.5 ms**. Retaining
-the tree therefore removes the dominant cost. A retained surface should still
-activate in one render frame, targeting 10-50 ms.
-
-One instrumented run (the probe observes its endpoint on a roughly 100 ms
-sampling interval; no distribution or confidence interval is claimed):
-
-| Phase | ms | Notes |
-|---|---:|---|
-| Initial render → first blank React commit | 2.6 | Providers wait for the platform snapshot. |
-| First commit → platform snapshot ready | 9.6 | Snapshot ready at 12.2 ms total. |
-| Snapshot ready → router created | 91.0 | Includes synchronous memory-router construction. |
-| Router created → provider/snapshot commit | 140.0 | Jotai, platform, theme and runtime-provider tree construction. |
-| Provider commit → runtime create start | 13.4 | Cache-clear await and effect scheduling. |
-| `createWorkspaceRuntime` | 5.8 | LoroRepo/IndexedDB 3.7 ms; local transport 0.9 ms; initial meta sync 0.7 ms; other 0.5 ms. |
-| Runtime return → agent bootstrap ready | 26.5 | Bootstrap itself was 24.8 ms. |
-| Bootstrap ready → rail/gate commit | 74.0 | Rail ready at 362.85 ms. |
-| Gate commit → first non-starting content observed | 178.6 | Heavy route render plus probe polling quantization. |
-| **Warm total** | **541.5** | One measured run. |
-
-The data-plane WebSocket opened at 260.67 ms and connected at 268.11 ms: 7.4
-ms, overlapping runtime/bootstrap work. Observed totals were 943.186 ms cold,
-541.538 ms warm, and 502.086 ms warm with bootstrap stubbed; warm minus stubbed
-was 39.452 ms.
+Retaining the tree removes provider, router, store and route reconstruction.
+The release target is a retained-ready p95 below 200 ms. The current attributed
+two-daemon result is 23.8 ms p95 in `/tmp/codex/perf-run-5.json`; the detailed
+artifact-backed comparison is recorded under Measurement and release gates.
 
 ## Non-negotiable invariants
 
@@ -91,12 +70,13 @@ was 39.452 ms.
 
 Build on the existing `getIpcServices`, `onIpcEvent`, `sendIpc`, and
 `sendLocalSessionControl` seam. Add a small `LodyIpcClient` interface with
-`getServices`, `on`, and `send`, plus two implementations:
+`signal`, `getServices`, `on`, `send`, and `dispose`, plus two implementations:
 
 - `windowIpcClient` is the default. It reads `window.ipc` lazily on every call,
   preserving Electron and all existing call sites.
 - `createBoundIpcClient(bridge)` captures one bridge permanently. BlitzOS
-  creates exactly one bound client per `SessionSurface`.
+  creates exactly one bound client per `SessionSurface`; terminal disposal
+  aborts the signal and idempotently drains all listeners registered by it.
 
 The existing helpers take an optional final client argument and delegate to it.
 No current Electron caller changes. Do not introduce parallel helpers such as
@@ -132,17 +112,22 @@ gate. It creates bridge A, bridge B, and a poison global bridge, then proves:
    unsubscribe only through their captured bridge.
 5. Workspace-machine RPC and local session dispatch use the captured client,
    not poison.
-6. The live runtime source has no unscoped `getIpcServices`, `onIpcEvent`,
-   `sendIpc`, or `sendLocalSessionControl` call. This source guard prevents a
-   future upstream call site from silently restoring the singleton.
+6. The mounted import closure has no unapproved unscoped `getIpcServices`,
+   `getPublicBrowserBridge`, `onIpcEvent`, `sendIpc`,
+   `sendLocalSessionControl`, or `window.ipc` call. The guard parses call sites
+   with Rolldown's Oxc TS/TSX AST, derives all `@lody/*` mappings from
+   `vendor-bridge.ts`, rejects unresolved internal imports, and grants exact
+   per-helper counts rather than whole-file allowances.
 
 The test must be run once with the client threading neutered and observed
 failing before the implementation is accepted.
 
-That mutation check is recorded: replacing `createBoundIpcClient(bridge)` with
-the default window client produced three independent failures (data plane,
-platform identity, and dispatch routing); restoring the capture made all six
-checks pass.
+Mutation checks are recorded for both layers: replacing
+`createBoundIpcClient(bridge)` with the default window client produced three
+independent routing failures, and temporarily changing
+`getPublicBrowserBridge(ipcClient)` to `getPublicBrowserBridge()` failed the
+source audit at the exact file and line. Restoring each mutation made the gate
+pass.
 
 ### Phase A + non-effect Phase B validation record (2026-09-02)
 
@@ -172,11 +157,10 @@ re-pin never has to reconcile it with cache isolation or the Blitz-owned LRU.
 ## Phase B: non-effect shared-state disposition
 
 `packages/webapp/test/lody-two-store-memos.test.ts` interleaves two independent
-Jotai stores with distinct daemon-minted session, machine and presence IDs.
-Doc-meta, machine and presence derived values remain correct. Cross-store memo
-reference churn is allowed; wrong values are not. Phase C must prevent two live
-entries for the same daemon identity and add one hidden-surface test for every
-item delegated to the `Activity` boundary.
+Jotai stores, replaces both stores' inputs with structurally equal values to
+invalidate the derived atoms, and then diverges one store. Doc-meta, machine
+and presence derived values remain correct through the shared `_prev*` reuse
+branches. Cross-store reference reuse is allowed only while values are equal.
 
 | Item | Disposition |
 |---|---|
@@ -187,27 +171,33 @@ item delegated to the `Activity` boundary.
 | Page-global boot-clear promise | **Accepted.** Distinct daemon identities use distinct database names and the page promise only coordinates boot clearing; no A/B data leak is demonstrated. |
 | Auth-client singleton | **Accepted inert.** Blitz supplies its auth client directly in `packages/webapp/src/lody/platform.tsx` and never calls `createLodyAuthClient`. |
 | Shared server-time offset | **Accepted inert.** Blitz does not mount `AppInitializer`, the only sync caller. |
-| Monaco URI/model/provider ownership | **Implemented by the Phase C Activity boundary.** Editor controllers/providers live in route-tree effects, so hiding cleans them up while preserving route DOM and state. |
+| Monaco URI/model/provider ownership | **Delegated to the Phase C Activity boundary.** Route-tree effects are destroyed while hidden. The generic effect gate is tested; Monaco itself requires manual browser verification. |
 | Global keyboard handlers | **Implemented and tested.** A probe listener is removed while hidden and restored on reveal. |
-| Session-viewing presence | **Implemented by the Phase C Activity boundary.** `usePublishSessionViewing` is route-effect scoped and therefore cleans up on hide. |
-| Global Sonner store / per-surface toaster | **Fixed** in `packages/webapp/src/lody/surface-providers.tsx`: only the `active` surface mounts the toast renderer. |
+| Session-viewing presence | **Delegated to the Phase C Activity boundary.** `usePublishSessionViewing` is route-effect scoped; the generic Activity cleanup is tested, not a live presence transport. |
+| Global Sonner store / per-surface toaster | **Accepted limitation.** Sonner 2.0.8 supports toaster IDs, but Lody's vendor producers use its global `toast` singleton without an ID. Handoff dismisses the outgoing global queue before the next active toaster mounts, which is tested with simultaneous A/B surfaces. A hidden surface's late asynchronous toast can still render in the active toaster. |
 | Session-mention slug map | **Accepted.** It is wrong only across boxes sharing a slug when a stale draft from the other box is expanded; session IDs remain daemon-minted and Phase C activation replaces the address owner. |
 | Managed-preview frame LRU | **Accepted warm-state loss only.** Cross-box eviction can discard a hidden preview iframe, but does not route work to the wrong box; the session's durable browser state remains authoritative. |
 | Root theme/CSS-variable ownership | **Fixed** in `packages/webapp/src/lody/SessionSurface.tsx` and `surface-providers.tsx`: one theme provider is hoisted above the keyed surface, and inactive surfaces never own the root. |
 | Command registry singleton | **Accepted inert.** Blitz mounts neither `commands.attach(window)` nor `CommandPalette`, so no dispatcher consumes stacked registrations. |
 | Unsettled local-platform interval | **Fixed** by seam 18: bound-client disposal aborts the poll, deletes its client state and disables later invokes. |
-| Per-runtime page listeners/timers | **Accepted live runtime work.** They are correct per runtime, required for continuity/reconnect, and fully removed by runtime disposal on eviction. |
+| Per-runtime page listeners/timers | **Accepted live runtime work.** They are required for continuity/reconnect. The real-provider gate awaits disposal and checks the data-plane listener drain; it does not enumerate every vendor timer. |
 | Monaco worker/theme one-time registration | **Accepted.** Definitions are page-global, workspace-independent and idempotent. |
 
 ## Phase C: identity-keyed keep-alive pool
 
 `keepalive-pool.ts` is the pure state machine and exports the single capacity
-constant, **2 total live surfaces**. Entries are provisional until the platform
-snapshot reports `(machineId, lw_workspaceId)`. Endpoint fingerprints are only
-lookup hints for continuous, identity-known hidden entries; they are never
-cache keys. Duplicate identity reports keep one entry, and activation performs
-a concurrent platform-snapshot identity check. A mismatch evicts the retained
-entry and mounts the target fresh.
+constant, **2 total live surfaces**, plus the device-memory policy. Capacity is
+two only when `navigator.deviceMemory` is absent or at least 4 GiB; lower-memory
+devices use one. Entries are provisional until the platform snapshot reports
+`(machineId, lw_workspaceId)`. Endpoint fingerprints are only lookup hints for
+continuous, identity-known hidden entries; they are never cache keys. Before a
+`RuntimeProvider` mounts, the provisional surface must acquire that identity's
+claim. A known continuous retained holder defeats a duplicate provisional
+surface. Otherwise claims serialize runtime creation behind the previous
+holder's completed `disposed` event, including immediate reopen after
+invalidation. Activation also performs a platform-snapshot identity check; a
+mismatch evicts the retained entry and mounts the target fresh after the claim
+barrier clears.
 
 `LodySurfacePool.tsx` keeps the React side to ownership and rendering. Every
 entry has a stable React key and retains its bridge, bound IPC client, Jotai
@@ -221,15 +211,21 @@ React 19.2 `<Activity mode="hidden">`; the store, platform, bridge,
 `RuntimeProvider`, and agent-config gate stay live above it. The route's own
 workspace-context cleanup is countered by a surface owner above Activity, so it
 cannot tear down the retained runtime. The outer surface is also `hidden`,
-`inert`, and `aria-hidden`. Reveal restores the last connected focused element,
+`inert`, and `aria-hidden`. Address subscriptions, project backfill, and the
+auth-notice two-second poll
+also remain live above Activity; they are accepted per-runtime background work.
+Reveal restores the last connected focused element,
 falling back to the composer or surface root. jsdom preserves `scrollTop`
-through Activity hide/reveal and the Activity test pins that behavior. The
-vendored conversation also caches scroll offsets per session; a real-browser
-runner was not available on this box, so browser verification remains a manual
-release check.
+through Activity hide/reveal only as a property-level approximation. The
+surface captures the known live conversation/Radix scroll viewport offsets
+before hide and reapplies them in the reveal layout effect; the jsdom
+gate pins this explicit restore. Virtualizer/layout behavior still needs manual
+Chromium verification.
 
 Ownership tokens accept API publication, router mirroring, the visible rail
-wrapper, toasts and `window.ipc` only from the active entry. Every retained
+wrapper and `window.ipc` only from the active entry. The active toaster is also
+the sole renderer and handoff dismisses the global queue, subject to the late
+producer limitation documented above. Every retained
 surface keeps its rail subtree mounted in its own hidden/inert wrapper under a
 matching Activity boundary, so activation reveals the existing rows rather
 than rebuilding their projections. Reactivation publishes the cached API
@@ -248,16 +244,21 @@ constructs target descriptions while rendering, and fresh-but-equivalent
 endpoint objects must not pierce the retained body's shallow memo comparison.
 The surface-pool adapter test pins endpoint-object reuse across reactivation.
 
-The data-plane reports socket close/redial and the bridge reports observed
-identity changes. A discontinuous hidden entry is evicted immediately. An
-active entry becomes non-reusable and re-fetches `/lody/platform`; matching
-identity restores continuity and mismatching identity remounts fresh. Unmount
-then disposes the runtime/repo, bridge/client, socket, intervals and listeners,
-and ownership-clears `window.repo`.
+The data-plane reports every non-disposal physical socket loss, including a
+failure before the first open, plus redial; the bridge forwards explicit
+identity-change notices it observes. A discontinuous hidden entry is evicted immediately. An active entry
+becomes non-reusable and re-fetches `/lody/platform`; matching identity restores
+continuity and mismatching identity remounts fresh. Surface teardown unmounts
+the provider, waits (with a 10-second construction backstop) for `created` or
+`failed`, lets `RuntimeProvider` await runtime/repo disposal, then waits for
+`disposed` before aborting the client, disposing the bridge/socket/listeners,
+releasing the identity claim, and ownership-clearing `window.repo`.
 
 The runtime kill switch is `localStorage["blitz.lody.keepalive"] = "off"`.
-It is read when the region pool mounts, defaults **on**, and reduces the pool to
-exact single-surface replacement behavior.
+It defaults **on** because `/tmp/codex/perf-run-5.json` clears the retained-ready
+p95 gate. It is re-read on every pool request; turning it off immediately
+shrinks an existing pool to one entry and restores exact single-surface
+replacement behavior.
 
 ## Measurement and release gates
 
@@ -279,9 +280,9 @@ revalidation start/end, surface reveal, and focus restore. The probe records
 entries, and after stopping A evicts it. Every execution writes a new exclusive
 `/tmp/codex/perf-run-<n>.json` and prints its tables to stdout.
 
-The earlier 184.1/208.1 ms claim had no surviving artifact and is withdrawn.
-The fixed-path artifact that did survive showed 357.3 ms p50 / 414.6 ms p95,
-not the claimed values. The first newly attributed pre-optimization run is
+The earlier uncorroborated latency claim is withdrawn. The surviving fixed-path
+artifact `/tmp/lody-keepalive-activation.json` showed 357.3 ms p50 / 414.6 ms
+p95. The first newly attributed pre-optimization run is
 `/tmp/codex/perf-run-1.json`; its shared-box p95 includes a multi-second stall,
 but its phase marks still locate the synchronous work:
 
@@ -322,15 +323,32 @@ Final clean run on 2026-09-03, two independent daemons, artifact
 | Two live | RSS 702.1 MiB; heap 545.0 MiB; external 11.6 MiB; 2 sockets; 2 repos |
 | After hidden A eviction | RSS 739.7 MiB; heap 578.3 MiB; external 12.1 MiB; 1 socket; 1 repo |
 
+The first correctness-pass candidate exposed a scroll-capture regression:
+`/tmp/codex/perf-run-4.json` measured 113.7 ms p50 / 157.0 ms p95 after the
+capture walked every descendant and forced style resolution during handoff.
+That implementation was not retained. Restricting capture to the known
+conversation/Radix viewports removed the DOM-size cost. Final post-correction
+run on 2026-09-03, artifact `/tmp/codex/perf-run-5.json`:
+
+| Measurement | Result |
+|---|---:|
+| Cold B visible / ready | 53.8 / 356.0 ms |
+| Retained visible p50 / p95 (10 samples) | **18.1 / 23.8 ms** |
+| Retained ready p50 / p95 (10 samples) | **18.1 / 23.8 ms** |
+| Full A -> B -> A cycle p50 / p95 | 39.4 / 43.4 ms |
+| Before B / two live / after eviction | 1 / 2 / 1 sockets; 1 / 2 / 1 repos |
+
 Vitest did not expose `global.gc`, so RSS and heap are allocator high-water
-samples; socket and retained-repo counts are the deterministic cleanup signal.
-Capacity remains two and must not be raised. The jsdom margin gates are p50 <
-100 ms and p95 < 150 ms; both pass. A real browser still adds layout and paint
-for the revealed DOM, so release verification should retain a browser trace.
-Never enable `BLITZ_LODY_LIVE_TURN`. A mobile/device-memory gate is still
-required before allowing the second retained entry on low-memory devices. A
-merge still requires explicit user approval because main deploys canary
-immediately.
+samples. Socket counts are physical bridge state; the repo counter increments
+on `created` and decrements only after the awaited `disposed` lifecycle event,
+so it does not declare cleanup while runtime destruction is pending. It does
+not count an allocation that never returns a runtime handle. Capacity remains
+two and must not be raised, and the implemented device-memory policy reduces it
+to one below 4 GiB. The jsdom margin gates are p50 < 100 ms and p95 < 150 ms;
+both pass. A real browser still adds layout and paint for the revealed DOM, so
+release verification should retain a browser trace. Never enable
+`BLITZ_LODY_LIVE_TURN`. A merge still requires explicit user approval because
+main deploys canary immediately.
 
 ## Upstream/conflict strategy
 

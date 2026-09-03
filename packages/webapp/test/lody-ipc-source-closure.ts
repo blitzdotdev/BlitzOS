@@ -1,134 +1,163 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import type { Node, Program } from "@oxc-project/types";
+import { parseSync } from "rolldown/experimental";
+import { LODY_VENDOR_SOURCE_ALIASES } from "../src/lody/vendor-bridge.js";
 
 const WORKSPACE_ROOT = resolve(process.cwd(), "../..");
 const WEBAPP_SOURCE_ROOT = resolve(process.cwd(), "src");
-const VENDOR_COMPONENTS_ROOT = resolve(
-  WORKSPACE_ROOT,
-  "vendor/lody/packages/components/src",
-);
+const VENDOR_PACKAGES_ROOT = resolve(WORKSPACE_ROOT, "vendor/lody/packages");
+const VENDOR_COMPONENTS_ROOT = resolve(VENDOR_PACKAGES_ROOT, "components/src");
 const SURFACE_ENTRY = resolve(WEBAPP_SOURCE_ROOT, "lody/SessionSurface.tsx");
 
 const IPC_HELPER_MIN_ARGUMENTS = new Map([
   ["getIpcServices", 1],
+  ["getPublicBrowserBridge", 1],
   ["onIpcEvent", 3],
   ["sendIpc", 3],
   ["sendLocalSessionControl", 3],
 ]);
 
-/** Ambient sites that are deliberately unreachable or harmless in Blitz Web. */
-const AMBIENT_IPC_ALLOWLIST = new Map<string, string>([
-  [
-    "vendor/lody/packages/components/src/theme-provider.tsx",
-    "The hoisted theme owner only asks for native OS theme/window chrome; the Blitz bridge explicitly no-ops both channels.",
-  ],
-  [
-    "vendor/lody/packages/components/src/atoms/local-probe.ts",
-    "The effect returns before IPC unless window.__LODY_ELECTRON__ is true.",
-  ],
-  [
-    "vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts",
-    "The hook is inert unless window.__LODY_ELECTRON__ is true.",
-  ],
-  [
-    "vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts",
-    "The terminal daemon channel is constructed only by the Electron-gated host.",
-  ],
-  [
-    "vendor/lody/packages/components/src/components/sessions/session-chat-interface.tsx",
-    "Its ambient calls are inside the Electron-only desktop path-launch branch.",
-  ],
-  [
-    "vendor/lody/packages/components/src/lib/electron.ts",
-    "Fullscreen IPC is guarded by isElectronRenderer().",
-  ],
-  [
-    "vendor/lody/packages/components/src/lib/native-browser.ts",
-    "Native URL opening checks the Electron/native shell before IPC.",
-  ],
-  [
-    "vendor/lody/packages/components/src/lib/image-preview-export.ts",
-    "Image export reaches IPC only in Electron.",
-  ],
-  [
-    "vendor/lody/packages/components/src/lib/clear-local-cache.ts",
-    "The reload request is Electron-gated; Web uses location.reload().",
-  ],
-  [
-    "vendor/lody/packages/components/src/components/mobile/mobile-about-settings.tsx",
-    "Blitz stubs every settings route; these updater actions are never mounted.",
-  ],
-  [
-    "vendor/lody/packages/components/src/components/mobile/mobile-general-settings.tsx",
-    "Blitz stubs every settings route; these notification and OS-setting controls are never mounted.",
-  ],
-  [
-    "vendor/lody/packages/components/src/components/settings/about-setting.tsx",
-    "Blitz stubs every settings route; these updater actions are never mounted.",
-  ],
-  [
-    "vendor/lody/packages/components/src/components/settings/general-setting.tsx",
-    "Blitz stubs every settings route; these notification and OS-setting controls are never mounted.",
-  ],
-  [
-    "vendor/lody/packages/components/src/hooks/use-electron-updater-state.ts",
-    "The effect returns unless window.__LODY_ELECTRON__ is true.",
-  ],
-  [
-    "vendor/lody/packages/components/src/lib/native-global-shortcuts.ts",
-    "All callers are Electron-only shortcut settings, and Blitz disables that settings surface and dispatcher.",
-  ],
-  [
-    "vendor/lody/packages/components/src/lib/electron-ipc-client.ts",
-    "This is the intentional Electron-compatible default implementation that alone reads window.ipc.",
-  ],
-]);
+interface AmbientIpcAllowance {
+  file: string;
+  helper: string;
+  expectedCount: number;
+  reason: string;
+}
 
-function sourceFileFor(importer: string, specifier: string): string | null {
-  let unresolved: string;
-  if (specifier.startsWith(".")) {
-    unresolved = resolve(dirname(importer), specifier);
-  } else if (specifier.startsWith("@lody/components/")) {
-    unresolved = resolve(VENDOR_COMPONENTS_ROOT, specifier.slice("@lody/components/".length));
-  } else if (specifier.startsWith("@/") && importer.startsWith(VENDOR_COMPONENTS_ROOT)) {
-    unresolved = resolve(VENDOR_COMPONENTS_ROOT, specifier.slice(2));
-  } else {
-    return null;
-  }
-  const withoutJs = unresolved.replace(/\.(?:m?js|cjs)$/u, "");
-  for (const candidate of [
-    unresolved,
-    `${withoutJs}.ts`,
-    `${withoutJs}.tsx`,
-    resolve(withoutJs, "index.ts"),
-    resolve(withoutJs, "index.tsx"),
-  ]) {
-    if (
-      existsSync(candidate) &&
-      statSync(candidate).isFile() &&
-      (candidate.startsWith(WEBAPP_SOURCE_ROOT) || candidate.startsWith(VENDOR_COMPONENTS_ROOT))
-    ) {
-      return candidate;
-    }
+const reasons = {
+  theme: "The hoisted owner uses native theme/window chrome channels that the Blitz bridge no-ops.",
+  electron: "The call site returns before IPC unless the Electron renderer flag is true.",
+  terminal: "The channel is constructed only by the Electron-gated terminal host.",
+  path: "The desktop path-launch branch is Electron-only.",
+  native: "The native operation checks the Electron/native shell before IPC.",
+  settings: "Blitz stubs the settings route, so these native controls are not mounted.",
+  shortcuts: "Both shortcut settings and their dispatcher are disabled in Blitz Web.",
+  default: "This is the intentional lazy Electron-compatible window client.",
+};
+
+/** Exact helper counts: a new ambient call in any listed file fails this audit. */
+const AMBIENT_IPC_ALLOWLIST: readonly AmbientIpcAllowance[] = [
+  { file: "vendor/lody/packages/components/src/theme-provider.tsx", helper: "getIpcServices", expectedCount: 1, reason: reasons.theme },
+  { file: "vendor/lody/packages/components/src/theme-provider.tsx", helper: "onIpcEvent", expectedCount: 1, reason: reasons.theme },
+  { file: "vendor/lody/packages/components/src/atoms/local-probe.ts", helper: "getIpcServices", expectedCount: 2, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/atoms/local-probe.ts", helper: "sendIpc", expectedCount: 1, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/atoms/local-probe.ts", helper: "onIpcEvent", expectedCount: 1, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", helper: "getIpcServices", expectedCount: 6, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", helper: "sendIpc", expectedCount: 1, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/hooks/use-electron-cli-daemon.ts", helper: "onIpcEvent", expectedCount: 1, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts", helper: "getIpcServices", expectedCount: 5, reason: reasons.terminal },
+  { file: "vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts", helper: "sendIpc", expectedCount: 5, reason: reasons.terminal },
+  { file: "vendor/lody/packages/components/src/components/terminal/electron-terminal-channel.ts", helper: "onIpcEvent", expectedCount: 3, reason: reasons.terminal },
+  { file: "vendor/lody/packages/components/src/components/sessions/session-chat-interface.tsx", helper: "getIpcServices", expectedCount: 3, reason: reasons.path },
+  { file: "vendor/lody/packages/components/src/lib/electron.ts", helper: "getIpcServices", expectedCount: 1, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/lib/electron.ts", helper: "onIpcEvent", expectedCount: 1, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/lib/native-browser.ts", helper: "getIpcServices", expectedCount: 2, reason: reasons.native },
+  { file: "vendor/lody/packages/components/src/lib/image-preview-export.ts", helper: "getIpcServices", expectedCount: 1, reason: reasons.native },
+  { file: "vendor/lody/packages/components/src/lib/clear-local-cache.ts", helper: "getIpcServices", expectedCount: 2, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/components/mobile/mobile-about-settings.tsx", helper: "getIpcServices", expectedCount: 4, reason: reasons.settings },
+  { file: "vendor/lody/packages/components/src/components/mobile/mobile-general-settings.tsx", helper: "getIpcServices", expectedCount: 9, reason: reasons.settings },
+  { file: "vendor/lody/packages/components/src/components/settings/about-setting.tsx", helper: "getIpcServices", expectedCount: 4, reason: reasons.settings },
+  { file: "vendor/lody/packages/components/src/components/settings/general-setting.tsx", helper: "getIpcServices", expectedCount: 9, reason: reasons.settings },
+  { file: "vendor/lody/packages/components/src/hooks/use-electron-updater-state.ts", helper: "getIpcServices", expectedCount: 2, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/hooks/use-electron-updater-state.ts", helper: "onIpcEvent", expectedCount: 1, reason: reasons.electron },
+  { file: "vendor/lody/packages/components/src/lib/native-global-shortcuts.ts", helper: "getIpcServices", expectedCount: 5, reason: reasons.shortcuts },
+  { file: "vendor/lody/packages/components/src/lib/electron-ipc-client.ts", helper: "window.ipc", expectedCount: 1, reason: reasons.default },
+];
+
+interface InternalAlias {
+  find: string;
+  replacement: string;
+}
+
+function internalAliases(): InternalAlias[] {
+  const aliases: InternalAlias[] = LODY_VENDOR_SOURCE_ALIASES.map((alias) => ({
+    find: alias.find,
+    replacement: resolve(WORKSPACE_ROOT, "vendor/lody", alias.vendorSource),
+  }));
+  aliases.push({ find: "@/", replacement: VENDOR_COMPONENTS_ROOT });
+  return aliases;
+}
+
+function aliasedBase(importer: string, specifier: string): string | null {
+  const cleanSpecifier = specifier.replace(/[?#].*$/u, "");
+  if (cleanSpecifier.startsWith(".")) return resolve(dirname(importer), cleanSpecifier);
+  for (const alias of internalAliases()) {
+    if (alias.find === "@/" && !importer.startsWith(VENDOR_COMPONENTS_ROOT)) continue;
+    const prefixMatch = alias.find.endsWith("/")
+      ? cleanSpecifier.startsWith(alias.find)
+      : cleanSpecifier === alias.find || cleanSpecifier.startsWith(`${alias.find}/`);
+    if (!prefixMatch) continue;
+    const suffix = cleanSpecifier.slice(alias.find.length).replace(/^\//u, "");
+    return resolve(alias.replacement, suffix);
   }
   return null;
 }
 
-function importSpecifiers(file: string): string[] {
-  const source = readFileSync(file, "utf8");
-  const specifiers = new Set<string>();
-  const patterns = [
-    /(?:^|\n)\s*import\s+(?:type\s+)?(?:[^;]*?\s+from\s+)?["']([^"']+)["']/gu,
-    /(?:^|\n)\s*export\s+(?:type\s+)?[^;]*?\s+from\s+["']([^"']+)["']/gu,
-    /\bimport\s*\(\s*["']([^"']+)["']/gu,
+function sourceFileFor(importer: string, specifier: string): string | null | undefined {
+  const unresolved = aliasedBase(importer, specifier);
+  if (unresolved === null) return undefined;
+  const withoutScriptExtension = unresolved.replace(/\.(?:[cm]?[jt]sx?)$/u, "");
+  const candidates = [
+    unresolved,
+    ...["ts", "tsx", "js", "jsx", "mts", "mjs", "cts", "cjs"].map(
+      (extension) => `${withoutScriptExtension}.${extension}`,
+    ),
+    ...["ts", "tsx", "js", "jsx"].map(
+      (extension) => resolve(withoutScriptExtension, `index.${extension}`),
+    ),
   ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      const specifier = match[1];
-      if (specifier !== undefined) specifiers.add(specifier);
+  for (const candidate of candidates) {
+    if (!existsSync(candidate) || !statSync(candidate).isFile()) continue;
+    if (!/\.[cm]?[jt]sx?$/u.test(candidate)) return undefined;
+    if (candidate.startsWith(WEBAPP_SOURCE_ROOT) || candidate.startsWith(VENDOR_PACKAGES_ROOT)) {
+      return candidate;
+    }
+  }
+  throw new Error(`${workspacePath(importer)}: unresolved internal import ${JSON.stringify(specifier)}`);
+}
+
+const sourceFiles = new Map<string, Program>();
+const sourceText = new Map<string, string>();
+const IPC_CANDIDATE = new RegExp(
+  String.raw`\b(?:${[...IPC_HELPER_MIN_ARGUMENTS.keys()].join("|")})\s*\(|\bwindow\s*\.\s*ipc\b`,
+  "u",
+);
+
+function importSpecifiers(file: string): string[] {
+  const source = readSource(file);
+  const parsed = parseSync(file, source, { astType: "js" });
+  if (parsed.errors.length > 0) {
+    throw new Error(`${workspacePath(file)}: ${parsed.errors.map((error) => error.message).join("; ")}`);
+  }
+  if (IPC_CANDIDATE.test(source)) sourceFiles.set(file, parsed.program);
+  const specifiers = new Set<string>();
+  for (const imported of parsed.module.staticImports) {
+    if (imported.entries.length === 0 || imported.entries.some((entry) => !entry.isType)) {
+      specifiers.add(imported.moduleRequest.value);
+    }
+  }
+  for (const exported of parsed.module.staticExports) {
+    for (const entry of exported.entries) {
+      if (!entry.isType && entry.moduleRequest !== null) specifiers.add(entry.moduleRequest.value);
+    }
+  }
+  for (const imported of parsed.module.dynamicImports) {
+    const raw = source.slice(imported.moduleRequest.start, imported.moduleRequest.end);
+    const quote = raw.at(0);
+    if ((quote === '"' || quote === "'") && raw.at(-1) === quote) {
+      specifiers.add(raw.slice(1, -1).replaceAll(`\\${quote}`, quote));
     }
   }
   return [...specifiers];
+}
+
+function readSource(file: string): string {
+  const cached = sourceText.get(file);
+  if (cached !== undefined) return cached;
+  const source = readFileSync(file, "utf8");
+  sourceText.set(file, source);
+  return source;
 }
 
 export async function mountedSourceClosure(): Promise<string[]> {
@@ -140,118 +169,82 @@ export async function mountedSourceClosure(): Promise<string[]> {
     visited.add(file);
     for (const specifier of importSpecifiers(file)) {
       const dependency = sourceFileFor(file, specifier);
-      if (dependency !== null && !visited.has(dependency)) pending.push(dependency);
+      if (dependency !== undefined && dependency !== null && !visited.has(dependency)) {
+        pending.push(dependency);
+      }
     }
   }
-  return [...visited].sort();
+  const closure = [...visited].sort();
+  return closure;
 }
 
 export function workspacePath(file: string): string {
   return relative(WORKSPACE_ROOT, file).replaceAll("\\", "/");
 }
 
-/** Mask comments and literals while preserving byte offsets and line breaks. */
-function maskNonCode(source: string): string {
-  const masked = source.split("");
-  let quote: "\"" | "'" | "`" | null = null;
-  let lineComment = false;
-  let blockComment = false;
-  for (let index = 0; index < source.length; index += 1) {
-    const character = source[index];
-    const next = source[index + 1];
-    if (lineComment) {
-      if (character === "\n") lineComment = false;
-      else masked[index] = " ";
-      continue;
-    }
-    if (blockComment) {
-      if (character === "*" && next === "/") {
-        masked[index] = " ";
-        masked[index + 1] = " ";
-        blockComment = false;
-        index += 1;
-      } else if (character !== "\n") {
-        masked[index] = " ";
-      }
-      continue;
-    }
-    if (quote !== null) {
-      if (character === "\\") {
-        masked[index] = " ";
-        if (source[index + 1] !== "\n") masked[index + 1] = " ";
-        index += 1;
-      } else {
-        if (character === quote) quote = null;
-        if (character !== "\n") masked[index] = " ";
-      }
-      continue;
-    }
-    if (character === "/" && next === "/") {
-      masked[index] = " ";
-      masked[index + 1] = " ";
-      lineComment = true;
-      index += 1;
-    } else if (character === "/" && next === "*") {
-      masked[index] = " ";
-      masked[index + 1] = " ";
-      blockComment = true;
-      index += 1;
-    } else if (character === "\"" || character === "'" || character === "`") {
-      quote = character;
-      masked[index] = " ";
-    }
-  }
-  return masked.join("");
+function isNode(value: unknown): value is Node {
+  return typeof value === "object"
+    && value !== null
+    && typeof Reflect.get(value, "type") === "string"
+    && typeof Reflect.get(value, "start") === "number"
+    && typeof Reflect.get(value, "end") === "number";
 }
 
-function findCallEnd(source: string, openingParenthesis: number): number {
-  let depth = 1;
-  for (let index = openingParenthesis + 1; index < source.length; index += 1) {
-    if (source[index] === "(") depth += 1;
-    if (source[index] === ")") {
-      depth -= 1;
-      if (depth === 0) return index;
+function visitNodes(node: Node, visit: (candidate: Node) => void): void {
+  visit(node);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "parent") continue;
+    if (Array.isArray(value)) {
+      for (const item of value) if (isNode(item)) visitNodes(item, visit);
+    } else if (isNode(value)) {
+      visitNodes(value, visit);
     }
   }
-  return source.length;
 }
 
-function topLevelArgumentCount(source: string): number {
-  if (source.trim() === "") return 0;
-  let depth = 0;
-  let commas = 0;
-  for (const character of source) {
-    if (character === "(" || character === "[" || character === "{") depth += 1;
-    if (character === ")" || character === "]" || character === "}") depth -= 1;
-    if (character === "," && depth === 0) commas += 1;
-  }
-  return commas + 1;
+function lineOf(file: string, node: Node): number {
+  return readSource(file).slice(0, node.start).split("\n").length;
 }
 
 export function findUnscopedIpcCalls(file: string): string[] {
-  const sourceText = readFileSync(file, "utf8");
-  const source = maskNonCode(sourceText);
-  const failures: string[] = [];
+  if (!IPC_CANDIDATE.test(readSource(file))) return [];
+  const source = sourceFiles.get(file);
+  if (source === undefined) throw new Error(`Source AST was not loaded for ${workspacePath(file)}`);
   const relativePath = workspacePath(file);
-  if (AMBIENT_IPC_ALLOWLIST.has(relativePath)) return failures;
-  const report = (index: number, label: string): void => {
-    const line = source.slice(0, index).split("\n").length;
-    failures.push(`${relativePath}:${line} ${label}`);
+  const sites = new Map<string, number[]>();
+  const add = (helper: string, node: Node): void => {
+    const lines = sites.get(helper) ?? [];
+    lines.push(lineOf(file, node));
+    sites.set(helper, lines);
   };
-  for (const [helper, minimum] of IPC_HELPER_MIN_ARGUMENTS) {
-    const pattern = new RegExp(`\\b${helper}\\s*\\(`, "gu");
-    for (const match of source.matchAll(pattern)) {
-      const index = match.index;
-      if (/\bfunction\s*$/u.test(source.slice(Math.max(0, index - 32), index))) continue;
-      const opening = source.indexOf("(", index);
-      const closing = findCallEnd(source, opening);
-      if (topLevelArgumentCount(source.slice(opening + 1, closing)) < minimum) {
-        report(index, helper);
-      }
+  visitNodes(source, (node) => {
+    if (node.type === "CallExpression" && node.callee.type === "Identifier") {
+      const minimum = IPC_HELPER_MIN_ARGUMENTS.get(node.callee.name);
+      if (minimum !== undefined && node.arguments.length < minimum) add(node.callee.name, node);
     }
+    if (node.type === "MemberExpression"
+      && !node.computed
+      && node.object.type === "Identifier"
+      && node.object.name === "window"
+      && node.property.type === "Identifier"
+      && node.property.name === "ipc") {
+      add("window.ipc", node);
+    }
+  });
+
+  const failures: string[] = [];
+  const allowances = AMBIENT_IPC_ALLOWLIST.filter((entry) => entry.file === relativePath);
+  for (const allowance of allowances) {
+    const actual = sites.get(allowance.helper)?.length ?? 0;
+    if (actual !== allowance.expectedCount) {
+      failures.push(
+        `${relativePath} ${allowance.helper}: expected ${allowance.expectedCount} ambient call(s), found ${actual}; ${allowance.reason}`,
+      );
+    }
+    sites.delete(allowance.helper);
   }
-  for (const match of source.matchAll(/\bwindow\s*\.\s*ipc\b/gu)) {
-    report(match.index, "window.ipc");
+  for (const [helper, lines] of sites) {
+    for (const line of lines) failures.push(`${relativePath}:${line} ${helper}`);
   }
   return failures;
 }

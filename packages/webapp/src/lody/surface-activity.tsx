@@ -1,5 +1,12 @@
 /** Visibility mechanics shared by the retained Lody route trees. */
-import { Activity, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import {
+  Activity,
+  useEffect,
+  useInsertionEffect,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from "react";
 import { markLodyActivationPhase } from "./surface-activation-performance.js";
 
 function LodyActivityRevealMarker({ targetKey }: { targetKey?: string }) {
@@ -33,6 +40,18 @@ function composerIn(root: HTMLElement): HTMLElement | null {
   return root.querySelector<HTMLElement>('textarea, [contenteditable="true"]');
 }
 
+interface ScrollPosition {
+  element: HTMLElement;
+  top: number;
+  left: number;
+}
+
+function scrollableDescendants(root: HTMLElement): HTMLElement[] {
+  const selector = ".chat-scrollbar, [data-radix-scroll-area-viewport], [data-lody-preserve-scroll]";
+  const descendants = [...root.querySelectorAll<HTMLElement>(selector)];
+  return root.matches(selector) ? [root, ...descendants] : descendants;
+}
+
 /**
  * Makes an inactive surface inaccessible and restores its last useful focus on
  * reveal. The route tree's effects are handled separately by Activity.
@@ -46,7 +65,21 @@ export function LodySurfaceVisibilityRoot(props: {
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const lastFocusedRef = useRef<HTMLElement | null>(null);
+  const scrollPositionsRef = useRef<ScrollPosition[]>([]);
   const wasHiddenRef = useRef(false);
+
+  useInsertionEffect(() => {
+    if (props.hidden) return undefined;
+    return () => {
+      const root = rootRef.current;
+      if (root === null) return;
+      scrollPositionsRef.current = scrollableDescendants(root).map((element) => ({
+        element,
+        top: element.scrollTop,
+        left: element.scrollLeft,
+      }));
+    };
+  }, [props.hidden]);
 
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -64,6 +97,11 @@ export function LodySurfaceVisibilityRoot(props: {
     }
     if (!wasHiddenRef.current) return undefined;
     wasHiddenRef.current = false;
+    for (const position of scrollPositionsRef.current) {
+      if (!position.element.isConnected || !root.contains(position.element)) continue;
+      position.element.scrollTop = position.top;
+      position.element.scrollLeft = position.left;
+    }
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled || rootRef.current !== root) return;

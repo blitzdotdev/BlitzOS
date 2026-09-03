@@ -1561,7 +1561,13 @@ seam patches 5, 7 and 15's.
   matching hunk and pass upstream's — the BlitzOS half is one field in
   `packages/webapp/src/lody/v1-scope.ts`.
 
-### 17. The local-platform snapshot must forget the previous box (workspace-switch empty rail, 2026-09-02)
+### 17. The local-platform snapshot must forget the previous box (superseded by seam 18, 2026-09-02)
+
+**Superseded.** Seam 18's client-keyed provider state replaces the sequential
+singleton reset described below. The additive reset remains in the subtree for
+standalone compatibility and its historical regression test, but Blitz's
+keep-alive composition does not use it to switch surfaces. Drop it when seam 18
+lands upstream.
 
 **One idea, one file, and it is additive.** BlitzOS drives MANY box daemons from
 one browser tab — one per workspace — where Electron drives exactly one local
@@ -1613,11 +1619,16 @@ window-backed default, while an embedding host captures one bridge, provides it
 to one React subtree and threads it into plain runtime code.
 
 Bound clients now have a terminal disposal lifecycle. Disposal aborts their
-signal and makes later service lookup/send/event operations reject or no-op.
+signal, drains every previously registered listener idempotently, and makes
+later service lookup/send/event operations reject or no-op.
 The local-platform state is a client-keyed WeakMap; its abort listener clears a
 never-settling snapshot interval and deletes the entry. The local Loro adapter
 owns every message unsubscribe, not only its status listener.
-`RuntimeDeps.localIpcHost` and the matching facade dependency are an explicit
+`RuntimeProvider` also accepts one optional additive `onRuntimeLifecycle`
+callback. It reports `created` or `failed` after construction settles and
+`disposed` only after awaited runtime cleanup, allowing an embedding surface to
+retain its IPC authority until repo destruction finishes. Omission preserves
+upstream behavior. `RuntimeDeps.localIpcHost` and the matching facade dependency are an explicit
 fast-path capability: supplying a client no longer implies a local plane.
 Omission preserves the existing Electron/global-host test.
 
@@ -1656,10 +1667,24 @@ touches **21**. No file was removed:
 | `packages/components/src/components/sessions/public-browser-surface.tsx` | `getPublicBrowserBridge` during surface render | **added here:** context client argument |
 | `packages/components/src/components/sessions/session-browser-panel.tsx` | back/forward/reload/stop public-browser callbacks | **added here:** context client argument/deps |
 
+**Correctness follow-up footprint (2026-09-03).** The file list remains exactly
+the 21 rows above. This pass changes only two already-listed seam files:
+
+| File | Diff lines | Why every line is in the seam |
+|---|---:|---|
+| `packages/components/src/lib/electron-ipc-client.ts` | +9 / -2 | Wraps `on` to own each unsubscribe and drains that set from terminal `dispose`; no default-client behavior changes. |
+| `packages/components/src/providers/runtime-provider.tsx` | +14 / -5 | Adds the optional three-phase lifecycle callback and emits it at construction settlement and completed disposal; absent callbacks retain prior behavior. |
+
+Total vendor source footprint for this follow-up: **+23 / -7** lines across two
+of seam 18's existing 21 files (exactly 30 changed lines).
+
 `packages/webapp/test/lody-ipc-client-isolation.test.ts` derives its inventory
 from the import closure rooted at Blitz's `SessionSurface.tsx`. It fails every
 unbound `getIpcServices`, `onIpcEvent`, `sendIpc`,
-`sendLocalSessionControl`, or `window.ipc` site except this explicit allowlist:
+`sendLocalSessionControl`, `getPublicBrowserBridge`, or `window.ipc` site except
+exact per-helper counts at the call sites represented by this allowlist. An
+additional ambient call in one of these files therefore fails rather than
+inheriting a whole-file exemption:
 
 | File | Why ambient IPC is allowed |
 |---|---|
