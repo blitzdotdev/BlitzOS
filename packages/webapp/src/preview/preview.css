@@ -1,0 +1,104 @@
+/* Gallery-only chrome for the settings design preview. The components under
+ * review bring their own stylesheets; this file only lays out the page around
+ * them and bounds the full-page surfaces. */
+
+/* The app locks the viewport (webapp-base.css); the gallery is a document. */
+html,
+body,
+#root {
+  height: auto;
+  min-height: 100%;
+  overflow: auto;
+  background: var(--surface-0);
+}
+
+.pv-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px 160px;
+  color: var(--ink);
+  font: 13.5px/1.6 var(--font-ui);
+}
+
+.pv-header {
+  position: sticky;
+  z-index: 60;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 -24px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-1);
+}
+
+.pv-header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.pv-theme {
+  display: flex;
+  gap: 8px;
+}
+
+.pv-section {
+  margin-top: 48px;
+}
+
+.pv-section > h2 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pv-caption {
+  margin: 0 0 16px;
+  color: var(--faint);
+}
+
+/* Bounds a full-page surface (the settings shell) inside the gallery. */
+.pv-frame {
+  height: 780px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+}
+
+.pv-frame .settings-shell {
+  height: 100%;
+}
+
+/* A drawer-width column for inline panels. */
+.pv-stage {
+  box-sizing: border-box;
+  width: 380px;
+  padding: 16px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--surface-1);
+}
+
+/* An inline well for form-scale components. */
+.pv-well {
+  max-width: 640px;
+  padding: 20px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--surface-1);
+}
+
+.pv-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pv-note {
+  margin: 12px 0 0;
+  color: var(--faint);
+}

@@ -28,7 +28,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceView } from "@blitzos/schema";
 import type { ControlPlaneClient } from "../api.js";
 import type { EndpointResolver } from "../resolver.js";
-import { chatSharedFrom, type ChatAddress } from "../sessions-page-state.js";
+import { chatSharedFrom, isChatPageAddress, type ChatAddress } from "../sessions-page-state.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 import type { SharedSurfaceTarget } from "./LodySessionsRegion.js";
 import { fetchLodyPlatformSnapshot } from "./platform-snapshot.js";
@@ -136,7 +136,7 @@ export function useSharedSessions(options: {
 
   const open = useMemo<SharedSurfaceTarget | null>(() => {
     if (!LODY_SESSIONS_ENABLED || workspace === null) return null;
-    if (chat === null || chat === "landing") return null;
+    if (chat === null || isChatPageAddress(chat)) return null;
     const sharedFrom = chatSharedFrom(chat);
     if (sharedFrom === undefined) return null;
     const grant = rows.find(

@@ -142,9 +142,28 @@ export interface LodyPlatformFetchOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * A catalog the box served and this shell cannot read.
+ *
+ * NAMED SO THE POLLER CAN TELL IT FROM A TRANSPORT FAILURE. Both used to leave
+ * this function as a bare throw, and `useLodyPlatformSnapshot` settled the
+ * surface on either one — so "the tunnel is not up yet", which resolves by
+ * itself in seconds, became "this workspace has no sessions", permanently, on
+ * exactly the boxes that were still starting. A malformed catalog is a fact
+ * about the BOX and stays terminal. A transport failure is a fact about the
+ * MOMENT and has to be asked again.
+ */
+export class LodyPlatformCatalogError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LodyPlatformCatalogError";
+  }
+}
+
 /** Reads the door once. `null` means "not ready yet" — the daemon writes the
  * catalog only after it provisions its workspace, and the bridge answers 503
- * until then. A malformed catalog throws, because that is a different fact. */
+ * until then. A malformed catalog throws {@link LodyPlatformCatalogError},
+ * because that is a different fact; everything else this throws is transport. */
 export async function fetchLodyPlatformSnapshot(
   platformUrl: string,
   options?: LodyPlatformFetchOptions,
@@ -155,5 +174,12 @@ export async function fetchLodyPlatformSnapshot(
   // into an unbounded pile of sockets that never answer.
   const response = await boxGatewayFetch(platformUrl, fetchImpl, options?.signal);
   if (!response.ok) return null;
-  return parseLodyPlatformSnapshot(parseJson(await response.text()));
+  // OUTSIDE the try: a body that stops arriving mid-read is the tunnel dying,
+  // not a catalog this shell cannot parse, and must stay transport.
+  const body = await response.text();
+  try {
+    return parseLodyPlatformSnapshot(parseJson(body));
+  } catch (cause) {
+    throw new LodyPlatformCatalogError(cause instanceof Error ? cause.message : String(cause));
+  }
 }

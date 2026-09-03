@@ -3,11 +3,14 @@
  * (plans/LODY-RUNTIME-DESIGN.md §4.2).
  *
  * `router.navigate({ to })` THROWS on an address the tree does not contain, and
- * their components navigate to fourteen settings pages, the archive, the task
- * pages and `/workspace/create` from menus a member can reach at any time. The
- * list is generated from the vendor tree at test time rather than copied, so an
- * upstream merge that adds a destination fails here instead of in a member's
- * click.
+ * their components navigate to twenty settings pages, the task pages and
+ * `/workspace/create` from menus a member can reach at any time. The list is
+ * generated from the vendor tree at test time rather than copied, so an upstream
+ * merge that adds a destination fails here instead of in a member's click.
+ *
+ * NOT EVERY ADDRESS IS A STUB. Three of them are real pages — the chat landing,
+ * the session detail and the archive — and the archive is the one that moved:
+ * it was `WORKSPACE_STUB_PATHS`'s only entry until the archive page landed.
  *
  * A source test, deliberately: importing `router.tsx` pulls the whole vendored
  * renderer (Monaco, three.js, the Loro WASM) for a question that is answered by
@@ -63,7 +66,6 @@ function declaredAddresses(): Set<string> {
   };
   const addresses = new Set<string>(["/"]);
   for (const path of listed("STUB_PATHS")) addresses.add(path === "/" ? "/" : `/${path}`);
-  for (const path of listed("WORKSPACE_STUB_PATHS")) addresses.add(`/$workspaceName/${path}`);
   for (const path of listed("SETTINGS_STUB_PATHS")) {
     addresses.add(`/$workspaceName/settings/${path}`);
   }
@@ -71,6 +73,8 @@ function declaredAddresses(): Set<string> {
     "/$workspaceName/chat",
     "/$workspaceName/sessions",
     "/$workspaceName/sessions/$sessionId",
+    // A real page, not a stub: `archiveRoute` renders `ArchiveView`.
+    "/$workspaceName/archive",
     "/$workspaceName/settings",
     "/$workspaceName/tasks",
     "/$workspaceName/tasks/$taskId",
@@ -90,5 +94,15 @@ describe("the Lody memory router", () => {
 
   it("finds targets at all, so an empty scan cannot pass vacuously", () => {
     expect(navigationTargets().length).toBeGreaterThan(15);
+  });
+
+  it("gives the archive a component rather than the empty stub", () => {
+    // The whole point of the page: `/$workspaceName/archive` used to resolve to
+    // `EmptyRoute`, so the rail's Archive entry — once it existed — would have
+    // landed on a blank surface instead of the archived-session list.
+    const source = readFileSync(join(here, "..", "src", "lody", "router.tsx"), "utf8");
+    expect(source).toContain('path: "archive",');
+    expect(source).toContain("component: ArchiveRoute,");
+    expect(source).not.toContain("WORKSPACE_STUB_PATHS");
   });
 });

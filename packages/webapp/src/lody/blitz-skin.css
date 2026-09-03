@@ -96,6 +96,42 @@ body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
   display: none;
 }
 
+/*
+ * WHY THE COLLAPSED STRIP LAID ITS CONTROLS OUTSIDE THE WINDOW (BUG-3, panels-a).
+ *
+ * Collapsing the side panel does not unmount it — `DesktopSessionDetailLayout`
+ * collapses the resizable panel to width 0 and marks the content `invisible
+ * pointer-events-none`, because the Browser view, the PR tab and the Monaco
+ * editor in there must keep their state. So the strip is still laid out, in a
+ * container 0 wide at the panel's own left edge, and its two `shrink-0`
+ * controls — the `+` "Add panel" trigger and the `endSlot` sidebar toggle —
+ * have nowhere to go but out. Measured on a box at 1920x1080: "Add panel" at
+ * cx=1911 and "Show sidebar" at cx=1943, the second one past the window edge
+ * entirely. Nothing paints and nothing is clickable (both are governed by the
+ * `invisible` wrapper, and the reachable toggle is the header toolbar's own
+ * copy at cx=1844), but a control with a box outside the viewport is a layout
+ * overflow, and `document.scrollingElement` is one style change away from
+ * growing a horizontal scrollbar for it.
+ *
+ * Overflow in a flex row leaves by the edge that alignment did NOT pack
+ * against, so `flex-end` sends it left, back into the window, instead of right.
+ *
+ * IT CANNOT MOVE ANYTHING WHILE THE STRIP HAS ROOM. The tablist beside those
+ * controls is `min-w-0 flex-1` (`session-side-panel-tab-bar.tsx`), so it
+ * absorbs every pixel of free space and `justify-content` is left with nothing
+ * to distribute. The declaration is observable in exactly one state: the one
+ * where the container is narrower than its own controls.
+ *
+ * Zero vendor change: `data-lody-session-tab-region` is upstream's attribute
+ * and `role="tablist"` is upstream's markup.
+ * `packages/webapp/test/lody-panel-fixes.test.tsx` renders the real vendored
+ * strip and pins both halves — this rule's selector against that DOM, and
+ * `flex-1` still being on the element that makes it inert.
+ */
+.lody-surface [data-lody-session-tab-region="side-panel"] > div:has([role="tablist"]) {
+  justify-content: flex-end;
+}
+
 /* --------------------------------------------------- the rail's own rows */
 
 /*

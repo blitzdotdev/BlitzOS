@@ -2,7 +2,7 @@
 //
 // It exists because an in-process mutex is the wrong tool for a box: every
 // user of the control-plane credential is a separate short-lived process —
-// `blitz-cred get`, `blitz-cred git-helper`, the boot-time register — and a
+// `blitz-cred api-token`, the boot-time register, the feed watcher — and a
 // sync.Mutex in one of them says nothing to the others.
 package filelock
 

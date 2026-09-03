@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAppCapability } from '@/lib/app-platform';
 import { Button } from '@/ui/button';
 import { Checkbox } from '@/ui/checkbox';
 import {
@@ -314,9 +315,16 @@ type ArchivedSessionItemViewModel = {
   prTooltipLabel: string;
 };
 
+/**
+ * @param gitHubIntegrationAvailable - The `githubIntegration` platform
+ * capability. With it off there is no GitHub App behind the row's PR badge, so
+ * the pull request is dropped here rather than at each of the four values it
+ * feeds — the same shape `getSessionGitHubState` uses.
+ */
 function getArchivedSessionItemViewModel(
   session: SessionMeta,
-  now: Date
+  now: Date,
+  gitHubIntegrationAvailable = true
 ): ArchivedSessionItemViewModel {
   const title = session.title?.trim() || 'Untitled session';
   const relativeTime = formatRelativeTime(session.lastMessageAt, now);
@@ -324,7 +332,7 @@ function getArchivedSessionItemViewModel(
   const diffStats = session.diffStats ?? { allChange: { add: 0, del: 0 } };
   const hasChanges = diffStats.allChange.add !== 0 || diffStats.allChange.del !== 0;
 
-  const pullRequests = session.pullRequests ?? [];
+  const pullRequests = gitHubIntegrationAvailable ? session.pullRequests ?? [] : [];
   const latestPr =
     pullRequests.length > 0
       ? pullRequests.some((pr) => getSessionPullRequestLegacyFields(pr).reportedAt)
@@ -401,6 +409,7 @@ function DesktopArchivedSessionItem({
   onEnterMultiSelect,
   owner,
 }: ArchivedSessionItemBaseProps) {
+  const gitHubIntegrationAvailable = useAppCapability('githubIntegration');
   const {
     title,
     relativeTime,
@@ -411,7 +420,7 @@ function DesktopArchivedSessionItem({
     prStatusMeta,
     PrIcon,
     prTooltipLabel,
-  } = getArchivedSessionItemViewModel(session, now);
+  } = getArchivedSessionItemViewModel(session, now, gitHubIntegrationAvailable);
 
   const handleRowClick = useCallback(() => {
     if (isMultiSelectMode) {
@@ -618,6 +627,7 @@ function MobileArchivedSessionItem({
   onEnterMultiSelect,
   owner,
 }: MobileArchivedSessionItemProps) {
+  const gitHubIntegrationAvailable = useAppCapability('githubIntegration');
   const {
     title,
     relativeTime,
@@ -628,7 +638,7 @@ function MobileArchivedSessionItem({
     prStatusMeta,
     PrIcon,
     prTooltipLabel,
-  } = getArchivedSessionItemViewModel(session, now);
+  } = getArchivedSessionItemViewModel(session, now, gitHubIntegrationAvailable);
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFiredRef = useRef(false);
@@ -1000,7 +1010,20 @@ export function ArchivedSessionGroupSection({
   );
 }
 
-export function ArchiveView() {
+export type ArchiveViewProps = {
+  /**
+   * Suppresses the My Tasks / All Tasks scope control and pins the listing to
+   * the viewer's own archived sessions.
+   *
+   * A host whose workspace has exactly one member has nothing to switch
+   * between, so the control is a dropdown whose two entries list the same
+   * sessions. Defaults to `false`, which is the scope picker every cloud
+   * workspace has always had.
+   */
+  hideTeamScope?: boolean;
+};
+
+export function ArchiveView({ hideTeamScope = false }: ArchiveViewProps = {}) {
   const { t } = useTranslation();
   const router = useRouter();
   const isMobile = useIsMobile();
@@ -1010,7 +1033,11 @@ export function ArchiveView() {
   const { restoreSession, deleteArchivedSession } = useSessionActions();
   const openMobileDrawer = useSetAtom(setMobileDrawerOpenAtom);
   const [deleteConfirmSession, setDeleteConfirmSession] = useState<SessionMeta | null>(null);
-  const [archiveScope, setArchiveScope] = useAtom(archiveScopeAtom);
+  const [storedArchiveScope, setArchiveScope] = useAtom(archiveScopeAtom);
+  // The stored scope is still written and still read back; it is only the
+  // ANSWER that is pinned, so turning the prop off restores the member's own
+  // last choice rather than a default.
+  const archiveScope = hideTeamScope ? 'my' : storedArchiveScope;
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<ArchiveSortMode>('newest');
   const [groupMode, setGroupMode] = useState<ArchiveGroupMode>('project');
@@ -1453,7 +1480,7 @@ export function ArchiveView() {
             className="h-8 border-foreground/[0.10] bg-background pl-8 text-sm shadow-none dark:border-input-border dark:bg-input"
           />
         </div>
-        {isMobile ? (
+        {isMobile && !hideTeamScope ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -1717,6 +1744,7 @@ export function ArchiveView() {
   return (
     <WebArchiveScreen
       archiveScope={archiveScope}
+      hideTeamScope={hideTeamScope}
       isMultiSelectMode={isMultiSelectMode}
       selectedCount={selectedCount}
       isBulkActionBusy={isBulkActionBusy}

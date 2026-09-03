@@ -149,46 +149,45 @@ func (c *Client) RegisterKeys(ctx context.Context, keys []feed.Key) (KeyRegistra
 	return KeyRegistration{Broker: result.Broker, MemberUnixName: result.MemberUnixName}, nil
 }
 
-// GetWorkspaceConnections reads the providers this workspace may pull.
-// The caller owns and must close the returned response body.
-func (c *Client) GetWorkspaceConnections(ctx context.Context) (*http.Response, error) {
-	return c.authenticated(ctx, http.MethodGet, func(string) string {
-		return "/workspaces/self/connections"
-	}, nil)
-}
+// agentAPIProbePath is the cheap authenticated read ValidAccessToken uses to
+// find out whether the stored access token is still accepted. GET /agent/api
+// is the control plane's self-describing agent API document; any authenticated
+// route would do, and this one is the cheapest read the agent surface has.
+const agentAPIProbePath = "/agent/api"
 
-// PostWorkspaceConnectionToken pulls one credential for one provider.
-// The caller owns and must close the returned response body.
-func (c *Client) PostWorkspaceConnectionToken(ctx context.Context, name string) (*http.Response, error) {
-	return c.authenticated(ctx, http.MethodPost, func(string) string {
-		return "/workspaces/self/connections/" + url.PathEscape(name) + "/token"
-	}, nil)
-}
-
-// PostWorkspaceCredentialImport stores each KEY=value line of a dotenv text
-// as a workspace credential. The caller owns and must close the returned
-// response body.
-func (c *Client) PostWorkspaceCredentialImport(ctx context.Context, body []byte) (*http.Response, error) {
-	return c.authenticated(ctx, http.MethodPost, func(string) string {
-		return "/workspaces/self/credentials/dotenv"
-	}, body)
-}
-
-// GetWorkspaceCredentials reads the workspace credential store: names and
-// comments, never values. The caller owns and must close the returned
-// response body.
-func (c *Client) GetWorkspaceCredentials(ctx context.Context) (*http.Response, error) {
-	return c.authenticated(ctx, http.MethodGet, func(string) string {
-		return "/workspaces/self/credentials"
-	}, nil)
-}
-
-// PutWorkspaceCredential stores one workspace credential. The caller owns
-// and must close the returned response body.
-func (c *Client) PutWorkspaceCredential(ctx context.Context, body []byte) (*http.Response, error) {
-	return c.authenticated(ctx, http.MethodPut, func(string) string {
-		return "/workspaces/self/credentials"
-	}, body)
+// ValidAccessToken returns an access token the control plane currently
+// accepts, rotating once through the flock-serialised refresh when the stored
+// one has expired.
+//
+// The box does not know the token's age — expiry lives server-side — so
+// validity is established by use: one authenticated GET, and a 401 is the
+// only answer that triggers a refresh. An unreachable control plane returns
+// the stored token as it is, deliberately: the caller is about to send that
+// bearer somewhere anyway, and its own request will surface the real network
+// error instead of this helper guessing at one.
+func (c *Client) ValidAccessToken(ctx context.Context) (string, error) {
+	credential, err := store.LoadCredential(c.stateDir)
+	if err != nil {
+		return "", err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.origin+agentAPIProbePath, nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Authorization", "Bearer "+credential.AccessToken)
+	response, err := c.http.Do(request)
+	if err != nil {
+		return credential.AccessToken, nil
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		return credential.AccessToken, nil
+	}
+	rotated, err := c.refreshCredential(ctx, credential.AccessToken)
+	if err != nil {
+		return "", err
+	}
+	return rotated.AccessToken, nil
 }
 
 func (c *Client) FetchFeed(ctx context.Context, etag string) ([]byte, string, bool, error) {

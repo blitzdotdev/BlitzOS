@@ -25,6 +25,7 @@ import { createInertConvexClient } from "./inert-convex.js";
 import { createInertLodyAuthClient, type LodyInertAuthClient } from "./inert-auth-client.js";
 import {
   fetchLodyPlatformSnapshot,
+  LodyPlatformCatalogError,
   type LodyPlatformFetchOptions,
   type LodyPlatformSnapshot,
 } from "./platform-snapshot.js";
@@ -114,12 +115,23 @@ export function useLodyPlatformSnapshot(
         }
       } catch (cause) {
         if (controller.signal.aborted || settled) return;
-        // Retrying a malformed catalog forever would hide the cause behind a
-        // spinner, so this settles too. A transport failure settles here as
-        // well, and always has: it is what puts the degraded notice on screen.
-        settled = true;
-        setError(cause instanceof Error ? cause.message : String(cause));
-        return;
+        // ONLY A MALFORMED CATALOG SETTLES. Retrying one forever would hide the
+        // cause behind a spinner, and no amount of asking will make the box
+        // serve a catalog this shell can read.
+        //
+        // A TRANSPORT FAILURE DOES NOT, and this is the fix. It used to settle
+        // here too — "and always has", said the comment that stood here — which
+        // is how a workspace whose tunnel was seconds from coming up got the
+        // degraded notice for the lifetime of the tab. On a freshly provisioned
+        // box that is not an edge case, it is the normal first read. Falling
+        // through to the schedule below asks again, at the interval the
+        // reachability signal already picks: 500 ms for a cold daemon, 30 s for
+        // a tunnel that is genuinely dead.
+        if (cause instanceof LodyPlatformCatalogError) {
+          settled = true;
+          setError(cause.message);
+          return;
+        }
       }
       // A NOT-OK ANSWER IS THE UNBOUNDED CASE, AND THIS IS ITS BRAKE. A cold
       // daemon answers 503 in a millisecond and deserves 500 ms; a dead tunnel

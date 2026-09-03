@@ -580,8 +580,26 @@ export function installLodyLocalBridge(
   target.ipc = bridge.ipc;
   target.__LODY_LOCAL_BRIDGE__ = true;
   return () => {
-    delete target.ipc;
-    delete target.__LODY_LOCAL_BRIDGE__;
+    // ONLY CLEAR THE GLOBAL IF IT IS STILL OURS.
+    //
+    // `window.ipc` is a singleton and a workspace switch now HANDS IT OVER:
+    // `LodySessionsRegion` keys the owned surface by box, so one `SessionSurface`
+    // unmounts while another mounts, and React mounts the new subtree before it
+    // runs the departing one's cleanup. An unconditional `delete` therefore
+    // deleted the INCOMING surface's bridge. The new runtime's boot effect runs
+    // before its parent re-asserts the install — React runs child effects first
+    // — so it found no bridge, its local data plane never attached, nothing
+    // synced, and the rail's session list stayed empty until a reload. A reload
+    // has no departing surface, which is why it looked like the cure.
+    //
+    // Before the per-box key one surface owned this for the life of the tab, so
+    // the unconditional delete was always its own. It is not any more.
+    if (target.ipc === bridge.ipc) {
+      delete target.ipc;
+      delete target.__LODY_LOCAL_BRIDGE__;
+    }
+    // Ownership decides the GLOBAL, never the socket. This bridge's data plane
+    // closes either way, or a switch leaks a WebSocket per visited workspace.
     bridge.dispose();
   };
 }

@@ -40,6 +40,12 @@ import {
   resetBoxGatewayHealth,
 } from "../src/box-gateway-health.js";
 import { probeLodySessionsDoor } from "../src/lody/box-capability.js";
+// STATIC, AND IT HAS TO BE. `platform.js` pulls Convex and the vendored Lody
+// providers behind it, which is seconds of transform on a loaded box. Imported
+// inside the poller's own `it()` that cost lands INSIDE the 5 s test timeout,
+// and the test fails on module weight rather than on the property — which is
+// measured in a millisecond once the module is there.
+import { useLodyPlatformSnapshot } from "../src/lody/platform.js";
 import { SurfaceLoadBoundary } from "../src/lody/SurfaceLoadBoundary.js";
 import {
   workspaceStatusLine,
@@ -53,6 +59,15 @@ const CHUNK_FAILURE =
   "Failed to fetch dynamically imported module: /assets/SessionSurface-CoBDK0FC.js";
 
 const PLATFORM_URL = "https://cp.invalid/workspaces/ws-1/webapp/7445/lody/platform";
+
+/** The daemon's own catalog, the shape `parseLodyPlatformSnapshot` accepts. */
+const CATALOG = JSON.stringify({
+  identity: { userId: "local:11111111-1111-1111-1111-111111111111" },
+  machine: { machineId: "m-1" },
+  workspaces: [
+    { workspaceId: "lw_1", name: "Lody", slug: "local", role: "owner", state: "active" },
+  ],
+});
 
 const ENDPOINTS = {
   terminalUrl: "https://cp.invalid/workspaces/ws-1/webapp/7681/",
@@ -290,7 +305,6 @@ describe("the platform snapshot poller", () => {
     // never come back — two a second, for as long as the tab lived — until the
     // browser had no sockets left for the chunk the shell actually needed.
     vi.useFakeTimers();
-    const { useLodyPlatformSnapshot } = await import("../src/lody/platform.js");
     let reads = 0;
     const hanging: typeof fetch = () => {
       reads += 1;
@@ -308,6 +322,71 @@ describe("the platform snapshot poller", () => {
 
     // One read, thirty seconds later. The next one is scheduled when this one
     // lands, and not before.
+    expect(reads).toBe(1);
+    await view.unmount();
+  });
+
+  /**
+   * THE OTHER HALF OF THE FRESH-WORKSPACE BUG. The poller retried a not-ok
+   * STATUS with backoff but settled permanently on a THROW, and its own comment
+   * admitted the conflation: "A transport failure settles here as well, and
+   * always has." On a box whose tunnel is seconds from coming up — which is
+   * every freshly provisioned workspace — the first read throws, and that
+   * settled the surface on the degraded notice for the lifetime of the tab.
+   * Only a catalog the box served and this shell cannot read is terminal.
+   */
+  it("keeps polling through a transport failure, and settles when the box answers", async () => {
+    vi.useFakeTimers();
+    resetBoxGatewayHealth();
+    let reads = 0;
+    const comingUp: typeof fetch = async () => {
+      reads += 1;
+      if (reads <= 2) throw new TypeError("Failed to fetch");
+      return new Response(CATALOG, { status: 200 });
+    };
+    const seen: { snapshot: unknown; error: string | null } = { snapshot: null, error: null };
+    function Probe() {
+      const state = useLodyPlatformSnapshot(PLATFORM_URL, comingUp);
+      seen.snapshot = state.snapshot;
+      seen.error = state.error;
+      return null;
+    }
+
+    const view = await render(<Probe />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    // The tunnel came up and so did the surface — no notice, no reload, and no
+    // workspace switch to re-run the effect.
+    expect(reads).toBeGreaterThan(2);
+    expect(seen.error).toBeNull();
+    expect(seen.snapshot).not.toBeNull();
+    await view.unmount();
+  });
+
+  it("still settles for good on a catalog it cannot parse", async () => {
+    vi.useFakeTimers();
+    resetBoxGatewayHealth();
+    let reads = 0;
+    // The box answered, in bytes this shell cannot read. Asking again would
+    // only hide the cause behind a spinner.
+    const malformed: typeof fetch = async () => {
+      reads += 1;
+      return new Response("{not json", { status: 200 });
+    };
+    const seen: { error: string | null } = { error: null };
+    function Probe() {
+      seen.error = useLodyPlatformSnapshot(PLATFORM_URL, malformed).error;
+      return null;
+    }
+
+    const view = await render(<Probe />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(seen.error).not.toBeNull();
     expect(reads).toBe(1);
     await view.unmount();
   });

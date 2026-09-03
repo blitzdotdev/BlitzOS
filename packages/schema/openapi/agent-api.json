@@ -1,0 +1,973 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "BlitzOS agent API",
+    "version": "1",
+    "description": "The routes a machine drives with its own credential, under /agent/. Generated from the control plane's wire types and route manifest by packages/control-plane/scripts/generate-agent-api.mjs; never edited by hand. The origin is the control plane the machine phoned home to (/var/lib/blitz/origin on a box), and every route wants the bearer `blitz-cred api-token` prints. Never print a token you receive."
+  },
+  "security": [
+    {
+      "machineBearer": []
+    }
+  ],
+  "paths": {
+    "/agent/api": {
+      "get": {
+        "summary": "This document",
+        "description": "The OpenAPI 3.1 description of every /agent/* route, generated from the control plane's own wire types. Read it, then call what it lists.",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document.",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "401": {
+            "description": "The bearer is not a live machine credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The machine has no workspace, or its workspace has no organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/credentials": {
+      "get": {
+        "summary": "List the credentials this machine may ask for",
+        "description": "Names, scopes and comments only — never a value. 'connection' rows come from the workspace's connection manifest; 'org' rows are org credentials the machine's member may read, 'writable' when they may rotate them too. Grants and the manifest are read on every call.",
+        "responses": {
+          "200": {
+            "description": "The list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCredentialsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The bearer is not a live machine credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The machine has no workspace, or its workspace has no organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/credentials/{name}/token": {
+      "post": {
+        "summary": "Resolve one credential for immediate use",
+        "description": "A connection of that name mints a token with its header and expiry; otherwise an org credential the member may read is served without inventing either. Use the value once and ask again next time: a rotation or revoke takes effect on the next call.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "A name from GET /agent/credentials.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The token, and how to present it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCredentialTokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The bearer is not a live machine credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The connection denied this machine's member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not connected here, or not granted to this member. A request was filed for the person; run `blitz connections open <name>` and retry after they connect it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialRequestFiledError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The machine has no workspace, or its workspace has no organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/credentials/{name}": {
+      "put": {
+        "summary": "Create or rotate an org credential",
+        "description": "One deliberate write with the comment that explains the key. Any active member may create (and receives the write grant); rotating needs write access. The value never comes back out.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "An environment variable name: letters, digits and underscores, not starting with a digit.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PutAgentCredentialRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rotated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PutOrgCredentialResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PutOrgCredentialResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The name is not an environment variable name, or the body is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The bearer is not a live machine credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No active membership, or no write access to an existing name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The machine has no workspace, or its workspace has no organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/credentials/dotenv": {
+      "post": {
+        "summary": "Import a dotenv file as org credentials",
+        "description": "Each KEY=value line becomes one org credential, with no comment. A line the member may not write is refused by name and the rest still imports. 'dryRun' parses and reports without storing anything.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportOrgCredentialsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One result per line.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportOrgCredentialsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The bearer is not a live machine credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No active membership.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The machine has no workspace, or its workspace has no organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/credentials/grant-proposals": {
+      "post": {
+        "summary": "Propose grant changes for a person to approve",
+        "description": "Nothing applies until the machine's member (or an org admin) approves it in the browser, possibly narrower than proposed. Poll the returned id until 'state' leaves 'pending'.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposeGrantChangesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Filed, pending approval.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposeGrantChangesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The change list is malformed, empty, or names a subject outside the organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The bearer is not a live machine credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No active membership, or a change past the member's write authority (named in the error).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The machine has no workspace, or its workspace has no organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent/grant-proposals/{id}": {
+      "get": {
+        "summary": "Poll a grant proposal",
+        "description": "Scoped to the proposing machine's organization. A proposal lives in memory for an hour; a 404 after a control-plane restart means propose again.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The id POST /agent/credentials/grant-proposals returned.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The proposal and what applied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantProposalView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The bearer is not a live machine credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown, expired, or another organization's proposal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The machine has no workspace, or its workspace has no organization.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "machineBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The machine's own credential. It acts as the member who owns the machine, resolved on every call."
+      }
+    },
+    "schemas": {
+      "AgentCredentialEntry": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/AgentCredentialScope"
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "writable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "scope",
+          "comment",
+          "writable"
+        ],
+        "additionalProperties": false,
+        "description": "One name an agent may ask for. `scope: 'connection'` rows come from the workspace connection manifest (comment null, writable false); `'org'` rows are org credentials the machine's member may read, `writable` when they may also rotate it."
+      },
+      "AgentCredentialScope": {
+        "type": "string",
+        "enum": [
+          "connection",
+          "org"
+        ],
+        "description": "The agent plane (plans/ORG-CREDENTIALS.md §4), box-authed under `/agent/`."
+      },
+      "AgentCredentialTokenResponse": {
+        "anyOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "type": "string",
+                "const": "connection"
+              },
+              "header": {
+                "$ref": "#/components/schemas/TokenHeader"
+              },
+              "expiresAt": {
+                "type": "number"
+              },
+              "name": {
+                "type": "string"
+              },
+              "token": {
+                "type": "string"
+              },
+              "env": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionEnv"
+                }
+              }
+            },
+            "required": [
+              "env",
+              "expiresAt",
+              "header",
+              "name",
+              "scope",
+              "token"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "scope": {
+                "type": "string",
+                "const": "org"
+              },
+              "name": {
+                "type": "string"
+              },
+              "token": {
+                "type": "string"
+              },
+              "env": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionEnv"
+                }
+              }
+            },
+            "required": [
+              "env",
+              "name",
+              "scope",
+              "token"
+            ]
+          }
+        ]
+      },
+      "AgentCredentialsResponse": {
+        "type": "object",
+        "properties": {
+          "credentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentCredentialEntry"
+            }
+          }
+        },
+        "required": [
+          "credentials"
+        ],
+        "additionalProperties": false
+      },
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "retryAction": {
+            "$ref": "#/components/schemas/RetryAction"
+          },
+          "paymentUrl": {
+            "type": "string",
+            "description": "Where a person can pay their way past this refusal. Present only on the 402 a seat gate throws, and only where the deployment has a billing service with a checkout surface — a refusal with nowhere to go is still a refusal, it just cannot offer a way out."
+          }
+        },
+        "required": [
+          "error",
+          "retryAction"
+        ],
+        "additionalProperties": false
+      },
+      "ConnectionEnv": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "additionalProperties": false,
+        "description": "One environment name a provider's own tooling reads, already filled. `gh` reads `GH_TOKEN` and no other name, so the box has to be told the name to print. The box prints these and stores none of them."
+      },
+      "CredentialRequestFiledError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "request_id"
+        ],
+        "additionalProperties": false,
+        "description": "The 404 of `POST /agent/credentials/:name/token`: the name is not connected in this workspace, or not granted to the machine's member. The miss files a `credential_requests` row, and `request_id` names it — the connect inbox resolves that id once a person connects or grants the name. The recovery is `blitz connections open <provider>`, then asking again."
+      },
+      "GrantChange": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/GrantChangeAction"
+          },
+          "subjectKind": {
+            "$ref": "#/components/schemas/OrgCredentialGrantSubjectKind"
+          },
+          "subjectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "access": {
+            "$ref": "#/components/schemas/OrgCredentialAccess"
+          }
+        },
+        "required": [
+          "name",
+          "action",
+          "subjectKind",
+          "subjectId",
+          "access"
+        ],
+        "additionalProperties": false,
+        "description": "One grant edit on one named credential. `add` writes the grant, replacing what the same subject already held but never lowering it: adding `read` to a subject that holds `write` changes nothing. `remove` deletes exactly the grant named, and is the only way access goes down. Subject rules are `OrgCredentialGrantView`'s."
+      },
+      "GrantChangeAction": {
+        "type": "string",
+        "enum": [
+          "add",
+          "remove"
+        ],
+        "description": "Agent-driven grant operations (plans/ORG-CREDENTIALS.md §7a): an agent proposes an explicit change list, a person approves what applies."
+      },
+      "GrantProposalState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "denied",
+          "expired"
+        ]
+      },
+      "GrantProposalView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/GrantProposalState"
+          },
+          "machineId": {
+            "type": "string"
+          },
+          "membershipId": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "proposed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GrantChange"
+            }
+          },
+          "applied": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/GrantChange"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "machineId",
+          "membershipId",
+          "reason",
+          "proposed",
+          "applied",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "One proposal as both planes read it: the agent's poll and the approval feed. `applied` is what actually went through — null until approval, and possibly narrower than `proposed`, because the person edits before approving and a credential revoked meanwhile drops out."
+      },
+      "ImportOrgCredentialsRequest": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false,
+        "description": "A dotenv text to store key by key at org scope. The importer sets no comment — `comment` is the one human-facing annotation and it belongs to a deliberate single-key write. `dryRun` parses and reports without writing."
+      },
+      "ImportOrgCredentialsResponse": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrgCredentialImportResult"
+            }
+          },
+          "linesRead": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "results",
+          "linesRead"
+        ],
+        "additionalProperties": false
+      },
+      "OrgCredentialAccess": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write"
+        ]
+      },
+      "OrgCredentialGrantSubjectKind": {
+        "type": "string",
+        "enum": [
+          "org",
+          "workspace",
+          "membership"
+        ],
+        "description": "Who a grant covers. `'org'` is everybody in the organization (`subjectId` null); the other kinds name a workspace or a membership."
+      },
+      "OrgCredentialGrantView": {
+        "type": "object",
+        "properties": {
+          "subjectKind": {
+            "$ref": "#/components/schemas/OrgCredentialGrantSubjectKind"
+          },
+          "subjectId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null iff `subjectKind === 'org'`."
+          },
+          "access": {
+            "$ref": "#/components/schemas/OrgCredentialAccess",
+            "description": "Write implies read."
+          }
+        },
+        "required": [
+          "subjectKind",
+          "subjectId",
+          "access"
+        ],
+        "additionalProperties": false
+      },
+      "OrgCredentialImportResult": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "line": {
+            "type": "number"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "stored",
+              "rotated",
+              "unchanged",
+              "refused"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "line",
+          "outcome"
+        ],
+        "additionalProperties": false,
+        "description": "What one KEY=value line became. Store-level facts only: `rotated` says a live row held this name and its value changed, `unchanged` says the incoming value equals the stored one, so nothing was written. A refused line names its reason and the rest of the file still imports."
+      },
+      "OrgCredentialView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdByMembershipId": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrgCredentialGrantView"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "comment",
+          "createdByMembershipId",
+          "createdAt",
+          "updatedAt",
+          "grants"
+        ],
+        "additionalProperties": false,
+        "description": "One org credential, name and metadata only — a value never crosses the wire after the write that stored it. `grants` is the full set for writers and org admins, and `[]` for plain readers."
+      },
+      "ProposeGrantChangesRequest": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GrantChange"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "changes",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "description": "`POST /agent/credentials/grant-proposals`. Every change must sit within the acting member's own write authority, or the whole proposal is refused with a 403 that names the offending changes. `reason` is shown to the person verbatim."
+      },
+      "ProposeGrantChangesResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/GrantProposalState"
+          }
+        },
+        "required": [
+          "id",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "PutAgentCredentialRequest": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false,
+        "description": "`PUT /agent/credentials/:name`: create (201) or rotate (200) an org credential from a machine. Same tri-state `comment` as the session plane."
+      },
+      "PutOrgCredentialResponse": {
+        "type": "object",
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/OrgCredentialView"
+          }
+        },
+        "required": [
+          "credential"
+        ],
+        "additionalProperties": false
+      },
+      "RetryAction": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "poll",
+          "destroy",
+          "create",
+          "upgrade",
+          null
+        ]
+      },
+      "TokenHeader": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "prefix"
+        ],
+        "additionalProperties": false,
+        "description": "Bearer material is not always a Bearer: Linear personal API keys go in a raw `Authorization: <key>` header, so the prefix belongs to the provider."
+      }
+    }
+  }
+}

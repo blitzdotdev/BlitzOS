@@ -167,10 +167,10 @@ describe("workspace clones and repos", () => {
     const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
     const userData = providers.userData.get(workspace.id) ?? "";
     expect(userData).toContain(
-      "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
+      "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || git -c http.version=HTTP/1.1 clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
     );
     expect(userData).toContain(
-      "[ -d /workspace/tools/.git ] || git clone https://github.com/acme/tools /workspace/tools || cloned=false",
+      "[ -d /workspace/tools/.git ] || git clone https://github.com/acme/tools /workspace/tools || git -c http.version=HTTP/1.1 clone https://github.com/acme/tools /workspace/tools || cloned=false",
     );
     // The clone owns its own list, so it is a starting point and not a link.
     await expect(env.DB.prepare(
@@ -219,7 +219,7 @@ describe("workspace clones and repos", () => {
       ]);
     const userData = providers.userData.get(workspace.id) ?? "";
     expect(userData).toContain(
-      "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
+      "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || git -c http.version=HTTP/1.1 clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
     );
     // Cloning mints through the box git credential helper, so naming repos
     // stipulates github exactly as naming them on a template does.

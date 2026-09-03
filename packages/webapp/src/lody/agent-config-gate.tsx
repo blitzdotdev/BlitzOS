@@ -42,6 +42,34 @@ import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "
 export const SURFACE_BOOT_DEADLINE_MS = 120_000;
 
 /**
+ * Boxes whose bootstrap has already SUCCEEDED this page lifetime, so a revisit
+ * opens the gate at once instead of holding the surface behind the same round
+ * trips again.
+ *
+ * WHY THIS IS SAFE WHERE A SNAPSHOT CACHE WOULD NOT BE. The key is the box's
+ * own IDENTITY — machineId and `lw_` workspace id, both minted by the daemon —
+ * not its URL. A rescue reboot that wipes the daemon's data dir mints a new
+ * identity at the same URL, so the rebuilt box MISSES this cache and gets the
+ * full gated bootstrap; nothing here can pin a surface to a dead identity (the
+ * exact class seam patch 17 closed). And the rows the gate exists to guarantee
+ * are durable on the daemon: a bootstrap that pushed once this page lifetime
+ * has nothing left to win by blocking the composer a second time.
+ *
+ * The bootstrap still RUNS on a revisit — in the background, behind the open
+ * gate — because it is idempotent by construction (`agent-configs.ts`) and the
+ * gate already opens on its failure. Only success is remembered.
+ */
+const settledBootstraps = new Set<string>();
+
+function bootstrapMemoKey(machineId: string, workspaceId: string): string {
+  return `${machineId} ${workspaceId}`;
+}
+
+export function resetAgentConfigGateMemoForTests(): void {
+  settledBootstraps.clear();
+}
+
+/**
  * Runs the agent-config bootstrap once the runtime is live, and HOLDS THE CHAT
  * SURFACE BACK until the daemon has the rows (plans/LODY-RUNTIME-DESIGN.md §12).
  *
@@ -148,8 +176,13 @@ export function LodyAgentConfigGate(props: {
         return;
       }
       started = runtime;
+      // A box this page has already bootstrapped opens at once; the re-run
+      // below is background belt-and-braces. See `settledBootstraps`.
+      const memoKey = bootstrapMemoKey(machineId, runtime.workspaceId);
+      if (settledBootstraps.has(memoKey)) open();
       void (async () => {
         await bootstrapLodyAgentConfigs(store, runtime, machineId);
+        settledBootstraps.add(memoKey);
         // The gate opens HERE, not at the end: everything below is about what
         // the composer offers, not about whether a send can resolve its config.
         open();

@@ -61,7 +61,7 @@ export interface ProviderEnvDelivery {
 }
 
 /** The environment names a pulled credential answers to. Nothing writes them
- * to disk: `blitz-cred env <provider>` prints them, and the agent scopes them
+ * to disk: the token route answers them as `env`, and the agent scopes them
  * to one command. The names still matter because vendor tooling reads them by
  * name — `gh` looks for `GH_TOKEN` and nothing else. */
 export interface ProviderDelivery {

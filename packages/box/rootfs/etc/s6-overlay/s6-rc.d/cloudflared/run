@@ -1,13 +1,30 @@
 #!/command/with-contenv bash
 set -euo pipefail
-tunnel_token_file=/var/lib/blitz/tunnel-token
-webapp_token_file=/var/lib/blitz/webapp-token
-if [ ! -f "$tunnel_token_file" ] || [ ! -s "$tunnel_token_file" ] || \
-  [ ! -f "$webapp_token_file" ] || [ ! -s "$webapp_token_file" ]; then
-  echo "cloudflared: waiting for tunnel and webApp tokens"
+# BLITZ_STATE_DIR is the seam `blitz-machine-stats` already uses; the guest
+# conformance test drives the real gate through it.
+state_dir="${BLITZ_STATE_DIR:-/var/lib/blitz}"
+tunnel_token_file="$state_dir/tunnel-token"
+webapp_token_file="$state_dir/webapp-token"
+# WHY A MARKER AND NOT JUST THE FILES. /var/lib/blitz is the member's
+# persistent volume, so on a re-provision the token files are already there --
+# left by the VM this one replaced, naming a tunnel the control plane has since
+# deleted. Waiting on existence alone let cloudflared start seconds before
+# cloud-init rewrote them (measured on a canary re-provision: 23:11:27 against
+# 23:11:34.8), and it reads --token-file once, so the box held a credential for
+# a deleted tunnel until something restarted it -- the new tunnel stayed at zero
+# origins and every browser-facing surface answered 1033. The marker is written
+# by this instance's cloud-init after the tokens (core/cloud-init.ts) and
+# removed by the bootstrap script before this container starts
+# (core/bootstrap.ts). A plain reboot re-runs neither, so it survives beside the
+# tokens it describes and there is no wait.
+tokens_ready_marker="$state_dir/tokens-ready"
+ready() {
+  [ -f "$tokens_ready_marker" ] && [ -s "$tunnel_token_file" ] && [ -s "$webapp_token_file" ]
+}
+if ! ready; then
+  echo "cloudflared: waiting for this instance's tunnel and webApp tokens"
 fi
-while [ ! -f "$tunnel_token_file" ] || [ ! -s "$tunnel_token_file" ] || \
-  [ ! -f "$webapp_token_file" ] || [ ! -s "$webapp_token_file" ]; do
+while ! ready; do
   sleep 5
 done
 exec /usr/local/bin/blitz-cgroup enter system -- /command/s6-setuidgid blitz /usr/bin/env \

@@ -24,6 +24,7 @@ import {
   type CodeCollabFileIndexResource,
 } from '@/lib/code-collab-file-index-cache';
 import { describeCodeCollabError, warnCodeCollab } from '@/lib/code-collab-debug';
+import { useMachineOnlineStatus } from '@/hooks/use-machine-online-status';
 import {
   CodeCollabSessionFileProvider,
   codeCollabFileTreeToSessionFileEntries,
@@ -63,6 +64,13 @@ export type UseCodeCollabSessionFileProviderResult = {
   readonly role?: CodeCollabRole;
   readonly message?: string;
   readonly error?: unknown;
+  /**
+   * Re-runs the file-index acquisition with every other input unchanged. A
+   * surface that renders `status: 'error'` or `'unavailable'` should offer it:
+   * the acquisition is effect-driven and its inputs do not move when a machine
+   * comes back, so without an explicit re-arm the failure is permanent.
+   */
+  readonly reload?: () => void;
 };
 
 export const CODE_COLLAB_NO_OWNING_MACHINE_MESSAGE =
@@ -187,18 +195,33 @@ function useCodeCollabFileIndexLoadState(args: {
   readonly ownerSessionId: SessionId;
   readonly prepareTarget?: () => Promise<FileIndexTargetPlane>;
   readonly loadLocalSnapshot?: () => Promise<LocalCodeCollabFileIndexSnapshot>;
+  /**
+   * Bumped to re-run the acquisition below with every other input unchanged.
+   * Without it a failed acquire is terminal: nothing else in `requestKey` moves
+   * when the machine comes back, so the effect never fires again and the file
+   * surfaces stay on "Files unavailable" until the component unmounts.
+   */
+  readonly reloadNonce?: number;
 }): HookFileIndexLoadState {
   const [acquired, setAcquired] = useState<AcquiredFileIndexResource | null>(null);
   const [fallbackState, setFallbackState] = useState<KeyedFileIndexLoadState | null>(null);
   const [acquireError, setAcquireError] = useState<KeyedFileIndexLoadState | null>(null);
-  const { enabled, cache, workspaceId, ownerSessionId, prepareTarget, loadLocalSnapshot } = args;
+  const {
+    enabled,
+    cache,
+    workspaceId,
+    ownerSessionId,
+    prepareTarget,
+    loadLocalSnapshot,
+    reloadNonce = 0,
+  } = args;
   const flockDocId =
     enabled && workspaceId
       ? getCodeCollabFileIndexFlockDocId(workspaceId as WorkspaceId, ownerSessionId)
       : null;
   const requestKey = useMemo<object>(
-    () => ({ cache, flockDocId, loadLocalSnapshot, prepareTarget }),
-    [cache, flockDocId, loadLocalSnapshot, prepareTarget]
+    () => ({ cache, flockDocId, loadLocalSnapshot, prepareTarget, reloadNonce }),
+    [cache, flockDocId, loadLocalSnapshot, prepareTarget, reloadNonce]
   );
 
   useEffect(() => {
@@ -372,6 +395,24 @@ export function useCodeCollabSessionFileProvider(
         : undefined,
     [machineId, ownerSessionId, runtime, sessionId]
   );
+  // Re-arm on a TRANSITION, never on a status. "Retry while the status is
+  // error" loops forever against a machine that is online and answering
+  // errors; an offline -> online edge fires at most once per outage, and every
+  // other cause is covered by the explicit `reload` below.
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const reload = useCallback(() => setReloadNonce((nonce) => nonce + 1), []);
+  const machineOnlineStatus = useMachineOnlineStatus(machineId);
+  const sawMachineOfflineRef = useRef(false);
+  useEffect(() => {
+    if (machineOnlineStatus === 'offline') {
+      sawMachineOfflineRef.current = true;
+      return;
+    }
+    if (machineOnlineStatus === 'online' && sawMachineOfflineRef.current) {
+      sawMachineOfflineRef.current = false;
+      setReloadNonce((nonce) => nonce + 1);
+    }
+  }, [machineOnlineStatus]);
   const fileIndexLoadState = useCodeCollabFileIndexLoadState({
     enabled: options.enabled !== false && !!machineId,
     cache: runtime?.codeCollabFileIndexCache ?? null,
@@ -379,6 +420,7 @@ export function useCodeCollabSessionFileProvider(
     ownerSessionId,
     prepareTarget: prepareFileIndexTarget,
     loadLocalSnapshot: loadLocalFileIndexSnapshot,
+    reloadNonce,
   });
   const fileIndexSnapshot =
     fileIndexLoadState.status === 'ready' ? fileIndexLoadState.snapshot : null;
@@ -494,7 +536,7 @@ export function useCodeCollabSessionFileProvider(
     });
   }, [materializedSharedState, providerTextState, role, rpcRuntime, sourceState]);
 
-  return useMemo<UseCodeCollabSessionFileProviderResult>(() => {
+  const result = useMemo<UseCodeCollabSessionFileProviderResult>(() => {
     if (options.enabled === false) {
       return disabledResult;
     }
@@ -549,4 +591,11 @@ export function useCodeCollabSessionFileProvider(
     role,
     runtime,
   ]);
+
+  // `reload` rides on every branch, including `disabledResult` (a module
+  // constant, so it cannot carry a per-hook callback of its own).
+  return useMemo<UseCodeCollabSessionFileProviderResult>(
+    () => ({ ...result, reload }),
+    [reload, result]
+  );
 }

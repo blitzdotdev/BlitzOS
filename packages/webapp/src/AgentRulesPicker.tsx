@@ -151,7 +151,7 @@ export function AgentRulesPicker({
           <option value={NEW_RULE_OPTION}>New rule…</option>
         </select>
         <button
-          className="blueprint-agent-rules-edit"
+          className="webapp-action blueprint-agent-rules-edit"
           type="button"
           onClick={() => openDraft(selected ?? builtIn)}
         >

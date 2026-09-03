@@ -12,8 +12,8 @@ import {
 /**
  * The workspace environment is retired (plans/MEMBER-MACHINES.md §1).
  *
- * Values live in `workspace_credentials` and only `blitz-cred` reads them; the
- * startup script has no runner left. What survives is a compatibility shim,
+ * Static secrets live in `org_credentials` and only the agent API serves
+ * them; the startup script has no runner left. What survives is a shim,
  * and these tests pin exactly what it owes: DEPLOYED broker binaries poll
  * `GET /workspaces/self/environment` every second at boot and wait for a 200
  * carrying all three fields with `filesReady: true`. A 404 or a dropped field
@@ -68,10 +68,11 @@ describe("workspace environment (legacy shim)", () => {
     });
     // The field is gone from the request, not refused: an old client that
     // still sends one gets its workspace, and the value goes nowhere. A
-    // credential is written through `credentials` now.
+    // secret is stored at org scope now (plans/ORG-CREDENTIALS.md).
     expect(created.status).toBe(201);
     const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
-    expect(workspace.credentials).toEqual([]);
+    expect(workspace.id).toMatch(/./u);
+    expect(JSON.stringify(workspace)).not.toContain("api.example");
   });
 
   it("rejects a create body larger than the request ceiling", async () => {

@@ -58,10 +58,13 @@
   padding: 14px 18px 18px;
 }
 
+/* Every confirmation in the app guards a point of no return (revoke, delete,
+ * leave, destroy), so the confirm wears the critical style (settings-design-kit:
+ * irreversible actions get the critical button). */
 .webapp-confirmation-confirm {
   border-color: transparent !important;
-  color: var(--paper) !important;
-  background: var(--ink) !important;
+  color: #fff !important;
+  background: var(--ansi-red) !important;
 }
 
 .webapp-confirmation-actions .webapp-action {

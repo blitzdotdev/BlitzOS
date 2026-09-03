@@ -367,7 +367,7 @@ describe('create template screen', () => {
     });
     const { view } = await screenWith(fetcher);
     const edit = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.className === 'blueprint-agent-rules-edit')!;
+      .find((button) => button.classList.contains('blueprint-agent-rules-edit'))!;
     await act(async () => { edit.click(); });
 
     const dialog = view.container.querySelector('.blueprint-agent-rules-dialog')!;
@@ -421,7 +421,7 @@ describe('create template screen', () => {
   it('closes the rules editor on Escape and returns focus to the opener', async () => {
     const { view } = await screenWith();
     const edit = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.className === 'blueprint-agent-rules-edit')!;
+      .find((button) => button.classList.contains('blueprint-agent-rules-edit'))!;
     await act(async () => {
       edit.focus();
       edit.click();
@@ -456,7 +456,7 @@ describe('create template screen', () => {
       select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     const edit = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.className === 'blueprint-agent-rules-edit')!;
+      .find((button) => button.classList.contains('blueprint-agent-rules-edit'))!;
     await act(async () => { edit.click(); });
     expect(view.container.querySelector<HTMLInputElement>(
       'input[aria-label="Agent rules name"]',
@@ -1338,7 +1338,7 @@ describe('create template screen', () => {
   });
 });
 
-describe('template screen org-credential config', () => {
+describe('template screen connections picker', () => {
   const discordEntry = {
     id: 'discord',
     title: 'Discord',
@@ -1413,213 +1413,6 @@ describe('template screen org-credential config', () => {
     for (const label of rows) {
       expect(label.querySelector('svg.tplf-connection-glyph'), label.textContent ?? '').not.toBeNull();
     }
-    await view.unmount();
-  });
-
-  it('opens the inline config form when an admin attaches an unconfigured provider', async () => {
-    const puts: [string, unknown][] = [];
-    const fetcher = connectionsStub((url, init) => {
-      if (url.pathname === '/connections/discord' && init?.method === 'PUT') {
-        puts.push([url.pathname, JSON.parse(String(init.body ?? 'null'))]);
-        return new Response(null, { status: 204 });
-      }
-      return null;
-    });
-    const onCreated = vi.fn();
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        admin
-        onCreated={onCreated}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-
-    // A real template name first: if the credential save leaked into the host
-    // form's submit, the template below would actually be created.
-    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
-    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    if (setInputValue === undefined) throw new Error('input value setter unavailable');
-    await act(async () => {
-      setInputValue.call(name, 'starter');
-      name.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-
-    await tick(view, 'Discord');
-    // The form is right there, no extra click: attaching an admin provider
-    // without its credential is the state this surface exists to prevent.
-    const root = view.container.querySelector<HTMLInputElement>('.tplf-connections input[name="root"]');
-    expect(root).not.toBeNull();
-    // The admin surface is not a nested <form>: the screen's create form is
-    // the only form element on the page.
-    expect(view.container.querySelectorAll('form')).toHaveLength(1);
-    await act(async () => {
-      setInputValue.call(root!, 'test-only-bot-token');
-      root!.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    const save = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Save');
-    expect(save).toBeDefined();
-    await act(async () => {
-      save!.click();
-    });
-    await settle();
-    expect(puts).toEqual([[
-      '/connections/discord',
-      {
-        provider: 'discord',
-        kind: 'static',
-        custody: 'cp',
-        config: { placements: [{ kind: 'env', name: 'DISCORD_BOT_TOKEN', fill: 'token' }] },
-        root: 'test-only-bot-token',
-      },
-    ]]);
-    // Saving the credential is its own errand: nothing submitted the template
-    // around it.
-    expect(onCreated).not.toHaveBeenCalled();
-    expect(fetcher.mock.calls.filter(([input, init]) => (
-      new URL(String(input)).pathname === '/workspace-templates' && init?.method === 'POST'
-    ))).toEqual([]);
-    await view.unmount();
-  });
-
-  it('tells members to ask their admin, and never renders them the form', async () => {
-    connectionsStub();
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        onCreated={vi.fn()}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-    await tick(view, 'Discord');
-    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
-    expect(view.container.textContent).toContain('Ask an admin to add the Discord key.');
-    await view.unmount();
-  });
-
-  it('shows the org-credential chip instead of a form once one is stored', async () => {
-    connectionsStub((url, init) => {
-      if (url.pathname === '/connections' && init?.method === undefined) {
-        return Response.json({ connections: [{
-          name: 'discord',
-          provider: 'discord',
-          kind: 'static',
-          custody: 'cp',
-          status: 'active',
-          createdBy: 'admin',
-          proxyBaseUrl: null,
-          orgCredential: true,
-        }] });
-      }
-      return null;
-    });
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        admin
-        onCreated={vi.fn()}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-    await tick(view, 'Discord');
-    expect(view.container.textContent).toContain('org key');
-    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
-    // Replacing swaps the one org-wide credential under every template and
-    // workspace, so the form opens only after an explicit confirmation.
-    const replace = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Replace Discord key');
-    expect(replace).toBeDefined();
-    await act(async () => {
-      replace!.click();
-    });
-    const confirmation = view.container.querySelector('.webapp-confirmation-dialog');
-    expect(confirmation?.textContent).toContain('Replace the Discord key?');
-    expect(confirmation?.textContent)
-      .toContain('Every template and workspace at this organization switches to the new key immediately.');
-    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
-
-    // Escape backs out without opening the form.
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-    });
-    expect(view.container.querySelector('.webapp-confirmation-dialog')).toBeNull();
-    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
-
-    await act(async () => {
-      [...view.container.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Replace Discord key')!.click();
-    });
-    await act(async () => {
-      view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
-    });
-    expect(view.container.querySelector('.tplf-connections input[name="root"]')).not.toBeNull();
-    await view.unmount();
-  });
-
-  it('never forces the admin form on a provider members can authorize themselves', async () => {
-    connectionsStub();
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        admin
-        onCreated={vi.fn()}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-    await tick(view, 'GitHub');
-    // Attaching bare is legitimate: members authorize GitHub themselves, so
-    // the org credential is an offer behind a button, not a gate.
-    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
-    expect(view.container.textContent)
-      .toContain('Without an org key, members sign in to GitHub themselves.');
-    const configure = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Add GitHub key');
-    expect(configure).toBeDefined();
-    await act(async () => {
-      configure!.click();
-    });
-    expect(view.container.querySelector('.tplf-connections input[name="root"]')).not.toBeNull();
-
-    // Cancelling closes the form but keeps the provider attached: bare is a
-    // valid state for a member-path provider.
-    const cancel = [...view.container.querySelectorAll('.tplf-connections button')]
-      .find((button) => button.textContent === 'Cancel');
-    await act(async () => {
-      (cancel as HTMLButtonElement).click();
-    });
-    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
-    const github = [...view.container.querySelectorAll<HTMLElement>('.tplf-connection')]
-      .find((candidate) => candidate.textContent?.includes('GitHub'));
-    expect(github?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(true);
-    await view.unmount();
-  });
-
-  it('tells members a member-path provider is theirs to connect, not an admin errand', async () => {
-    connectionsStub();
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        onCreated={vi.fn()}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-    await tick(view, 'GitHub');
-    // Scoped to the section: the repo picker below legitimately routes
-    // members to an admin for the org App credential.
-    expect(view.container.querySelector('.tplf-connections')?.textContent)
-      .not.toContain('Ask an organization admin');
-    expect(view.container.textContent).toContain('Members sign in to GitHub themselves.');
     await view.unmount();
   });
 

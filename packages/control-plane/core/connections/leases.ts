@@ -303,15 +303,6 @@ export function revokeMachineLeasesQuery(machineId: string): Query {
   };
 }
 
-export function revokeConnectionLeasesQuery(connectionId: string): Query {
-  return {
-    q: `UPDATE credential_leases
-        SET state = 'revoked', token_hash = NULL
-        WHERE connection_id = ?1 AND state = 'active'`,
-    v: [connectionId],
-  };
-}
-
 /** One workspace holds one live lease per connection. Minting again supersedes
  * the lease before it with the same revocation the grant-replace path uses —
  * a superseded lease is revoked, not a state of its own. */

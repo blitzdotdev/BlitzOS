@@ -14,7 +14,11 @@ import {
   removeMentionText,
 } from './mention-input-core';
 import { MentionHighlighter } from './mention-highlighter';
-import { findTriggerCandidates, isMentionNavigationPrefix } from './mention-trigger';
+import {
+  findTriggerCandidates,
+  getMentionDrillDownParent,
+  isMentionNavigationPrefix,
+} from './mention-trigger';
 import { type Mention, useMentionContext } from './mention-root';
 
 const INPUT_NAME = 'MentionInput';
@@ -458,10 +462,9 @@ const MentionInput = React.forwardRef<InputElement, MentionInputProps>((props, f
       const input = event.currentTarget;
       onMentionUpdate(input);
 
-      if (!context.onMentionClick) return;
-
       const selectionStart = input.selectionStart ?? 0;
       const selectionEnd = input.selectionEnd ?? selectionStart;
+      // A click that ENDS a drag-selection is not a click on a chip.
       if (selectionStart !== selectionEnd) return;
 
       const mentionAtCursor = context.mentions.find(
@@ -469,11 +472,20 @@ const MentionInput = React.forwardRef<InputElement, MentionInputProps>((props, f
       );
 
       if (
-        mentionAtCursor &&
-        isPointInsideMentionHighlight(input, mentionAtCursor, event.clientX, event.clientY)
+        !mentionAtCursor ||
+        !isPointInsideMentionHighlight(input, mentionAtCursor, event.clientX, event.clientY)
       ) {
-        context.onMentionClick(mentionAtCursor);
+        return;
       }
+
+      // A committed mention is atomic to every other input path: Backspace
+      // deletes the whole range and the horizontal arrows step over it, so a
+      // caret dropped inside one is a position no edit can use. Selecting the
+      // range is the click's own outcome — the chip mirror already paints a
+      // selected range, and until now only a drag could reach that. Callers
+      // with a kind-specific action run on top of it, not instead of it.
+      input.setSelectionRange(mentionAtCursor.start, mentionAtCursor.end);
+      context.onMentionClick?.(mentionAtCursor);
     },
     [context, onMentionUpdate]
   );
@@ -635,6 +647,21 @@ const MentionInput = React.forwardRef<InputElement, MentionInputProps>((props, f
         return context.onNavigateBack();
       }
 
+      /**
+       * Go up ONE drill-down level: `@ns:` to the bare trigger, `@src/comp/` to
+       * `@src/`. Wider than `tryNavigateBack` because it also walks a path,
+       * which Backspace must not do — inside a path Backspace still deletes one
+       * character at a time.
+       */
+      function tryNavigateUp() {
+        if (hasSelection || event.shiftKey) return false;
+        const span = getTriggerSpan();
+        if (!span) return false;
+        const parent = getMentionDrillDownParent(span.search);
+        if (parent === null) return false;
+        return context.onNavigateBack(parent);
+      }
+
       /** Commit the highlighted (or exact-match) item, matching Enter. */
       function trySelectHighlighted() {
         const span = getTriggerSpan();
@@ -695,7 +722,7 @@ const MentionInput = React.forwardRef<InputElement, MentionInputProps>((props, f
           break;
         }
         case 'ArrowLeft': {
-          if (tryNavigateBack()) event.preventDefault();
+          if (tryNavigateUp()) event.preventDefault();
           break;
         }
         case 'Backspace': {

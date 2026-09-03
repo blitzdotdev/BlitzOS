@@ -195,19 +195,20 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     ).toEqual([]);
   }, 90_000);
 
-  it("suppresses their header and footer through the props seam #4 added", () => {
+  it("suppresses their header and all of the footer but Archive (seams #2 and #13)", () => {
     // §0.3: `div.shell-rhead` stays native, so their workspace switcher must
     // not render — it is the one control that would duplicate it.
     expect(railHost.querySelector("[data-workspace-switcher-trigger]")).toBeNull();
     expect(railHost.querySelector("[data-workspace-identity]")).toBeNull();
-    // The footer rail is settings / help / archive, all of which BlitzOS serves
-    // from its own chrome.
-    for (const label of ["Settings", "Help", "Archive"]) {
-      expect(
-        railButtons().some((button) => button.getAttribute("aria-label") === label),
-        label,
-      ).toBe(false);
+    // A footer entry names itself in an `sr-only` span, so the label is the
+    // button's text (`IconButton`, `loro-sidebar.tsx:527`).
+    // Settings and Help are surfaces BlitzOS serves from its own chrome.
+    for (const label of [/^Settings$/u, /^Help$/u]) {
+      expect(railButton(label) === undefined, String(label)).toBe(true);
     }
+    // Archive is upstream's only affordance that leads to the archive page, so
+    // hiding it left the page unreachable. Seam patch 13 keeps exactly this one.
+    expect(railButton(/^Archive$/u), "the footer's Archive entry").toBeDefined();
   });
 
   it("offers + New session, and it asks the shell for the landing", async () => {
@@ -350,8 +351,11 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
   });
 
   it("keeps the terminal tabs exactly as the old rail drew them", async () => {
-    const rows = [...railHost.querySelectorAll<HTMLButtonElement>(".shell-s")];
-    expect(rows.map((row) => row.textContent)).toEqual(["claude · tab 1", "bash"]);
+    const rows = [...railHost.querySelectorAll<HTMLElement>(".shell-s")];
+    // The LABEL, not the whole row: the trailing slot now holds the close the
+    // deleted native tab strip used to own.
+    expect(rows.map((row) => row.querySelector(".shell-s__t")?.textContent))
+      .toEqual(["claude · tab 1", "bash"]);
     // Same glyphs: `SessionTypeIcon` renders an svg into the same gutter span.
     expect(rows[0]?.querySelector(".shell-g .shell-g__glyph")).not.toBeNull();
     // The surface is showing a CONVERSATION, so no terminal row claims to be
@@ -360,7 +364,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     // exactly when its terminal is the tab on screen (wave 3, ADJ1).
     expect(rows.some((row) => row.className.includes("shell-s--on"))).toBe(false);
     await act(async () => {
-      rows[0]?.click();
+      rows[0]?.querySelector<HTMLButtonElement>(".shell-s__open")?.click();
     });
     expect(selectedTerminals).toEqual(["11"]);
     // The `+ New tab` menu keeps a home in the rail, in the Terminals header.
@@ -377,7 +381,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       mounted.root.render(surface(false, "12"));
     });
     await settle();
-    const rows = [...railHost.querySelectorAll<HTMLButtonElement>(".shell-s")];
+    const rows = [...railHost.querySelectorAll<HTMLElement>(".shell-s")];
     expect(rows[1]?.className).toContain("shell-s--on");
     expect(rows[0]?.className).not.toContain("shell-s--on");
     await act(async () => {
@@ -393,7 +397,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       mounted.root.render(surface(true));
     });
     await settle();
-    const rows = [...railHost.querySelectorAll<HTMLButtonElement>(".shell-s")];
+    const rows = [...railHost.querySelectorAll<HTMLElement>(".shell-s")];
     expect(rows[1]?.className).toContain("shell-s--on");
     await act(async () => {
       mounted.root.render(surface(false));

@@ -12,6 +12,7 @@ import {
 } from '../ComputeCredentialFields';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
+import { PanelHeader } from './primitives';
 import { KeyIcon } from '../WebAppIcons';
 
 type ComputeClient = Pick<
@@ -125,13 +126,11 @@ export function ComputeCredentialsPanel({
 
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Compute credentials">
-      <header className="settings-panel-header">
-        <div>
-          <p>Organization</p>
-          <h1>Compute credentials</h1>
-          <span>Cloud machines are created and billed through your organization’s provider account.</span>
-        </div>
-      </header>
+      <PanelHeader
+        eyebrow="Organization"
+        title="Compute credentials"
+        detail="Cloud machines are created and billed through your organization’s provider account."
+      />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       {loading ? (
         <p className="settings-credential-state">Loading compute credentials…</p>

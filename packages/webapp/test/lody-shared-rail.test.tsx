@@ -76,7 +76,7 @@ const RECEIVED: ListSessionSharesResponse = {
  * test here is not the pre-Lody fallback (`lody-old-box-fallback.test.tsx`). */
 const SESSIONS_PRESENT = {
   capability: "present",
-  onLegacyDefaultTabs: () => {},
+  surfaceHostsTabs: true,
 } satisfies LodyRailSessions;
 
 function stubOwnerBox(titles: Record<string, string> | null): void {
@@ -175,7 +175,7 @@ async function mount(options: {
 
   function Host() {
     const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname));
-    const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, 1, SESSIONS_PRESENT);
+    const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, SESSIONS_PRESENT);
     const shared = useSharedSessions({
       client,
       workspace: mountedWorkspace,

@@ -1,0 +1,22 @@
+-- Whether the teardown now in flight leaves the machine behind.
+--
+-- `destroying` said a VM was going away. It never said whether the MACHINE was.
+-- A stop, a recreate and a machine-type change destroy the VM and keep the row
+-- and its volume (`destroyMachine`'s `keepRow`); a destroy takes all three. That
+-- difference lived in a function argument, in memory, for the length of one
+-- request — so anything that finished the teardown afterwards had to guess, and
+-- `core/janitors.ts` guessed `destroyed` every time.
+--
+-- A stop whose request died mid-teardown therefore came back as a tombstone:
+-- `start` refused the row 409, the workspace projected as `destroyed` and left
+-- the rail, and the volume's seven-day retention clock had started on a disk its
+-- member had only paused. Observed in production on 2026-09-01.
+--
+-- The intent is now on the row, written by the same statement that enters
+-- `destroying`, so whoever finalises the teardown finalises the one that was
+-- asked for. 0 is the default and the backfill at once: a row written by a
+-- control plane too old to set this column finalises as a destroy, exactly as it
+-- does today, and that is also the safe direction — a machine wrongly kept costs
+-- one VM, a machine wrongly destroyed costs the member's disk.
+ALTER TABLE machines ADD COLUMN destroy_keeps_row INTEGER NOT NULL DEFAULT 0
+  CHECK (destroy_keeps_row IN (0, 1));

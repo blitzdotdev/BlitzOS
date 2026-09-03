@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient, MemberView } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { DriveAvatar } from '../files/DriveAvatar';
+import { PanelHeader } from './primitives';
 
 export function MembersPanel({
   client,
@@ -39,7 +40,7 @@ export function MembersPanel({
 
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Members">
-      <header className="settings-panel-header"><div><p>Organization</p><h1>Members</h1><span>People who can work in this organization.</span></div></header>
+      <PanelHeader eyebrow="Organization" title="Members" detail="People who can work in this organization." />
       {admin && (
         <form className="settings-form" onSubmit={(event) => {
           event.preventDefault();
@@ -92,19 +93,27 @@ export function MembersPanel({
           </div>
         ))}
       </div>
-      <div className="cfg-danger">
-        <div className="cfg-danger-copy">
-          <strong>Leave {orgName}</strong>
-          <span>{soleMember
-            ? 'You are the only member. Add another member first, or create your own organization and leave this one.'
-            : 'You lose access to this organization\u2019s workspaces, files and connections. An admin can invite you back.'}</span>
+      {/* The redesign gave the zone a name; the zone itself stays the
+        * settings-surface one, so the heading is a `cfg-` section head and
+        * not a seventh heading treatment. */}
+      <div className="cfg-section">
+        <div className="cfg-section-head">
+          <h2 className="cfg-title">Danger zone</h2>
         </div>
-        <button
-          className="cfg-danger-action"
-          type="button"
-          disabled={soleMember || leaving}
-          onClick={() => setConfirmLeave(true)}
-        >{leaving ? 'Leaving\u2026' : 'Leave'}</button>
+        <div className="cfg-danger">
+          <div className="cfg-danger-copy">
+            <strong>Leave {orgName}</strong>
+            <span>{soleMember
+              ? 'You are the only member. Add another member first, or create your own organization and leave this one.'
+              : 'You lose access to this organization\u2019s workspaces, files and connections. An admin can invite you back.'}</span>
+          </div>
+          <button
+            className="cfg-danger-action"
+            type="button"
+            disabled={soleMember || leaving}
+            onClick={() => setConfirmLeave(true)}
+          >{leaving ? 'Leaving\u2026' : 'Leave'}</button>
+        </div>
       </div>
       {confirmLeave && (
         <ConfirmationDialog

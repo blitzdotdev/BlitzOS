@@ -1,3 +1,9 @@
+/* The dialog sits on the settings ladder: its body is the content pane
+ * (surface-2), and the row lists inside it are raised cards (surface-0), the
+ * same rungs the settings page walks. The modal keeps its lift — it genuinely
+ * floats, unlike anything inside the settings surface. Its headings, fields
+ * and fact lists come from settings-surface.css. */
+
 /* Anchor 1: ONE height for every tab. `height`, not `max-height` — the frame
    is sized to the tallest tab (Settings, whose form + agent rules + facts +
    repositories run past this ceiling), so Members and Credentials leave space
@@ -11,7 +17,7 @@
   border: 1px solid var(--rule);
   border-radius: var(--r-card);
   color: var(--ink);
-  background: var(--paper);
+  background: var(--surface-2);
   box-shadow: var(--lift);
   font-family: var(--font-ui);
 }
@@ -38,7 +44,8 @@
 .workspace-details-tabs button[aria-selected="true"]::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent); content: ''; }
 
 /* The one scrolling box. The frame above it is fixed, so this is what grows
-   and shrinks with the tab's content. */
+   and shrinks with the tab's content. The read-only fact lists that used to
+   be styled here are `.cfg-meta` now, in settings-surface.css. */
 .workspace-details-body { min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 20px 22px 8px; }
 
 /* Members, credentials and settings (plans/MEMBER-MACHINES.md §6). Their
@@ -48,10 +55,22 @@
 .workspace-details-settings { min-width: 0; }
 
 .workspace-members-search { position: relative; margin-bottom: 14px; }
-.workspace-members-rows { border-top: 1px solid var(--rule); }
-.workspace-members-empty { margin: 14px 0; color: var(--faint); font-size: 11px; }
+/* The add-people field joins the ladder's card language: the raised surface
+ * the row lists below it wear. */
+.workspace-members-search .drive-field {
+  border-color: var(--mod-16);
+  background: var(--surface-0);
+}
+/* Row lists are raised cards (surface-0) with --mod separators, the same card
+ * the settings page draws for its people and credential lists. */
+.workspace-members-rows,
+.workspace-credential-rows,
+.workspace-repo-rows { overflow: hidden; border: 1px solid var(--mod-12); border-radius: var(--r-card); background: var(--surface-0); }
+/* Rendered inside the raised row cards, so it carries its own inset. */
+.workspace-members-empty { margin: 14px 12px; color: var(--faint); font-size: 11px; }
 
-.workspace-member-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto auto auto 28px; align-items: center; gap: 10px; min-height: 48px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+.workspace-member-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto auto auto 28px; align-items: center; gap: 10px; min-height: 48px; padding: 0 12px; border-bottom: 0; }
+.workspace-member-row + .workspace-member-row { border-top: 1px solid var(--mod-8); }
 .workspace-member-name { display: grid; min-width: 0; gap: 2px; }
 .workspace-member-name strong,
 .workspace-member-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -75,8 +94,8 @@
 .machine-chip--provisioning,
 .machine-chip--destroying { border-color: color-mix(in oklab, var(--accent) 55%, var(--rule)); color: var(--accent); }
 
-.workspace-credential-rows { border-top: 1px solid var(--rule); }
-.workspace-credential-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 48px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+.workspace-credential-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 48px; padding: 0 12px; }
+.workspace-credential-row + .workspace-credential-row { border-top: 1px solid var(--mod-8); }
 .workspace-credential-name { display: grid; min-width: 0; gap: 2px; }
 .workspace-credential-name strong { font-size: 11px; font-weight: 550; }
 .workspace-credential-name small { color: var(--faint); font-size: 10px; }
@@ -106,10 +125,21 @@
 .credential-import-actions p { margin: 0; color: var(--faint); font-size: 10.5px; }
 .credential-import-actions code, .credential-import-summary code { font-family: var(--font-mono); font-size: 10px; }
 
+/* The default-machine-type select caps at 190px and 30px tall in a member
+ * row; in the settings form it is a field, and lines up with the name input
+ * above it at the one settings control height. */
+.workspace-details-settings .cfg-field .machine-type-select { max-width: none; }
+
+.workspace-details-settings .cfg-field .machine-type-select .webapp-select-trigger {
+  min-height: var(--cfg-control-height);
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
 /* The clone list borrows the credential-row geometry: one list of rows, an
- * add control under it. */
-.workspace-repo-rows { border-top: 1px solid var(--rule); }
-.workspace-repo-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+ * add control under it, on the same raised card. */
+.workspace-repo-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; }
+.workspace-repo-row + .workspace-repo-row { border-top: 1px solid var(--mod-8); }
 .workspace-repo-name { display: grid; min-width: 0; gap: 2px; }
 .workspace-repo-name strong { font-size: 11px; font-weight: 550; }
 .workspace-repo-name small { color: var(--faint); font-size: 10px; }

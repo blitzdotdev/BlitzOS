@@ -36,10 +36,21 @@ export function resolveSessionStatusStripState(args: {
   machineRemoved: boolean;
   machineOnlineStatus: MachineOnlineStatus;
   machineName?: string | null;
+  /**
+   * Set by a host that reports connectivity itself — an embedding shell with its
+   * own status line, say — so the two surfaces do not narrate the same outage in
+   * different words. It suppresses the two CONNECTION states and nothing else:
+   * `machine-removed` still resolves, because a machine that no longer exists is
+   * a membership fact rather than a link, and it is the only one of the three
+   * that blocks sending. A host that hid it would leave a dead composer with no
+   * sentence anywhere explaining why.
+   */
+  connectionStatusHidden?: boolean;
 }): SessionStatusStripState | null {
-  if (!args.browserOnline) return { kind: 'browser-offline' };
+  const hidden = args.connectionStatusHidden === true;
+  if (!args.browserOnline && !hidden) return { kind: 'browser-offline' };
   if (args.machineRemoved) return { kind: 'machine-removed' };
-  if (args.machineOnlineStatus === 'offline') {
+  if (args.machineOnlineStatus === 'offline' && !hidden) {
     return { kind: 'machine-offline', machineName: args.machineName ?? null };
   }
   return null;

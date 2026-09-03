@@ -26,6 +26,15 @@ FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c
 
 # Agents install into a prefix the runtime user owns, so `claude` can
 # auto-update and users can `npm install -g` without root.
+#
+# `claude` is deliberately UNPINNED. Its version decides which models the Lody
+# composer can offer (docs/LODY-MODELS.md), it updates itself on every box, and
+# a build-time pin therefore only decided how stale a fresh box was on its first
+# boot — it never held a version, because the first update moved it. Taking
+# `@latest` at build time costs the reproducibility of this layer and buys a box
+# that is current the moment it starts. `codex` and `lody` stay pinned: neither
+# gates a model list, and the `lody` patches below are guarded by a sha256 of
+# the bundle as published, so a floating version would fail the build.
 ENV NPM_CONFIG_PREFIX=/opt/blitz/npm
 # `ws` carries no binary: it is the only dependency of
 # /usr/local/libexec/blitz-lody-bridge, which reaches it through NODE_PATH.
@@ -33,7 +42,7 @@ ENV NPM_CONFIG_PREFIX=/opt/blitz/npm
 # bundle is the CLOUD build and refuses to start without a Lody account, so the
 # patch below re-enables the local platform; see the script's header.
 RUN npm install --global --omit=dev \
-      @anthropic-ai/claude-code@2.1.228 \
+      @anthropic-ai/claude-code@latest \
       @openai/codex@0.147.0 \
       lody@0.88.1 \
       ws@8.21.0 \
@@ -41,13 +50,17 @@ RUN npm install --global --omit=dev \
 COPY packages/box/patches/lody-local-platform.mjs /tmp/lody-local-platform.mjs
 COPY packages/box/patches/lody-acp-auth-queue.mjs /tmp/lody-acp-auth-queue.mjs
 COPY packages/box/patches/lody-code-collab-worktree-root.mjs /tmp/lody-code-collab-worktree-root.mjs
+COPY packages/box/patches/lody-builtin-mcp-off.mjs /tmp/lody-builtin-mcp-off.mjs
+COPY packages/box/patches/lody-session-sandbox.mjs /tmp/lody-session-sandbox.mjs
 # Order matters only for the first: its guard is a sha256 of the bundle AS
 # PUBLISHED, so nothing may rewrite the file before it runs. The others guard on
 # the package version and their own anchor instead, for that reason.
 RUN node /tmp/lody-local-platform.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
     && node /tmp/lody-acp-auth-queue.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
     && node /tmp/lody-code-collab-worktree-root.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
-    && rm /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs
+    && node /tmp/lody-builtin-mcp-off.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
+    && node /tmp/lody-session-sandbox.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
+    && rm /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs /tmp/lody-builtin-mcp-off.mjs /tmp/lody-session-sandbox.mjs
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime-base
 
@@ -64,6 +77,7 @@ RUN set -eux; \
       git=1:2.39.5-0+deb12u3 \
       iproute2=6.1.0-3 \
       iptables=1.8.9-2 \
+      jq=1.6-2.1+deb12u2 \
       libstdc++6=12.2.0-14+deb12u1 \
       nano=7.2-1+deb12u1 \
       openssh-client=1:9.2p1-2+deb12u10 \
@@ -136,19 +150,37 @@ RUN set -eux; \
     ln -s /workspace /srv/blitz-files/workspace; \
     chown -R blitz:blitz /opt/blitz/npm
 
+# Canary ships Lody on while env.defaults keeps it off for self-hosters. This
+# build argument replaces a manual sed that once let a clean rebake silently
+# ship canary with Lody off.
+ARG BLITZ_LODY_SESSIONS=
+RUN set -eu; \
+    if [ -n "$BLITZ_LODY_SESSIONS" ]; then \
+      case "$BLITZ_LODY_SESSIONS" in 0|1) ;; *) echo "BLITZ_LODY_SESSIONS must be 0 or 1" >&2; exit 1 ;; esac; \
+      sed -i "s/^BLITZ_LODY_SESSIONS=.*/BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS/" /etc/blitz/env.defaults; \
+      grep -qx "BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS" /etc/blitz/env.defaults; \
+    fi
+
 # /usr/local/bin comes FIRST, ahead of the npm prefix, so the PATH shims at
 # /usr/local/bin/claude and /usr/local/bin/codex win over the real binaries they
 # exec — and so a copy a member installs into their own writable prefix cannot
 # shadow them. That shadowing is the single most common way a terminal ends up
 # signed out while the same box holds a valid credential.
 #
-# DISABLE_AUTOUPDATER is set image-wide for the same reason: an auto-update
-# breaks the version pin above AND drops a second copy into the member's prefix.
-# It only reaches claude. codex has no such variable, so its shim passes
-# `-c check_for_update_on_startup=false` instead — without it, codex's
-# "Update available!" prompt runs `npm install -g @openai/codex` straight into
-# NPM_CONFIG_PREFIX and overwrites the pin above in place — the chown on the
-# line above hands uid 1000 the write permission that makes it possible.
+# THE VENDOR CLIs UPDATE THEMSELVES, and that is the point. A new Anthropic
+# model reaches the Lody composer only when the `claude` binary is new enough to
+# report it in its ACP `initialize` response — every layer above is passthrough
+# (docs/LODY-MODELS.md). Holding the CLI at a build-time version therefore held
+# the model list at build time too, and made a box-image rebake the delivery
+# mechanism for models. It no longer is: `DISABLE_AUTOUPDATER` is gone from the
+# image, the shims, the profile and the broker, and codex's shim now leaves its
+# startup update check on.
+#
+# What still protects the shims is the PATH order above, not a pin: an update
+# rewrites /opt/blitz/npm in place, and /usr/local/bin sits ahead of it, so the
+# updated copy is exec'd BY the shim rather than instead of it. The chown that
+# hands uid 1000 write permission on the prefix is what makes the in-place
+# rewrite possible, and is deliberate.
 #
 # LODY_PLATFORM and LODY_DATA_DIR are image-wide, not service-local, and that is
 # deliberate. `lody` is on PATH, so a member can type it in a terminal. With the
@@ -165,7 +197,6 @@ RUN set -eux; \
 ENV HOME=/var/lib/blitz/home \
     USER=blitz \
     NPM_CONFIG_PREFIX=/opt/blitz/npm \
-    DISABLE_AUTOUPDATER=1 \
     LODY_PLATFORM=local \
     LODY_DATA_DIR=/var/lib/blitz/lody \
     PATH=/usr/local/bin:/opt/blitz/npm/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin

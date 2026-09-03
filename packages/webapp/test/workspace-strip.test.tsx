@@ -1,10 +1,14 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { WorkspaceStrip, workspaceCode } from "../src/shell/WorkspaceStrip.js";
+import { WorkspaceStrip } from "../src/shell/WorkspaceStrip.js";
 import type { TenantMe } from "../src/api-adapter.js";
 import type { CloudWorkspaceModel } from "../src/workspace-store.js";
 import { render } from "./dom.js";
 import { workspaceModelFixture } from "./workspace-fixtures.js";
+
+const workspaceCss = readFileSync(join(process.cwd(), "src", "webapp-workspace.css"), "utf8");
 
 const acme = { id: "org-one", slug: "acme", name: "Acme", vmLimit: 10 };
 const side = { id: "org-two", slug: "side", name: "Side", vmLimit: 10 };
@@ -38,8 +42,6 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
       onOpenWorkspaceSettings={() => undefined}
       onInviteToWorkspace={() => undefined}
       onCreateWorkspace={() => undefined}
-      onSwitchOrg={() => undefined}
-      onCreateOrg={() => undefined}
       onOpenDrive={() => undefined}
       onOpenSettings={() => undefined}
       onCloseDrawer={() => undefined}
@@ -48,18 +50,8 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
   );
 }
 
-describe("workspaceCode", () => {
-  it("reads initials from a multi-word name and two letters from a single word", () => {
-    expect(workspaceCode("design-team")).toBe("DT");
-    expect(workspaceCode("engineering")).toBe("EN");
-    expect(workspaceCode("research sandbox")).toBe("RS");
-    expect(workspaceCode("a b c d")).toBe("ABC");
-    expect(workspaceCode("  ")).toBe("··");
-  });
-});
-
 describe("workspace strip", () => {
-  it("draws one tile per workspace, ringing the active one", async () => {
+  it("draws one tile per workspace with an accessible Discord-style selection state", async () => {
     const view = await render(strip({
       workspaces: [
         workspace(),
@@ -69,20 +61,19 @@ describe("workspace strip", () => {
     const tiles = [...view.container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="Workspaces"] button',
     )];
-    expect(tiles.map(({ textContent }) => textContent)).toEqual(["DT", "EN", ""]);
+    expect(tiles).toHaveLength(3);
     expect(tiles[0]?.getAttribute("aria-current")).toBe("page");
     expect(tiles[1]?.getAttribute("aria-current")).toBeNull();
-    expect(tiles[1]?.className).toContain("shell-wtile--off");
+    expect(tiles[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(tiles[1]?.getAttribute("aria-selected")).toBe("false");
+    expect(tiles[0]?.querySelector(".shell-wtile__indicator")?.getAttribute("aria-hidden")).toBe("true");
     expect(tiles[2]?.getAttribute("aria-label")).toBe("Create workspace");
-    // Each workspace tile wears its own solid pastel; the create tile keeps the
-    // dashed outline the stylesheet gives it.
-    // jsdom normalizes hsl() to rgb() on read-back; assert solid + distinct.
-    expect(tiles[0]?.style.background).toMatch(/^rgb\(/u);
-    expect(tiles[1]?.style.background).toMatch(/^rgb\(/u);
-    expect(tiles[0]?.style.background).not.toContain("gradient");
-    expect(tiles[0]?.style.background).not.toBe(tiles[1]?.style.background);
-    expect(tiles[0]?.style.background).not.toBe(tiles[1]?.style.background);
-    expect(tiles[2]?.style.background).toBe("");
+    const sigils = tiles.slice(0, 2).map((tile) => tile.querySelector<SVGElement>(".shell-wtile__sigil"));
+    expect(sigils.every((sigil) => sigil !== null)).toBe(true);
+    expect(sigils[0]?.querySelectorAll("rect").length).toBeGreaterThan(1);
+    expect(sigils[0]?.querySelector("rect")?.getAttribute("fill"))
+      .not.toBe(sigils[1]?.querySelector("rect")?.getAttribute("fill"));
+    expect(tiles[2]?.querySelector(".shell-wtile__sigil")).toBeNull();
     await view.unmount();
   });
 
@@ -150,6 +141,12 @@ describe("workspace strip", () => {
     await view.unmount();
   });
 
+  it("resets native button chrome so the context menu keeps its themed surface", () => {
+    const menuRule = /\.webapp-session-menu button\s*\{(?<body>[^}]*)\}/u.exec(workspaceCss);
+    expect(menuRule?.groups?.body).toMatch(/\bborder:\s*0;/u);
+    expect(menuRule?.groups?.body).toMatch(/\bbackground:\s*transparent;/u);
+  });
+
   it("offers a non-admin Settings alone, and renames through the caller's PATCH", async () => {
     const onRenameWorkspace = vi.fn();
     const view = await render(strip({
@@ -194,31 +191,22 @@ describe("workspace strip", () => {
     await view.unmount();
   });
 
-  it("marks only the current organization and closes from a click anywhere outside", async () => {
+  it("carries no org control: only workspace tiles live above the strip's tools", async () => {
+    // The org mark read as a workspace tile, so org switching moved to
+    // Settings → Profile (owner annotation 2026-09-01).
     const view = await render(strip());
-    const menu = () => view.container.querySelector<HTMLElement>(
-      '[role="menu"][aria-label="Organizations"]',
-    );
-    expect(menu()?.hidden).toBe(true);
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Organization: Acme"]',
-    )?.click());
-    expect(menu()?.hidden).toBe(false);
-    const checked = [...menu()!.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
-      .filter((item) => item.getAttribute("aria-checked") === "true")
-      .map(({ textContent }) => textContent);
-    expect(checked).toEqual(["Acme✓"]);
-    const other = menu()!.querySelector<HTMLElement>('[role="menuitemradio"][aria-checked="false"]');
-    expect(other?.textContent).toBe("Side");
-
-    const backdrop = view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Close organization menu"]',
-    );
-    expect(backdrop).not.toBeNull();
-    await act(async () => backdrop?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
-    expect(menu()?.hidden).toBe(true);
-    expect(view.container.querySelector('button[aria-label="Close organization menu"]')).toBeNull();
+    expect(view.container.querySelector('button[aria-label="Organization: Acme"]')).toBeNull();
+    expect(view.container.querySelector('[role="menu"][aria-label="Organizations"]')).toBeNull();
+    // By class as well as by label: the classes are what a hand-written strip
+    // (the design preview's, say) reaches for, and they have no CSS any more.
+    expect(view.container.querySelector(".shell-orgmark")).toBeNull();
+    expect(view.container.querySelector(".shell-strip__orgwrap")).toBeNull();
+    // The strip opens on the workspace tiles; nothing precedes them.
+    const aside = view.container.querySelector(".shell-strip");
+    expect(aside?.querySelector(".shell-strip__tiles")?.previousElementSibling)
+      .toBe(aside?.querySelector(".shell-strip__close"));
+    // One separator remains (above the account edge), not the org divider.
+    expect(view.container.querySelectorAll(".shell-strip__sep").length).toBe(1);
     await view.unmount();
   });
 

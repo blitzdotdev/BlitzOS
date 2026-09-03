@@ -20,6 +20,14 @@ type ArchiveScope = 'my' | 'team';
 
 export type WebArchiveScreenProps = {
   archiveScope: ArchiveScope;
+  /**
+   * Suppresses the My Tasks / All Tasks scope control in the header.
+   *
+   * A host whose workspace has one member has nothing to switch between. The
+   * Archive title keeps its place; only the dropdown beside it goes. Defaults to
+   * `false`, which is the header every cloud workspace has always had.
+   */
+  hideTeamScope?: boolean;
   isMultiSelectMode: boolean;
   selectedCount: number;
   isBulkActionBusy: boolean;
@@ -35,6 +43,7 @@ export type WebArchiveScreenProps = {
 
 export function WebArchiveScreen({
   archiveScope,
+  hideTeamScope = false,
   isMultiSelectMode,
   selectedCount,
   isBulkActionBusy,
@@ -123,6 +132,7 @@ export function WebArchiveScreen({
                 <Archive className="h-4 w-4 text-muted-foreground" />
                 <h1 className="text-sm font-semibold">{t('archive.title', 'Archive')}</h1>
               </div>
+              {hideTeamScope ? null : (
               <div className="ml-2">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -160,6 +170,7 @@ export function WebArchiveScreen({
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
+              )}
             </>
           )}
         </header>

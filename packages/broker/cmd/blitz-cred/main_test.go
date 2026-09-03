@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,13 +12,6 @@ import (
 	"github.com/blitzdotdev/blitz-core/broker/internal/store"
 	"github.com/blitzdotdev/blitz-core/broker/internal/workspace"
 )
-
-// githubTokenBody is what the control plane answers a GitHub pull with. The
-// token and the env value differ from each other on purpose: `get` prints the
-// token, `env` prints the env entries, and a shared string would hide a mix-up.
-const githubTokenBody = `{"connection":"github","mode":"inject","token":"ghs-live",` +
-	`"env":[{"name":"GH_TOKEN","value":"gh-env-value"}],` +
-	`"header":{"name":"Authorization","prefix":"Bearer "},"expiresAt":2000000000000}`
 
 func TestEnrollAcceptsCredentialWithAdditionalFields(t *testing.T) {
 	stateDir := t.TempDir()
@@ -43,7 +35,7 @@ func TestEnrollAcceptsCredentialWithAdditionalFields(t *testing.T) {
 // The verb list an agent reads when it guesses wrong. `--help` used to print
 // "unknown blitz-cred command" and exit 1.
 func TestHelpAndNoArgumentsNameEveryVerb(t *testing.T) {
-	verbs := []string{"enroll", "register", "token", "list", "get", "env", "import", "put", "git-helper", "watch"}
+	verbs := []string{"api-token", "enroll", "register", "token", "watch"}
 	// Empty on purpose: help answers before the state check, so it works on a
 	// machine that is not a box.
 	t.Setenv("BLITZ_STATE_DIR", "")
@@ -99,303 +91,127 @@ func TestTokenHarnessOutputStaysRawForTheShims(t *testing.T) {
 	}
 }
 
-// `list` is a live read of the workspace allow-list. One name per line, because
-// an agent pipes this into a loop.
-func TestListPrintsOneProviderPerLine(t *testing.T) {
+// `api-token` feeds a command substitution inside an Authorization header, so
+// stdout is the bearer and one newline, nothing else. The box cannot read a
+// token's age, so validity is established by use: one authenticated GET
+// against the agent API, refresh only on a 401.
+func TestAPITokenPrintsAStillValidToken(t *testing.T) {
 	stateDir := t.TempDir()
+	var probes []string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		// The comment read rides beside the allow-list read; names come from
-		// the allow-list alone.
-		if request.URL.Path == "/workspaces/self/credentials" {
-			io.WriteString(writer, `{"credentials":[]}`)
-			return
-		}
-		if request.Method != http.MethodGet || request.URL.Path != "/workspaces/self/connections" {
-			t.Errorf("request = %s %s", request.Method, request.URL.Path)
-		}
-		io.WriteString(writer, `{"connections":["github","linear"]}`)
+		probes = append(probes, request.Method+" "+request.URL.Path+" "+request.Header.Get("Authorization"))
+		io.WriteString(writer, `{"openapi":"3.1.0"}`)
 	}))
 	defer server.Close()
 	prepareCPState(t, stateDir, server.URL)
 
 	var output strings.Builder
-	if err := run([]string{"list"}, &output); err != nil {
+	if err := run([]string{"api-token"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "github\nlinear\n" {
-		t.Fatalf("list output = %q", output.String())
+	if output.String() != "access\n" {
+		t.Fatalf("api-token output = %q", output.String())
+	}
+	if len(probes) != 1 || probes[0] != "GET /agent/api Bearer access" {
+		t.Fatalf("probes = %v", probes)
 	}
 }
 
-// An empty allow-list is a workspace nobody has connected yet. Printing nothing
-// reads as a broken command, so the line has to say what to do next.
-func TestListWithNoConnectionsPrintsTheConnectGuidance(t *testing.T) {
+func TestAPITokenRefreshesOnceOnA401ThenPrintsTheRotatedToken(t *testing.T) {
 	stateDir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		io.WriteString(writer, `{"connections":[]}`)
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
-
-	var output strings.Builder
-	if err := run([]string{"list"}, &output); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(output.String(), "blitz connections open") {
-		t.Fatalf("list output = %q", output.String())
-	}
-}
-
-// A credential that carries a comment prints it after a `#`, so an agent
-// picking a key reads what each one is for without a second command.
-func TestListPrintsCredentialCommentsAfterAHash(t *testing.T) {
-	stateDir := t.TempDir()
+	var refreshes int
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/workspaces/self/credentials" {
-			io.WriteString(writer, `{"credentials":[{"name":"CF_TOKEN","comment":"canary token; deploys the control plane"}]}`)
-			return
-		}
-		io.WriteString(writer, `{"connections":["CF_TOKEN","github"]}`)
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
-
-	var output strings.Builder
-	if err := run([]string{"list"}, &output); err != nil {
-		t.Fatal(err)
-	}
-	if output.String() != "CF_TOKEN  # canary token; deploys the control plane\ngithub\n" {
-		t.Fatalf("list output = %q", output.String())
-	}
-}
-
-// A control plane too old to serve the credential list costs the comments,
-// never the list itself.
-func TestListSurvivesAMissingCredentialRoute(t *testing.T) {
-	stateDir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/workspaces/self/credentials" {
+		switch request.URL.Path {
+		case "/agent/api":
+			// The stored access token has expired; only the rotated one passes.
+			if request.Header.Get("Authorization") == "Bearer access-2" {
+				io.WriteString(writer, `{"openapi":"3.1.0"}`)
+				return
+			}
+			writer.WriteHeader(http.StatusUnauthorized)
+		case "/oauth/token":
+			refreshes++
+			if err := request.ParseForm(); err != nil {
+				t.Error(err)
+			}
+			if request.PostForm.Get("grant_type") != "refresh_token" ||
+				request.PostForm.Get("refresh_token") != "refresh" {
+				t.Errorf("refresh form = %v", request.PostForm)
+			}
+			io.WriteString(writer, `{"box_id":"box","access_token":"access-2",`+
+				`"refresh_token":"refresh-2","token_type":"Bearer","expires_in":900}`)
+		default:
+			t.Errorf("unexpected request %s %s", request.Method, request.URL.Path)
 			writer.WriteHeader(http.StatusNotFound)
-			return
 		}
-		io.WriteString(writer, `{"connections":["github"]}`)
 	}))
 	defer server.Close()
 	prepareCPState(t, stateDir, server.URL)
 
 	var output strings.Builder
-	if err := run([]string{"list"}, &output); err != nil {
+	if err := run([]string{"api-token"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "github\n" {
-		t.Fatalf("list output = %q", output.String())
+	if output.String() != "access-2\n" {
+		t.Fatalf("api-token output = %q", output.String())
 	}
-}
-
-// The value arrives on stdin, never argv: a process list must not hold a
-// secret. One trailing newline is the pipe's, not the value's.
-func TestPutSendsTheStdinValueWithItsComment(t *testing.T) {
-	stateDir := t.TempDir()
-	var body []byte
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPut || request.URL.Path != "/workspaces/self/credentials" {
-			t.Errorf("request = %s %s", request.Method, request.URL.Path)
-		}
-		data, err := io.ReadAll(request.Body)
-		if err != nil {
-			t.Error(err)
-		}
-		body = data
-		writer.WriteHeader(http.StatusCreated)
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
-
-	var output strings.Builder
-	err := runWithInput(
-		[]string{"put", "STRIPE_API_KEY", "--comment", "test-mode key, safe for CI"},
-		strings.NewReader("sk_test\n"),
-		&output,
-	)
+	if refreshes != 1 {
+		t.Fatalf("refresh calls = %d", refreshes)
+	}
+	// The rotation is durable: the next caller reads the new pair off disk.
+	rotated, err := store.LoadCredential(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(body) != `{"name":"STRIPE_API_KEY","value":"sk_test","comment":"test-mode key, safe for CI"}` {
-		t.Fatalf("body = %s", body)
-	}
-	if output.String() != "stored    STRIPE_API_KEY\n" {
-		t.Fatalf("put output = %q", output.String())
+	if rotated.AccessToken != "access-2" || rotated.RefreshToken != "refresh-2" {
+		t.Fatalf("stored credential = %+v", rotated)
 	}
 }
 
-func TestPutRefusesAMultilineValueWithTheBase64Sentence(t *testing.T) {
+// An unreachable control plane still prints the stored token, with exit 0:
+// the agent's own curl is about to hit the same network and will surface the
+// real error, which beats this helper guessing at one.
+func TestAPITokenPrintsTheStoredTokenWhenTheCPIsUnreachable(t *testing.T) {
 	stateDir := t.TempDir()
-	prepareCPState(t, stateDir, "https://cp.example")
-	err := runWithInput(
-		[]string{"put", "GOOGLE_SA_JSON"},
-		strings.NewReader("{\n  \"type\": \"service_account\"\n}\n"),
-		io.Discard,
-	)
-	if err == nil || !strings.Contains(err.Error(), "base64") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-// `get` feeds a command substitution. Anything else on stdout — a label, a
-// summary — becomes part of the token the caller sends to the vendor.
-func TestGetPrintsOnlyTheToken(t *testing.T) {
-	stateDir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/workspaces/self/connections/github/token" {
-			t.Errorf("request = %s %s", request.Method, request.URL.Path)
-		}
-		io.WriteString(writer, githubTokenBody)
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	origin := server.URL
+	// Close before the run: nothing listens on the port any more.
+	server.Close()
+	prepareCPState(t, stateDir, origin)
 
 	var output strings.Builder
-	if err := run([]string{"get", "github"}, &output); err != nil {
+	if err := run([]string{"api-token"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "ghs-live\n" {
-		t.Fatalf("get output = %q", output.String())
+	if output.String() != "access\n" {
+		t.Fatalf("api-token output = %q", output.String())
 	}
 }
 
-// `env` is eval'd by a shell. The header comment states the vendor's header
-// shape, which is not guessable, and every value is quoted because a token is
-// an opaque vendor string.
-func TestEnvPrintsTheHeaderCommentThenQuotedAssignments(t *testing.T) {
-	stateDir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		io.WriteString(writer, `{"connection":"github","mode":"inject","token":"ghs-live","env":[`+
-			`{"name":"GH_TOKEN","value":"ghs-live"},`+
-			`{"name":"GH_HOST","value":"it's-github"}`+
-			`],"header":{"name":"Authorization","prefix":"Bearer "},"expiresAt":2000000000000}`)
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
-
-	var output strings.Builder
-	if err := run([]string{"env", "github"}, &output); err != nil {
-		t.Fatal(err)
-	}
-	want := "# send: Authorization: Bearer $GH_TOKEN\n" +
-		"GH_TOKEN='ghs-live'\n" +
-		"GH_HOST='it'\"'\"'s-github'\n"
-	if output.String() != want {
-		t.Fatalf("env output = %q, want %q", output.String(), want)
+// A machine that never enrolled has no origin and no credential to print.
+func TestAPITokenWithoutBoxStateFails(t *testing.T) {
+	t.Setenv("BLITZ_STATE_DIR", t.TempDir())
+	if err := run([]string{"api-token"}, io.Discard); err == nil {
+		t.Fatal("api-token without box state returned no error")
 	}
 }
 
-func TestGitHelperProtocol(t *testing.T) {
-	stateDir := t.TempDir()
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		calls++
-		io.WriteString(writer, githubTokenBody)
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
-
-	var output bytes.Buffer
-	input := strings.NewReader("protocol=https\nhost=github.com\npath=owner/repo.git\n\n")
-	if err := runWithInput([]string{"git-helper", "get"}, input, &output); err != nil {
-		t.Fatal(err)
-	}
-	if output.String() != "username=x-access-token\npassword=ghs-live\n\n" {
-		t.Fatalf("git helper output = %q", output.String())
-	}
-	for _, action := range []string{"store", "erase"} {
-		output.Reset()
-		if err := runWithInput([]string{"git-helper", action}, strings.NewReader("protocol=https\n\n"), &output); err != nil {
-			t.Fatalf("%s: %v", action, err)
-		}
-		if output.Len() != 0 {
-			t.Fatalf("%s output = %q", action, output.String())
-		}
-	}
-	if calls != 1 {
-		t.Fatalf("git helper mint calls = %d", calls)
-	}
-}
-
-func TestGitHelper404IsSilent(t *testing.T) {
-	stateDir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
-
-	var output bytes.Buffer
-	if err := runWithInput([]string{"git-helper", "get"}, strings.NewReader("host=github.com\n\n"), &output); err != nil {
-		t.Fatal(err)
-	}
-	if output.Len() != 0 {
-		t.Fatalf("404 output = %q", output.String())
-	}
-}
-
-// A bare "403" sent agents into retry loops against a workspace that was never
-// connected. Every refusal names the command that puts the question in front of
-// a person, and quotes the request id when the control plane filed one.
-func TestRefusalsNameTheConnectCommandAndTheFiledRequest(t *testing.T) {
-	tests := []struct {
-		name      string
-		status    int
-		body      string
-		requestID string
-	}{
-		{
-			name:      "not connected, request filed",
-			status:    http.StatusForbidden,
-			body:      `{"error":"denied","request_id":"request-403"}`,
-			requestID: "request-403",
-		},
-		{
-			name:      "no credential behind it, request filed",
-			status:    http.StatusNotFound,
-			body:      `{"error":"missing","request_id":"request-404"}`,
-			requestID: "request-404",
-		},
-		{
-			name:   "not connected, no request filed",
-			status: http.StatusForbidden,
-			body:   `{"error":"denied"}`,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			stateDir := t.TempDir()
-			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-				writer.WriteHeader(test.status)
-				io.WriteString(writer, test.body)
-			}))
-			defer server.Close()
-			prepareCPState(t, stateDir, server.URL)
-
-			err := run([]string{"get", "github"}, io.Discard)
-			if err == nil {
-				t.Fatal("a refused pull was reported as success")
-			}
-			if !strings.Contains(err.Error(), "blitz connections open github") {
-				t.Errorf("refusal does not name the connect command: %q", err.Error())
-			}
-			if test.requestID != "" && !strings.Contains(err.Error(), test.requestID) {
-				t.Errorf("refusal does not quote the filed request: %q", err.Error())
-			}
-		})
-	}
-}
-
-// The push model is gone. `sync` delivered credentials into the box, and
-// `token PROVIDER` minted one; both must fail loudly, because an agent that
-// still runs them would otherwise read silence as success.
+// The box credential wire is gone: an agent that still runs a deleted verb
+// must read a loud refusal, never silence it could mistake for success — and
+// the help must have stopped advertising them.
 func TestRemovedVerbsAreRejected(t *testing.T) {
 	t.Setenv("BLITZ_STATE_DIR", t.TempDir())
-	for _, args := range [][]string{{"sync"}, {"token", "github"}} {
+	removed := [][]string{
+		{"sync"},
+		{"token", "github"},
+		{"list"},
+		{"get", "github"},
+		{"env", "github"},
+		{"import", ".env"},
+		{"put", "STRIPE_API_KEY"},
+		{"git-helper", "get"},
+	}
+	for _, args := range removed {
 		if err := run(args, io.Discard); err == nil {
 			t.Errorf("blitz-cred %v returned no error", args)
 		}
@@ -404,8 +220,10 @@ func TestRemovedVerbsAreRejected(t *testing.T) {
 	if err := run([]string{"--help"}, &help); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(help.String(), "sync") {
-		t.Errorf("help still advertises sync: %q", help.String())
+	for _, verb := range []string{"sync", "git-helper", "import", "put", "env"} {
+		if strings.Contains(help.String(), verb) {
+			t.Errorf("help still advertises %s: %q", verb, help.String())
+		}
 	}
 }
 

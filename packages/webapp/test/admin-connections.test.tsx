@@ -2,16 +2,13 @@ import type {
   CatalogEntryView,
   ConnectionView,
   CredentialLeaseView,
-  PutConnectionRequest,
   PutUserGrantRequest,
 } from '@blitzos/schema';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
-import { adminConnectionInput, ProviderAdminForm } from '../src/connections/ProviderAdminForm.js';
 import { WorkspaceProviderRows } from '../src/connections/WorkspaceProviderRows.js';
 import { ConnectionsPanel } from '../src/settings/ConnectionsPanel.js';
-import { OrgConnectionsSection } from '../src/settings/OrgConnectionsSection.js';
 import { render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -46,9 +43,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     recreateMachine: vi.fn(async () => { throw new Error('unused'); }),
     setMachineType: vi.fn(async () => { throw new Error('unused'); }),
     destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
-    putWorkspaceCredential: vi.fn(async () => undefined),
-    importWorkspaceCredentials: vi.fn(async () => { throw new Error('unused'); }),
-    revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error('unused'); }),
     deleteFolder: vi.fn(async () => undefined),
@@ -93,14 +87,19 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
     listConnections: vi.fn(async () => ({ connections: [] })),
-    putConnection: vi.fn(async () => undefined),
-    deleteConnection: vi.fn(async () => undefined),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
     mintWorkspaceConnection: vi.fn(async () => { throw new Error('unused'); }),
     disconnectWorkspaceConnection: vi.fn(async () => undefined),
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
     denyCredentialRequest: vi.fn(async () => undefined),
+    listOrgCredentials: vi.fn(async () => ({ credentials: [] })),
+    putOrgCredential: vi.fn(async () => { throw new Error('unused'); }),
+    revokeOrgCredential: vi.fn(async () => undefined),
+    replaceOrgCredentialGrants: vi.fn(async () => { throw new Error('unused'); }),
+    importOrgCredentials: vi.fn(async () => ({ results: [], linesRead: 0 })),
+    listGrantProposals: vi.fn(async () => ({ proposals: [] })),
+    resolveGrantProposal: vi.fn(async () => { throw new Error('unused'); }),
     listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
     listConnectionGrants: vi.fn(async () => ({ grants: [] })),
     listGithubInstallations: vi.fn(async () => ({ installations: [] })),
@@ -148,20 +147,6 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
   };
 }
 
-/** The GitHub App shape: app id + installation id + private-key file, PUT */
-function appEntry(id: string, title: string): CatalogEntryView {
-  const entry = adminEntry(id, title, false);
-  return {
-    ...entry,
-    oauthAvailable: true,
-    adminForm: {
-      rootLabel: 'App private key (.pem)',
-      rootHelp: 'Generate a private key in the vendor app settings and drop the downloaded file here.',
-      placements: [{ kind: 'env', name: 'GH_TOKEN', fill: 'token' }],
-    },
-  };
-}
-
 function grantOnlyEntry(id: string, title: string): CatalogEntryView {
   return { ...adminEntry(id, title, false), adminForm: null, personalTokenLabel: 'API key' };
 }
@@ -189,238 +174,9 @@ function typeInto(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-const setTextAreaValue = Object.getOwnPropertyDescriptor(
-  HTMLTextAreaElement.prototype,
-  'value',
-)?.set;
-
-function typeIntoTextArea(textarea: HTMLTextAreaElement, value: string): void {
-  if (setTextAreaValue === undefined) throw new Error('textarea value setter is unavailable');
-  setTextAreaValue.call(textarea, value);
-  textarea.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
-/** Drops a file on the key drop zone the way a browser would: a bubbling
- * drop event whose dataTransfer carries the file list. */
-function dropKeyFile(zone: Element, file: File): void {
-  const event = new Event('drop', { bubbles: true, cancelable: true });
-  Object.defineProperty(event, 'dataTransfer', {
-    value: { files: [file], items: [], types: ['Files'] },
-  });
-  zone.dispatchEvent(event);
-}
-
-function keyDropZone(container: HTMLElement): Element {
-  const zone = container.querySelector('.connect-drop');
-  if (zone === null) throw new Error('key drop zone is missing');
-  return zone;
-}
-
-function fillAppIds(container: HTMLElement): void {
-  const appId = container.querySelector<HTMLInputElement>('input[name="appId"]');
-  const installationId = container.querySelector<HTMLInputElement>('input[name="installationId"]');
-  if (appId === null || installationId === null) {
-    throw new Error('app form inputs are missing');
-  }
-  typeInto(appId, '123456');
-  typeInto(installationId, '987654');
-}
-
 function click(button: Element): void {
   button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 }
-
-function buttonByText(container: Element, text: string): Element {
-  const match = [...container.querySelectorAll('button')]
-    .find((button) => button.textContent === text);
-  if (match === undefined) throw new Error(`no button reads "${text}"`);
-  return match;
-}
-
-describe('provider admin form', () => {
-  const putBody = (
-    entry: CatalogEntryView,
-    fill: (container: HTMLElement) => void | Promise<void>,
-  ) => {
-    return (async () => {
-      const bodies: PutConnectionRequest[] = [];
-      const view = await render(
-        <ProviderAdminForm
-          entry={entry}
-          saving={false}
-          configured={false}
-          onCancel={() => undefined}
-          onSubmit={(input) => bodies.push(input)}
-        />,
-      );
-      await fill(view.container);
-      // The component renders no <form> (its host may be one), so saving is
-      // the Save button, not a submit event.
-      expect(view.container.querySelector('form')).toBeNull();
-      await act(async () => {
-        click(buttonByText(view.container, 'Save'));
-      });
-      await view.unmount();
-      return bodies;
-    })();
-  };
-
-  /** The static form is one field: the root. It used to grow an instance-URL
-   * field for proxy custody, which no manifest ever asked for — the admin path
-   * and proxy custody have never met on the same provider. */
-  it('renders the manifest-decided fields for a static root', async () => {
-    const view = await render(
-      <ProviderAdminForm
-        entry={adminEntry('discord', 'Discord', false)}
-        saving={false}
-        configured={false}
-        onCancel={() => undefined}
-        onSubmit={() => undefined}
-      />,
-    );
-    // The field micro-label is `.cfg-label` since the settings-surface
-    // system landed (src/settings-surface.css).
-    const labels = [...view.container.querySelectorAll('.cfg-label')]
-      .map((label) => label.textContent);
-    expect(labels).toEqual(['Bot token']);
-    expect(view.container.querySelector('input[name="baseUrl"]')).toBeNull();
-    expect(view.container.querySelector('input[name="root"]')?.getAttribute('type')).toBe('password');
-    expect(view.container.textContent).toContain('Create it in the vendor console');
-    await view.unmount();
-  });
-
-  /** The same shape the control-plane suite PUTs directly: manifest-decided
-   * custody and placements, admin-supplied root, and no proxy block anywhere. */
-  it('submits the exact static PUT body the control plane stores', async () => {
-    const bodies = await putBody(adminEntry('discord', 'Discord', false), (container) => {
-      expect(container.querySelector('input[name="baseUrl"]')).toBeNull();
-      const root = container.querySelector<HTMLInputElement>('input[name="root"]');
-      if (root === null) throw new Error('root input is missing');
-      typeInto(root, 'test-only-bot-token');
-    });
-    expect(bodies).toEqual([{
-      provider: 'discord',
-      kind: 'static',
-      custody: 'cp',
-      config: {
-        placements: [{ kind: 'env', name: 'DISCORD_BOT_TOKEN', fill: 'token' }],
-      },
-      root: 'test-only-bot-token',
-    }]);
-  });
-
-  it('parses nothing for a provider without an admin form', () => {
-    expect(adminConnectionInput(grantOnlyEntry('linear', 'Linear'), new FormData())).toBeNull();
-  });
-
-  it('saves on Enter in a field without any native submit', async () => {
-    const bodies: PutConnectionRequest[] = [];
-    const view = await render(
-      <ProviderAdminForm
-        entry={adminEntry('discord', 'Discord', false)}
-        saving={false}
-        configured={false}
-        onCancel={() => undefined}
-        onSubmit={(input) => bodies.push(input)}
-      />,
-    );
-    const root = view.container.querySelector<HTMLInputElement>('input[name="root"]');
-    if (root === null) throw new Error('root input is missing');
-    typeInto(root, 'test-only-bot-token');
-    await act(async () => {
-      root.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Enter',
-        bubbles: true,
-        cancelable: true,
-      }));
-    });
-    expect(bodies).toHaveLength(1);
-    expect(bodies[0]?.root).toBe('test-only-bot-token');
-    await view.unmount();
-  });
-
-  it('refuses to save while a required field is empty', async () => {
-    const bodies: PutConnectionRequest[] = [];
-    const view = await render(
-      <ProviderAdminForm
-        entry={adminEntry('discord', 'Discord', false)}
-        saving={false}
-        configured={false}
-        onCancel={() => undefined}
-        onSubmit={(input) => bodies.push(input)}
-      />,
-    );
-    await act(async () => {
-      click(buttonByText(view.container, 'Save'));
-    });
-    expect(bodies).toEqual([]);
-    await view.unmount();
-  });
-});
-
-describe('org connections section (settings, revoke-only)', () => {
-  const storedRow: ConnectionView = {
-    name: 'discord',
-    provider: 'discord',
-    kind: 'static',
-    custody: 'cp',
-    status: 'active',
-    createdBy: 'admin',
-    proxyBaseUrl: null,
-    orgCredential: true,
-  };
-  const declaredRow: ConnectionView = {
-    name: 'youtrack',
-    provider: 'youtrack',
-    kind: 'static',
-    custody: 'proxy',
-    status: 'active',
-    createdBy: 'first-member',
-    proxyBaseUrl: 'https://acme.youtrack.example',
-    orgCredential: false,
-  };
-
-  it('lists only sealed org credentials, never member declarations', async () => {
-    const wire = client({
-      listConnections: vi.fn(async () => ({ connections: [storedRow, declaredRow] })),
-    });
-    const view = await render(<OrgConnectionsSection client={wire} />);
-    await settle();
-    const section = view.container.querySelector('[aria-label="Organization connections"]');
-    expect(section?.textContent).toContain('discord');
-    expect(section?.textContent).not.toContain('youtrack');
-    // The add path lives on the template page now; this section only names it.
-    expect(section?.textContent).toContain('template page');
-    expect(section?.querySelector('form')).toBeNull();
-    await view.unmount();
-  });
-
-  it('revokes an org credential only after confirmation', async () => {
-    const deleteConnection = vi.fn(async () => undefined);
-    const wire = client({
-      listConnections: vi.fn(async () => ({ connections: [storedRow] })),
-      deleteConnection,
-    });
-    const view = await render(<OrgConnectionsSection client={wire} />);
-    await settle();
-    await act(async () => click(buttonByText(view.container, 'Revoke')));
-    expect(deleteConnection).not.toHaveBeenCalled();
-    await act(async () => click(buttonByText(document.body, 'Revoke credential')));
-    await settle();
-    expect(deleteConnection).toHaveBeenCalledWith('discord');
-    await view.unmount();
-  });
-
-  it('draws nothing when the org stores no credential', async () => {
-    const wire = client({
-      listConnections: vi.fn(async () => ({ connections: [declaredRow] })),
-    });
-    const view = await render(<OrgConnectionsSection client={wire} />);
-    await settle();
-    expect(view.container.querySelector('[aria-label="Organization connections"]')).toBeNull();
-    await view.unmount();
-  });
-});
 
 describe('settings connections panel (revoke-only)', () => {
   it('hosts no picker and no config form; grants keep revoke and OAuth re-auth', async () => {
@@ -453,7 +209,7 @@ describe('settings connections panel (revoke-only)', () => {
     const view = await render(<ConnectionsPanel client={wire} />);
     await settle();
     // The connect surfaces moved out: members connect in the workspace
-    // drawer, admins configure on the template page.
+    // drawer; org-shared keys are org credentials, not connections.
     expect(view.container.querySelector('.connect-picker')).toBeNull();
     expect(view.container.querySelector('.connect-form')).toBeNull();
     // Rotation stays: an OAuth grant re-runs the dance from a plain link; a
@@ -466,31 +222,6 @@ describe('settings connections panel (revoke-only)', () => {
       .filter((button) => button.textContent === 'Revoke');
     expect(revokes.length).toBe(2);
     await view.unmount();
-  });
-
-  it('shows the org section for admins and never for members', async () => {
-    const stored: ConnectionView = {
-      name: 'discord',
-      provider: 'discord',
-      kind: 'static',
-      custody: 'cp',
-      status: 'active',
-      createdBy: 'admin',
-      proxyBaseUrl: null,
-      orgCredential: true,
-    };
-    const wire = client({
-      listConnections: vi.fn(async () => ({ connections: [stored] })),
-    });
-    const asAdmin = await render(<ConnectionsPanel client={wire} admin />);
-    await settle();
-    expect(asAdmin.container.querySelector('[aria-label="Organization connections"]')).not.toBeNull();
-    await asAdmin.unmount();
-
-    const asMember = await render(<ConnectionsPanel client={wire} />);
-    await settle();
-    expect(asMember.container.querySelector('[aria-label="Organization connections"]')).toBeNull();
-    await asMember.unmount();
   });
 });
 
@@ -533,7 +264,7 @@ describe('provider connect surface (workspace rows)', () => {
     return main;
   }
 
-  it('explains admin-configured providers point at the template page', async () => {
+  it('explains admin-configured providers are an organization credential', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({
         providers: [
@@ -548,7 +279,8 @@ describe('provider connect surface (workspace rows)', () => {
     await act(async () => click(expand(view.container, 'Acme Tracker')));
     expect(view.container.querySelector('.connect-form')).toBeNull();
     expect(view.container.textContent).toContain('An admin stores one Acme Tracker key for everyone');
-    expect(view.container.textContent).toContain('template page');
+    expect(view.container.textContent).toContain('organization credential');
+    expect(view.container.textContent).not.toContain('template page');
     expect(view.container.textContent).not.toContain('Connecting requires OAuth');
 
     await act(async () => click(expand(view.container, 'Corp SSO')));
@@ -608,7 +340,6 @@ describe('provider connect surface (workspace rows)', () => {
       status: 'active',
       createdBy: 'first-member',
       proxyBaseUrl: 'https://acme.youtrack.example',
-      orgCredential: false,
     };
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({

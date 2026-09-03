@@ -11,7 +11,10 @@ const rawCore = import.meta.glob<string>(["../core/**/*.ts", "../core/**/*.js"],
   query: "?raw",
 });
 
-const rawTextAssets = import.meta.glob<string>("../../box/rootfs/opt/blitz/skel/*.md", {
+const rawTextAssets = import.meta.glob<string>([
+  "../../box/rootfs/opt/blitz/skel/*.md",
+  "../../schema/openapi/*.json",
+], {
   eager: true,
   import: "default",
   query: "?raw",

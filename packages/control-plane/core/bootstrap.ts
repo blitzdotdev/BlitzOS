@@ -196,7 +196,7 @@ with open(parts_path, "w", encoding="utf-8") as parts_file:
 print(f"{total_sha256.lower()}\t{image_tag}")
 PYTHON
     IFS=$'\t' read -r manifest_total_sha256 manifest_image_tag <"$manifest_metadata_path"
-    [ "$manifest_image_tag" = "$BOX_IMAGE_TAG" ] || fail "manifest imageTag does not match BOX_IMAGE_TAG"
+    [ "$manifest_image_tag" = "$BOX_IMAGE_TAG" ] || fail "manifest imageTag $manifest_image_tag does not match BOX_IMAGE_TAG $BOX_IMAGE_TAG"
     manifest_base=${"${BOX_IMAGE_REF%/*}"}
     : >"$image_archive"
     while IFS=$'\t' read -r part_name part_sha256; do
@@ -347,12 +347,12 @@ install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
   // "" on every create without template repos, so the emitted bytes stay
   // identical and every existing bootstrap pin holds. With repos it starts
   // one detached best-effort retry loop inside the box: each pass skips
-  // repos that already have a .git (idempotent across reboots) and retries
-  // every 5s for up to 10 minutes, because cloning can only succeed once
-  // registration completes and the baked /etc/gitconfig credential helper
-  // (`blitz-cred git-helper`, CP-direct) can mint. `|| true` overall: a
-  // failed clone never fails the boot; output lands in
-  // /var/lib/blitz/repo-clone.log.
+  // repos that already have a .git (idempotent across reboots), falls back
+  // from Git's negotiated HTTP/2 to HTTP/1.1, and retries every 5s for up to
+  // 10 minutes, because cloning can only succeed once registration completes
+  // and the baked /etc/gitconfig credential helper (`blitz-git-credential`,
+  // CP-direct) can mint. `|| true` overall: a failed clone never fails the
+  // boot; output lands in /var/lib/blitz/repo-clone.log.
   const repos = options.repos ?? [];
   for (const repo of repos) {
     // The save-time validator is the real gate; this re-check keeps the
@@ -363,7 +363,7 @@ install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
   }
   const repoCloneAttempts = repos.map((repo) => {
     const directory = repo.slice(repo.indexOf("/") + 1);
-    return `  [ -d /workspace/${directory}/.git ] || git clone https://github.com/${repo} /workspace/${directory} || cloned=false`;
+    return `  [ -d /workspace/${directory}/.git ] || git clone https://github.com/${repo} /workspace/${directory} || git -c http.version=HTTP/1.1 clone https://github.com/${repo} /workspace/${directory} || cloned=false`;
   }).join("\n");
   const repoCloner = repos.length === 0
     ? ""
@@ -540,6 +540,12 @@ if [ -n "$volume_device" ]; then
   grep -Fqx "$fstab_entry" /etc/fstab || printf '%s\n' "$fstab_entry" >>/etc/fstab
 fi
 
+# The surface tokens on this volume were written by whatever VM last ran here,
+# and on a re-provision its tunnel is already deleted. Drop the marker now --
+# after the mount, before the box container starts -- so the guest's cloudflared
+# waits for THIS instance's cloud-init to rewrite them instead of racing it and
+# holding a dead credential for the life of the box (core/cloud-init.ts).
+rm -f /var/lib/blitz/tokens-ready
 blitz_phase volume-mounted
 touch "$DURABLE_BOOTSTRAP_LOG"
 chmod 0600 "$DURABLE_BOOTSTRAP_LOG"

@@ -7,6 +7,9 @@ const sources = import.meta.glob<string>(["../core/**/*.ts", "../core/**/*.js"],
 });
 
 const expected = [
+  "agent-api.ts",
+  "agent-api-manifest.ts",
+  "agent-routes.ts",
   "agent-rules.ts",
   "app.ts",
   "blobs.ts",
@@ -31,10 +34,7 @@ const expected = [
   "connections/mint.ts",
   "connections/minters/grant.ts",
   "connections/minters/oauth.ts",
-  "connections/minters/static.ts",
   "connections/proxy.ts",
-  "connections/pull-routes.ts",
-  "connections/pull-wire.ts",
   "connections/registry.ts",
   "connections/requests.ts",
   "connections/root-crypto.ts",
@@ -55,6 +55,7 @@ const expected = [
   "files/schedule.ts",
   "files/sync.ts",
   "files/usage-push.ts",
+  "grant-proposals.ts",
   "http.ts",
   "identity/google.ts",
   "identity/invites.ts",
@@ -69,6 +70,9 @@ const expected = [
   "machines.ts",
   "oauth.ts",
   "operator-tokens.ts",
+  "org-credential-import.ts",
+  "org-credential-routes.ts",
+  "org-credentials.ts",
   "preview.ts",
   "principals.ts",
   "recipes.ts",
@@ -98,8 +102,6 @@ const expected = [
   "template-repos.ts",
   "workspace-names.ts",
   "workspace-access.ts",
-  "workspace-credential-import.ts",
-  "workspace-credentials.ts",
   "workspace-drain.ts",
   "workspace-members.ts",
   "workspace-projection.ts",
@@ -114,6 +116,7 @@ const expected = [
   "webapp-surface.ts",
   "webapp-tickets.ts",
   "wire-machines.ts",
+  "wire-org-credentials.ts",
   "wire-sharing.ts",
   "wire.ts",
   "workspaces.ts",
@@ -135,6 +138,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(110);
+    expect(expected).toHaveLength(113);
   });
 });

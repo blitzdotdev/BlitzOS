@@ -426,9 +426,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     recreateMachine: vi.fn(async () => { throw new Error('unused'); }),
     setMachineType: vi.fn(async () => { throw new Error('unused'); }),
     destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
-    putWorkspaceCredential: vi.fn(async () => undefined),
-    importWorkspaceCredentials: vi.fn(async () => { throw new Error('unused'); }),
-    revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error('unused'); }),
     deleteFolder: vi.fn(async () => undefined),
@@ -481,8 +478,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
     listConnections: vi.fn(async () => ({ connections: [] })),
-    putConnection: vi.fn(async () => undefined),
-    deleteConnection: vi.fn(async () => undefined),
     mintWorkspaceConnection: vi.fn(async () => { throw new Error('unused'); }),
     disconnectWorkspaceConnection: vi.fn(async () => undefined),
     listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
@@ -504,6 +499,13 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
     denyCredentialRequest: vi.fn(async () => undefined),
+    listOrgCredentials: vi.fn(async () => ({ credentials: [] })),
+    putOrgCredential: vi.fn(async () => { throw new Error('unused'); }),
+    revokeOrgCredential: vi.fn(async () => undefined),
+    replaceOrgCredentialGrants: vi.fn(async () => { throw new Error('unused'); }),
+    importOrgCredentials: vi.fn(async () => ({ results: [], linesRead: 0 })),
+    listGrantProposals: vi.fn(async () => ({ proposals: [] })),
+    resolveGrantProposal: vi.fn(async () => { throw new Error('unused'); }),
     ...overrides,
   };
 }
@@ -518,11 +520,15 @@ describe('usage capture settings', () => {
       <SettingsPage
         client={wire}
         viewer={viewer}
+        pendingGrantProposals={[]}
         section={section}
         onNavigate={() => undefined}
         onOpenWorkspace={() => undefined}
+        onReviewProposal={() => undefined}
         onSignOut={async () => undefined}
         onLeftOrg={() => undefined}
+        onSwitchOrg={() => undefined}
+        onCreateOrg={() => undefined}
       />
     );
   }
@@ -550,8 +556,10 @@ describe('usage capture settings', () => {
     const view = await render(settingsPage(wire, 'admin'));
     await settle();
 
+    // The switch's accessible name comes from its wrapping label
+    // (SettingsSwitch), so the query pins the role instead.
     const toggle = view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Agent usage capture"]',
+      'input[role="switch"]',
     )!;
     expect(toggle.checked).toBe(false);
     expect(view.container.textContent).toContain('created the first time you turn it on');
@@ -562,7 +570,7 @@ describe('usage capture settings', () => {
     await settle();
     expect(putUsageCapture).toHaveBeenCalledWith(true);
     expect(view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Agent usage capture"]',
+      'input[role="switch"]',
     )?.checked).toBe(true);
     expect(view.container.querySelector<HTMLAnchorElement>('a[href="/folder/folder-usage"]'))
       .not.toBeNull();

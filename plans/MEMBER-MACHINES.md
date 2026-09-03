@@ -338,7 +338,9 @@ This replaces today's owner-resolution (`mint.ts:243`) — the machine's
 member IS the identity, so nothing is borrowed and no disclosure banner is
 needed.
 
-**Workspace plane.** The workspace box only *adds* the workspace
+**Workspace plane.** *Superseded 2026-09-02: the workspace credential store
+is deleted; the static plane is org-scoped — see plans/ORG-CREDENTIALS.md.*
+The workspace box only *adds* the workspace
 credentials from §1. Every member's machine in the workspace can use them
 (viewer excepted — no machine). Audit rows name the machine and its member.
 

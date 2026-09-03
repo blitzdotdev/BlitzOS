@@ -6,15 +6,16 @@ import type {
 } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runOrphanSweep } from "../core/index.js";
 import {
   appRequest,
-  boxTokenFor,
   createWorkspace,
   harness,
   machineIdFor,
   operatorSession,
   resetDatabase,
   sameOrgSession,
+  testRuntime,
 } from "./helpers.js";
 
 function json(body: object, method = "POST"): RequestInit {
@@ -65,7 +66,6 @@ describe("member machines", () => {
           { membershipId: teammate.membershipId, role: "member" },
           { membershipId: watcher.membershipId, role: "viewer" },
         ],
-        credentials: [{ name: "STRIPE_API_KEY", label: "live", value: "sk_test_only" }],
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
     });
@@ -87,11 +87,6 @@ describe("member machines", () => {
       "provisioning",
       null,
     ]);
-    // Names only: a value never comes back out of the store.
-    expect(workspace.credentials).toEqual([
-      { name: "STRIPE_API_KEY", label: "live", comment: null, createdAt: expect.any(Number) },
-    ]);
-    expect(JSON.stringify(workspace)).not.toContain("sk_test_only");
   });
 
   it("keeps the machine row and the volume when a machine stops, and brings it back on start", async () => {
@@ -148,6 +143,125 @@ describe("member machines", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
     }).then(({ status }) => status)).toBe(200);
+  });
+
+  /**
+   * The incident of 2026-09-01, in one test.
+   *
+   * A member stopped a machine whose VM was already unreachable. The teardown
+   * threw partway, leaving the row in `destroying`, and the janitor — which
+   * could not tell a stop from a destroy — finished it as `destroyed`. The
+   * workspace then projected as destroyed and left the rail, `start` answered
+   * 409, and the volume's retention clock had begun on a disk that was only
+   * paused. Nothing about a stop is allowed to end that way.
+   */
+  it("finishes an interrupted stop as a stop, and never as a tombstone", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const volume = await appRequest(app, "/volumes", {
+      ...json({ name: "state", sizeGb: 20, location: "test" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const volumeId = (await volume.json<{ volume: { id: string } }>()).volume.id;
+    const workspace = await createWorkspace(app, cookie, volumeId);
+    const machineId = await machineIdFor(workspace.id);
+
+    // The VM is gone as far as the provider is concerned, which is what the
+    // real machine's broken tunnel amounted to: the stop cannot finish.
+    providers.onDestroy = () => {
+      throw new Error("provider is unreachable mid-stop");
+    };
+    expect((await appRequest(app, `/machines/${machineId}/stop`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    })).status).toBeGreaterThanOrEqual(500);
+
+    // Mid-flight, and carrying what the finaliser needs to know.
+    const midFlight = await env.DB
+      .prepare("SELECT state, vm_id, destroy_keeps_row FROM machines WHERE id = ?1")
+      .bind(machineId)
+      .first<{ state: string; vm_id: string | null; destroy_keeps_row: number }>();
+    expect(midFlight).toMatchObject({ state: "destroying", destroy_keeps_row: 1 });
+    expect(midFlight?.vm_id).not.toBeNull();
+
+    // The janitor picks the row up, as it does on every hourly tick and on any
+    // request that schedules the lazy sweep.
+    delete providers.onDestroy;
+    expect(await runOrphanSweep(testRuntime(providers))).toBe(1);
+
+    const afterSweep = await machineRow(workspace.id, "personal");
+    expect(afterSweep?.state).toBe("stopped");
+    expect(afterSweep?.vm_id).toBeNull();
+    expect(afterSweep?.volume_id).toBe(volumeId);
+    // The disk was paused, not released: no retention clock runs on it.
+    expect(await env.DB
+      .prepare("SELECT detached_at FROM volume_ownership WHERE volume_id = ?1")
+      .bind(volumeId).first<number | null>("detached_at")).toBeNull();
+
+    // The workspace is still on the rail, and the machine still starts.
+    const view = await appRequest(app, `/workspaces/${workspace.id}`, {
+      headers: { Cookie: cookie },
+    });
+    await expect(view.json<{ workspace: WorkspaceView }>()).resolves.toMatchObject({
+      workspace: { phase: "ready" },
+    });
+    expect((await appRequest(app, `/machines/${machineId}/start`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    })).status).toBe(200);
+    expect((await machineRow(workspace.id, "personal"))?.state).toBe("provisioning");
+  });
+
+  it("starts a machine again when its row and volume outlived a destroy", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const volume = await appRequest(app, "/volumes", {
+      ...json({ name: "state", sizeGb: 20, location: "test" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const volumeId = (await volume.json<{ volume: { id: string } }>()).volume.id;
+    const workspace = await createWorkspace(app, cookie, volumeId);
+    const machineId = await machineIdFor(workspace.id);
+
+    // A row exactly like the one the field is carrying: tombstoned by a
+    // pre-0047 janitor, with the member's disk still attached to it.
+    await env.DB
+      .prepare("UPDATE machines SET state = 'destroyed', vm_id = NULL WHERE id = ?1")
+      .bind(machineId)
+      .run();
+    // The trap, as the browser saw it: no phase to poll on and no machine to
+    // act on, so `start` is the only door left.
+    const trapped = await appRequest(app, `/workspaces/${workspace.id}`, {
+      headers: { Cookie: cookie },
+    });
+    const view = (await trapped.json<{ workspace: WorkspaceView }>()).workspace;
+    expect(view.phase).toBe("destroyed");
+    expect(view.members?.find(({ membershipId }) => membershipId === "personal")?.machine)
+      .toBeNull();
+
+    const started = await appRequest(app, `/machines/${machineId}/start`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(started.status).toBe(200);
+    await expect(started.json<MachineResponse>()).resolves.toMatchObject({
+      machine: { id: machineId, state: "provisioning" },
+    });
+    // Back on the same disk, which is the whole point of keeping the row.
+    expect((await machineRow(workspace.id, "personal"))?.volume_id).toBe(volumeId);
+    expect(providers.createCalls).toBe(2);
+
+    // A teardown that is genuinely in flight is still refused: a second VM on
+    // that volume would race the finaliser.
+    await env.DB
+      .prepare("UPDATE machines SET state = 'destroying', vm_id = NULL WHERE id = ?1")
+      .bind(machineId)
+      .run();
+    const racing = await appRequest(app, `/machines/${machineId}/start`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(racing.status).toBe(409);
   });
 
   it("changes a machine type on the same volume and refuses another location", async () => {
@@ -524,105 +638,6 @@ describe("member machines", () => {
 
     const usage = await appRequest(app, "/orgs/self/usage", { headers: { Cookie: cookie } });
     await expect(usage.json()).resolves.toMatchObject({ vmsUsed: 2, vmLimit: 2 });
-  });
-
-  it("serves a workspace credential through the box pull wire, personal grant first", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    const created = await appRequest(app, "/workspaces", {
-      ...json({
-        machineTypeId: "small",
-        credentials: [{ name: "STRIPE_API_KEY", value: "sk_workspace_value" }],
-      }),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    const workspace = (await created.json<CreatedWorkspace>()).workspace;
-    const token = await boxTokenFor(app, providers, workspace.id);
-    const boxHeaders = { Authorization: `Bearer ${token}` };
-
-    // The allow-list a box reads carries both planes: `blitz-cred` is the one
-    // door to every secret on the machine.
-    const listed = await appRequest(app, "/workspaces/self/connections", { headers: boxHeaders });
-    await expect(listed.json()).resolves.toEqual({ connections: ["STRIPE_API_KEY"] });
-
-    const minted = await appRequest(app, "/workspaces/self/connections/STRIPE_API_KEY/token", {
-      method: "POST",
-      headers: boxHeaders,
-    });
-    expect(minted.status).toBe(200);
-    await expect(minted.json()).resolves.toMatchObject({
-      connection: "STRIPE_API_KEY",
-      mode: "inject",
-      token: "sk_workspace_value",
-      env: [{ name: "STRIPE_API_KEY", value: "sk_workspace_value" }],
-    });
-
-    // A rotate is the same act as an add: the next pull reads the new value
-    // live, with no sync and no restart.
-    expect((await appRequest(app, `/workspaces/${workspace.id}/credentials`, {
-      ...json({ name: "STRIPE_API_KEY", value: "sk_rotated_value" }, "PUT"),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    })).status).toBe(201);
-    await expect(appRequest(app, "/workspaces/self/connections/STRIPE_API_KEY/token", {
-      method: "POST",
-      headers: boxHeaders,
-    }).then((response) => response.json())).resolves.toMatchObject({
-      token: "sk_rotated_value",
-    });
-
-    // A revoke refuses the next call rather than the one after it.
-    expect((await appRequest(app, `/workspaces/${workspace.id}/credentials/STRIPE_API_KEY`, {
-      method: "DELETE",
-      headers: { Cookie: cookie },
-    })).status).toBe(204);
-    expect((await appRequest(app, "/workspaces/self/connections/STRIPE_API_KEY/token", {
-      method: "POST",
-      headers: boxHeaders,
-    })).status).toBe(404);
-  });
-
-  it("gates workspace credentials on the workspace role", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-    const member = await sameOrgSession("cred-member");
-    const viewer = await sameOrgSession("cred-viewer");
-    const created = await appRequest(app, "/workspaces", {
-      ...json({
-        machineTypeId: "small",
-        members: [
-          { membershipId: member.membershipId, role: "member" },
-          { membershipId: viewer.membershipId, role: "viewer" },
-        ],
-        credentials: [{ name: "STRIPE_API_KEY", value: "sk_test_only" }],
-      }),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    const workspace = (await created.json<CreatedWorkspace>()).workspace;
-    const path = `/workspaces/${workspace.id}/credentials`;
-
-    // Use, yes; manage, no. The names reach a member on the workspace view,
-    // and a viewer sees none: they hold no machine and may not use a
-    // credential at all (§3).
-    await expect(appRequest(app, `/workspaces/${workspace.id}`, {
-      headers: { Cookie: member.cookie },
-    }).then((response) => response.json())).resolves.toMatchObject({
-      workspace: {
-        credentials: [{ name: "STRIPE_API_KEY", label: null, createdAt: expect.any(Number) }],
-      },
-    });
-    await expect(appRequest(app, `/workspaces/${workspace.id}`, {
-      headers: { Cookie: viewer.cookie },
-    }).then((response) => response.json())).resolves.toMatchObject({
-      workspace: { credentials: [] },
-    });
-    expect((await appRequest(app, path, {
-      ...json({ name: "OTHER", value: "x" }, "PUT"),
-      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
-    })).status).toBe(403);
-    expect((await appRequest(app, `${path}/STRIPE_API_KEY`, {
-      method: "DELETE",
-      headers: { Cookie: member.cookie },
-    })).status).toBe(403);
   });
 
   it("routes the webApp proxy to the requesting member's own machine", async () => {

@@ -53,7 +53,6 @@ import {
   activeOrgMember,
   parseAddWorkspaceMember,
 } from "./workspace-members.js";
-import { putWorkspaceCredential } from "./workspace-credentials.js";
 import type { WebAppPort } from "./compute/types.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { rewriteWebDavDestination } from "./webapp-proxy.js";
@@ -123,31 +122,9 @@ export interface PhoneHomeResponse {
   webapp_token?: string;
 }
 
-type CreateWorkspaceCredential = NonNullable<CreateWorkspaceRequest["credentials"]>[number];
-
 function parseCreateMembers(value: JsonValue): AddWorkspaceMemberRequest[] {
   if (!Array.isArray(value)) throw new HttpError(400, "members must be an array");
   return value.map((entry) => parseAddWorkspaceMember(entry));
-}
-
-function parseCreateCredentials(value: JsonValue): CreateWorkspaceCredential[] {
-  if (!Array.isArray(value)) throw new HttpError(400, "credentials must be an array");
-  return value.map((entry, index) => {
-    if (!isRecord(entry)) {
-      throw new HttpError(400, `credentials[${String(index)}] must be an object`);
-    }
-    const result: CreateWorkspaceCredential = {
-      name: requiredString(entry.name, `credentials[${String(index)}].name`, 128),
-      value: requiredString(entry.value, `credentials[${String(index)}].value`, 8 * 1024),
-    };
-    if (entry.label !== undefined && entry.label !== null) {
-      result.label = requiredString(entry.label, `credentials[${String(index)}].label`, 128);
-    }
-    if (entry.comment !== undefined && entry.comment !== null) {
-      result.comment = requiredString(entry.comment, `credentials[${String(index)}].comment`, 256);
-    }
-    return result;
-  });
 }
 
 function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
@@ -181,9 +158,6 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
     result.autoProvision = value.autoProvision;
   }
   if (value.members !== undefined) result.members = parseCreateMembers(value.members);
-  if (value.credentials !== undefined) {
-    result.credentials = parseCreateCredentials(value.credentials);
-  }
   if (value.name !== undefined) {
     const name = isString(value.name)
       ? value.name.trim()
@@ -574,11 +548,6 @@ export async function performWorkspaceCreate(
         VALUES (?1, ?2, 'admin', ?2, ?3)`,
     v: [id, membershipId, now],
   });
-  // The one path where a credential VALUE is sent. Written before any machine
-  // boots, so the first `blitz-cred get` inside the workspace already answers.
-  for (const credential of input.credentials ?? []) {
-    await putWorkspaceCredential(runtime, id, membershipId, credential, now);
-  }
   const workspace = await workspaceById(runtime.db, id);
   if (workspace === null) throw new Error("workspace disappeared during create");
 
@@ -621,7 +590,6 @@ export async function performWorkspaceCreate(
 /** Removes a workspace that never got a machine, with its children. */
 async function deleteWorkspaceRow(db: Db, id: string): Promise<void> {
   await transaction(db, [
-    { q: "DELETE FROM workspace_credentials WHERE workspace_id = ?1", v: [id] },
     { q: "DELETE FROM workspace_members WHERE workspace_id = ?1", v: [id] },
     { q: "DELETE FROM workspace_repos WHERE workspace_id = ?1", v: [id] },
     { q: "DELETE FROM workspaces WHERE id = ?1", v: [id] },

@@ -1,0 +1,271 @@
+/**
+ * The seam pin: every vendored file BlitzOS patches, against pristine upstream.
+ *
+ * WHY THIS IS ITS OWN FILE, AND IT IS NOT TIDINESS. These assertions read four
+ * text files off disk and import nothing. They used to live in
+ * `lody-surface-tabs.test.tsx`, whose file-level `beforeAll` imports the route
+ * tree — Monaco, shiki, three, the Loro WASM — and that import is the slowest
+ * thing in the suite. When the machine is loaded it exceeds the hook budget,
+ * and vitest then reports EVERY test in the file as skipped, the pin included.
+ * A check that is meant to fail loudly on an undeclared vendor edit must not be
+ * the first thing a slow machine turns off, so it now costs four `readFileSync`
+ * calls and nothing else.
+ *
+ * TWO KINDS OF CLAIM.
+ *
+ * 1. THE PATCHES ARE INERT. With every new prop absent, each patched file
+ *    renders byte-for-byte what upstream renders. `expectSeam` proves it: each
+ *    declared anchor is the line upstream really has at that number, and
+ *    upstream MINUS those lines is still a subsequence of the patched file. See
+ *    `upstream-seam-pin.ts` for the mechanics and `upstream-baseline/README.md`
+ *    for the baselines' provenance.
+ * 2. THE DECLARATIONS AGREE. The props seam patch 5 states on both sides of the
+ *    vendor boundary, and the writers seam patch 5 hunk 17 routes through the
+ *    announcing setter.
+ *
+ * The BEHAVIOUR of each patch is pinned where it can be driven:
+ * `lody-surface-tabs.test.tsx` mounts the real `SessionTabBar` through both
+ * hosts, and `lody-mobile-mount.test.tsx` mounts the real mobile tab sheet and
+ * the real mobile home screen.
+ */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import {
+  expectSeam as expectSeamAgainstBaseline,
+  type SeamAnchor,
+} from "./upstream-seam-pin.js";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repoRoot = join(here, "..", "..", "..");
+const vendorDir = join(repoRoot, "vendor/lody/packages/components/src/components/sessions");
+const baselineDir = join(here, "upstream-baseline");
+
+/** Paths in `upstream-seam-pin.ts` are relative to the components `src`; the
+ * two files this suite anchors by name live under `components/sessions`. */
+const expectSeam = (file: string, anchors: readonly SeamAnchor[]): void =>
+  expectSeamAgainstBaseline(`components/sessions/${file}`, anchors);
+
+describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
+  it("removes nothing from session-tab-bar.tsx but the declared anchors", () => {
+    expectSeam("session-tab-bar.tsx", [
+      // hunk 1: the `react` import gains `type ReactNode`
+      [1, "import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';"],
+      // hunk 2: `ViewerTabItem` gains `'custom'` and `icon`
+      [42, "/** A viewer tab item (file or diff) displayed in the tab bar. */"],
+      [45, "  type: 'file' | 'diff';"],
+      // hunk 4: `parentSession` becomes optional
+      [58, "  parentSession: SessionMeta;"],
+      // hunk 3: `ViewerTabContent` draws the host's glyph
+      [466, "        {tab.type === 'file' && tab.filePath ? ("],
+      [470, "        )}"],
+      // hunk 5: `visibleTabIds` reads the parent id only when there is one
+      [726, "    () => (showSessionTabs ? [parentSession.id, ...sortableIds] : sortableIds),"],
+      [727, "    [parentSession.id, showSessionTabs, sortableIds]"],
+      // hunk 6: the parent strip item is guarded on the same thing
+      [765, "        {showSessionTabs && ("],
+    ]);
+  });
+
+  it("removes nothing from session-detail.tsx but seam patches 4, 5, 6, 7, 15 and 16's anchors", () => {
+    expectSeam("session-detail.tsx", [
+      // Seam patch 4's hunks are additive and remove nothing, which is why they
+      // are absent from this list and still covered by the subsequence check.
+      // So are three of seam patch 6's four; its fourth is the last anchor here.
+      // hunk 7: the `react` import gains `type ReactNode`
+      [
+        90,
+        "import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';",
+      ],
+      // hunk 11: the strip's variant follows the host's list
+      [5505, '      variant="session"'],
+      // hunk 14: an active host tab deselects the conversation surfaces
+      [5587, "        const isActive = tabSession.id === activeTabSessionId;"],
+      [5621, "        const isActive = draft.id === activeTabSessionId;"],
+      // hunk 17: the state setter becomes a chokepoint that announces the
+      // conversation tab it selected, so the `useState` keeps the raw setter
+      // under a new name
+      [756, "  const [activeTabSessionIdRaw, setActiveTabSessionId] = useState<string>("],
+      // hunk 18: the three writers that are a CORRECTION rather than a
+      // selection keep the raw setter
+      [947, "    setActiveTabSessionId(nextInitialTabState.activeTabSessionId);"],
+      [2585, "      setActiveTabSessionId((prev) =>"],
+      [2591, "    setActiveTabSessionId((prev) => (prev === sessionId ? prev : sessionId));"],
+      // Seam patch 6 hunk 24: the Side Chat launcher gains a third reason to be
+      // disabled. Its other three hunks add lines and remove none, so they are
+      // covered by the subsequence check rather than named here.
+      [3358, "      disabled: launcherState === 'disabled' || isCreatingSideSession,"],
+      // Seam patch 7 hunk 12: the page's GitHub state answers the
+      // `githubIntegration` capability, so the two lines of the memo it was
+      // built by are rewritten. Its other three hunks in this file add lines
+      // and remove none.
+      [1564, "    () => getSessionGitHubState(activeTabSession, workspaceOwnerSession),"],
+      [1565, "    [activeTabSession, workspaceOwnerSession]"],
+      // Seam patch 7 hunk 15: `session.focusInput` takes `useCommand`'s second
+      // argument, so its closing line gains one. This is the ONE `});` in the
+      // file the seam declares, which is why the anchor is a line number.
+      [3719, "  });"],
+      // Seam patch 15 hunk 11: the page's catch-up flag answers
+      // `hideConnectionStatus`, so the one line the `useDelayedFlag` was built
+      // from is rewritten. This takes the mobile header's spinner and the
+      // `titleSyncing` override together. Its other four hunks in this file add
+      // lines and remove none.
+      [
+        1110,
+        "    activeSessionTabId !== null && isSyncingRoomSyncState(activeSessionDocSyncState),",
+      ],
+      // ── Seam patch 16, the mobile branch ─────────────────────────────────
+      // Every anchor below is inside the `if (isMobile)` return, or inside a
+      // component only that branch mounts. Hunks that only ADD lines — the
+      // host-tab surface block, the appended `mobileViewers` entries, the
+      // forwarded `hide*` props — are covered by the subsequence check.
+      //
+      // hunk 16: `MobileProjectInfo` answers the `githubIntegration`
+      // capability instead of re-deriving the repo from the session
+      [567, "  const repoFullName = (resolveProjectGitHubRepo(project) ?? session.repoFullName)?.trim() ?? '';"],
+      [568, "  const isGitHub = project?.kind === 'github' || !!repoFullName;"],
+      // hunk 12: the menu sheet's visibility row takes `hideCloudMenuItems`
+      [4662, "    if (activeSessionSharing) {"],
+      // hunk 13: Copy URL is guarded, which re-indents the push it wraps
+      [4752, "    mobileMenuActions.push({"],
+      [4753, "      id: 'copy-url',"],
+      [4754, '      icon: <Link className="h-3.5 w-3.5" />,'],
+      [4755, "      label: t('sessions.copyUrl', 'Copy URL'),"],
+      [4756, "      onClick: () => {"],
+      [4757, "        void handleCopyUrl();"],
+      [4758, "      },"],
+      [4759, "    });"],
+      // hunk 14: Share with team gains the third term the desktop menu has
+      [4763, "    if (activeSessionSharing && activeSessionSharing.visibility !== 'team') {"],
+      // hunk 15: Change owner gains the same third term
+      [4889, "            isMultiMemberWorkspace && !activeSession.isArchived"],
+      // hunk 8: an active HOST tab hides the conversations and the drafts,
+      // which is seam patch 5 hunk 13's desktop rule on the mobile branch
+      [4908, "            const isActive = !hasActiveViewerTab && tabSession.id === activeTabSessionId;"],
+      [4975, "            const isActive = !hasActiveViewerTab && draft.id === activeTabSessionId;"],
+    ]);
+  });
+
+  it("removes nothing from the two mobile files but seam patch 16's anchors", () => {
+    expectSeamAgainstBaseline("components/mobile/mobile-session-tab-sheet.tsx", [
+      // hunk 1: `ViewerTabEntry['kind']` gains `'custom'`
+      [58, "  kind: 'file' | 'diff' | 'pr' | 'browser' | 'files';"],
+      // hunk 4: the row draws the host's glyph when it has one, which wraps
+      // the element it replaces
+      [233, "                        <Icon"],
+      [234, '                          className="h-4 w-4 shrink-0 text-muted-foreground"'],
+      [235, "                          strokeWidth={1.8}"],
+      [236, '                          aria-hidden="true"'],
+      [237, "                        />"],
+    ]);
+
+    expectSeamAgainstBaseline("components/mobile/mobile-home-screen.tsx", [
+      // hunk 24: the GitHub segment becomes conditional, which re-indents the
+      // object it wraps
+      [1132, "    {"],
+      [1133, "      key: 'github',"],
+      [1134, "      label: githubLabel,"],
+      [1135, "      icon: iosTheme ? ("],
+      [1136, '        <Github className="h-3.5 w-3.5" strokeWidth={1.8} aria-hidden="true" />'],
+      [1137, "      ) : ("],
+      [1138, '        <MobileReactIcon icon={FaGithub} className="h-3.5 w-3.5" />'],
+      [1139, "      ),"],
+      [1140, "      ref: githubRef,"],
+      [1141, "    },"],
+      // hunk 24 again: the rendered sub-tab is pinned to Local without it
+      [1924, "        active={selectedSubTab}"],
+      [1930, "      {selectedSubTab === 'local' ? ("],
+    ]);
+  });
+
+  it("holds a baseline of the commit vendor/lody/UPSTREAM.md pins", () => {
+    // The baselines are only evidence while they are the pin's own bytes, and
+    // nothing else in the tree would notice them going stale. `docs/LODY-MERGE.md`
+    // §4 says to refresh them in the same change as the merge; this is what
+    // fails when that is forgotten.
+    const upstream = readFileSync(join(repoRoot, "vendor/lody/UPSTREAM.md"), "utf8");
+    const pin = /\| Pinned commit \| `([0-9a-f]{40})` \|/u.exec(upstream)?.[1];
+    expect(pin, "UPSTREAM.md still states a pinned commit").toBeDefined();
+    const readme = readFileSync(join(baselineDir, "README.md"), "utf8");
+    expect(readme, "the baselines name the commit they were taken from").toContain(pin ?? "");
+  });
+
+  it("declares the same six props on both sides of the seam", () => {
+    const detail = readFileSync(join(vendorDir, "session-detail.tsx"), "utf8");
+    for (const prop of [
+      "surfaceTabs?: readonly SessionSurfaceTab[];",
+      "activeSurfaceTabId?: string | null;",
+      "onSurfaceTabSelect?: (tabId: string) => void;",
+      "onSurfaceTabClose?: (tabId: string) => void;",
+      "onSessionTabSelect?: (tabId: string) => void;",
+      // Hunk 19, added in wave 3: the page returns above the strip when the
+      // session does not exist, and the host loses every tab with it.
+      "onSessionMissing?: (sessionId: string) => void;",
+    ]) {
+      expect(detail, `seam patch 5 declares ${prop}`).toContain(prop);
+    }
+    // Hunks 17-18, pinned as a CALL and not only as a declaration. A declared
+    // prop that nothing invokes is exactly the shape of the defect it fixes:
+    // the host keeps its tab selected, hunk 15 keeps drawing it, and a click on
+    // a session tab does nothing a member can see.
+    expect(detail, "the announcing setter exists").toContain(
+      "const setActiveTabSessionId = useCallback((tabId: string) => {",
+    );
+    expect(detail, "and it announces").toContain("onSessionTabSelectRef.current?.(tabId);");
+  });
+
+  /**
+   * THE CHOKEPOINT IS ONLY A CHOKEPOINT WHILE NOTHING WALKS AROUND IT.
+   *
+   * Ten call sites move the conversation selection and the first version of the
+   * fix notified from one of them, which left the strip's `+` opening a draft
+   * tab underneath the terminal — the same defect one button along. What the
+   * seam relies on now is that the raw setter has exactly three callers, all
+   * declared, so a merge that adds an eleventh writer either goes through the
+   * wrapper or fails here.
+   */
+  it("routes every conversation-tab SELECTION through the announcing setter", () => {
+    const detail = readFileSync(join(vendorDir, "session-detail.tsx"), "utf8");
+    const rawWrites = [...detail.matchAll(/^\s*setActiveTabSessionIdState\(/gmu)];
+    expect(
+      rawWrites.length,
+      "the raw setter is called only inside the wrapper and by hunk 18's three corrections",
+    ).toBe(4);
+
+    // The writers that were inert with the click-only notification, named so a
+    // merge that reroutes one of them says which.
+    const announcing = new Set(
+      [...detail.matchAll(/^\s*(?:void )?setActiveTabSessionId\((.+?)\);?$/gmu)].map(
+        (match) => match[1],
+      ),
+    );
+    for (const [argument, what] of [
+      ["tabId", "the strip's own tab click, and everything routed through it"],
+      ["draft.id", "the strip's + — a new draft tab"],
+      ["childSessionId", "a draft promoted to a real child session"],
+      ["sessionId", "a close falling back to the parent"],
+      ["tabSessionId", "the browser panel opening a tab"],
+    ] as const) {
+      expect(announcing, `${what} announces`).toContain(argument);
+    }
+    // The next/previous cycle and the archived-tab restore reach the same
+    // setter through `handleSessionTabSelect` rather than directly.
+    expect(detail, "the tab cycle goes through the announcing handler").toContain(
+      "void handleSessionTabSelect(nextTabId);",
+    );
+    expect(detail, "the archived-tab restore goes through it too").toContain(
+      "handleSessionTabSelect(id as SessionId);",
+    );
+    // Our side re-states the tab shape, because every `@lody/components/*`
+    // specifier is `any` at the typecheck seam. The two must not drift.
+    const ours = readFileSync(
+      join(repoRoot, "packages/webapp/src/lody/surface-tabs.ts"),
+      "utf8",
+    );
+    for (const field of ["id: string;", "label: string;", "icon?: ReactNode;", "content: ReactNode;"]) {
+      expect(detail, `vendored SessionSurfaceTab carries ${field}`).toContain(field);
+      expect(ours, `our SessionSurfaceTab carries ${field}`).toContain(field);
+    }
+  });
+});

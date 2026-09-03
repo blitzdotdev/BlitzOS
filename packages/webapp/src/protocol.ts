@@ -34,10 +34,9 @@ export type WorkspaceRecord = {
    * connections panel draws a status row per name. */
   connections?: string[];
   /** The member-machines view (plans/MEMBER-MACHINES.md §1). The workspace
-   * details dialog administers members, machines and credentials from these,
-   * so the poll keeps it current without a second fetch. */
+   * details dialog administers members and machines from these, so the poll
+   * keeps it current without a second fetch. */
   members: WorkspaceMemberView[];
-  credentials: WorkspaceCredentialView[];
   defaultMachineTypeId: string;
   autoProvision: boolean;
   /** The org agent-rules document this workspace hands its agents; null on the
@@ -68,7 +67,6 @@ export type OrgRecord = {
 };
 import type {
   RetryAction,
-  WorkspaceCredentialView,
   WorkspaceMemberRole,
   WorkspaceMemberView,
   WorkspaceRole,
