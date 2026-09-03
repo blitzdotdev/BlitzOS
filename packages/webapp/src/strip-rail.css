@@ -389,6 +389,12 @@
   color: var(--soft-ink);
 }
 
+/* The owner's machine is off: the grant is real, the box is not there. */
+.session-rail-shared--off {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* The row: gutter · title · time. Never more. */
 .shell-s {
   display: flex;

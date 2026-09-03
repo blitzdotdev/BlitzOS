@@ -228,21 +228,33 @@ function SharedSessionRows(props: {
     <>
       {props.rows.map((row) => {
         const selected = row.sessionId === props.activeSessionId;
+        const level = row.level === "rw" ? "read-write" : "read-only";
+        // A row whose owner's box is off stays on the rail — the grant exists —
+        // but does not open: there is no box to mount, and the surface's poller
+        // would wait for one that is not coming.
+        const off = !row.ownerMachineRunning;
         return (
           <button
-            className={`shell-s${selected ? " shell-s--on" : ""}`}
+            className={[
+              "shell-s",
+              selected ? "shell-s--on" : "",
+              off ? "session-rail-shared--off" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             type="button"
             key={`${row.ownerMembershipId}:${row.sessionId}`}
             aria-current={selected ? "page" : undefined}
-            title={`${row.ownerName} · ${row.level === "rw" ? "read-write" : "read-only"}`}
-            onClick={() => props.onSelect(row)}
+            aria-disabled={off || undefined}
+            title={off ? `${row.ownerName} · ${level} · their machine is off` : `${row.ownerName} · ${level}`}
+            onClick={off ? undefined : () => props.onSelect(row)}
           >
             <span className="shell-g">
               <SessionTypeIcon type="terminal" className="shell-g__glyph" />
             </span>
             <span className="shell-s__t">{row.title ?? row.sessionId.slice(0, 8)}</span>
             <span className="shell-s__a session-rail-shared__level">
-              {row.level === "rw" ? "RW" : "RO"}
+              {off ? "OFF" : row.level === "rw" ? "RW" : "RO"}
             </span>
           </button>
         );
