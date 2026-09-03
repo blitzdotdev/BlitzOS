@@ -2,6 +2,7 @@ import {
   type ACPSessionId,
   type AgentConfigId,
   type AgentConfigCliType,
+  type AgentConfigMeta,
   type ChatFailedCode,
   type ChatFailedReason,
   type IssuePRMention,
@@ -139,6 +140,11 @@ type FinalizeTurnContext = {
 };
 
 const TURN_FINALIZATION_STAGE_WARN_MS = 5_000;
+// Renderer, local IPC, and Machine RPC wait at most 300s for the complete
+// authentication workflow. Keep the post-login capability proof inside that
+// envelope and leave a small delivery margin for the final response.
+const ACP_AUTHENTICATION_WORKFLOW_DEADLINE_MS = 295_000;
+const ACP_POST_AUTH_REFRESH_MAX_MS = 60_000;
 
 /**
  * Shown in chat when a turn ends with no agent output at all. It names the most
@@ -576,6 +582,9 @@ type AcpAuthenticationOptions = {
   onProgress?: (message: MachineAcpAuthenticationProgressMessage) => void;
 };
 
+type ResolvedMachineAcpCapabilitiesRefreshRequest = MachineAcpCapabilitiesRefreshRequestValidated &
+  Pick<AgentConfigMeta, 'cliType' | 'agentType' | 'customAcp' | 'runtimeOverrides' | 'env'>;
+
 const summarizeAcpAuthMethod = (method: unknown): MachineAcpAuthMethodSummary => {
   const record =
     typeof method === 'object' && method !== null
@@ -583,13 +592,18 @@ const summarizeAcpAuthMethod = (method: unknown): MachineAcpAuthMethodSummary =>
       : ({} as Record<string, unknown>);
   const type =
     record.type === 'terminal' || record.type === 'env_var' ? record.type : ('agent' as const);
+  const boundedString = (value: unknown, maxLength: number): string | undefined =>
+    typeof value === 'string' ? value.slice(0, maxLength) : undefined;
+  const id = boundedString(record.id, 1024);
+  const name = boundedString(record.name, 4096);
+  const description = boundedString(record.description, 16_384);
   return {
     type,
-    ...(typeof record.id === 'string' ? { id: record.id } : {}),
-    ...(typeof record.name === 'string' ? { name: record.name } : {}),
-    ...(typeof record.description === 'string' ? { description: record.description } : {}),
+    ...(id !== undefined ? { id } : {}),
+    ...(name !== undefined ? { name } : {}),
+    ...(description !== undefined ? { description } : {}),
     ...(Array.isArray(record.args) && record.args.every((arg) => typeof arg === 'string')
-      ? { args: record.args }
+      ? { args: record.args.slice(0, 64).map((arg) => arg.slice(0, 4096)) }
       : {}),
   };
 };
@@ -1853,7 +1867,13 @@ export class SessionExecutionService {
     }
     runtime.prePromptFailureRecorded = true;
     const message = formatErrorMessage(error);
-    if (isGitExecutableNotFoundError(error)) {
+    // A first turn on a brand-new session establishes the ACP session here, so
+    // an agent that requires sign-in fails before the prompt. Keep the specific
+    // reason: it is what lets the client offer the authentication flow instead
+    // of a generic "failed before the agent could start".
+    if (error instanceof AcpAuthenticationRequiredError) {
+      await this.deps.recordChatFailure(sessionDoc, 'acp_auth_required', message);
+    } else if (isGitExecutableNotFoundError(error)) {
       await this.deps.recordChatFailure(
         sessionDoc,
         'turn_pre_prompt_failed',
@@ -4858,11 +4878,15 @@ export class SessionExecutionService {
     message: MachineAcpAuthenticateRequestValidated,
     options: AcpAuthenticationOptions = {}
   ): Promise<MachineAcpAuthenticateResponse> {
+    const workflowStartedAt = Date.now();
+    const targetRequestId =
+      message.action === 'start' ? message.requestId : message.authenticationRequestId;
+    const activeAgentType = this.acpAuthenticationManager.getAgentType(targetRequestId);
     const base = {
       type: 'machine/acp-authenticate_response' as const,
       machineId: this.deps.machineId,
       requestId: message.requestId,
-      agentType: message.agentType,
+      agentType: activeAgentType ?? 'unknown',
     };
     if (message.machineId !== this.deps.machineId) {
       return {
@@ -4876,62 +4900,118 @@ export class SessionExecutionService {
     if (message.action === 'cancel') {
       return {
         ...base,
-        ...this.acpAuthenticationManager.cancel(message.agentType, message.requestId),
+        ...this.acpAuthenticationManager.cancel(message.authenticationRequestId),
       };
     }
     if (message.action === 'submit-code') {
-      if (!message.authenticationRequestId || !message.authorizationCode) {
-        return {
-          ...base,
-          success: false,
-          disposition: 'error',
-          error: 'Missing authentication request or authorization code',
-        };
-      }
       return {
         ...base,
         ...this.acpAuthenticationManager.submitAuthorizationCode(
-          message.agentType,
           message.authenticationRequestId,
           message.authorizationCode
         ),
       };
     }
+    if (message.action === 'submit-input') {
+      return {
+        ...base,
+        ...this.acpAuthenticationManager.submitAuthenticationInput(
+          message.authenticationRequestId,
+          message.interactionId,
+          message.authenticationInput
+        ),
+      };
+    }
+
+    const config = await this.deps.workspaceDocument.getAgentConfigForMachineLaunch(
+      message.configId,
+      this.deps.machineId
+    );
+    if (!config || (config.cliType === 'custom' && !config.customAcp)) {
+      return {
+        ...base,
+        success: false,
+        disposition: 'error',
+        error: `Provider config not found or invalid on this machine: ${message.configId}`,
+      };
+    }
+    const resolvedBase = { ...base, agentType: config.agentType };
 
     const onProgress = (event: AcpAuthenticationProgressEvent): void => {
+      if (event.status === 'auth-methods') {
+        options.onProgress?.({
+          type: 'machine/acp-authentication-progress',
+          machineId: this.deps.machineId,
+          requestId: message.requestId,
+          agentType: config.agentType,
+          status: event.status,
+          interactionId: event.interactionId,
+          authMethods: event.authMethods.map(summarizeAcpAuthMethod),
+        });
+        return;
+      }
       options.onProgress?.({
         type: 'machine/acp-authentication-progress',
         machineId: this.deps.machineId,
         requestId: message.requestId,
-        agentType: message.agentType,
+        agentType: config.agentType,
         ...event,
       });
     };
     const result = await this.acpAuthenticationManager.authenticate({
       requestId: message.requestId,
-      cliType: message.cliType,
-      agentType: message.agentType,
-      customAcp: message.customAcp,
-      runtimeOverrides: message.runtimeOverrides,
-      env: message.env,
+      cliType: config.cliType,
+      agentType: config.agentType,
+      customAcp: config.customAcp,
+      runtimeOverrides: config.runtimeOverrides,
+      env: config.env,
       onProgress,
     });
-
-    if (result.success && result.disposition === 'authenticated' && message.configId) {
-      const refresh = await this.refreshMachineAcpCapabilities({
-        type: 'machine/acp-capabilities-refresh',
-        machineId: message.machineId,
-        workspaceId: message.workspaceId,
-        configId: message.configId,
-        cliType: message.cliType,
-        agentType: message.agentType,
-        customAcp: message.customAcp,
-        runtimeOverrides: message.runtimeOverrides,
-        env: message.env,
-      });
+    if (result.success && result.disposition === 'authenticated') {
+      const refreshController = new AbortController();
+      const refreshTimeoutMs = Math.max(
+        1,
+        Math.min(
+          ACP_POST_AUTH_REFRESH_MAX_MS,
+          ACP_AUTHENTICATION_WORKFLOW_DEADLINE_MS - (Date.now() - workflowStartedAt)
+        )
+      );
+      const refreshTimeout = setTimeout(() => refreshController.abort(), refreshTimeoutMs);
+      refreshTimeout.unref?.();
+      let refresh: MachineAcpCapabilitiesRefreshResponse;
+      try {
+        refresh = await this.refreshMachineAcpCapabilitiesForConfig(
+          {
+            type: 'machine/acp-capabilities-refresh',
+            machineId: message.machineId,
+            workspaceId: message.workspaceId,
+            configId: message.configId,
+            cliType: config.cliType,
+            agentType: config.agentType,
+            customAcp: config.customAcp,
+            runtimeOverrides: config.runtimeOverrides,
+            env: config.env,
+          },
+          { signal: refreshController.signal }
+        );
+      } catch (error) {
+        refresh = {
+          type: 'machine/acp-capabilities-refresh_response',
+          machineId: message.machineId,
+          configId: message.configId,
+          cliType: config.cliType,
+          agentType: config.agentType,
+          success: false,
+          error: refreshController.signal.aborted
+            ? 'Authentication succeeded, but capability verification timed out'
+            : formatErrorMessage(error),
+        };
+      } finally {
+        clearTimeout(refreshTimeout);
+      }
       if (!refresh.success) {
         return {
-          ...base,
+          ...resolvedBase,
           ...result,
           capabilitiesRefreshed: false,
           authRequired: refresh.authRequired,
@@ -4939,10 +5019,10 @@ export class SessionExecutionService {
           error: refresh.error ?? 'Authentication succeeded, but capability refresh failed',
         };
       }
-      return { ...base, ...result, capabilitiesRefreshed: true };
+      return { ...resolvedBase, ...result, capabilitiesRefreshed: true };
     }
 
-    return { ...base, ...result };
+    return { ...resolvedBase, ...result };
   }
 
   async refreshMachineAcpCapabilities(
@@ -4954,13 +5034,46 @@ export class SessionExecutionService {
         type: 'machine/acp-capabilities-refresh_response',
         machineId: this.deps.machineId,
         configId: message.configId,
-        cliType: message.cliType,
-        agentType: message.agentType,
+        cliType: 'builtin',
+        agentType: 'unknown',
         success: false,
         error: `Machine mismatch: expected ${this.deps.machineId}, got ${message.machineId}`,
       };
     }
 
+    const config = await this.deps.workspaceDocument.getAgentConfigForMachineLaunch(
+      message.configId,
+      this.deps.machineId
+    );
+    if (!config) {
+      return {
+        type: 'machine/acp-capabilities-refresh_response',
+        machineId: this.deps.machineId,
+        configId: message.configId,
+        cliType: 'builtin',
+        agentType: 'unknown',
+        success: false,
+        error: `Provider config not found on this machine: ${message.configId}`,
+      };
+    }
+
+    return await this.refreshMachineAcpCapabilitiesForConfig(
+      {
+        ...message,
+        cliType: config.cliType,
+        agentType: config.agentType,
+        customAcp: config.customAcp,
+        runtimeOverrides: config.runtimeOverrides,
+        env: config.env,
+      },
+      options
+    );
+  }
+
+  private async refreshMachineAcpCapabilitiesForConfig(
+    message: ResolvedMachineAcpCapabilitiesRefreshRequest,
+    options: AcpBinaryProgressOptions = {}
+  ): Promise<MachineAcpCapabilitiesRefreshResponse> {
     // Config identity is part of the key because the response and cache row are
     // both config-scoped even when two configs share identical launch inputs.
     const dedupeKey = computeAcpRefreshDedupeKey(
@@ -5045,7 +5158,7 @@ export class SessionExecutionService {
   }
 
   private async executeAcpRefresh(
-    message: MachineAcpCapabilitiesRefreshRequestValidated,
+    message: ResolvedMachineAcpCapabilitiesRefreshRequest,
     options: AcpBinaryProgressOptions = {}
   ): Promise<MachineAcpCapabilitiesRefreshResponse> {
     try {
@@ -5142,7 +5255,7 @@ export class SessionExecutionService {
   }
 
   private async emitBuiltinRuntimeStatusForRefresh(
-    message: MachineAcpCapabilitiesRefreshRequestValidated,
+    message: ResolvedMachineAcpCapabilitiesRefreshRequest,
     onProgress: AcpBinaryProgressSink | undefined
   ): Promise<void> {
     if (!onProgress || message.cliType !== 'builtin') {

@@ -1841,11 +1841,6 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
       const client = await getMachineRpcClient(message.machineId);
       const response = await client.requestMachineAcpCapabilitiesRefresh({
         configId: message.configId,
-        cliType: message.cliType,
-        agentType: message.agentType,
-        customAcp: message.customAcp,
-        runtimeOverrides: message.runtimeOverrides,
-        env: message.env,
         onProgress: (progress) => {
           if (!options.signal?.aborted) {
             handleMachineAcpBinaryProgress(progress);
@@ -1860,8 +1855,8 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
           type: 'machine/acp-capabilities-refresh_response',
           machineId: message.machineId,
           configId: message.configId,
-          cliType: message.cliType,
-          agentType: message.agentType,
+          cliType: 'builtin',
+          agentType: 'unknown',
           success: false,
           error: 'timeout: ACP capability refresh timed out',
         }
@@ -1871,8 +1866,8 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
         type: 'machine/acp-capabilities-refresh_response',
         machineId: message.machineId,
         configId: message.configId,
-        cliType: message.cliType,
-        agentType: message.agentType,
+        cliType: 'builtin',
+        agentType: 'unknown',
         success: false,
         error: error instanceof Error ? error.message : String(error),
       };
@@ -1902,8 +1897,8 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
           type: 'machine/acp-capabilities-refresh_response',
           machineId: message.machineId,
           configId: message.configId,
-          cliType: message.cliType,
-          agentType: message.agentType,
+          cliType: 'builtin',
+          agentType: 'unknown',
           success: false,
           error: `Local session control cannot route ${message.type} to machine ${message.machineId}`,
         };
@@ -1922,8 +1917,8 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
           type: 'machine/acp-capabilities-refresh_response',
           machineId: message.machineId,
           configId: message.configId,
-          cliType: message.cliType,
-          agentType: message.agentType,
+          cliType: 'builtin',
+          agentType: 'unknown',
           success: false,
           error: localResult.error,
         };
@@ -1944,8 +1939,8 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
           type: 'machine/acp-capabilities-refresh_response',
           machineId: message.machineId,
           configId: message.configId,
-          cliType: message.cliType,
-          agentType: message.agentType,
+          cliType: 'builtin',
+          agentType: 'unknown',
           success: false,
           error: 'Local session control did not return an ACP capability refresh response',
         }
@@ -1957,8 +1952,8 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
         type: 'machine/acp-capabilities-refresh_response',
         machineId: message.machineId,
         configId: message.configId,
-        cliType: message.cliType,
-        agentType: message.agentType,
+        cliType: 'builtin',
+        agentType: 'unknown',
         success: false,
         error: 'Cloud Machine RPC is disabled in local-only sync mode',
       };
@@ -1972,26 +1967,50 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
   ): Promise<void> => {
     try {
       const client = await getMachineRpcClient(message.machineId);
-      const response = await client.requestMachineAcpAuthenticate({
+      const common = {
         requestId: message.requestId,
-        action: message.action,
-        authenticationRequestId: message.authenticationRequestId,
-        authorizationCode: message.authorizationCode,
-        configId: message.configId,
-        cliType: message.cliType,
-        agentType: message.agentType,
-        customAcp: message.customAcp,
-        runtimeOverrides: message.runtimeOverrides,
-        env: message.env,
         onProgress: handleMachineAcpAuthenticationProgress,
         timeoutMs: 300000,
-      });
+      };
+      const response = await (() => {
+        switch (message.action) {
+          case 'start':
+            return client.requestMachineAcpAuthenticate({
+              ...common,
+              action: message.action,
+              configId: message.configId,
+            });
+          case 'cancel':
+            return client.requestMachineAcpAuthenticate({
+              ...common,
+              action: message.action,
+              authenticationRequestId: message.authenticationRequestId,
+            });
+          case 'submit-code':
+            return client.requestMachineAcpAuthenticate({
+              ...common,
+              action: message.action,
+              authenticationRequestId: message.authenticationRequestId,
+              authorizationCode: message.authorizationCode,
+            });
+          case 'submit-input':
+            return client.requestMachineAcpAuthenticate({
+              ...common,
+              action: message.action,
+              authenticationRequestId: message.authenticationRequestId,
+              interactionId: message.interactionId,
+              authenticationInput: message.authenticationInput,
+            });
+          default:
+            throw new Error('Unsupported ACP authentication action');
+        }
+      })();
       handleMachineAcpAuthenticateResponse(
         response ?? {
           type: 'machine/acp-authenticate_response',
           machineId: message.machineId,
           requestId: message.requestId,
-          agentType: message.agentType,
+          agentType: 'unknown',
           success: false,
           disposition: 'error',
           error: 'timeout: ACP authentication timed out',
@@ -2002,7 +2021,7 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
         type: 'machine/acp-authenticate_response',
         machineId: message.machineId,
         requestId: message.requestId,
-        agentType: message.agentType,
+        agentType: 'unknown',
         success: false,
         disposition: 'error',
         error: error instanceof Error ? error.message : String(error),
@@ -2267,7 +2286,7 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
         type: 'machine/acp-authenticate_response',
         machineId: message.machineId,
         requestId: message.requestId,
-        agentType: message.agentType,
+        agentType: 'unknown',
         success: false,
         disposition: 'error',
         error,
@@ -2474,11 +2493,6 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
               machineId,
               workspaceId,
               configId: config.id,
-              cliType: config.cliType,
-              agentType: config.agentType,
-              customAcp: config.customAcp,
-              runtimeOverrides: config.runtimeOverrides,
-              env: config.env,
             },
             { signal }
           );

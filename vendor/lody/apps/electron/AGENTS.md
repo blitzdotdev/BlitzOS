@@ -82,10 +82,15 @@ Root `AGENTS.md` also applies.
   notify the renderer (`app.nativeTheme`). On macOS also subscribe
   to `AppleInterfaceThemeChangedNotification`; Chromium `matchMedia` and
   `nativeTheme.updated` often miss Control Center switches.
+- Frameless window drag is per-panel, not a root overlay: each column's top
+  header (or a same-height `WindowDragStrip` when there is no header) is
+  `-webkit-app-region: drag`. Interactive descendants use `app-region-no-drag`.
+  Dialog and alert-dialog overlays mount the strip themselves. Hide those
+  regions in native fullscreen. Windows caption buttons stay an OS overlay
+  (`MAIN_WINDOW_TITLE_BAR_OVERLAY_HEIGHT`); right-edge headers pad `pr-[144px]`
+  so toolbar controls do not sit under them.
 - The onboarding window must be native Light before its first renderer paint; normal product windows start from the System theme source.
-  Windows title-bar geometry must stay aligned across
-  `MAIN_WINDOW_TITLE_BAR_OVERLAY_HEIGHT`, the `h-9` drag strip in
-  `routes/__root.tsx`, and the `pt-9` offset in `web-workspace-layout.tsx`.
+  An automatic login launch may suppress the initial product window, but onboarding and deep-link launches must remain visible.
 - `sessionControl.send` streams intermediate responses on `sessionControl.response`
   keyed by request id. The renderer subscribes before `invoke`, removes the
   listener after settlement, and treats only the final response as completion.
@@ -130,17 +135,26 @@ Root `AGENTS.md` also applies.
   never `electron-builder` directly. It injects the released version via
   `extraMetadata` so `package.json` is a fallback rather than the release source of
   truth, and it forces `--publish never` unless a caller opts in.
-- The `publish` block in `electron-builder.yml` is what gives the public build an
-  update feed: `electron.vite.config.ts` strips every `VITE_*` value, so
-  `AppUpdaterService` finds no `VITE_ELECTRON_UPDATE_URL` and falls back to the
-  packaged `app-update.yml`. That block is also what makes electron-builder emit
-  `latest*.yml` at all. Its tag contract is `v${version}`.
-- Artifact names must stay space-free. GitHub Releases rewrites spaces in uploaded
-  asset names to periods, which would desynchronize them from the names recorded in
-  `latest*.yml`. Do not reintroduce `${productName}` into an `artifactName`.
-- macOS releases must be signed and notarized. Squirrel.Mac will not install an update
-  it cannot validate against the running app's signature, so an unsigned macOS build
-  silently has no working auto-update. Windows and Linux do not have this constraint.
+- Windows/Linux electron-updater still uses the `publish` block: Vite strips every
+  `VITE_*` value, so `AppUpdaterService` falls back to packaged `app-update.yml` and
+  `latest*.yml`. Tag contract is `v${version}`.
+- macOS uses Sparkle (`electron-sparkle-updater`): `SUFeedURL` + `SUPublicEDKey` in
+  Info.plist, `package-electron.mjs` rebuilds the native addon, afterPack injects
+  `SPARKLE_ED_PUBLIC_KEY` before signing. The release workflow then runs
+  `Innei/electron-sparkle-updater/action` pinned to a reviewed full commit SHA against
+  this release's zips only
+  (`publish: false`); the Action fetches the two previous `v*` zip releases as
+  delta bases. Keep Apple signing credentials scoped to the packaging step and the
+  Sparkle private key scoped to validation plus the pinned signing Action; never expose
+  them as job-level environment variables. Previous zips stay out of the published asset list. Sparkle load
+  failure falls back to electron-updater. Sparkle UI stays silent; progress and
+  ready-to-install go through `ElectronUpdaterState` for the renderer banner.
+- Artifact names must stay space-free. GitHub Releases rewrites spaces to periods,
+  which desynchronizes `latest*.yml` and Sparkle enclosures. Do not use
+  `${productName}` in `artifactName`.
+- macOS releases must be signed and notarized. `generate_appcast` refuses archives
+  that fail `codesign --verify --deep --strict`, and Gatekeeper needs a notarized
+  first-install DMG. Windows and Linux do not have this constraint.
 - CI packages Linux as `AppImage deb` only; `snap` stays in the target list for local
   builds because it needs snapcraft on the machine.
 

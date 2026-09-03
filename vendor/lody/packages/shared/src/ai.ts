@@ -7,7 +7,7 @@ import {
 } from '@agentclientprotocol/sdk';
 import type { ToolCallContent as AcpToolCallContent, SessionMode } from '@agentclientprotocol/sdk';
 import type { PermissionOutcome } from './message';
-import type { AgentConfigId, McpServerId, SessionId } from './ids';
+import type { AgentConfigId, AgentRoleId, McpServerId, SessionId } from './ids';
 import type { MessageTextSpan } from './message-text-spans';
 import type { MinimalVisualAnnotationAnchor } from './visual-annotation-types';
 import type { WorktreeScriptPhase } from './project';
@@ -600,7 +600,7 @@ const CLAUDE_STATIC_MODES: StaticBuiltinAcpCapabilities['modes'] = [
   },
   {
     id: 'default',
-    name: 'Default',
+    name: 'Manual',
     description: 'Standard behavior, prompts for dangerous operations',
   },
   {
@@ -618,6 +618,11 @@ const CLAUDE_STATIC_MODES: StaticBuiltinAcpCapabilities['modes'] = [
     name: "Don't Ask",
     description: "Don't prompt for permissions, deny if not pre-approved",
   },
+  {
+    id: 'bypassPermissions',
+    name: 'Bypass Permissions',
+    description: 'Bypass all permission checks',
+  },
 ];
 
 /**
@@ -632,9 +637,9 @@ const CLAUDE_STATIC_MODES: StaticBuiltinAcpCapabilities['modes'] = [
  * - `render: 'icon'` + `tone: 'neutral'`: a notable but non-risky mode
  *   (read-only, accept-edits, plan) — plain indicator.
  * - `render: 'icon'` + `tone: 'warning'`: a mode that changes the safety model —
- *   Codex `agent-full-access` (Full access) OR Claude `dontAsk` (Don't Ask /
- *   skip permissions, which drops the human out of the approval loop) — amber so
- *   the risk is visible at a glance.
+ *   Codex `agent-full-access` (Full access), Claude `dontAsk` (Don't Ask /
+ *   skip permissions), or Claude `bypassPermissions` (bypass all checks) — amber
+ *   so the risk is visible at a glance.
  * - `render: 'auto-label'`: show the literal short text "Auto" (Claude auto and
  *   Codex agent-auto-review route approval prompts to a reviewing model, so a
  *   short name fits better than a glyph).
@@ -677,6 +682,8 @@ export function classifyPermissionModeFace(modeId: string | null | undefined): P
     case 'dontAsk':
       // "Don't Ask" skips the human approval prompt — flag it like full access.
       return { kind: 'deny', tone: 'warning', render: 'icon' };
+    case 'bypassPermissions':
+      return { kind: 'full-access', tone: 'warning', render: 'icon' };
     case 'yolo':
     case 'always-approve':
       return { kind: 'full-access', tone: 'warning', render: 'icon' };
@@ -690,28 +697,28 @@ export function classifyPermissionModeFace(modeId: string | null | undefined): P
 const CLAUDE_STATIC_MODELS: StaticBuiltinAcpCapabilities['models'] = [
   {
     modelId: 'default',
-    name: 'Default',
-    description: 'Claude Code default model',
+    name: 'Default (recommended)',
+    description: 'Opus (1M context)',
   },
   {
-    modelId: 'opus',
-    name: 'Opus',
-    description: 'Claude Opus',
+    modelId: 'opus[1m]',
+    name: 'Opus (1M context)',
+    description: 'Opus 5 with 1M context · Best for everyday, complex tasks',
   },
   {
-    modelId: 'claude-fable-5[1m]',
+    modelId: 'claude-fable-5-1[1m]',
     name: 'Fable',
-    description: 'Claude Fable 5 with 1M context',
+    description: 'Fable 5.1 · Most capable for your hardest and longest-running tasks',
   },
   {
     modelId: 'sonnet',
     name: 'Sonnet',
-    description: 'Claude Sonnet',
+    description: 'Sonnet 5 · Efficient for routine tasks',
   },
   {
     modelId: 'haiku',
     name: 'Haiku',
-    description: 'Claude Haiku',
+    description: 'Haiku 4.5 · Fastest for quick answers',
   },
 ];
 
@@ -754,7 +761,18 @@ const CLAUDE_STATIC_CONFIG_OPTIONS: AcpConfigOptionSummary[] = [
       { value: 'low', name: 'Low' },
       { value: 'medium', name: 'Medium' },
       { value: 'high', name: 'High' },
+      { value: 'xhigh', name: 'Xhigh' },
+      { value: 'max', name: 'Max' },
     ],
+  },
+  {
+    id: 'fast',
+    name: 'Fast mode',
+    description: 'Faster responses on supported models',
+    category: 'model_config',
+    type: 'boolean',
+    currentValue: false,
+    options: [],
   },
 ];
 
@@ -1105,6 +1123,7 @@ export type ChatFailedReason =
   | 'acp_auth_required' // -32000: Authentication required
   | 'acp_internal_error' // -32603: Internal JSON-RPC error
   | 'acp_upstream_api_error' // -32603 with upstream API error (500/529) - transient, retryable
+  | 'acp_provider_overloaded' // provider capacity exhausted; safe to continue in a new turn
   | 'acp_session_storage_incompatible' // -32603 from an incompatible session-persistence root
   | 'acp_resource_not_found' // -32002: Resource not found
   | 'acp_request_cancelled' // -32800: Request cancelled
@@ -1575,6 +1594,15 @@ export type ACPSessionConfig = {
   mcpServerIds?: McpServerId[];
   /** Whether the built-in Lody Task MCP tools are available to this Turn's Agent session. */
   taskToolsEnabled?: boolean;
+  /**
+   * Agent Role identity selected in the composer for this Turn. Null is an
+   * explicit None selection; absence is legacy/unknown. This is provenance for
+   * restoring synchronized composer state, not an instruction to re-resolve the
+   * mutable Role catalog during execution.
+   */
+  agentRoleId?: AgentRoleId | null;
+  /** Catalog revision whose values were frozen into this Turn. */
+  agentRoleRevision?: number;
   issuePRMentions?: IssuePRMention[];
   // continue to chat
   resume?: ACPSessionId;

@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useMemo,
+  useLayoutEffect,
   memo,
   forwardRef,
   useImperativeHandle,
@@ -14,10 +15,15 @@ import { useAtomValue } from 'jotai';
 import { ArrowUp, Loader2 } from 'lucide-react';
 import { Button } from '@/ui/button';
 import type { AcpSessionSelectOption } from '@/components/shared/acp-session-select';
-import { useSessionAgentRole } from '@/hooks/use-session-agent-role';
+import { useSessionAgentRole, type SessionAgentRoleControl } from '@/hooks/use-session-agent-role';
 import { useAppCapability } from '@/lib/app-platform';
 import { buildAgentRoleFormValueFromRunConfig } from '@/lib/agent-role-form';
-import { doesAgentRolePinPermissionMode } from '@/lib/composer-agent-roles';
+import {
+  doesAgentRolePinPermissionMode,
+  resolveTurnAgentRoleForRunConfig,
+  type ComposerRunConfigOverrides,
+  type SessionTurnAgentRoleSelection as ComposerTurnAgentRoleSelection,
+} from '@/lib/composer-agent-roles';
 import { resolvePermissionModeFace } from '@/lib/permission-mode-face';
 import {
   AgentRoleEditorDialog,
@@ -59,6 +65,8 @@ import {
 import { IMAGE_UPLOAD_REASONS, type ImageUploadReason } from '@lody/shared';
 import type {
   AcpCommandSummary,
+  AgentRole,
+  AgentRoleId,
   CommentReferencePayload,
   SessionMeta,
   SessionId,
@@ -390,6 +398,15 @@ export interface SessionChatInputAreaProps {
   isEmptyConversation: boolean;
   selectedModeId: string | null;
   selectedModelId: string | null;
+  /** Role identity restored from the latest accepted/queued Turn. */
+  durableAgentRoleId?: AgentRoleId | null;
+  durableAgentRoleRevision?: number;
+  durableAgentRoleSourceTurnKey?: string;
+  durableAgentRoleKnownTurnKeys?: readonly string[];
+  /** False while this Session's durable document is still hydrating. */
+  durableAgentRoleReady?: boolean;
+  /** True when the composer run config differs through an unsent user edit. */
+  runConfigHasUserEdits?: boolean;
   modeOptions: AcpSessionSelectOption[];
   modelOptions: AcpSessionSelectOption[];
   /** Subscription limits already resolved from this session's machine Flock data. */
@@ -428,11 +445,21 @@ export interface SessionChatInputAreaProps {
   onModeChange: (value: string) => void;
   onModelChange: (value: string) => void;
   onConfigOptionChange?: (configId: string, value: AcpConfigOptionValue) => void;
-  onSendMessage: (inputBlocks: SessionInputBlock[]) => Promise<boolean>;
+  onSendMessage: (
+    inputBlocks: SessionInputBlock[],
+    agentRole: SessionTurnAgentRoleSelection
+  ) => Promise<boolean>;
   onStop: () => void | Promise<void>;
   onRemoveQueueItem: (itemId: string) => Promise<void>;
   /** When provided and conversation is empty, the agent config badge becomes a selector. */
   onAgentConfigChange?: (selection: AgentSelection) => void;
+  /**
+   * New-Session surfaces may provide complete Role semantics. Existing
+   * Sessions omit this and keep the same-agent-type run-config-only behavior.
+   */
+  agentRoleControl?: SessionAgentRoleControl;
+  /** Receives durable Role editor saves owned by a new-Session surface. */
+  onAgentRoleSaved?: (role: AgentRole, meta: { created: boolean }) => void;
   initialInputText?: string;
   onInputValueChange?: (value: string) => void;
   disableImageUpload?: boolean;
@@ -448,6 +475,8 @@ export interface SessionChatInputAreaProps {
   ) => void | Promise<void>;
 }
 
+export type SessionTurnAgentRoleSelection = ComposerTurnAgentRoleSelection;
+
 export type SessionChatInputAreaHandle = {
   setInputText: (text: string) => void;
   focusInput: () => void;
@@ -462,6 +491,10 @@ export type SessionChatInputAreaHandle = {
    * caller can leave the gesture unacknowledged instead of implying a change.
    */
   insertSessionMention: (sessionId: string) => boolean;
+  /** Role identity committed in the currently rendered composer. */
+  getAgentRoleSelection: (
+    runConfigOverrides?: ComposerRunConfigOverrides
+  ) => SessionTurnAgentRoleSelection;
 };
 
 export const SessionChatInputArea = memo(
@@ -478,6 +511,12 @@ export const SessionChatInputArea = memo(
       isEmptyConversation,
       selectedModeId,
       selectedModelId,
+      durableAgentRoleId,
+      durableAgentRoleRevision,
+      durableAgentRoleSourceTurnKey,
+      durableAgentRoleKnownTurnKeys,
+      durableAgentRoleReady,
+      runConfigHasUserEdits,
       modeOptions,
       modelOptions,
       rateLimits,
@@ -499,6 +538,8 @@ export const SessionChatInputArea = memo(
       onStop,
       onRemoveQueueItem: _onRemoveQueueItem,
       onAgentConfigChange,
+      agentRoleControl,
+      onAgentRoleSaved,
       initialInputText,
       onInputValueChange,
       disableImageUpload = false,
@@ -545,7 +586,18 @@ export const SessionChatInputArea = memo(
     const postHog = usePostHog();
     const isArchived = session.isArchived === true;
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const agentRoleTurnSelectionRef = useRef<SessionTurnAgentRoleSelection>(undefined);
+    const selectedAgentRoleRef = useRef<AgentRole | undefined>(undefined);
+    const agentRoleRunConfigRef = useRef({
+      modeId: selectedModeId,
+      modelId: selectedModelId,
+      configOptionValues: configOptionValues ?? {},
+    });
     const restoreFocusAfterRejectedMobileSendRef = useRef(false);
+    /** Session id that initiated the pending desktop focus restore. */
+    const pendingDesktopFocusRestoreSessionIdRef = useRef<string | null>(null);
+    /** The textarea element that was active when the send started. */
+    const pendingFocusRestoreTextareaRef = useRef<HTMLTextAreaElement | null>(null);
     const attachmentInputRef = useRef<HTMLInputElement>(null);
     const activeSessionIdRef = useRef(session.id);
     activeSessionIdRef.current = session.id;
@@ -1666,6 +1718,13 @@ export const SessionChatInputArea = memo(
         toggleVisualAnnotationReference,
         handleImageDrop,
         insertSessionMention,
+        getAgentRoleSelection: (runConfigOverrides) =>
+          resolveTurnAgentRoleForRunConfig({
+            turnSelection: agentRoleTurnSelectionRef.current,
+            role: selectedAgentRoleRef.current,
+            current: agentRoleRunConfigRef.current,
+            overrides: runConfigOverrides,
+          }),
       }),
       [
         setInputText,
@@ -1717,6 +1776,9 @@ export const SessionChatInputArea = memo(
             workspace_id: workspaceId ?? null,
             session_id: session.id,
           });
+          return;
+        }
+        if (durableAgentRoleReady === false) {
           return;
         }
         if (isMachineRemoved) {
@@ -1833,6 +1895,12 @@ export const SessionChatInputArea = memo(
         ];
         const dismissKeyboardForSubmit =
           usesMobileKeyboardAction && (source === 'keyboard' || source === 'button');
+        // Snapshot the textarea and session id BEFORE the await so the
+        // post-commit focus-restore effect can verify neither changed during
+        // the in-flight send. Capturing after the await would miss a session
+        // switch that happened while the send was pending.
+        const textareaBeforeSend = textareaRef.current;
+        const sessionIdBeforeSend = session.id;
         if (dismissKeyboardForSubmit) {
           // The mobile Send action should dismiss the soft keyboard at the same
           // immediate handoff boundary as the visible draft, not after the
@@ -1847,7 +1915,7 @@ export const SessionChatInputArea = memo(
         }
         let accepted = false;
         try {
-          accepted = await onSendMessage(inputBlocks);
+          accepted = await onSendMessage(inputBlocks, agentRoleTurnSelectionRef.current);
           if (accepted) {
             clearInput();
             clearPendingImages();
@@ -1861,7 +1929,16 @@ export const SessionChatInputArea = memo(
           }
         } finally {
           restoreFocusAfterRejectedMobileSendRef.current = dismissKeyboardForSubmit && !accepted;
+          if (!dismissKeyboardForSubmit) {
+            // Stash the pre-send snapshot for the focus-restore effect below.
+            pendingDesktopFocusRestoreSessionIdRef.current = sessionIdBeforeSend;
+            pendingFocusRestoreTextareaRef.current = textareaBeforeSend;
+          }
           setSubmissionPending(false);
+          // Focus is NOT restored synchronously here: the textarea is still
+          // disabled (React has not yet committed the re-render that clears
+          // submissionPending). The desktop focus-restore useEffect below
+          // handles it after the re-enable render.
         }
       },
       [
@@ -1870,6 +1947,7 @@ export const SessionChatInputArea = memo(
         clearPendingFiles,
         freeTurnLimitNotice,
         isArchived,
+        durableAgentRoleReady,
         isExternalHistoryRefreshing,
         isMachineRemoved,
         onSendMessage,
@@ -1895,6 +1973,44 @@ export const SessionChatInputArea = memo(
       }
       restoreFocusAfterRejectedMobileSendRef.current = false;
       textareaRef.current?.focus();
+    }, [submissionPending]);
+    // Desktop focus restore: runs after submissionPending flips to false AND
+    // the textarea re-renders as enabled. Verifies that:
+    //   1. The session has not changed since the send started (compares the
+    //      stored session id with the current one).
+    //   2. The textarea DOM element is still the one that initiated the send
+    //      (guards against session switches that replace the textarea).
+    //   3. No other interactive control owns focus. Disabling the textarea
+    //      moves focus to document.body, so body !== textarea is the expected
+    //      state — only skip when a different interactive element has focus.
+    useEffect(() => {
+      if (submissionPending) return;
+      const storedSessionId = pendingDesktopFocusRestoreSessionIdRef.current;
+      if (storedSessionId === null) return;
+      pendingDesktopFocusRestoreSessionIdRef.current = null;
+
+      const targetTextarea = pendingFocusRestoreTextareaRef.current;
+      pendingFocusRestoreTextareaRef.current = null;
+
+      // Session changed while the send was in flight — the current textarea
+      // belongs to a different session, so do not touch it.
+      if (storedSessionId !== activeSessionIdRef.current) return;
+      // The textarea was replaced (e.g. session switch unmounted/remounted).
+      if (!targetTextarea || textareaRef.current !== targetTextarea) return;
+      // The user deliberately focused another interactive control during the
+      // wait. document.body is the default when the disabled textarea lost
+      // focus, so it does NOT count as the user moving focus elsewhere.
+      const active = document.activeElement;
+      if (
+        active &&
+        active !== document.body &&
+        active !== targetTextarea &&
+        active instanceof HTMLElement
+      ) {
+        return;
+      }
+
+      targetTextarea.focus();
     }, [submissionPending]);
 
     const handleKeyDown = useCallback(
@@ -1941,6 +2057,7 @@ export const SessionChatInputArea = memo(
       isMachineRemoved ||
       isArchived ||
       isExternalHistoryRefreshing ||
+      durableAgentRoleReady === false ||
       Boolean(freeTurnLimitNotice && freeTurnLimitNotice.current >= freeTurnLimitNotice.limit);
     const attachmentAddEnabled = !isArchived;
     const sessionLocalFileSource = useMemo(
@@ -2117,17 +2234,23 @@ export const SessionChatInputArea = memo(
       session.agentConfigId && session.machineId
         ? { agentId: session.agentConfigId, machineId: session.machineId }
         : null;
-    /* Role, in an EXISTING session. The agent is fixed here, so this offers
-       only Roles bound to an agent of the same TYPE and applies only their run
-       config — see `useSessionAgentRole`. The row is NOT gated on
-       `isEmptyConversation`: those values stay changeable every turn, so a Role
-       that packages them stays useful for the whole conversation. */
+    /* Existing Sessions use their exact machine/provider, run-config-only Role control.
+       A not-yet-created child-tab draft supplies its own complete new-Session
+       control instead. The row is NOT gated on `isEmptyConversation`: these
+       values stay changeable every turn in an existing conversation too. */
     const [agentRoleEditor, setAgentRoleEditor] = useState<AgentRoleEditorState | null>(null);
     const { roles: accessibleAgentRoles } = useWorkspaceAgentRoles();
     const sessionAgentRole = useSessionAgentRole({
       sessionId: session.id,
       provenanceRoleId: session.agentRoleId,
-      agentType: session.agentType,
+      provenanceRoleRevision: session.agentRoleRevision,
+      durableRoleId: durableAgentRoleId,
+      durableRoleRevision: durableAgentRoleRevision,
+      durableSourceTurnKey: durableAgentRoleSourceTurnKey,
+      durableKnownSourceTurnKeys: durableAgentRoleKnownTurnKeys,
+      durableRoleReady: durableAgentRoleReady,
+      machineId: session.machineId,
+      agentConfigId: session.agentConfigId,
       modelOptions,
       selectedModelId,
       onModelChange,
@@ -2136,13 +2259,54 @@ export const SessionChatInputArea = memo(
       onModeChange,
       configOptionSelectors: configOptionSelectors ?? [],
       configOptionValues,
+      runConfigHasUserEdits,
       onConfigOptionChange,
     });
+    const effectiveAgentRoleControl = agentRoleControl ?? sessionAgentRole;
+    const selectedAgentRoleItem = effectiveAgentRoleControl.selectedRoleId
+      ? effectiveAgentRoleControl.items.find(
+          (item) => item.role.id === effectiveAgentRoleControl.selectedRoleId
+        )
+      : undefined;
+    const selectedAgentRoleItemId = selectedAgentRoleItem?.role.id;
+    const selectedAgentRoleItemRevision = selectedAgentRoleItem?.role.revision;
+    const agentRoleTurnSelection = useMemo<SessionTurnAgentRoleSelection>(
+      () =>
+        agentRoleControl
+          ? selectedAgentRoleItemId && selectedAgentRoleItemRevision !== undefined
+            ? {
+                agentRoleId: selectedAgentRoleItemId,
+                agentRoleRevision: selectedAgentRoleItemRevision,
+              }
+            : null
+          : sessionAgentRole.turnSelection,
+      [
+        agentRoleControl,
+        selectedAgentRoleItemId,
+        selectedAgentRoleItemRevision,
+        sessionAgentRole.turnSelection,
+      ]
+    );
+    useLayoutEffect(() => {
+      agentRoleTurnSelectionRef.current = agentRoleTurnSelection;
+      selectedAgentRoleRef.current = selectedAgentRoleItem?.role;
+      agentRoleRunConfigRef.current = {
+        modeId: selectedModeId,
+        modelId: selectedModelId,
+        configOptionValues: configOptionValues ?? {},
+      };
+    }, [
+      agentRoleTurnSelection,
+      configOptionValues,
+      selectedAgentRoleItem?.role,
+      selectedModeId,
+      selectedModelId,
+    ]);
     const agentRolesProp = useMemo(
       () => ({
-        items: sessionAgentRole.items,
-        selectedRoleId: sessionAgentRole.selectedRoleId,
-        onSelect: sessionAgentRole.onSelect,
+        items: effectiveAgentRoleControl.items,
+        selectedRoleId: effectiveAgentRoleControl.selectedRoleId,
+        onSelect: effectiveAgentRoleControl.onSelect,
         onCreate: () =>
           setAgentRoleEditor(
             openAgentRoleEditorForCreate(
@@ -2163,13 +2327,13 @@ export const SessionChatInputArea = memo(
         selectedModeId,
         session.agentConfigId,
         session.machineId,
-        sessionAgentRole,
+        effectiveAgentRoleControl,
       ]
     );
-    const sessionAgentRolePinsPermissionMode = useMemo(() => {
-      if (!sessionAgentRole.selectedRoleId) return false;
-      const selectedRole = sessionAgentRole.items.find(
-        (item) => item.role.id === sessionAgentRole.selectedRoleId
+    const selectedAgentRolePinsPermissionMode = useMemo(() => {
+      if (!effectiveAgentRoleControl.selectedRoleId) return false;
+      const selectedRole = effectiveAgentRoleControl.items.find(
+        (item) => item.role.id === effectiveAgentRoleControl.selectedRoleId
       )?.role;
       if (!selectedRole) return false;
       const { source } = resolvePermissionModeFace({
@@ -2184,8 +2348,8 @@ export const SessionChatInputArea = memo(
       configOptionValues,
       modeOptions,
       selectedModeId,
-      sessionAgentRole.items,
-      sessionAgentRole.selectedRoleId,
+      effectiveAgentRoleControl.items,
+      effectiveAgentRoleControl.selectedRoleId,
     ]);
     const mobileFooterSelectorNode = isMobile ? (
       <MobileSessionRunConfig
@@ -2238,7 +2402,7 @@ export const SessionChatInputArea = memo(
           selectedModeId={selectedModeId}
           agentRoles={hideAgentRoles ? undefined : agentRolesProp}
         />
-        {sessionAgentRolePinsPermissionMode ? null : (
+        {selectedAgentRolePinsPermissionMode ? null : (
           <DesktopPermissionModeButton
             modeOptions={modeOptions}
             selectedModeId={selectedModeId}
@@ -2443,6 +2607,7 @@ export const SessionChatInputArea = memo(
             accessibleRoles={accessibleAgentRoles}
             onChange={setAgentRoleEditor}
             onClose={() => setAgentRoleEditor(null)}
+            onSaved={onAgentRoleSaved}
             source="session_composer"
           />
         ) : null}

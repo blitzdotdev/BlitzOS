@@ -12,6 +12,8 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { cn } from '@/lib/utils';
+import { WINDOW_DRAG_EXEMPT_CLASS, WINDOW_DRAG_HEADER_CLASS } from '@/ui/window-drag-region';
+import { useElectronFullscreen } from '@/lib/electron';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { Kbd } from '@/ui/kbd';
@@ -718,6 +720,7 @@ export const LoroSidebar = memo(function LoroSidebar({
   onRequestCollapse,
 }: LoroSidebarProps) {
   const isMobile = useIsMobile();
+  const isElectronFullscreen = useElectronFullscreen();
   const mergedLabels: LoroSidebarLabels = {
     ...defaultLabels,
     ...labels,
@@ -861,6 +864,7 @@ export const LoroSidebar = memo(function LoroSidebar({
       </span>
     </>
   );
+  const windowDrag = isElectron && !isElectronFullscreen;
   const workspaceIdentityClassName = cn(
     'grid w-full min-w-0 select-none grid-cols-[20px_1fr_16px] items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm',
     isMobile ? 'h-9' : 'h-8',
@@ -923,110 +927,115 @@ export const LoroSidebar = memo(function LoroSidebar({
                 ? 'pl-[calc(12px+var(--safe-area-left))] pr-[calc(12px+var(--safe-area-right))] pt-[calc(12px+var(--safe-area-top))]'
                 : isElectronMacOS
                   ? 'h-[72px] px-1.5 pt-7'
-                  : 'h-11 px-1.5'
+                  : 'h-11 px-1.5',
+              windowDrag && WINDOW_DRAG_HEADER_CLASS
             )}
           >
-            {workspaceSwitcherEnabled ? (
-              <DropdownMenu modal={!isMobile}>
-                <div className="min-w-0 flex-1">
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className={workspaceIdentityClassName}
-                      data-workspace-switcher-trigger
-                      data-workspace-syncing={workspaceSyncing ? 'true' : 'false'}
-                      aria-busy={workspaceSyncing || undefined}
-                    >
-                      {workspaceIdentity}
-                    </button>
-                  </DropdownMenuTrigger>
-                </div>
-                <DropdownMenuContent align="start" className="w-64">
-                  <DropdownMenuLabel className="text-xs font-normal">{userEmail}</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-
-                  {workspaces.length > 0 ? (
-                    <>
-                      <DropdownMenuLabel className="text-xs font-medium">
-                        {mergedLabels.switchWorkspace}
-                      </DropdownMenuLabel>
-                      <DropdownMenuRadioGroup
-                        value={currentWorkspaceId}
-                        onValueChange={(value) => onWorkspaceSelected?.(value)}
-                      >
-                        {workspaces.map((ws) => (
-                          <DropdownMenuRadioItem key={ws.id} value={ws.id} className="gap-2">
-                            <WorkspaceAvatar
-                              workspace={{ name: ws.name, logo: ws.logo }}
-                              className="h-5 w-5 shrink-0 text-[10px]"
-                            />
-                            <span className="min-w-0 truncate">{ws.name}</span>
-                            {ws.planTier ? (
-                              <Badge
-                                variant="secondary"
-                                className="ml-auto shrink-0 px-1.5 py-0 text-[10px]"
-                              >
-                                {ws.planTier === 'enterprise'
-                                  ? mergedLabels.planEnterprise
-                                  : mergedLabels.planPlus}
-                              </Badge>
-                            ) : null}
-                          </DropdownMenuRadioItem>
-                        ))}
-                      </DropdownMenuRadioGroup>
-                      <DropdownMenuSeparator />
-                    </>
-                  ) : null}
-
-                  <DropdownMenuItem onSelect={() => onCreateWorkspaceClicked?.()}>
-                    <Plus className="h-4 w-4" />
-                    {mergedLabels.createWorkspace}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => onInviteClicked?.()}>
-                    <Users className="h-4 w-4" />
-                    {mergedLabels.inviteMembers}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => onLinkRepoClicked?.()}>
-                    <Link2 className="h-4 w-4" />
-                    {mergedLabels.connectGithubRepo}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
+          {workspaceSwitcherEnabled ? (
+            <DropdownMenu modal={!isMobile}>
               <div className="min-w-0 flex-1">
-                <div className={workspaceIdentityClassName} data-workspace-identity>
-                  {workspaceIdentity}
-                </div>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      workspaceIdentityClassName,
+                      windowDrag && WINDOW_DRAG_EXEMPT_CLASS
+                    )}
+                    data-workspace-switcher-trigger
+                    data-workspace-syncing={workspaceSyncing ? 'true' : 'false'}
+                    aria-busy={workspaceSyncing || undefined}
+                  >
+                    {workspaceIdentity}
+                  </button>
+                </DropdownMenuTrigger>
               </div>
-            )}
-            {/* Collapse toggle anchored to the header's top-right corner.
-                `top-2` centers the h-7 button inside the standard h-11 header.
-                On macOS Electron the header is taller (`h-[72px] pt-7`) and its
-                top sits 11px below the window top (card `mt-2` + 1px border +
-                inner `p-[2px]`); `-top-0.5` then puts the button center at
-                11 - 2 + 14 = 23px, exactly on the traffic-light centerline
-                (`trafficLightPosition.y` 16 + 7px radius in
-                apps/electron/src/main/window.ts) — and level with the
-                collapsed-state expand button (`top-[9px]` in
-                web-chat-landing-screen.tsx), so the control stays put across
-                collapse/expand. */}
-            {!isMobile && onRequestCollapse ? (
-              <button
-                type="button"
-                aria-label="Collapse sidebar"
-                onClick={() => onRequestCollapse()}
-                className={cn(
-                  'absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-md',
-                  isElectronMacOS ? '-top-0.5' : 'top-2',
-                  'text-sidebar-foreground-muted hover:bg-sidebar-hover hover:text-sidebar-hover-foreground',
-                  isElectron
-                    ? 'focus-visible:outline-hidden'
-                    : 'opacity-0 pointer-events-none group-hover/sidebar-header:opacity-100 group-hover/sidebar-header:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto focus-visible:outline-hidden transition-opacity duration-100'
-                )}
-              >
-                <PanelLeft className="h-4 w-4" />
-              </button>
-            ) : null}
+              <DropdownMenuContent align="start" className="w-64">
+                <DropdownMenuLabel className="text-xs font-normal">{userEmail}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+
+                {workspaces.length > 0 ? (
+                  <>
+                    <DropdownMenuLabel className="text-xs font-medium">
+                      {mergedLabels.switchWorkspace}
+                    </DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={currentWorkspaceId}
+                      onValueChange={(value) => onWorkspaceSelected?.(value)}
+                    >
+                      {workspaces.map((ws) => (
+                        <DropdownMenuRadioItem key={ws.id} value={ws.id} className="gap-2">
+                          <WorkspaceAvatar
+                            workspace={{ name: ws.name, logo: ws.logo }}
+                            className="h-5 w-5 shrink-0 text-[10px]"
+                          />
+                          <span className="min-w-0 truncate">{ws.name}</span>
+                          {ws.planTier ? (
+                            <Badge
+                              variant="secondary"
+                              className="ml-auto shrink-0 px-1.5 py-0 text-[10px]"
+                            >
+                              {ws.planTier === 'enterprise'
+                                ? mergedLabels.planEnterprise
+                                : mergedLabels.planPlus}
+                            </Badge>
+                          ) : null}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                    <DropdownMenuSeparator />
+                  </>
+                ) : null}
+
+                <DropdownMenuItem onSelect={() => onCreateWorkspaceClicked?.()}>
+                  <Plus className="h-4 w-4" />
+                  {mergedLabels.createWorkspace}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onInviteClicked?.()}>
+                  <Users className="h-4 w-4" />
+                  {mergedLabels.inviteMembers}
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onLinkRepoClicked?.()}>
+                  <Link2 className="h-4 w-4" />
+                  {mergedLabels.connectGithubRepo}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <div className="min-w-0 flex-1">
+              <div className={workspaceIdentityClassName} data-workspace-identity>
+                {workspaceIdentity}
+              </div>
+            </div>
+          )}
+          {/* Collapse toggle anchored to the header's top-right corner.
+              `top-2` centers the h-7 button inside the standard h-11 header.
+              On macOS Electron the header is taller (`h-[72px] pt-7`) and its
+              top sits 11px below the window top (card `mt-2` + 1px border +
+              inner `p-[2px]`); `-top-0.5` then puts the button center at
+              11 - 2 + 14 = 23px, exactly on the traffic-light centerline
+              (`trafficLightPosition.y` 16 + 7px radius in
+              apps/electron/src/main/window.ts) — and level with the
+              collapsed-state expand button (`top-[9px]` in
+              web-chat-landing-screen.tsx), so the control stays put across
+              collapse/expand. */}
+          {!isMobile && onRequestCollapse ? (
+            <button
+              type="button"
+              aria-label="Collapse sidebar"
+              onClick={() => onRequestCollapse()}
+              className={cn(
+                'absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-md',
+                isElectronMacOS ? '-top-0.5' : 'top-2',
+                'text-sidebar-foreground-muted hover:bg-sidebar-hover hover:text-sidebar-hover-foreground',
+                windowDrag && WINDOW_DRAG_EXEMPT_CLASS,
+                isElectron
+                  ? 'focus-visible:outline-hidden'
+                  : 'opacity-0 pointer-events-none group-hover/sidebar-header:opacity-100 group-hover/sidebar-header:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto focus-visible:outline-hidden transition-opacity duration-100'
+              )}
+            >
+              <PanelLeft className="h-4 w-4" />
+            </button>
+          ) : null}
           </div>
         )}
 
@@ -1260,43 +1269,47 @@ export const LoroSidebar = memo(function LoroSidebar({
           <div className={getLoroSidebarFooterClassName(isMobile)}>
             <div className="flex items-center gap-1">
               {footerItems.includes('settings') ? (
-              <IconButton label="Settings" onClick={onSettingsClicked}>
-                <Settings className="h-4 w-4" />
-              </IconButton>
+                <IconButton label="Settings" onClick={onSettingsClicked}>
+                  <Settings className="h-4 w-4" />
+                </IconButton>
               ) : null}
 
               {footerItems.includes('help') ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <IconButton label="Help">
-                    <CircleHelp className="h-4 w-4" />
-                  </IconButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="top" align="start" className="min-w-[140px]">
-                  <DropdownMenuItem onSelect={() => onDocsClicked?.()}>
-                    <BookOpen className="h-4 w-4" />
-                    {mergedLabels.docs}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => onJoinCommunityClicked?.()}>
-                    <Users className="h-4 w-4" />
-                    {mergedLabels.joinCommunity}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => onFeedbackClicked?.()}>
-                    <MessageSquareMore className="h-4 w-4" />
-                    {mergedLabels.feedback}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => onBugReportClicked?.()}>
-                    <Bug className="h-4 w-4" />
-                    {mergedLabels.bugReport}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <IconButton label="Help">
+                      <CircleHelp className="h-4 w-4" />
+                    </IconButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent side="top" align="start" className="min-w-[140px]">
+                    <DropdownMenuItem onSelect={() => onDocsClicked?.()}>
+                      <BookOpen className="h-4 w-4" />
+                      {mergedLabels.docs}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => onJoinCommunityClicked?.()}>
+                      <Users className="h-4 w-4" />
+                      {mergedLabels.joinCommunity}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => onFeedbackClicked?.()}>
+                      <MessageSquareMore className="h-4 w-4" />
+                      {mergedLabels.feedback}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => onBugReportClicked?.()}>
+                      <Bug className="h-4 w-4" />
+                      {mergedLabels.bugReport}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               ) : null}
 
               {footerItems.includes('archive') ? (
-              <IconButton label="Archive" active={activeNav === 'archive'} onClick={onArchiveClicked}>
-                <Archive className="h-4 w-4" />
-              </IconButton>
+                <IconButton
+                  label="Archive"
+                  active={activeNav === 'archive'}
+                  onClick={onArchiveClicked}
+                >
+                  <Archive className="h-4 w-4" />
+                </IconButton>
               ) : null}
             </div>
 

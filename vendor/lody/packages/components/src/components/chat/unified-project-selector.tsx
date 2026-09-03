@@ -635,7 +635,7 @@ export function UnifiedProjectSelectorView({
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={onAddLocalProject}>
             <FolderPlus className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span>{t('chat.contextSwitch.addProject', 'Add a local project')}</span>
+            <span>{t('chat.contextSwitch.addProject', 'Add a folder')}</span>
           </DropdownMenuItem>
           {githubIntegrationAvailable ? (
             <DropdownMenuItem onSelect={onConnectGitRepo}>

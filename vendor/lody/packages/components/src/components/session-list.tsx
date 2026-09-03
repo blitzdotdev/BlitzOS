@@ -50,7 +50,6 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/ui/context-menu';
-import { Skeleton } from '@/ui/skeleton';
 import type {
   LocalProjectHistoryProvider,
   MachineId,
@@ -89,6 +88,7 @@ import {
   SessionMergeablePill,
   SessionOpenedByTreeRow,
   SessionRowOpenedByMenuItems,
+  SidebarListSkeleton,
   buildSessionRowOpenedByTreeSlot,
 } from '@/components/sidebar-row-shared';
 import { SessionInfoHoverCard } from '@/components/session-info-hover-card';
@@ -280,26 +280,6 @@ export function sessionGroupOverflowsPreview(group: SessionRowGroup): boolean {
   return (
     countOpenedByTreeRoots(group.sessions, SESSION_ROW_OPENED_BY_TREE_ACCESSORS) >
     MAX_VISIBLE_SESSIONS
-  );
-}
-
-function SessionListSkeleton({ className }: { className?: string }) {
-  const rowWidths = ['w-[70%]', 'w-[58%]', 'w-[76%]', 'w-[62%]', 'w-[68%]', 'w-[54%]'];
-  return (
-    <div className={cn('space-y-3', className)}>
-      <div className="space-y-2">
-        <Skeleton className="h-3 w-24" />
-        <div className="space-y-2 rounded-lg border border-border/50 p-2">
-          {rowWidths.map((width, index) => (
-            <div key={index} className="flex items-center gap-2 px-1 py-1.5">
-              <Skeleton className="h-7 w-7 rounded-md" />
-              <Skeleton className={cn('h-3', width)} />
-              <Skeleton className="ml-auto h-3 w-10" />
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -664,6 +644,8 @@ const SessionGroupSection = memo(function SessionGroupSection({
         <div
           role={canNavigate || canToggle ? 'button' : undefined}
           tabIndex={canNavigate || canToggle ? 0 : -1}
+          data-id={`group:${group.key}`}
+          data-scope-item="row"
           data-sidebar-group-key={group.key}
           className={cn(
             'relative flex h-7 w-full select-none items-center gap-1 rounded-md px-2 text-left',
@@ -897,6 +879,9 @@ const SessionGroupSection = memo(function SessionGroupSection({
                 role={!useAnchor && isSelectable ? 'button' : undefined}
                 tabIndex={!useAnchor && isSelectable ? 0 : undefined}
                 aria-disabled={!isSelectable ? true : undefined}
+                aria-current={isSelected ? 'page' : undefined}
+                data-id={`session:${session.sessionId}`}
+                data-scope-item="row"
                 data-sidebar-session-id={session.sessionId}
                 // Drag a conversation onto a chat surface to mention it there.
                 draggable
@@ -1251,6 +1236,8 @@ const SessionGroupSection = memo(function SessionGroupSection({
           {canToggleFullList && (
             <button
               type="button"
+              data-id={`show-more:${group.key}`}
+              data-scope-item="row"
               data-sidebar-show-more={group.key}
               className={cn(
                 'flex select-none items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-sidebar-foreground-muted/80',
@@ -1451,7 +1438,7 @@ export const SessionList = memo(function SessionList({
         {headerAction ? (
           <div className="flex h-7 shrink-0 items-center justify-end">{headerAction}</div>
         ) : null}
-        <SessionListSkeleton className={className} />
+        <SidebarListSkeleton className={className} />
       </div>
     );
   }

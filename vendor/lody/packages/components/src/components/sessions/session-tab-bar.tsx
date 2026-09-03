@@ -1,13 +1,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Plus, Loader2, X, History, Undo2, Pin, FileDiff } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { WINDOW_DRAG_EXEMPT_CLASS, useWindowDragRegionClass } from '@/ui/window-drag-region';
 import { getSessionLaunchConfigLegacyFields, type SessionId, type SessionMeta } from '@lody/shared';
 import { useTranslation } from 'react-i18next';
 import { useAtomValue } from 'jotai';
-import { focusLayerAtom } from '@/atoms/focus-layer';
 import { getAgentMetaByIdAtomFamily } from '@/atoms/agents';
+import { WORKSPACE_FOCUS_SCOPES } from '@/atoms/focus-layer';
 import { sessionLiveStatusAtomFamily } from '@/atoms/presence';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import { useListKeyboardNavigation } from '@/ui/focus-scope';
 import { ScrollArea } from '@/ui/scroll-area';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 import { AgentIcon } from '@/components/icons/agent-icon';
@@ -123,14 +125,11 @@ interface SessionTabBarProps {
    switching tabs never shifts a label by a pixel. */
 const TAB_ITEM_CLASS =
   'group relative flex h-8 w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md border border-transparent px-3 text-[13px] transition-colors cursor-pointer';
-// Colors are shared with TabPillStrip / TaskTabBar — same measured surface-
-// ladder values, not independently eyeballed copies.
 const TAB_ITEM_ACTIVE_CLASS = TAB_PILL_ACTIVE_CLASS;
 const TAB_ITEM_INACTIVE_CLASS = TAB_PILL_INACTIVE_CLASS;
 const TAB_INLINE_ACTION_CLASS =
   'ml-auto shrink-0 rounded-sm p-0.5 opacity-70 transition-[opacity,background-color,color] hover:bg-muted-foreground/10 hover:text-tab-hover-foreground hover:opacity-100';
-const TAB_BAR_ACTION_CLASS =
-  'flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-hover-foreground';
+const TAB_BAR_ACTION_CLASS = `flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-hover hover:text-hover-foreground ${WINDOW_DRAG_EXEMPT_CLASS}`;
 
 function clientPointFromDragEnd(event: DragEndEvent): { x: number; y: number } | null {
   const source = event.activatorEvent;
@@ -186,7 +185,6 @@ function TabContent({
   inputRef,
   onTabSelect,
   onTabRename,
-  isL2Focus,
   onTabClose,
   setEditDraft,
   setEditingTabId,
@@ -214,7 +212,6 @@ function TabContent({
   setEditingTabId: (v: SessionId | null) => void;
   commitRename: () => void;
   cancelRename: () => void;
-  isL2Focus: boolean;
   t: (key: string, fallback: string) => string;
 }) {
   const liveStatus = useAtomValue(sessionLiveStatusAtomFamily(session.id));
@@ -232,6 +229,8 @@ function TabContent({
       role="tab"
       aria-selected={isActive}
       tabIndex={isActive ? 0 : -1}
+      data-id={`session-tab:${session.id}`}
+      data-scope-item="row"
       aria-label={label}
       draggable={html5MentionDrag && !isEditing}
       onDragStart={
@@ -243,12 +242,12 @@ function TabContent({
       }
       className={cn(
         TAB_ITEM_CLASS,
+        !solo && WINDOW_DRAG_EXEMPT_CLASS,
         solo
           ? 'text-tab-active-foreground'
           : isActive
             ? TAB_ITEM_ACTIVE_CLASS
-            : TAB_ITEM_INACTIVE_CLASS,
-        isActive && isL2Focus && 'ring-2 ring-ring/40 ring-inset'
+            : TAB_ITEM_INACTIVE_CLASS
       )}
       onClick={() => {
         if (!isEditing) void onTabSelect(session.id);
@@ -342,7 +341,6 @@ function SessionAgentIcon({ session, className }: { session: SessionMeta; classN
 function DraftTabContent({
   draft,
   isActive,
-  isL2Focus,
   onSelect,
   onClose,
   t,
@@ -350,7 +348,6 @@ function DraftTabContent({
 }: {
   draft: DraftSessionTab;
   isActive: boolean;
-  isL2Focus: boolean;
   solo: boolean;
   onSelect: (tabId: string) => MaybePromiseVoid;
   onClose?: (tabId: string) => MaybePromiseVoid;
@@ -370,15 +367,17 @@ function DraftTabContent({
       role="tab"
       aria-selected={isActive}
       tabIndex={isActive ? 0 : -1}
+      data-id={`draft-tab:${draft.id}`}
+      data-scope-item="row"
       aria-label={label}
       className={cn(
         TAB_ITEM_CLASS,
+        !solo && WINDOW_DRAG_EXEMPT_CLASS,
         solo
           ? 'text-tab-active-foreground'
           : isActive
             ? TAB_ITEM_ACTIVE_CLASS
-            : TAB_ITEM_INACTIVE_CLASS,
-        isActive && isL2Focus && 'ring-2 ring-ring/40 ring-inset'
+            : TAB_ITEM_INACTIVE_CLASS
       )}
       onClick={() => {
         void onSelect(draft.id);
@@ -421,7 +420,6 @@ function DraftTabContent({
 function ViewerTabContent({
   tab,
   isActive,
-  isL2Focus,
   onSelect,
   onClose,
   t,
@@ -429,7 +427,6 @@ function ViewerTabContent({
 }: {
   tab: ViewerTabItem;
   isActive: boolean;
-  isL2Focus: boolean;
   solo: boolean;
   onSelect: (tabId: string) => MaybePromiseVoid;
   onClose?: (tabId: string) => MaybePromiseVoid;
@@ -452,15 +449,17 @@ function ViewerTabContent({
       role="tab"
       aria-selected={isActive}
       tabIndex={isActive ? 0 : -1}
+      data-id={`viewer-tab:${tab.id}`}
+      data-scope-item="row"
       aria-label={saveStateLabel ? `${tab.label}, ${saveStateLabel}` : tab.label}
       className={cn(
         TAB_ITEM_CLASS,
+        !solo && WINDOW_DRAG_EXEMPT_CLASS,
         solo
           ? 'text-tab-active-foreground'
           : isActive
             ? TAB_ITEM_ACTIVE_CLASS
-            : TAB_ITEM_INACTIVE_CLASS,
-        isActive && isL2Focus && 'ring-2 ring-ring/40 ring-inset'
+            : TAB_ITEM_INACTIVE_CLASS
       )}
       onClick={() => {
         void onSelect(tab.id);
@@ -565,7 +564,8 @@ export const SessionTabBar = memo(function SessionTabBar({
   onMentionSession,
 }: SessionTabBarProps) {
   const { t } = useTranslation();
-  const focusLayer = useAtomValue(focusLayerAtom);
+  const windowDragClass = useWindowDragRegionClass();
+  useListKeyboardNavigation({ scopeId: WORKSPACE_FOCUS_SCOPES.sessionConversation });
   const defaultTitle = t('sessions.untitled', 'Untitled session');
   const showSessionTabs = variant !== 'viewer';
   const showViewerTabs = variant !== 'session';
@@ -725,7 +725,6 @@ export const SessionTabBar = memo(function SessionTabBar({
     setEditingTabId,
     commitRename,
     cancelRename,
-    isL2Focus: focusLayer === 'L2',
     solo: soloTab,
     t: t as (key: string, fallback: string) => string,
   };
@@ -758,9 +757,15 @@ export const SessionTabBar = memo(function SessionTabBar({
   ) : null;
 
   return (
-    <div className={cn('flex min-w-0 items-center bg-background', className)}>
+    <div className={cn('flex min-w-0 items-center bg-background', windowDragClass, className)}>
       {leftSlot ? (
-        <div className={cn('flex shrink-0 items-center pl-3', soloTab ? 'pr-0' : 'pr-2')}>
+        <div
+          className={cn(
+            'flex shrink-0 items-center pl-3',
+            WINDOW_DRAG_EXEMPT_CLASS,
+            soloTab ? 'pr-0' : 'pr-2'
+          )}
+        >
           {leftSlot}
         </div>
       ) : null}
@@ -810,7 +815,6 @@ export const SessionTabBar = memo(function SessionTabBar({
                   <DraftTabContent
                     draft={item.data.draft}
                     isActive={!hasActiveViewerTab && item.data.draft.id === activeTabSessionId}
-                    isL2Focus={focusLayer === 'L2'}
                     solo={soloTab}
                     onSelect={onTabSelect}
                     onClose={onTabClose}
@@ -822,7 +826,6 @@ export const SessionTabBar = memo(function SessionTabBar({
                   <ViewerTabContent
                     tab={item.data.tab}
                     isActive={activeViewerTabId === item.data.tab.id}
-                    isL2Focus={focusLayer === 'L2'}
                     solo={soloTab}
                     onSelect={onViewerTabSelect ?? (() => {})}
                     onClose={onViewerTabClose}
@@ -836,11 +839,13 @@ export const SessionTabBar = memo(function SessionTabBar({
       </AdaptiveTabStrip>
       {/* Pinned right cluster: new-tab, then the archived-tabs history (only
           when closed tabs exist), then the caller's toolbar ("…" etc.). */}
-      {newTabButton}
-      {showArchivedTabs && archivedChildSessions.length > 0 && onTabRestore && (
-        <ArchivedTabsPopover archivedSessions={archivedChildSessions} onRestore={onTabRestore} />
-      )}
-      {rightSlot}
+      <div className={cn('flex shrink-0 items-center', WINDOW_DRAG_EXEMPT_CLASS)}>
+        {newTabButton}
+        {showArchivedTabs && archivedChildSessions.length > 0 && onTabRestore && (
+          <ArchivedTabsPopover archivedSessions={archivedChildSessions} onRestore={onTabRestore} />
+        )}
+        {rightSlot}
+      </div>
     </div>
   );
 });

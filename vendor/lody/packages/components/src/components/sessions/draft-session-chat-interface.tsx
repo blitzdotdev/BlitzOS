@@ -2,14 +2,18 @@ import {
   forwardRef,
   memo,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from 'react';
 import { useAtomValue } from 'jotai';
 import type {
   AcpConfigOptionValue,
+  AgentRole,
+  AgentRoleId,
   BuiltinRuntimeOverrides,
   CustomAcpLaunchSpec,
   CommentReferencePayload,
@@ -43,7 +47,7 @@ import {
   resolveSessionRepoFullName,
 } from '@/lib/session-local-file-source';
 import type { AgentSelection } from '@/components/shared/agent-selector';
-import type { DraftSessionTab } from '@/lib/session-draft-tabs';
+import { buildDraftSessionAgentRolePatch, type DraftSessionTab } from '@/lib/session-draft-tabs';
 import { agentDefaultsCache } from '@/lib/local-storage-cache';
 import {
   isThoughtLevelSelector,
@@ -52,12 +56,23 @@ import {
 } from '@/components/shared/acp-selector-options';
 import {
   useAcpSessionConfigSelectionState,
-  useReconcileAcpSessionConfigSelection,
+  useResolvedAcpSessionConfigSelection,
 } from '@/hooks/use-acp-session-config-selection';
 import { filterAcpSessionConfigOptionValues } from '@/lib/acp-session-config-selection';
 import { useComposerCycleCommands } from '@/hooks/use-composer-cycle-commands';
 import { ChildTabEmptyState } from './child-tab-empty-state';
 import { useSessionDoc } from '@/hooks/use-session-doc';
+import {
+  buildComposerAgentRoleItems,
+  isComposerAgentRoleApplied,
+  resolvePendingAgentRoleSelection,
+} from '@/lib/composer-agent-roles';
+import {
+  useAgentRoleAvailability,
+  useWorkspaceAgentRoles,
+} from '@/hooks/use-workspace-agent-roles';
+import type { SessionAgentRoleControl } from '@/hooks/use-session-agent-role';
+import { buildAgentPrompt } from '@/lib';
 
 const areConfigOptionValuesEqual = (
   left?: Record<string, AcpConfigOptionValue>,
@@ -77,6 +92,9 @@ export type DraftSessionSendPayload = {
   inputBlocks: SessionInputBlock[];
   preservedInputText?: string;
   agentConfigId?: DraftSessionTab['agentConfigId'];
+  /** Role provenance frozen with the child Session, when the Role still applies. */
+  agentRoleId?: DraftSessionTab['agentRoleId'];
+  agentRoleRevision?: number;
   cliType: DraftSessionTab['cliType'];
   agentType: DraftSessionTab['agentType'];
   /** Launch spec resolved from the selected agent config for `cliType: 'custom'`. */
@@ -125,41 +143,35 @@ export const DraftSessionChatInterface = memo(
       const resolvedTheme = useResolvedTheme();
       const isDark = resolvedTheme === 'dark';
       const inputAreaRef = useRef<SessionChatInputAreaHandle>(null);
-      const {
-        state: sessionConfigSelectionState,
-        selectedModeId,
-        selectedModelId,
-        configOptionValues,
-        selectMode,
-        selectModel,
-        selectConfigOption,
-        dispatch: dispatchSessionConfigSelection,
-      } = useAcpSessionConfigSelectionState();
       const sessionConfigTargetKey = `${draft.id}:${draft.agentConfigId ?? ''}:${draft.cliType}:${draft.agentType}`;
-      const {
-        availableCommands,
-        capabilityAuthority,
-        configOptionSelectors,
-        defaultModeId,
-        defaultModelId,
-        machineFlockRows,
-        modeOptions,
-        modelOptions,
-        sessionMachine,
-      } = useSessionAcpSelectorContext({
-        machineId: parentSession.machineId,
-        configId: draft.agentConfigId,
-        cliType: draft.cliType,
-        agentType: draft.agentType,
-        selectedModeId,
-        selectedModelId,
-        configOptionValues,
-      });
-      const dispatchConfigOptionValues = useMemo(
-        () => filterAcpSessionConfigOptionValues(configOptionValues, configOptionSelectors),
-        [configOptionSelectors, configOptionValues]
-      );
       const agentConfigs = useAtomValue(getAllAgentConfigAtom);
+      const { roles: workspaceAgentRoles } = useWorkspaceAgentRoles();
+      const { resolve: resolveAgentRoleAvailability } =
+        useAgentRoleAvailability(workspaceAgentRoles);
+      /* A blank child tab is still a new Session. Offer every Role bound to
+         the parent workspace's machine, just as Chat Landing does for its
+         selected machine; the Role itself may choose a different Agent type. */
+      const composerAgentRoleItems = useMemo(
+        () =>
+          buildComposerAgentRoleItems({
+            roles: workspaceAgentRoles,
+            machineId: parentSession.machineId,
+            agentConfigs,
+            resolveAvailability: resolveAgentRoleAvailability,
+          }),
+        [agentConfigs, parentSession.machineId, resolveAgentRoleAvailability, workspaceAgentRoles]
+      );
+      const [agentRolePreferenceToken, setAgentRolePreferenceToken] = useState(0);
+      /* The draft stores the Role's identity, not a captured copy. Edits bump
+         its revision and re-seed the composer; deletion simply stops resolving.
+         A preference only applies while the draft remains on the exact Agent
+         Config that Role binds. */
+      const agentRolePreference = useMemo(() => {
+        if (!draft.agentRoleId || !draft.agentConfigId) return null;
+        const item = composerAgentRoleItems.find((entry) => entry.role.id === draft.agentRoleId);
+        if (!item || item.availability.kind !== 'available') return null;
+        return item.role.agentConfigId === draft.agentConfigId ? item.role : null;
+      }, [composerAgentRoleItems, draft.agentConfigId, draft.agentRoleId]);
       const docMetaCacheReady = useAtomValue(docMetaCacheReadyAtom);
       const tasksFeatureEnabled = useAtomValue(tasksFeatureEnabledAtom);
       // The draft composer has no MCP picker yet, so the first turn carries the
@@ -189,6 +201,9 @@ export const DraftSessionChatInterface = memo(
         [draft.agentConfigId, preferAgentDefaults]
       );
       const preferredSessionConfig = useMemo(() => {
+        if (agentRolePreference) {
+          return agentRolePreference.runConfig;
+        }
         const inheritedConfigOptionValues = preferAgentDefaults
           ? draftAgentDefaults?.configOptionValues
           : parentConversationConfig.configOptionValues;
@@ -205,6 +220,7 @@ export const DraftSessionChatInterface = memo(
           },
         };
       }, [
+        agentRolePreference,
         draft.configOptionValues,
         draft.modeId,
         draft.modelId,
@@ -216,6 +232,46 @@ export const DraftSessionChatInterface = memo(
         parentConversationConfig.modelId,
         preferAgentDefaults,
       ]);
+      const sessionConfigPreferenceRevision = agentRolePreference
+        ? `${sessionConfigTargetKey}:role:${agentRolePreference.id}:${agentRolePreference.revision}:${agentRolePreferenceToken}`
+        : `${sessionConfigTargetKey}:${parentConversationConfig.sourceConfigKey ?? ''}`;
+      /* No effects: user edits are the only stored selection state; the
+         effective values derive per render. Candidates feed the capability
+         lookup so the catalog can depend on the selection without feeding
+         back into it. */
+      const {
+        selection: sessionConfigSelection,
+        candidates: sessionConfigCandidates,
+        appliedTargetKey: appliedSessionConfigTargetKey,
+        appliedPreferenceRevision: appliedSessionConfigPreferenceRevision,
+        selectMode,
+        selectModel,
+        selectConfigOption,
+      } = useAcpSessionConfigSelectionState({
+        enabled: parentSessionDocReady,
+        targetKey: sessionConfigTargetKey,
+        preferenceRevision: sessionConfigPreferenceRevision,
+        preferences: preferredSessionConfig,
+      });
+      const {
+        availableCommands,
+        capabilityAuthority,
+        configOptionSelectors,
+        defaultModeId,
+        defaultModelId,
+        machineFlockRows,
+        modeOptions,
+        modelOptions,
+        sessionMachine,
+      } = useSessionAcpSelectorContext({
+        machineId: parentSession.machineId,
+        configId: draft.agentConfigId,
+        cliType: draft.cliType,
+        agentType: draft.agentType,
+        selectedModeId: sessionConfigCandidates.modeId,
+        selectedModelId: sessionConfigCandidates.modelId,
+        configOptionValues: sessionConfigCandidates.configOptionValues,
+      });
       const selectorOptions = useMemo(
         () => ({
           capabilityAuthority,
@@ -234,15 +290,15 @@ export const DraftSessionChatInterface = memo(
           modelOptions,
         ]
       );
-      const sessionConfigPreferenceRevision = `${sessionConfigTargetKey}:${parentConversationConfig.sourceConfigKey ?? ''}`;
-      useReconcileAcpSessionConfigSelection({
-        enabled: parentSessionDocReady,
-        targetKey: sessionConfigTargetKey,
-        preferenceRevision: sessionConfigPreferenceRevision,
-        preferences: preferredSessionConfig,
-        selectorOptions,
-        dispatch: dispatchSessionConfigSelection,
-      });
+      const { selectedModeId, selectedModelId, configOptionValues } =
+        useResolvedAcpSessionConfigSelection(sessionConfigSelection, selectorOptions, {
+          cliType: draft.cliType,
+          agentType: draft.agentType,
+        });
+      const dispatchConfigOptionValues = useMemo(
+        () => filterAcpSessionConfigOptionValues(configOptionValues, configOptionSelectors),
+        [configOptionSelectors, configOptionValues]
+      );
       const thinkEffortSelector = useMemo(
         () =>
           configOptionSelectors.find(
@@ -279,6 +335,82 @@ export const DraftSessionChatInterface = memo(
         provider: null,
       });
 
+      const handleAgentRoleSelect = useCallback(
+        (roleId: AgentRoleId | null) => {
+          // None clears only the Role identity. The values it seeded remain the
+          // user's draft configuration, matching Chat Landing.
+          if (roleId === null) {
+            onDraftChange(draft.id, { agentRoleId: undefined });
+            return;
+          }
+          const item = composerAgentRoleItems.find((entry) => entry.role.id === roleId);
+          if (!item || item.availability.kind !== 'available') return;
+          const agentConfig = agentConfigs.find(
+            (config) =>
+              config.id === item.role.agentConfigId && config.machineId === parentSession.machineId
+          );
+          if (!agentConfig) return;
+          const patch = buildDraftSessionAgentRolePatch(item.role, agentConfig);
+          if (!patch) return;
+          setAgentRolePreferenceToken((token) => token + 1);
+          onDraftChange(draft.id, patch);
+        },
+        [agentConfigs, composerAgentRoleItems, draft.id, onDraftChange, parentSession.machineId]
+      );
+      const activeAgentRole = useMemo(() => {
+        if (!agentRolePreference || !draft.agentConfigId) return null;
+        return isComposerAgentRoleApplied(agentRolePreference, {
+          agentSelection: {
+            agentId: draft.agentConfigId,
+            machineId: parentSession.machineId,
+          },
+          modeId: selectedModeId,
+          modelId: selectedModelId,
+          configOptionValues,
+        })
+          ? agentRolePreference
+          : null;
+      }, [
+        agentRolePreference,
+        configOptionValues,
+        draft.agentConfigId,
+        parentSession.machineId,
+        selectedModeId,
+        selectedModelId,
+      ]);
+      const draftAgentRoleControl = useMemo<SessionAgentRoleControl>(
+        () => ({
+          items: composerAgentRoleItems,
+          selectedRoleId: activeAgentRole?.id ?? null,
+          onSelect: handleAgentRoleSelect,
+        }),
+        [activeAgentRole?.id, composerAgentRoleItems, handleAgentRoleSelect]
+      );
+      const [pendingAgentRoleSelection, setPendingAgentRoleSelection] =
+        useState<AgentRoleId | null>(null);
+      const handleAgentRoleSaved = useCallback(
+        (role: AgentRole, { created }: { created: boolean }) => {
+          if (created) setPendingAgentRoleSelection(role.id);
+        },
+        []
+      );
+      useEffect(() => {
+        if (!pendingAgentRoleSelection) return;
+        const outcome = resolvePendingAgentRoleSelection({
+          roleId: pendingAgentRoleSelection,
+          items: composerAgentRoleItems,
+          isInCatalog: workspaceAgentRoles.some((role) => role.id === pendingAgentRoleSelection),
+        });
+        if (outcome === 'wait') return;
+        setPendingAgentRoleSelection(null);
+        if (outcome === 'select') handleAgentRoleSelect(pendingAgentRoleSelection);
+      }, [
+        composerAgentRoleItems,
+        handleAgentRoleSelect,
+        pendingAgentRoleSelection,
+        workspaceAgentRoles,
+      ]);
+
       const transientSession = useMemo(
         () =>
           ({
@@ -286,12 +418,21 @@ export const DraftSessionChatInterface = memo(
             id: draft.sessionId,
             parentSessionId: parentSession.id,
             agentConfigId: draft.agentConfigId,
+            agentRoleId: draft.agentRoleId,
+            agentRoleRevision: undefined,
             cliType: draft.cliType,
             agentType: draft.agentType,
             contextWindowUsage: undefined,
             status: { type: 'idle' },
           }) satisfies SessionMeta,
-        [draft.agentConfigId, draft.agentType, draft.cliType, draft.sessionId, parentSession]
+        [
+          draft.agentConfigId,
+          draft.agentRoleId,
+          draft.agentType,
+          draft.cliType,
+          draft.sessionId,
+          parentSession,
+        ]
       );
 
       const sessionAgentConfig = useMemo(
@@ -312,8 +453,8 @@ export const DraftSessionChatInterface = memo(
       useLayoutEffect(() => {
         if (
           !parentSessionDocReady ||
-          sessionConfigSelectionState.targetKey !== sessionConfigTargetKey ||
-          sessionConfigSelectionState.preferenceRevision !== sessionConfigPreferenceRevision
+          appliedSessionConfigTargetKey !== sessionConfigTargetKey ||
+          appliedSessionConfigPreferenceRevision !== sessionConfigPreferenceRevision
         ) {
           return;
         }
@@ -340,8 +481,8 @@ export const DraftSessionChatInterface = memo(
         parentSessionDocReady,
         selectedModeId,
         selectedModelId,
-        sessionConfigSelectionState.targetKey,
-        sessionConfigSelectionState.preferenceRevision,
+        appliedSessionConfigTargetKey,
+        appliedSessionConfigPreferenceRevision,
         sessionConfigPreferenceRevision,
         sessionConfigTargetKey,
       ]);
@@ -352,23 +493,34 @@ export const DraftSessionChatInterface = memo(
           preservedInputText?: string
         ): DraftSessionSendPayload => {
           const prompt = extractPromptPreviewFromInputBlocks(inputBlocks);
+          // A Role is a new-Session preset even inside a parent Session's blank
+          // tab. Its instruction belongs before this child Session's first
+          // task, while the parent Agent Config's prompt remains excluded.
+          const promptPayload = buildAgentPrompt(prompt, activeAgentRole?.promptPrefix ?? '');
           return {
             draftId: draft.id,
             sessionId: draft.sessionId,
             inputBlocks,
             preservedInputText,
             agentConfigId: draft.agentConfigId,
+            ...(activeAgentRole
+              ? {
+                  agentRoleId: activeAgentRole.id,
+                  agentRoleRevision: activeAgentRole.revision,
+                }
+              : {}),
             cliType: draft.cliType,
             agentType: draft.agentType,
             customAcp: sessionAgentConfig?.customAcp,
             runtimeOverrides: sessionAgentConfig?.runtimeOverrides,
             configOptionSelectors,
-            // Unlike chat-landing's first turn, the prompt deliberately has no
-            // agent-config prompt prefix: a child tab continues the parent's
-            // running context, matching what the promoted composer would send.
+            // Unlike Chat Landing's first turn, this deliberately has no
+            // Agent Config prompt prefix: a child tab continues the parent's
+            // workspace context. A selected Role's own first-turn instruction
+            // is already included in `promptPayload` above.
             inputConfig: buildSessionTurnInputConfig({
               inputBlocks,
-              prompt,
+              prompt: promptPayload,
               cliType: draft.cliType,
               agentType: draft.agentType,
               modeId: selectedModeId,
@@ -383,10 +535,13 @@ export const DraftSessionChatInterface = memo(
                 : undefined,
               mcpServerIds: mcpSelection.selectedIds,
               taskToolsEnabled: tasksFeatureEnabled,
+              agentRoleId: activeAgentRole?.id ?? null,
+              agentRoleRevision: activeAgentRole?.revision,
             }),
           };
         },
         [
+          activeAgentRole,
           configOptionSelectors,
           draft.agentConfigId,
           draft.agentType,
@@ -497,6 +652,8 @@ export const DraftSessionChatInterface = memo(
             onStop={() => {}}
             onRemoveQueueItem={async () => {}}
             onAgentConfigChange={handleAgentConfigChange}
+            agentRoleControl={draftAgentRoleControl}
+            onAgentRoleSaved={handleAgentRoleSaved}
             initialInputText={draft.prompt}
             onInputValueChange={(prompt) => onDraftChange(draft.id, { prompt })}
             onCommentReferencesChange={onCommentReferencesChange}
