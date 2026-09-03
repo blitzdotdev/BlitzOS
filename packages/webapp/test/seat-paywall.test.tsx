@@ -1,8 +1,9 @@
 import type { OrgUsageResponse } from '@blitzos/schema';
+import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { ApiRequestError, type ControlPlaneClient } from '../src/api.js';
+import { ApiRequestError, type ControlPlaneClient, type InviteView } from '../src/api.js';
 import { InvitesPanel } from '../src/settings/InvitesPanel.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 
 /** Only what this panel calls. The panel takes the whole client, but a stub
  * that lists seventy unused methods hides which four matter here. */
@@ -107,6 +108,84 @@ describe('the seat paywall', () => {
 
     expect(view.container.querySelector('.settings-paywall')).toBeNull();
     expect(text(view.container)).toContain('organization admin required');
+    await view.unmount();
+  });
+
+  it('keeps the invite draft pending and commits the returned row directly', async () => {
+    const listInvites = vi.fn(async () => ({ invites: [], ttlDays: 14 }));
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['createInvite']>>>();
+    const canonical: InviteView = {
+      id: 'invite-one',
+      email: 'nia@example.com',
+      role: 'member',
+      state: 'ready',
+      createdAt: 10,
+      expiresAt: 20,
+      redeemedAt: null,
+    };
+    const view = await render(<InvitesPanel client={client({
+      listInvites,
+      createInvite: vi.fn(() => request.promise),
+    })} />);
+    await settle();
+
+    const email = view.container.querySelector<HTMLInputElement>('input[type="email"]');
+    if (email === null) throw new Error('invite email field is missing');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        ?.set?.call(email, canonical.email);
+      email.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+
+    const create = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Creating…');
+    expect(create?.disabled).toBe(true);
+    expect(email.value).toBe(canonical.email);
+
+    request.resolve({ invite: canonical, code: 'one-time', ttlDays: 14 });
+    await settle();
+    expect(text(view.container)).toContain(canonical.email);
+    expect(view.container.querySelector<HTMLInputElement>('[aria-label="Invite link"]')?.value)
+      .toContain('one-time');
+    expect(email.value).toBe('');
+    expect(listInvites).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it('removes a revoked invite immediately and restores it on refusal', async () => {
+    const invite: InviteView = {
+      id: 'invite-one',
+      email: 'nia@example.com',
+      role: 'member',
+      state: 'ready',
+      createdAt: 10,
+      expiresAt: 20,
+      redeemedAt: null,
+    };
+    const listInvites = vi.fn(async () => ({ invites: [invite], ttlDays: 14 }));
+    const request = deferred<void>();
+    const view = await render(<InvitesPanel client={client({
+      listInvites,
+      revokeInvite: vi.fn(() => request.promise),
+    })} />);
+    await settle();
+
+    const revoke = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Revoke');
+    await act(async () => revoke?.click());
+    expect(text(view.container)).not.toContain(invite.email);
+
+    request.reject(new Error('invite is already redeemed'));
+    await settle();
+    expect(text(view.container)).toContain(invite.email);
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('invite is already redeemed');
+    expect(listInvites).toHaveBeenCalledOnce();
     await view.unmount();
   });
 });

@@ -176,10 +176,20 @@ export function TemplatesHome({
           onCancel={() => setDeleting(null)}
           onConfirm={() => {
             const target = deleting;
+            const index = templates?.findIndex(({ id }) => id === target.id) ?? 0;
             setDeleting(null);
+            setError(null);
+            setTemplates((current) => current?.filter(({ id }) => id !== target.id) ?? null);
             void client.deleteWorkspaceTemplate(target.id)
-              .then(load)
-              .catch((caught: Error) => setError(caught.message));
+              .catch((cause: unknown) => {
+                setTemplates((current) => {
+                  if (current === null || current.some(({ id }) => id === target.id)) return current;
+                  const restored = [...current];
+                  restored.splice(Math.max(index, 0), 0, target);
+                  return restored;
+                });
+                setError(cause instanceof Error ? cause.message : 'Could not delete template.');
+              });
           }}
         />
       )}

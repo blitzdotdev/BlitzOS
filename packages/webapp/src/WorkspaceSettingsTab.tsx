@@ -163,11 +163,12 @@ export function WorkspaceSettingsTab({
   machines: MachineType[];
   repos: TemplateRepoView[];
   canManage: boolean;
-  onSave: (input: UpdateWorkspaceRequest) => void;
+  onSave: (input: UpdateWorkspaceRequest) => Promise<SettingsDraft>;
   onAddRepo: (repo: string) => void;
   onRemoveRepo: (repo: string) => void;
 }) {
   const [draft, setDraft] = useState<SettingsDraft>(() => draftFor(workspace));
+  const [saving, setSaving] = useState(false);
   const changes = settingsChanges(workspace, draft);
   const defaultMachine = machines.find(({ id }) => id === draft.defaultMachineTypeId);
   return (
@@ -190,6 +191,7 @@ export function WorkspaceSettingsTab({
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
+                disabled={saving}
                 value={draft.name}
                 onChange={(event) => {
                   const name = event.currentTarget.value;
@@ -202,6 +204,7 @@ export function WorkspaceSettingsTab({
               <WebAppSelectMenu
                 ariaLabel="Default machine type"
                 className="machine-type-select"
+                disabled={saving}
                 value={draft.defaultMachineTypeId}
                 options={machineTypeOptions(machines)}
                 onChange={(defaultMachineTypeId) =>
@@ -218,6 +221,7 @@ export function WorkspaceSettingsTab({
               <input
                 type="checkbox"
                 aria-label="Provision a machine when a member is added"
+                disabled={saving}
                 checked={draft.autoProvision}
                 onChange={(event) => {
                   const autoProvision = event.currentTarget.checked;
@@ -230,6 +234,7 @@ export function WorkspaceSettingsTab({
           <AgentRulesPicker
             client={client}
             value={draft.agentRuleId}
+            disabled={saving}
             onChange={(agentRuleId) => setDraft((current) => ({ ...current, agentRuleId }))}
           />
           {/* One Save for the whole form, so it belongs to neither section and
@@ -238,10 +243,17 @@ export function WorkspaceSettingsTab({
             <button
               className="webapp-action webapp-action--primary"
               type="button"
-              disabled={changes === null}
-              onClick={() => { if (changes !== null) onSave(changes); }}
+              disabled={changes === null || saving}
+              onClick={() => {
+                if (changes === null || saving) return;
+                setSaving(true);
+                void onSave(changes)
+                  .then((canonical) => setDraft(canonical))
+                  .catch(() => undefined)
+                  .finally(() => setSaving(false));
+              }}
             >
-              Save settings
+              {saving ? 'Saving…' : 'Save settings'}
             </button>
           </div>
         </>

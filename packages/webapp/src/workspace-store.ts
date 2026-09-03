@@ -55,6 +55,14 @@ export type WorkspaceAction =
   | { type: 'workspace_member_upserted'; workspaceId: string; member: WorkspaceMemberView }
   | { type: 'workspace_member_removed'; workspaceId: string; membershipId: string }
   | { type: 'workspace_member_machine_updated'; workspaceId: string; membershipId: string; machine: MachineView | null }
+  | {
+      type: 'workspace_settings_updated';
+      workspaceId: string;
+      settings: Pick<
+        CloudWorkspaceModel,
+        'serverName' | 'defaultMachineTypeId' | 'autoProvision' | 'agentRuleId' | 'updatedAt'
+      >;
+    }
   | { type: 'workspace_renamed'; workspaceId: string; title: string }
   | { type: 'agent_default_changed'; workspaceId: string; agent: Agent }
   | { type: 'workspace_reordered'; sourceId: string; targetId: string };
@@ -269,6 +277,11 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         members: workspace.members.map((member) => member.membershipId === action.membershipId
           ? { ...member, machine: action.machine }
           : member),
+      }));
+    case 'workspace_settings_updated':
+      return mapWorkspace(state, action.workspaceId, (workspace) => ({
+        ...workspace,
+        ...action.settings,
       }));
     case 'workspace_renamed':
       return mapWorkspace(state, action.workspaceId, (workspace) => ({ ...workspace, title: action.title }));

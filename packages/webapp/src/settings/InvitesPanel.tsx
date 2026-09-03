@@ -24,12 +24,16 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
   const [oneTimeLink, setOneTimeLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<SeatRefusal | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
   const load = useCallback(async () => {
     try {
       setInvites((await client.listInvites()).invites);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not load invites.');
+    } finally {
+      setLoading(false);
     }
     // A deployment with no billing service has no seat limit to show, and this
     // route still answers. Its failure is not the invite list's failure.
@@ -55,6 +59,21 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
       .catch((caught: Error) => setError(caught.message));
   };
 
+  const revoke = (invite: InviteView) => {
+    const index = invites.findIndex(({ id }) => id === invite.id);
+    setInvites((current) => current.filter(({ id }) => id !== invite.id));
+    setError(null);
+    void client.revokeInvite(invite.id).catch((cause: unknown) => {
+      setInvites((current) => {
+        if (current.some(({ id }) => id === invite.id)) return current;
+        const restored = [...current];
+        restored.splice(Math.max(index, 0), 0, invite);
+        return restored;
+      });
+      setError(cause instanceof Error ? cause.message : 'Could not revoke invite.');
+    });
+  };
+
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Invites">
       <PanelHeader eyebrow="Organization" title="Invite links" detail={<>Links expire after {INVITE_TTL_DAYS} days.</>} />
@@ -78,35 +97,40 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
       )}
       <form className="settings-form" onSubmit={(event) => {
         event.preventDefault();
+        if (loading || creating) return;
         const input = { email: email.trim() || undefined, role };
+        setCreating(true);
+        setError(null);
         setRefusal(null);
         void client.createInvite(input).then((created) => {
-          setOneTimeLink(`${window.location.origin}/invite/${created.code}`);
+          setOneTimeLink(window.location.origin + '/invite/' + created.code);
+          setInvites((current) => [
+            created.invite,
+            ...current.filter(({ id }) => id !== created.invite.id),
+          ]);
           setEmail('');
-          return load();
         }).catch((caught: Error) => {
           if (caught instanceof ApiRequestError && caught.paymentUrl !== null) {
             setRefusal({
               message: caught.message,
               paymentUrl: caught.paymentUrl,
-              // The buyer's own seat is one of these. Saying the total out
-              // loud is the difference between an offer and an error.
+              // The buyer's own seat is one of these; show the total they need.
               seatsNeeded: seatsUsed + 1,
             });
             return;
           }
           setError(caught.message);
-        });
+        }).finally(() => setCreating(false));
       }}>
         <label className="cfg-field">
           <span>Email (optional)</span>
-          <input type="email" placeholder="person@example.com" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
+          <input disabled={loading || creating} type="email" placeholder="person@example.com" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
         </label>
         <label className="cfg-field cfg-field--compact">
           <span>Role</span>
-          <select value={role} onChange={(event) => setRole(event.currentTarget.value === 'admin' ? 'admin' : 'member')}><option value="member">Member</option><option value="admin">Admin</option></select>
+          <select disabled={loading || creating} value={role} onChange={(event) => setRole(event.currentTarget.value === 'admin' ? 'admin' : 'member')}><option value="member">Member</option><option value="admin">Admin</option></select>
         </label>
-        <button className="webapp-action webapp-action--primary" type="submit">Create invite</button>
+        <button className="webapp-action webapp-action--primary" type="submit" disabled={loading || creating}>{creating ? 'Creating…' : 'Create invite'}</button>
       </form>
       {refusal && (
         <div className="settings-paywall" role="alert">
@@ -145,7 +169,7 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
             </span>
             {invite.state === 'ready' && (
               <span className="settings-person-actions">
-                <button className="webapp-action" type="button" onClick={() => void client.revokeInvite(invite.id).then(load).catch((caught: Error) => setError(caught.message))}>Revoke</button>
+                <button className="webapp-action" type="button" onClick={() => revoke(invite)}>Revoke</button>
               </span>
             )}
           </div>

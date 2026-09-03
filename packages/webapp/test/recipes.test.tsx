@@ -13,7 +13,7 @@ import { RecipesHome } from '../src/files/RecipesHome.js';
 import { TemplatesHome } from '../src/files/TemplatesHome.js';
 import { SettingsPage } from '../src/SettingsPage.js';
 import { standaloneResolver } from '../src/resolver.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 import { workspaceViewFixture } from './workspace-fixtures.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -41,7 +41,7 @@ const recipe: RecipeView = {
   prompt: 'Write the weekly report.',
 };
 
-function stub(extra?: (url: URL, init?: RequestInit) => Response | null) {
+function stub(extra?: (url: URL, init?: RequestInit) => Response | Promise<Response> | null) {
   const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const handled = extra?.(url, init);
@@ -90,10 +90,11 @@ async function submit(view: { container: HTMLElement }) {
 describe('recipes home', () => {
   it('lists name, harness, model, and template name, and deletes with confirm', async () => {
     const deleted: string[] = [];
+    const deletion = deferred<Response>();
     const fetcher = stub((url, init) => {
       if (url.pathname === '/workspace-recipes/r-1' && init?.method === 'DELETE') {
         deleted.push(url.pathname);
-        return new Response(null, { status: 204 });
+        return deletion.promise;
       }
       return null;
     });
@@ -133,11 +134,13 @@ describe('recipes home', () => {
     await act(async () => {
       view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
     });
-    await settle();
     expect(deleted).toEqual(['/workspace-recipes/r-1']);
+    expect(view.container.querySelector('.tpl-card')).toBeNull();
+    deletion.resolve(new Response(null, { status: 204 }));
+    await settle();
     expect(fetcher.mock.calls.filter(([input]) =>
       new URL(String(input)).pathname === '/workspace-recipes'))
-      .toHaveLength(2);
+      .toHaveLength(1);
     await view.unmount();
   });
 });
@@ -173,15 +176,10 @@ describe('templates home', () => {
   });
 
   it('surfaces the control-plane 409 naming the blocking recipes on delete failure', async () => {
+    const deletion = deferred<Response>();
     stub((url, init) => {
       if (url.pathname === '/workspace-templates/template-1' && init?.method === 'DELETE') {
-        return Response.json(
-          {
-            error: 'delete the 2 recipes using this template first: weekly report, nightly audit',
-            retryAction: null,
-          },
-          { status: 409 },
-        );
+        return deletion.promise;
       }
       return null;
     });
@@ -208,8 +206,17 @@ describe('templates home', () => {
     await act(async () => {
       view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
     });
+    expect(view.container.querySelector('.tpl-card')).toBeNull();
+    deletion.resolve(Response.json(
+      {
+        error: 'delete the 2 recipes using this template first: weekly report, nightly audit',
+        retryAction: null,
+      },
+      { status: 409 },
+    ));
     await settle();
 
+    expect(view.container.querySelector('.tpl-card')?.textContent).toContain('analysis starter');
     expect(view.container.querySelector('[role="alert"]')?.textContent)
       .toBe('delete the 2 recipes using this template first: weekly report, nightly audit');
     await view.unmount();

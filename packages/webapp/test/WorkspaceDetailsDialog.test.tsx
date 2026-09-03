@@ -18,7 +18,7 @@ import {
 } from '../src/workspace-store.js';
 import { describe, expect, it, vi } from 'vitest';
 import { deferred, render, settle } from './dom.js';
-import { workspaceModelFixture } from './workspace-fixtures.js';
+import { workspaceModelFixture, workspaceViewFixture } from './workspace-fixtures.js';
 import { ErrorReporterProvider } from '../src/error-dialog/ErrorReporter.js';
 
 const machineTypes: MachineType[] = [
@@ -538,7 +538,8 @@ describe('WorkspaceDetailsDialog', () => {
   });
 
   it('writes only the settings fields that actually changed', async () => {
-    const updateWorkspace = vi.fn().mockResolvedValue({ workspace: {} });
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['updateWorkspace']>>>();
+    const updateWorkspace = vi.fn(() => request.promise);
     const view = await render(dialog({ client: client({ updateWorkspace }) }));
     await settle();
     await act(async () => tab(view.container, 'Settings')?.click());
@@ -564,13 +565,27 @@ describe('WorkspaceDetailsDialog', () => {
     await act(async () => toggle?.click());
 
     expect(save()?.disabled).toBe(false);
-    await act(async () => save()?.click());
+    const saveButton = save();
+    await act(async () => saveButton?.click());
+    expect(saveButton?.textContent).toBe('Saving…');
+    expect(name.disabled).toBe(true);
     // The default machine type and the agent rule were never touched, so they
     // travel as absent fields rather than as a restatement of what is stored.
     expect(updateWorkspace).toHaveBeenCalledWith(workspace.id, {
       name: 'renamed-workspace',
       autoProvision: false,
     });
+    request.resolve({ workspace: workspaceViewFixture({
+      id: workspace.id,
+      name: 'server-normalized',
+      defaultMachineTypeId: workspace.defaultMachineTypeId,
+      autoProvision: false,
+      agentRuleId: workspace.agentRuleId,
+    }) });
+    await settle();
+    expect(saveButton?.textContent).toBe('Save settings');
+    expect(name.value).toBe('server-normalized');
+    expect(saveButton?.disabled).toBe(true);
     await view.unmount();
   });
 

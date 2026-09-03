@@ -3,6 +3,7 @@ import type {
   ListMachineTypesResponse,
   MachineType,
   TemplateRepoView,
+  UpdateWorkspaceRequest,
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient, MemberView } from './api';
@@ -13,10 +14,7 @@ import { WorkspaceCredentialsTab } from './WorkspaceCredentialsTab';
 import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
 import type { CloudWorkspaceModel, WorkspaceAction } from './workspace-store';
 import { caughtErrorMessage } from './error-message';
-import {
-  useErrorReporter,
-  type ErrorContext,
-} from './error-dialog/ErrorReporter';
+import { useErrorReporter } from './error-dialog/ErrorReporter';
 import { useWorkspaceOptimisticMembers } from './use-workspace-optimistic-members';
 
 /** Members, the org credentials readable here (plans/ORG-CREDENTIALS.md §9
@@ -136,13 +134,35 @@ export function WorkspaceDetailsDialog({
     return () => { cancelled = true; };
   }, [client, listMachineTypes, workspaceId]);
 
-  /** Non-optimistic writes still refresh their polled rows, but every action
-   * failure now goes to the shared copyable dialog instead of the load banner. */
-  const run = useCallback((action: Promise<unknown>, failure: ErrorContext) => {
-    void action
-      .then(refreshWorkspaces)
-      .catch((caught) => reportError(caught, failure));
-  }, [refreshWorkspaces, reportError]);
+  const saveSettings = useCallback(async (input: UpdateWorkspaceRequest) => {
+    try {
+      const { workspace: updated } = await client.updateWorkspace(workspaceId, input);
+      commitWorkspaceMutation({
+        type: 'workspace_settings_updated',
+        workspaceId,
+        settings: {
+          serverName: updated.name,
+          defaultMachineTypeId: updated.defaultMachineTypeId,
+          autoProvision: updated.autoProvision,
+          agentRuleId: updated.agentRuleId,
+          updatedAt: updated.updatedAt,
+        },
+      });
+      return {
+        name: updated.name,
+        defaultMachineTypeId: updated.defaultMachineTypeId,
+        autoProvision: updated.autoProvision,
+        agentRuleId: updated.agentRuleId,
+      };
+    } catch (caught) {
+      reportError(caught instanceof Error ? caught : new Error('The settings could not be saved.'), {
+        title: 'Couldn’t save workspace settings',
+        action: 'Saving settings for ' + workspace.title + '.',
+        workspaceId,
+      });
+      throw caught;
+    }
+  }, [client, commitWorkspaceMutation, reportError, workspace.title, workspaceId]);
 
   /** A repo write answers with the list it produced, so the panel shows what
    * the server holds rather than what the browser hoped for. A remove answers
@@ -263,11 +283,7 @@ export function WorkspaceDetailsDialog({
               machines={machines}
               repos={repos}
               canManage={canManage}
-              onSave={(input) => run(client.updateWorkspace(workspaceId, input), {
-                title: 'Couldn’t save workspace settings',
-                action: `Saving settings for ${workspace.title}.`,
-                workspaceId,
-              })}
+              onSave={saveSettings}
               onAddRepo={addRepo}
               onRemoveRepo={removeRepo}
             />
