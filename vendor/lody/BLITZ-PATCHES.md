@@ -484,7 +484,7 @@ merges.**
 
 ### 7. Host suppression of surfaces BlitzOS does not serve (v1 scope cuts, 2026-09-01)
 
-**One idea, 40 hunks in seven files, and every one of them is inert by default.**
+**One idea, 42 hunks in seven files, and every one of them is inert by default.**
 The 463-row support matrix (`plans/LODY-SESSIONS.md`, the scope decision) found
 four groups of controls that RENDER in a BlitzOS browser and cannot work there.
 Each one is a control a member can click, and the failure is never at the button:
@@ -606,7 +606,9 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
 |---|---|---|---|
 | 36 | 20 | the `@/lib/github-avatar` import | imports `useAppCapability` |
 | 37 | 398 | `const { t } = useTranslation();` in `UnifiedProjectSelectorView` | reads the capability |
-| 38 | 635 | the `repos.connectMore` `<DropdownMenuItem>` | renders it only with the capability — C65 |
+| 38 | 410 | above the selectable-options memo | clears a controlled GitHub selection when the capability is unavailable, so a stale URL or saved draft cannot retain the unsupported remote path |
+| 39 | 428 | `for (const repository of repositories ?? [])` | adds cached GitHub repositories to the selectable project list only with the capability; BlitzOS deliberately caches clone names for local-project metadata, not as remote project choices |
+| 40 | 635 | the `repos.connectMore` `<DropdownMenuItem>` | renders it only with the capability — C65 |
 
 `packages/components/src/components/sessions/session-conversation-diff-panel.tsx`
 — the same two-line shape as hunks 11-12, and what takes SP43 and SP44 with it:
@@ -614,8 +616,8 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 39 | 47 | the `@/lib/github-token` import | imports `useAppCapability` |
-| 40 | 430, 432, 433 | the `getSessionGitHubState` memo | reads the capability and passes it as the third argument |
+| 41 | 47 | the `@/lib/github-token` import | imports `useAppCapability` |
+| 42 | 430, 432, 433 | the `getSessionGitHubState` memo | reads the capability and passes it as the third argument |
 
 #### What this patch does NOT do, and why
 
@@ -1603,6 +1605,48 @@ vendored hook across a box switch and fails without hunk 3.
 **Candidate upstream PR:** key the local-platform snapshot by the installed IPC
 bridge (or expose this reset) so a host driving more than one daemon can move
 between them. Until then this is the smallest seam that closes it.
+
+### 18. A failed Git-state probe degrades a worktree selection to local (2026-09-03)
+
+**One idea, three hunks in two files, and it fixes upstream's own mismatch.**
+The chat landing already distinguishes the SELECTED workdir mode from the
+EFFECTIVE one: when local Git state is unavailable,
+`effectiveWorkdirMode` is `local`, the worktree toggle renders off, and the
+session `ProjectRef` omits `useWorktree`. That is a complete and safe fallback
+to editing the selected local project in place.
+
+Two later checks nevertheless read `selectedWorkdirMode === 'worktree'` and
+turn that fallback into a dead end. `getChatLandingSubmitDisabled` permanently
+disables the button after the Git-state load errors, and `handleSubmit` has a
+matching early return for keyboard submission. A persisted worktree preference
+therefore makes a project whose machine cannot answer `local-project/git-state`
+impossible to use, even though the rest of the component has already selected
+the local fallback.
+
+| # | File | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | `packages/components/src/components/chat/chat-landing-derived.ts` | the worktree arm in `getChatLandingSubmitDisabled` | keeps the loading guard, but an answered error no longer disables Send; the effective mode has already fallen back to local |
+| 2 | `packages/components/src/components/chat/chat-landing.tsx` | `local_project_git_state_failed` in `captureSessionInputBlocked`'s reason union | removes the reason that hunk 3 makes unreachable |
+| 3 | same | the `localGitStateError && selectedWorkdirMode === 'worktree'` early return in `handleSubmit` | removes the second block so click and Enter both dispatch with the existing `effectiveWorkdirMode === 'local'` project shape |
+
+Guard: `packages/webapp/test/lody-git-state-fallback.test.ts` reproduces the
+cross-workspace case — a healthy box has already persisted the global worktree
+preference, then a different box's Git-state request fails — and pins both the
+button decision and the submit path.
+
+This is not a BlitzOS-specific behaviour switch. No prop or capability is
+added, and every healthy Git-state path is byte-for-byte unchanged: a worktree
+selection still blocks while state is loading and still dispatches a worktree
+after state resolves. The only changed state is a terminal error, where the UI
+already displays and builds a local session. The upstream PR is drafted in
+`plans/evidence/lody-git-state-fallback-pr.md`; **drop all three hunks when it
+merges.**
+
+**Merge conflict drill.** If upstream consolidates selected/effective workdir
+mode, preserve one rule: loading a requested worktree may block, but a terminal
+Git-state error must allow the already-selected local fallback through both the
+button and the submit handler. If upstream implements that rule itself, delete
+this seam rather than reconciling it.
 
 ## Patches to the published npm artifact (NOT to this tree)
 

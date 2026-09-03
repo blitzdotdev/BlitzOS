@@ -21,11 +21,7 @@ import {
   publishBoxReposAsWorkspaceRepos,
   registerWorkspaceRepositories,
 } from "./local-projects.js";
-import {
-  applyDefaultSessionProject,
-  createSessionProjectDefaults,
-  seedWorktreeWorkdirDefault,
-} from "./workdir-default.js";
+import { applyDefaultSessionProject, createSessionProjectDefaults } from "./workdir-default.js";
 import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
 
 /**
@@ -214,20 +210,7 @@ export function LodyAgentConfigGate(props: {
         // name is in the workspace's connected-repo list, and without that
         // field the session is a chat to the rail and to the daemon's diff
         // stats alike. See `local-projects.ts`.
-        const publication = await publishBoxReposAsWorkspaceRepos(
-          store,
-          endpointsRef.current,
-          runtime,
-          machineId,
-        );
-        // The worktree default is seeded HERE, on the sweep's own verdict, and
-        // not unconditionally at provider mount: the landing greys its send
-        // button whenever a local project is selected in worktree mode and its
-        // git-state load errs, so a box the sweep could not verify must be
-        // left on upstream's `'local'` default, where a send can always go
-        // out. The key is only ever written when absent, so a box that
-        // verifies on a later mount still gets the seed (`workdir-default.ts`).
-        if (publication.gitProbe === "verified") seedWorktreeWorkdirDefault();
+        await publishBoxReposAsWorkspaceRepos(store, endpointsRef.current, runtime, machineId);
         // Second, and only after the rows exist: the capabilities pass keys off
         // them. A config that fails to report costs the composer that agent's
         // selectors and nothing else, so it is warned about rather than raised

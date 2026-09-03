@@ -2905,7 +2905,6 @@ function WorkspaceChatLanding({
         | 'missing_agent_config'
         | 'missing_machine'
         | 'missing_context'
-        | 'local_project_git_state_failed'
         | 'missing_branch'
         | 'missing_project',
       extra?: Record<string, unknown>
@@ -3004,12 +3003,6 @@ function WorkspaceChatLanding({
     const githubBranch = selectedBranch?.trim() || '';
     const localWorktreeBranch =
       effectiveWorkdirMode === 'worktree' ? selectedLocalBranch?.trim() || undefined : undefined;
-    if (contextType === 'local' && localGitStateError && selectedWorkdirMode === 'worktree') {
-      captureSessionInputBlocked('local_project_git_state_failed', {
-        error_message: localGitStateError,
-      });
-      return;
-    }
     // Only require branch selection when the repo actually has branches.
     // Empty repos have no branches, but sessions can still be created.
     if (contextType === 'github' && !githubBranch && repoBranches.length > 0) {
