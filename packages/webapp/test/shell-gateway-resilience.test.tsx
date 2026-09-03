@@ -128,9 +128,6 @@ describe("a rejected session-surface chunk", () => {
         workspaceTitle="Workspace"
         visible
         railHost={null}
-        terminals={[]}
-        activeTerminalId=""
-        onSelectTerminal={() => undefined}
       />,
     );
     await act(async () => {

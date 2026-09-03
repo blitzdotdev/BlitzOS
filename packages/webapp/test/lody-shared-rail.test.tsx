@@ -314,9 +314,6 @@ async function mountRegion(sharedOpen: unknown | null) {
       workspaceTitle="Workspace"
       visible
       railHost={null}
-      terminals={[]}
-      activeTerminalId=""
-      onSelectTerminal={() => undefined}
       surfaceTabs={surfaceTabs as never}
       sharedOpen={sharedOpen as never}
     />,

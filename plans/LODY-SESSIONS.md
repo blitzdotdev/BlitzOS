@@ -442,8 +442,11 @@ measurements in `plans/LODY-RUNTIME-DESIGN.md` §9):
   says why ("so Chats reads as the last section"), so the rail reads GitHub
   Worktrees, then Chats, then Terminals. §0's bias rule settles it.
 - **An empty Lody section renders nothing, header included** — upstream's rule
-  (`loro-app-sidebar.tsx:2095`). Terminals is the exception, because it is ours
-  and its header carries the `+`.
+  (`loro-app-sidebar.tsx:2095`). Terminals was the exception, because it was
+  ours and its header carried the `+` — until 2026-09-03, when the section was
+  deleted (a terminal is a tab of the surface's own strip, and the rail listed
+  every tab twice) and the `+` became a terminal glyph in the rail's footer,
+  left of Archive (seam patch 18, `plans/LODY-TERMINAL-TABS.md` §4.1).
 - **"+ New session" is their `home` nav entry, relabelled.** It is the same
   action — go to the chat landing, which is the create surface — so there is no
   native button and no `div.shell-newbar` in the vendored shape.
@@ -457,7 +460,10 @@ measurements in `plans/LODY-RUNTIME-DESIGN.md` §9):
   box.
 - **Archive / rename / pin are wired to Lody's own `useSessionActions`**, so
   they are their dialogs and their copy. The archive-backup wording in the
-  confirm dialog is theirs and was not restated on our side.
+  confirm dialog is theirs and was not restated on our side. Archiving the
+  session ON SCREEN also asks the shell for the landing, which is upstream's
+  own rule for its sidebar (`loro-app-sidebar.tsx:1397`); until 2026-09-03 the
+  rail archived and stayed, so the page kept showing the archived session.
 
 **What phase 5 changed in the rail.** The filter phase 4 copied from upstream
 (`loro-app-sidebar.tsx:1565`, drop every session whose `project.kind` is

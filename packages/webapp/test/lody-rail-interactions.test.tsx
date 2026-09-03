@@ -72,8 +72,6 @@ interface MountResult {
   surface: { hidden: boolean | undefined; rail: LodyRailBinding | undefined };
   /** The hook's own state, the way `CloudApp` holds it. */
   seen: { rail: LodyRailState | null };
-  /** Every tab id a terminal row selected. */
-  selectedTerminals: string[];
   view: Awaited<ReturnType<typeof render>>;
 }
 
@@ -99,7 +97,6 @@ async function mountRegion(options: { path: string; tabCount: number }): Promise
   window.history.replaceState({}, "", options.path);
 
   const seen: MountResult["seen"] = { rail: null };
-  const selectedTerminals: string[] = [];
   // The rail draws its list region whether or not the surface is on screen, so
   // the host exists from the first render. That is what makes the region mount
   // while the panes own the view — and what makes the bug reachable.
@@ -126,14 +123,6 @@ async function mountRegion(options: { path: string; tabCount: number }): Promise
         workspaceTitle="Workspace"
         visible={rail.visible}
         railHost={railHost}
-        terminals={[{ id: "12", label: "bash", agent: "terminal" }]}
-        activeTerminalId="12"
-        onSelectTerminal={(tabId) => {
-          // `selectTtydSession`, in one line: the tab is activated and the
-          // panes take the view back.
-          selectedTerminals.push(tabId);
-          rail.closeChat();
-        }}
         onOpenSession={rail.openSession}
         onOpenLanding={rail.openLanding}
         onOpenArchive={rail.openArchive}
@@ -144,7 +133,7 @@ async function mountRegion(options: { path: string; tabCount: number }): Promise
   const view = await render(<Host />);
   // The region loads the surface through `lazy`, so one microtask turn.
   await settle();
-  return { surface, seen, selectedTerminals, view };
+  return { surface, seen, view };
 }
 
 describe("a rail click while the panes own the view", () => {
@@ -184,7 +173,6 @@ describe("a rail click while the panes own the view", () => {
 
     expect(window.location.pathname).toBe("/workspaces/ws-1/chat");
     expect(mounted.surface.hidden).toBe(false);
-    expect(mounted.selectedTerminals).toEqual([]);
     await mounted.view.unmount();
   });
 
@@ -206,20 +194,6 @@ describe("the rail's other two directions, unchanged", () => {
     await act(async () => mounted.surface.rail?.onOpenSession?.("s-2"));
     await settle();
     expect(window.location.pathname).toBe("/workspaces/ws-1/chat/s-2");
-    await mounted.view.unmount();
-  });
-
-  it("still gives the panes back to a terminal row", async () => {
-    const mounted = await mountRegion({ path: "/workspaces/ws-1/chat/s-1", tabCount: 1 });
-    expect(mounted.surface.hidden).toBe(false);
-
-    await act(async () => mounted.surface.rail?.onSelectTerminal("12"));
-    await settle();
-
-    expect(mounted.selectedTerminals).toEqual(["12"]);
-    expect(window.location.pathname).toBe("/workspaces/ws-1");
-    expect(mounted.seen.rail?.visible).toBe(false);
-    expect(mounted.surface.hidden).toBe(true);
     await mounted.view.unmount();
   });
 

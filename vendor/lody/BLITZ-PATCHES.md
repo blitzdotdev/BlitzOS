@@ -1606,6 +1606,48 @@ vendored hook across a box switch and fails without hunk 3.
 bridge (or expose this reset) so a host driving more than one daemon can move
 between them. Until then this is the smallest seam that closes it.
 
+### 18. `LoroSidebar`'s footer takes one host control (rail footer New tab, 2026-09-03)
+
+**One optional prop, three hunks, one file — seam patch 13's row, opened at
+its start.** Seam patch 13 let the host keep the footer's Archive entry and drop
+the rest. The rail then wanted one control of its own in that same row: the
+New tab menu (Claude / Codex / terminal), which had headed a Terminals section
+of native rows under `afterSessionListContent`. That section is deleted — a
+terminal is a tab of the surface's own strip, and the rail listed every tab
+twice — so its `+` needed a home, and the footer is where a rail keeps the
+controls that are not a list entry.
+
+The existing slots cannot place it. `bottomFloatingContent` floats ABOVE the
+list; `afterSessionListContent` is inside the scroll region. Neither is "in the
+footer's row, before Archive". So the row gets a leading slot.
+
+| # | File | Line (after seam patch 13) | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/components/src/components/loro-sidebar.tsx` | 207 | after `footerItems?: readonly LoroSidebarFooterItem[];` in `LoroSidebarProps` | declares `footerLeadingContent?: ReactNode` |
+| 2 | same | 675 | after `footerItems = LORO_SIDEBAR_FOOTER_ITEMS,` in the destructuring | destructures it (no default: absent renders nothing) |
+| 3 | same | 1261 | the footer's `<div className="flex items-center gap-1">` | renders `{footerLeadingContent}` as that row's first child |
+
+Strictly additive: with the prop absent the footer renders byte-for-byte what
+it rendered after seam patch 13. No upstream call site passes it. No new file
+enters the divergence count.
+
+**What BlitzOS passes.** `packages/webapp/src/lody/SessionRailSidebar.tsx`
+hands it `newTabControl`, which is `CloudApp`'s `NewTabControl variant="footer"`
+— a terminal glyph whose menu opens upward and lands on the unchanged
+`spawnTtydSession`. `packages/webapp/src/strip-rail.css` gives the trigger the
+footer button's own 28px box (`getLoroSidebarFooterIconButtonClassName`) so the
+two read as one row, and `blitz-skin.css` pins the Archive button's rest colour
+to the rail's icon-button token for the same reason.
+
+**Merge conflict drill.** If the footer's utility row is restructured, re-apply
+by rendering the prop as the first child of whatever the row became. If
+upstream grows its own footer slot, delete these hunks and pass that prop from
+`SessionRailSidebar.tsx`.
+
+**Candidate upstream PR:** "let a host add a control to the sidebar footer",
+one prop; it belongs with the `hideHeader`/`hideFooter`/`footerItems` set in
+`plans/evidence/lody-sidebar-props-pr.md`.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NewTabMenu, type SpawnSessionType } from '../NewTabMenu';
+import { SessionTypeIcon } from '../SessionTypeIcon';
 import type { LivePort, PreviewLink } from '../preview';
 import { PlusGlyph } from './StripIcons';
 
@@ -11,10 +12,12 @@ export type NewTabControlProps = {
   onOpenPreviewLink: (url: string, title: string) => void;
   /**
    * `'bar'` is the rail's own pinned action, full width above the list.
-   * `'icon'` is the same menu behind a `+` glyph, for the Terminals section
-   * header the vendored rail draws (plans/LODY-SESSIONS.md §8).
+   * `'footer'` is the same menu behind a terminal glyph, in the footer of the
+   * vendored rail, to the left of their Archive entry
+   * (`vendor/lody/BLITZ-PATCHES.md` seam patch 18). The menu opens upward
+   * there, because below the footer is the end of the rail.
    */
-  variant: 'bar' | 'icon';
+  variant: 'bar' | 'footer';
 };
 
 /**
@@ -45,7 +48,7 @@ export function NewTabControl({
   }, [menuOpen]);
 
   return (
-    <div className={variant === 'bar' ? 'shell-newbar' : 'shell-newbar shell-newbar--icon'}>
+    <div className={variant === 'bar' ? 'shell-newbar' : 'shell-newbar shell-newbar--footer'}>
       <button
         className={variant === 'bar' ? 'shell-new' : 'shell-ib'}
         type="button"
@@ -55,8 +58,17 @@ export function NewTabControl({
         aria-expanded={menuOpen}
         onClick={() => setMenuOpen((open) => !open)}
       >
-        <span className="shell-g"><PlusGlyph className="shell-new__plus" /></span>
-        {variant === 'bar' && 'New tab'}
+        {variant === 'bar' ? (
+          <>
+            <span className="shell-g"><PlusGlyph className="shell-new__plus" /></span>
+            New tab
+          </>
+        ) : (
+          // The terminal glyph every tab strip and rail row draws a terminal
+          // with, so the footer's trigger reads as "a terminal" and not as a
+          // second "+" beside their own.
+          <SessionTypeIcon type="terminal" className="shell-ib__glyph" />
+        )}
       </button>
       {menuOpen && (
         <button
