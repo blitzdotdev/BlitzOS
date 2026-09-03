@@ -106,6 +106,7 @@ import {
   initialWorkspaceStore,
   selectControllableWorkspaceId,
   workspaceReducer,
+  type WorkspaceAction,
 } from './workspace-store';
 import {
   isPreviewPath,
@@ -244,6 +245,11 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   const activeWorkspaceIdRef = useRef(activeWorkspaceId);
   const storeRef = useRef(store);
   const workspaceEndpoints = useRef(new Map<string, WorkspaceEndpoints>());
+  // A workspace list request that began before a successful local mutation can
+  // finish afterward with the older snapshot. Mutation responses are the
+  // authority for their own rows, so such a request is discarded rather than
+  // briefly (or permanently) rolling the UI backward.
+  const workspaceMutationEpoch = useRef(0);
   const firstWorkspacePrompted = useRef(false);
   // Visit once, then retain: tab switches preserve live state without eagerly
   // opening every saved terminal and WebGL surface.
@@ -325,8 +331,10 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   }, [api]);
   const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
   const refreshWorkspaceRecords = useCallback(async () => {
+    const mutationEpoch = workspaceMutationEpoch.current;
     try {
       const records = await api.listWorkspaces();
+      if (mutationEpoch !== workspaceMutationEpoch.current) return;
       rememberWorkspaceEndpoints(workspaceEndpoints.current, records, resolver, true);
       dispatch({ type: 'workspace_records_refreshed', records });
     } catch (refreshError) {
@@ -335,6 +343,10 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       }
     }
   }, [api, resolver]);
+  const commitWorkspaceMutation = useCallback((action: WorkspaceAction) => {
+    workspaceMutationEpoch.current += 1;
+    dispatch(action);
+  }, []);
   /** The poll as a dialog asks for it: a settled write wants its rows now,
    * and has no answer of its own to report. */
   const refreshWorkspacesNow = useCallback(() => {
@@ -1794,6 +1806,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       createWorkspaceError={createWorkspaceError}
       listMachineTypes={listMachineTypes}
       refreshWorkspaces={refreshWorkspacesNow}
+      commitWorkspaceMutation={commitWorkspaceMutation}
       cloneFromWorkspaceId={cloneFromWorkspaceId}
       onCancelCreateWorkspace={() => {
         if (createWorkspaceBusy) return;

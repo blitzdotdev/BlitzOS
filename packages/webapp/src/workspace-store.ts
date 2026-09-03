@@ -1,5 +1,6 @@
 import type { TenantMe } from './api-adapter';
 import type {
+  MachineView,
   RetryAction,
   WorkspaceCredentialView,
   WorkspaceMemberRole,
@@ -53,6 +54,9 @@ export type WorkspaceAction =
   | { type: 'workspace_resume_failed'; workspaceId: string; errorDetail: string }
   | { type: 'workspace_deleted'; workspaceId: string }
   | { type: 'workspace_delete_rolled_back'; workspace: CloudWorkspaceModel; index: number }
+  | { type: 'workspace_member_upserted'; workspaceId: string; member: WorkspaceMemberView }
+  | { type: 'workspace_member_removed'; workspaceId: string; membershipId: string }
+  | { type: 'workspace_member_machine_updated'; workspaceId: string; membershipId: string; machine: MachineView | null }
   | { type: 'workspace_renamed'; workspaceId: string; title: string }
   | { type: 'agent_default_changed'; workspaceId: string; agent: Agent }
   | { type: 'workspace_reordered'; sourceId: string; targetId: string };
@@ -209,6 +213,32 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
       );
       return { ...state, workspaces };
     }
+    case 'workspace_member_upserted':
+      return mapWorkspace(state, action.workspaceId, (workspace) => {
+        const index = workspace.members.findIndex(
+          ({ membershipId }) => membershipId === action.member.membershipId,
+        );
+        if (index < 0) {
+          return { ...workspace, members: [...workspace.members, action.member] };
+        }
+        const members = [...workspace.members];
+        members[index] = action.member;
+        return { ...workspace, members };
+      });
+    case 'workspace_member_removed':
+      return mapWorkspace(state, action.workspaceId, (workspace) => ({
+        ...workspace,
+        members: workspace.members.filter(
+          ({ membershipId }) => membershipId !== action.membershipId,
+        ),
+      }));
+    case 'workspace_member_machine_updated':
+      return mapWorkspace(state, action.workspaceId, (workspace) => ({
+        ...workspace,
+        members: workspace.members.map((member) => member.membershipId === action.membershipId
+          ? { ...member, machine: action.machine }
+          : member),
+      }));
     case 'workspace_renamed':
       return mapWorkspace(state, action.workspaceId, (workspace) => ({ ...workspace, title: action.title }));
     case 'agent_default_changed':

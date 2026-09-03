@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AddWorkspaceMemberRequest,
   MachineView,
@@ -11,24 +11,21 @@ import type {
   DraftWorkspaceMember,
   MachineAction,
 } from './WorkspaceMembersEditor';
-import type { CloudWorkspaceModel } from './workspace-store';
+import type {
+  CloudWorkspaceModel,
+  WorkspaceAction,
+} from './workspace-store';
 import {
   MACHINE_ACTION_FAILURE_TITLES,
-  machineReconciled,
   type MachineOverlay,
   visibleMachine,
 } from './machine-overlay';
-
-type PendingAdd = {
-  member: WorkspaceMemberView;
-  requestPending: boolean;
-};
 
 type OptimisticMemberOptions = {
   client: ControlPlaneClient;
   workspace: CloudWorkspaceModel;
   orgMembers: readonly MemberView[];
-  refreshWorkspaces: () => void;
+  commitWorkspaceMutation: (action: WorkspaceAction) => void;
 };
 
 function addMemberRequest(input: DraftWorkspaceMember): AddWorkspaceMemberRequest {
@@ -43,84 +40,78 @@ function addMemberRequest(input: DraftWorkspaceMember): AddWorkspaceMemberReques
   return request;
 }
 
-/** Local intent sits over polled members until the next poll confirms it.
- * This prevents an in-flight stale poll from making an add/remove or machine
- * transition flash backward. A rejected request drops only its own overlay. */
+/** Local intent sits over polled members only while its request is in flight.
+ * A successful response is committed to the workspace store immediately; a
+ * rejection drops only its own overlay and reveals the preceding server row. */
 export function useWorkspaceOptimisticMembers({
   client,
   workspace,
   orgMembers,
-  refreshWorkspaces,
+  commitWorkspaceMutation,
 }: OptimisticMemberOptions) {
-  const [pendingAdds, setPendingAdds] = useState<Map<string, PendingAdd>>(
+  const [pendingAdds, setPendingAdds] = useState<Map<string, WorkspaceMemberView>>(
     () => new Map(),
   );
   const [pendingRemoves, setPendingRemoves] = useState<Set<string>>(() => new Set());
+  const [pendingRoleUpdates, setPendingRoleUpdates] = useState<Map<string, WorkspaceMemberView>>(
+    () => new Map(),
+  );
   const [machineOverlays, setMachineOverlays] = useState<Map<string, MachineOverlay>>(
     () => new Map(),
   );
   const reportError = useErrorReporter();
   const workspaceId = workspace.id;
+  const workspaceIdRef = useRef(workspaceId);
+  workspaceIdRef.current = workspaceId;
 
   useEffect(() => {
-    const serverByMembership = new Map(
-      workspace.members.map((member) => [member.membershipId, member]),
-    );
-    setPendingAdds((current) => {
-      const next = new Map(current);
-      for (const membershipId of current.keys()) {
-        if (serverByMembership.has(membershipId)) next.delete(membershipId);
-      }
-      return next.size === current.size ? current : next;
-    });
-    setPendingRemoves((current) => {
-      const next = new Set(current);
-      for (const membershipId of current) {
-        if (!serverByMembership.has(membershipId)) next.delete(membershipId);
-      }
-      return next.size === current.size ? current : next;
-    });
-    setMachineOverlays((current) => {
-      const next = new Map(current);
-      for (const [membershipId, overlay] of current) {
-        if (overlay.pendingAction !== null) continue;
-        const polled = serverByMembership.get(membershipId)?.machine ?? null;
-        if (machineReconciled(polled, overlay.machine)) next.delete(membershipId);
-      }
-      return next.size === current.size ? current : next;
-    });
-  }, [workspace.members]);
+    setPendingAdds(new Map());
+    setPendingRemoves(new Set());
+    setPendingRoleUpdates(new Map());
+    setMachineOverlays(new Map());
+  }, [workspaceId]);
 
   const displayedMembers = useMemo(() => {
     const serverIds = new Set(workspace.members.map(({ membershipId }) => membershipId));
     const members = workspace.members
       .filter(({ membershipId }) => !pendingRemoves.has(membershipId))
       .map((member) => {
-        const overlay = machineOverlays.get(member.membershipId);
-        return overlay === undefined ? member : { ...member, machine: overlay.machine };
+        const roleUpdate = pendingRoleUpdates.get(member.membershipId) ?? member;
+        const machineOverlay = machineOverlays.get(member.membershipId);
+        return machineOverlay === undefined
+          ? roleUpdate
+          : { ...roleUpdate, machine: machineOverlay.machine };
       });
     for (const [membershipId, pending] of pendingAdds) {
       if (serverIds.has(membershipId) || pendingRemoves.has(membershipId)) continue;
       const overlay = machineOverlays.get(membershipId);
-      members.push(overlay === undefined
-        ? pending.member
-        : { ...pending.member, machine: overlay.machine });
+      members.push(overlay === undefined ? pending : { ...pending, machine: overlay.machine });
     }
     return members;
-  }, [machineOverlays, pendingAdds, pendingRemoves, workspace.members]);
+  }, [
+    machineOverlays,
+    pendingAdds,
+    pendingRemoves,
+    pendingRoleUpdates,
+    workspace.members,
+  ]);
 
   const pendingMembershipIds = useMemo(() => {
-    const membershipIds = new Set<string>();
-    for (const [membershipId, pending] of pendingAdds) {
-      if (pending.requestPending) membershipIds.add(membershipId);
-    }
+    const membershipIds = new Set(pendingAdds.keys());
+    for (const membershipId of pendingRoleUpdates.keys()) membershipIds.add(membershipId);
     return membershipIds;
-  }, [pendingAdds]);
+  }, [pendingAdds, pendingRoleUpdates]);
   const pendingMachineActions = useMemo(() => {
     const actions = new Map<string, MachineAction>();
     if (workspace.autoProvision) {
       for (const [membershipId, pending] of pendingAdds) {
-        if (pending.requestPending && pending.member.role !== 'viewer') {
+        if (pending.role !== 'viewer') actions.set(membershipId, 'provision');
+      }
+      for (const [membershipId, pending] of pendingRoleUpdates) {
+        const preceding = workspace.members.find((member) => (
+          member.membershipId === membershipId
+        ));
+        if (preceding?.role === 'viewer' && pending.role !== 'viewer') {
           actions.set(membershipId, 'provision');
         }
       }
@@ -129,7 +120,13 @@ export function useWorkspaceOptimisticMembers({
       if (overlay.pendingAction !== null) actions.set(membershipId, overlay.pendingAction);
     }
     return actions;
-  }, [machineOverlays, pendingAdds, workspace.autoProvision]);
+  }, [
+    machineOverlays,
+    pendingAdds,
+    pendingRoleUpdates,
+    workspace.autoProvision,
+    workspace.members,
+  ]);
 
   const addWorkspaceMember = (input: DraftWorkspaceMember) => {
     const identity = orgMembers.find(({ id }) => id === input.membershipId);
@@ -140,27 +137,29 @@ export function useWorkspaceOptimisticMembers({
       role: input.role,
       machine: null,
     };
-    setPendingAdds((current) => new Map(current).set(input.membershipId, {
-      member: optimistic,
-      requestPending: true,
-    }));
+    setPendingAdds((current) => new Map(current).set(input.membershipId, optimistic));
     void client.addWorkspaceMember(workspaceId, addMemberRequest(input))
       .then(({ member }) => {
-        setPendingAdds((current) => {
-          if (!current.has(input.membershipId)) return current;
-          return new Map(current).set(input.membershipId, {
-            member,
-            requestPending: false,
-          });
+        commitWorkspaceMutation({
+          type: 'workspace_member_upserted',
+          workspaceId,
+          member,
         });
-        refreshWorkspaces();
-      })
-      .catch((caught) => {
+        if (workspaceIdRef.current !== workspaceId) return;
         setPendingAdds((current) => {
           const next = new Map(current);
           next.delete(input.membershipId);
           return next;
         });
+      })
+      .catch((caught) => {
+        if (workspaceIdRef.current === workspaceId) {
+          setPendingAdds((current) => {
+            const next = new Map(current);
+            next.delete(input.membershipId);
+            return next;
+          });
+        }
         reportError(caught, {
           title: 'Couldn’t add member',
           action: `Adding ${optimistic.name} to ${workspace.title}.`,
@@ -172,16 +171,68 @@ export function useWorkspaceOptimisticMembers({
   const removeWorkspaceMember = (member: WorkspaceMemberView) => {
     setPendingRemoves((current) => new Set(current).add(member.membershipId));
     void client.removeWorkspaceMember(workspaceId, member.membershipId)
-      .then(refreshWorkspaces)
-      .catch((caught) => {
+      .then(() => {
+        commitWorkspaceMutation({
+          type: 'workspace_member_removed',
+          workspaceId,
+          membershipId: member.membershipId,
+        });
+        if (workspaceIdRef.current !== workspaceId) return;
         setPendingRemoves((current) => {
           const next = new Set(current);
           next.delete(member.membershipId);
           return next;
         });
+      })
+      .catch((caught) => {
+        if (workspaceIdRef.current === workspaceId) {
+          setPendingRemoves((current) => {
+            const next = new Set(current);
+            next.delete(member.membershipId);
+            return next;
+          });
+        }
         reportError(caught, {
           title: 'Couldn’t remove member',
           action: `Removing ${member.name} from ${workspace.title}.`,
+          workspaceId,
+        });
+      });
+  };
+
+  const updateWorkspaceMemberRole = (
+    member: WorkspaceMemberView,
+    role: WorkspaceMemberView['role'],
+  ) => {
+    setPendingRoleUpdates((current) => new Map(current).set(member.membershipId, {
+      ...member,
+      role,
+    }));
+    void client.updateWorkspaceMember(workspaceId, member.membershipId, { role })
+      .then(({ member: updated }) => {
+        commitWorkspaceMutation({
+          type: 'workspace_member_upserted',
+          workspaceId,
+          member: updated,
+        });
+        if (workspaceIdRef.current !== workspaceId) return;
+        setPendingRoleUpdates((current) => {
+          const next = new Map(current);
+          next.delete(member.membershipId);
+          return next;
+        });
+      })
+      .catch((caught) => {
+        if (workspaceIdRef.current === workspaceId) {
+          setPendingRoleUpdates((current) => {
+            const next = new Map(current);
+            next.delete(member.membershipId);
+            return next;
+          });
+        }
+        reportError(caught, {
+          title: 'Couldn’t change member role',
+          action: `Updating ${member.name} in ${workspace.title}.`,
           workspaceId,
         });
       });
@@ -200,10 +251,19 @@ export function useWorkspaceOptimisticMembers({
     void request()
       .then((machine) => {
         const updated = visibleMachine(machine);
-        setMachineOverlays((current) => new Map(current).set(member.membershipId, {
+        commitWorkspaceMutation({
+          type: 'workspace_member_machine_updated',
+          workspaceId,
+          membershipId: member.membershipId,
           machine: updated,
-          pendingAction: null,
-        }));
+        });
+        if (workspaceIdRef.current === workspaceId) {
+          setMachineOverlays((current) => {
+            const next = new Map(current);
+            next.delete(member.membershipId);
+            return next;
+          });
+        }
         if (updated?.state === 'error') {
           reportError(new Error(updated.error ?? 'The machine entered an error state.'), {
             title,
@@ -211,14 +271,15 @@ export function useWorkspaceOptimisticMembers({
             workspaceId,
           });
         }
-        refreshWorkspaces();
       })
       .catch((caught) => {
-        setMachineOverlays((current) => {
-          const next = new Map(current);
-          next.delete(member.membershipId);
-          return next;
-        });
+        if (workspaceIdRef.current === workspaceId) {
+          setMachineOverlays((current) => {
+            const next = new Map(current);
+            next.delete(member.membershipId);
+            return next;
+          });
+        }
         reportError(caught, {
           title,
           action: `${member.name}’s machine in ${workspace.title}.`,
@@ -260,6 +321,7 @@ export function useWorkspaceOptimisticMembers({
     pendingMembershipIds,
     pendingMachineActions,
     addWorkspaceMember,
+    updateWorkspaceMemberRole,
     removeWorkspaceMember,
     runMachineAction,
     machineAction,
