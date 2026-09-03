@@ -150,9 +150,19 @@ jobs:
           #
           # Rebake with the procedure in docs/BOX-IMAGE.md and update all three
           # together: the digest is of the archive the tag names.
+          #
+          # The tag and digest MUST be what `BOX_IMAGE_REF` serves right now.
+          # The manifest is one mutable key in the bucket, so a publish
+          # replaces it the moment the upload finishes, while this pin changes
+          # only when a commit lands here. In between, every VM the platform
+          # creates downloads the new manifest, compares its imageTag with the
+          # old pin, and fails its bootstrap into `error`. That is what took
+          # every new member machine down on 2026-09-02/03: the bucket held
+          # blitz-box:11218111 for hours while this file still said
+          # 23b2c707-lody. Land the pin in the same sitting as the upload.
           BLITZ_DEPLOY_VAR_BOX_IMAGE_REF: https://blitz-control-plane.minjunesv0.workers.dev/box-image/manifest.json
-          BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: blitz-box:23b2c707-lody
-          BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: 7dd60fb6d40c973bd98431f8ebf8e052fac592df28674921947f53ccc6d0e1e3
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: blitz-box:11218111
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: 25d9306f8dab72effc6494f802fd0b167642998b5f85dee9f10de8e9dbfaaec9
           # The Lody session surface, half two (plans/LODY-SESSIONS.md §13.3).
           # Half one is BLITZ_LODY_SESSIONS inside the image above, which is
           # already baked on: the daemon has to be listening before a browser
