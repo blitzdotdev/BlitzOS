@@ -319,3 +319,4 @@ export function WorkspaceDetailsDialog({
     </ModalOverlay>
   );
 }
+

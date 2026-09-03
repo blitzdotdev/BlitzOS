@@ -4,11 +4,10 @@ import { ApiRequestError } from '../src/api.js';
 import {
   ErrorReporterProvider,
   useErrorReporter,
-  type ReportableError,
 } from '../src/error-dialog/ErrorReporter.js';
 import { render, settle } from './dom.js';
 
-function ErrorTrigger({ caught }: { caught: ReportableError }) {
+function ErrorTrigger({ caught }: { caught: Error }) {
   const reportError = useErrorReporter();
   return (
     <button

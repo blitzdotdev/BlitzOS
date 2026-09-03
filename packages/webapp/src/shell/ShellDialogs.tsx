@@ -123,6 +123,7 @@ export function ShellDialogs({
       )}
       {detailsWorkspace?.canControl && details !== null && (
         <WorkspaceDetailsDialog
+          key={detailsWorkspace.id}
           client={client}
           workspace={detailsWorkspace}
           listMachineTypes={listMachineTypes}
@@ -141,6 +142,7 @@ export function ShellDialogs({
       )}
       {machineWorkspace !== undefined && (
         <MyMachineDialog
+          key={`${machineWorkspace.id}:${viewer?.membership.id ?? ''}`}
           client={client}
           workspace={machineWorkspace}
           membershipId={viewer?.membership.id ?? null}

@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiRequestError, type ControlPlaneClient } from '../src/api.js';
 import { MyMachineDialog } from '../src/MyMachineDialog.js';
 import { SessionRail } from '../src/shell/SessionRail.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 import { workspaceModelFixture } from './workspace-fixtures.js';
 import { ErrorReporterProvider } from '../src/error-dialog/ErrorReporter.js';
 
@@ -86,16 +86,6 @@ const workspace = workspaceModelFixture({
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   // SAFETY: the dialog reaches only for the writes each test names.
   return { ...overrides } as unknown as ControlPlaneClient;
-}
-
-function deferred<Value>() {
-  let resolvePromise: (value: Value) => void = () => undefined;
-  let rejectPromise: (reason: Error) => void = () => undefined;
-  const promise = new Promise<Value>((resolve, reject) => {
-    resolvePromise = resolve;
-    rejectPromise = (reason) => reject(reason);
-  });
-  return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
 
 function dialog(overrides: Partial<Parameters<typeof MyMachineDialog>[0]> = {}) {

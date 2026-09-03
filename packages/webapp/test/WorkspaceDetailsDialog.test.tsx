@@ -13,7 +13,7 @@ import { WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
 import { SessionRail } from '../src/shell/SessionRail.js';
 import { machineActionsFor } from '../src/WorkspaceMembersEditor.js';
 import { describe, expect, it, vi } from 'vitest';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 import { workspaceModelFixture } from './workspace-fixtures.js';
 import { ErrorReporterProvider } from '../src/error-dialog/ErrorReporter.js';
 
@@ -98,16 +98,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
 const listMachineTypesStub = async () => ({ machineTypes, failures: [] });
 const noop = () => undefined;
 
-function deferred<Value>() {
-  let resolvePromise: (value: Value) => void = () => undefined;
-  let rejectPromise: (reason: Error) => void = () => undefined;
-  const promise = new Promise<Value>((resolve, reject) => {
-    resolvePromise = resolve;
-    rejectPromise = (reason) => reject(reason);
-  });
-  return { promise, resolve: resolvePromise, reject: rejectPromise };
-}
-
 function dialog(overrides: Partial<Parameters<typeof WorkspaceDetailsDialog>[0]> = {}) {
   return (
     <ErrorReporterProvider>
@@ -178,6 +168,11 @@ describe('WorkspaceDetailsDialog', () => {
       role: 'member',
     });
     expect(view.container.textContent).toContain('Nia Newcomer');
+    const optimisticRow = [...view.container.querySelectorAll('.workspace-member-row')]
+      .find((row) => row.textContent?.includes('Nia Newcomer'));
+    expect(optimisticRow?.querySelector('.machine-chip')?.textContent).toBe('Provisioning');
+    expect(optimisticRow?.querySelector('[aria-label="Persistent volume for Nia Newcomer"]'))
+      .not.toBeNull();
     expect(view.container.querySelector('[aria-label="Remove Nia Newcomer"]'))
       .toHaveProperty('disabled', true);
 
