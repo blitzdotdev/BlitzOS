@@ -19,7 +19,6 @@ import { caughtErrorMessage } from './error-message';
 import {
   useErrorReporter,
   type ErrorContext,
-  type ReportableError,
 } from './error-dialog/ErrorReporter';
 import { useWorkspaceOptimisticMembers } from './use-workspace-optimistic-members';
 
@@ -79,7 +78,7 @@ function CredentialsTab({
   onPut: (input: PutWorkspaceCredentialRequest) => void;
   onRevoke: (name: string) => void;
   onImport: (input: ImportWorkspaceCredentialsRequest) => Promise<ImportWorkspaceCredentialsResponse>;
-  onImportError: (caught: ReportableError) => void;
+  onImportError: (caught: Error) => void;
 }) {
   const [name, setName] = useState('');
   const [label, setLabel] = useState('');

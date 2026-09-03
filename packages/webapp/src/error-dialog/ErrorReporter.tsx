@@ -11,7 +11,6 @@ import {
 } from 'react';
 import { ApiRequestError } from '../api';
 import { ModalOverlay } from '../ModalOverlay';
-import { isString } from '../type-guards';
 
 export type ErrorContext = {
   title: string;
@@ -29,23 +28,11 @@ type PresentedErrorReport = ErrorReport & ErrorContext & {
   timestamp: string;
 };
 
-/** Errors and primitive rejections accepted by first-party action call sites,
- * without weakening the reporter's exported signature to `unknown`. */
-export type ReportableError =
-  | Error
-  | { toString(): string }
-  | null
-  | undefined;
-
-type ReportError = (caught: ReportableError, context: ErrorContext) => void;
+type ReportError = (caught: Error, context: ErrorContext) => void;
 
 const ErrorReporterContext = createContext<ReportError | null>(null);
 
-/** The one rejection boundary for action errors. Callers provide only the UX
- * context; this helper owns the API-specific diagnostic fields and safe
- * handling of non-Error rejections. */
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the single Promise-rejection boundary; it returns a parsed ErrorReport and never exposes the value.
-function describeError(caught: unknown): ErrorReport {
+function describeError(caught: Error): ErrorReport {
   if (caught instanceof ApiRequestError) {
     const report: ErrorReport = {
       message: caught.message || 'The control plane request failed.',
@@ -54,11 +41,7 @@ function describeError(caught: unknown): ErrorReport {
     if (caught.retryAction !== null) report.code = caught.retryAction;
     return report;
   }
-  if (caught instanceof Error) {
-    return { message: caught.message || 'An unexpected error occurred.' };
-  }
-  if (isString(caught) && caught.trim() !== '') return { message: caught };
-  return { message: 'An unexpected error occurred.' };
+  return { message: caught.message || 'An unexpected error occurred.' };
 }
 
 function buildErrorReport(report: PresentedErrorReport): string {
@@ -93,12 +76,7 @@ function ErrorDialog({ report, onClose }: { report: PresentedErrorReport; onClos
   }, [copied]);
 
   const copy = () => {
-    const write = navigator.clipboard?.writeText(reportText);
-    if (write === undefined) {
-      setCopyFailed(true);
-      return;
-    }
-    void write.then(
+    void navigator.clipboard.writeText(reportText).then(
       () => {
         setCopyFailed(false);
         setCopied(true);
@@ -110,20 +88,18 @@ function ErrorDialog({ report, onClose }: { report: PresentedErrorReport; onClos
   return (
     <ModalOverlay onDismiss={onClose}>
       <section
-        className="webapp-error-dialog"
+        className="webapp-confirmation-dialog webapp-error-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
       >
-        <header className="webapp-error-dialog__header">
+        <header className="webapp-confirmation-header">
           <span className="webapp-error-dialog__icon" aria-hidden="true">!</span>
-          <div>
-            <h1 id={titleId}>{report.title}</h1>
-            {report.action !== undefined && <p>{report.action}</p>}
-          </div>
+          <h1 id={titleId}>{report.title}</h1>
         </header>
-        <div className="webapp-error-dialog__body">
+        <div className="webapp-confirmation-body">
+          {report.action !== undefined && <p>{report.action}</p>}
           <div className="webapp-error-dialog__tags">
             {report.status !== undefined && <span>Status: HTTP {report.status}</span>}
             {report.code !== undefined && <span>Code: {report.code}</span>}
@@ -135,7 +111,7 @@ function ErrorDialog({ report, onClose }: { report: PresentedErrorReport; onClos
             </p>
           )}
         </div>
-        <footer className="webapp-error-dialog__actions">
+        <footer className="webapp-confirmation-actions">
           <button ref={closeButton} className="webapp-action" type="button" onClick={onClose}>
             Close
           </button>

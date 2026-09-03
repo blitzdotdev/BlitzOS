@@ -12,11 +12,12 @@ import type {
   MachineAction,
 } from './WorkspaceMembersEditor';
 import type { CloudWorkspaceModel } from './workspace-store';
-
-type MachineOverlay = {
-  machine: MachineView | null;
-  pendingAction: MachineAction | null;
-};
+import {
+  MACHINE_ACTION_FAILURE_TITLES,
+  machineReconciled,
+  type MachineOverlay,
+  visibleMachine,
+} from './machine-overlay';
 
 type PendingAdd = {
   member: WorkspaceMemberView;
@@ -30,14 +31,6 @@ type OptimisticMemberOptions = {
   refreshWorkspaces: () => void;
 };
 
-const MACHINE_FAILURE_TITLES = {
-  provision: 'Couldn’t provision machine',
-  stop: 'Couldn’t stop machine',
-  start: 'Couldn’t start machine',
-  recreate: 'Couldn’t recreate machine',
-  destroy: 'Couldn’t destroy machine',
-} satisfies Record<MachineAction, string>;
-
 function addMemberRequest(input: DraftWorkspaceMember): AddWorkspaceMemberRequest {
   const request: AddWorkspaceMemberRequest = {
     membershipId: input.membershipId,
@@ -48,15 +41,6 @@ function addMemberRequest(input: DraftWorkspaceMember): AddWorkspaceMemberReques
   }
   if (!input.persistentVolume) request.persistentVolume = false;
   return request;
-}
-
-function visibleMachine(machine: MachineView | null): MachineView | null {
-  return machine?.state === 'destroyed' ? null : machine;
-}
-
-function machineReconciled(polled: MachineView | null, expected: MachineView | null): boolean {
-  if (polled === null || expected === null) return polled === expected;
-  return polled.id === expected.id && polled.updatedAt >= expected.updatedAt;
 }
 
 /** Local intent sits over polled members until the next poll confirms it.
@@ -77,12 +61,6 @@ export function useWorkspaceOptimisticMembers({
   );
   const reportError = useErrorReporter();
   const workspaceId = workspace.id;
-
-  useEffect(() => {
-    setPendingAdds(new Map());
-    setPendingRemoves(new Set());
-    setMachineOverlays(new Map());
-  }, [workspaceId]);
 
   useEffect(() => {
     const serverByMembership = new Map(
@@ -140,41 +118,33 @@ export function useWorkspaceOptimisticMembers({
   }, [pendingAdds]);
   const pendingMachineActions = useMemo(() => {
     const actions = new Map<string, MachineAction>();
+    if (workspace.autoProvision) {
+      for (const [membershipId, pending] of pendingAdds) {
+        if (pending.requestPending && pending.member.role !== 'viewer') {
+          actions.set(membershipId, 'provision');
+        }
+      }
+    }
     for (const [membershipId, overlay] of machineOverlays) {
       if (overlay.pendingAction !== null) actions.set(membershipId, overlay.pendingAction);
     }
     return actions;
-  }, [machineOverlays]);
+  }, [machineOverlays, pendingAdds, workspace.autoProvision]);
 
   const addWorkspaceMember = (input: DraftWorkspaceMember) => {
     const identity = orgMembers.find(({ id }) => id === input.membershipId);
-    const now = Date.now();
-    const machineTypeId = input.machineTypeId === WORKSPACE_DEFAULT_MACHINE_TYPE
-      ? workspace.defaultMachineTypeId
-      : input.machineTypeId;
     const optimistic: WorkspaceMemberView = {
       membershipId: input.membershipId,
       name: identity?.name || identity?.email || input.membershipId,
       avatarUrl: identity?.avatarUrl ?? null,
       role: input.role,
-      machine: workspace.autoProvision && input.role !== 'viewer' ? {
-        id: `pending-${input.membershipId}`,
-        state: 'provisioning',
-        machineTypeId,
-        volumeId: null,
-        volumeUsedPercent: null,
-        membershipId: input.membershipId,
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-      } : null,
+      machine: null,
     };
     setPendingAdds((current) => new Map(current).set(input.membershipId, {
       member: optimistic,
       requestPending: true,
     }));
-    void Promise.resolve()
-      .then(() => client.addWorkspaceMember(workspaceId, addMemberRequest(input)))
+    void client.addWorkspaceMember(workspaceId, addMemberRequest(input))
       .then(({ member }) => {
         setPendingAdds((current) => {
           if (!current.has(input.membershipId)) return current;
@@ -201,8 +171,7 @@ export function useWorkspaceOptimisticMembers({
 
   const removeWorkspaceMember = (member: WorkspaceMemberView) => {
     setPendingRemoves((current) => new Set(current).add(member.membershipId));
-    void Promise.resolve()
-      .then(() => client.removeWorkspaceMember(workspaceId, member.membershipId))
+    void client.removeWorkspaceMember(workspaceId, member.membershipId)
       .then(refreshWorkspaces)
       .catch((caught) => {
         setPendingRemoves((current) => {
@@ -222,14 +191,13 @@ export function useWorkspaceOptimisticMembers({
     member: WorkspaceMemberView,
     action: MachineAction,
     request: () => Promise<MachineView | null>,
-    title = MACHINE_FAILURE_TITLES[action],
+    title = MACHINE_ACTION_FAILURE_TITLES[action],
   ) => {
     setMachineOverlays((current) => new Map(current).set(member.membershipId, {
       machine: member.machine,
       pendingAction: action,
     }));
-    void Promise.resolve()
-      .then(request)
+    void request()
       .then((machine) => {
         const updated = visibleMachine(machine);
         setMachineOverlays((current) => new Map(current).set(member.membershipId, {

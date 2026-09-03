@@ -19,6 +19,12 @@ import {
 } from './WorkspaceMembersEditor';
 import type { CloudWorkspaceModel } from './workspace-store';
 import { useErrorReporter } from './error-dialog/ErrorReporter';
+import {
+  MACHINE_ACTION_FAILURE_TITLES,
+  machineReconciled,
+  type MachineOverlay,
+  visibleMachine,
+} from './machine-overlay';
 
 const ACTION_LABELS = {
   provision: 'Provision',
@@ -27,28 +33,6 @@ const ACTION_LABELS = {
   recreate: 'Recreate',
   destroy: 'Destroy',
 } satisfies Record<MachineAction, string>;
-
-const ACTION_FAILURE_TITLES = {
-  provision: 'Couldn’t provision machine',
-  stop: 'Couldn’t stop machine',
-  start: 'Couldn’t start machine',
-  recreate: 'Couldn’t recreate machine',
-  destroy: 'Couldn’t destroy machine',
-} satisfies Record<MachineAction, string>;
-
-type MachineOverlay = {
-  machine: MachineView | null;
-  pendingAction: MachineAction | null;
-};
-
-function visibleMachine(machine: MachineView | null): MachineView | null {
-  return machine?.state === 'destroyed' ? null : machine;
-}
-
-function machineReconciled(polled: MachineView | null, expected: MachineView | null): boolean {
-  if (polled === null || expected === null) return polled === expected;
-  return polled.id === expected.id && polled.updatedAt >= expected.updatedAt;
-}
 
 /**
  * Who may run each verb on their OWN machine (plans/MEMBER-MACHINES.md §3).
@@ -191,7 +175,6 @@ export function MyMachineDialog({
   const machine = machineOverlay?.machine ?? polledMachine;
   const pendingAction = machineOverlay?.pendingAction ?? null;
 
-  useEffect(() => { setMachineOverlay(null); }, [membershipId, workspace.id]);
   useEffect(() => {
     setMachineOverlay((current) => current !== null
       && current.pendingAction === null
@@ -207,11 +190,10 @@ export function MyMachineDialog({
   const runMachineAction = (
     action: MachineAction,
     request: () => Promise<MachineView | null>,
-    title = ACTION_FAILURE_TITLES[action],
+    title = MACHINE_ACTION_FAILURE_TITLES[action],
   ) => {
     setMachineOverlay({ machine, pendingAction: action });
-    void Promise.resolve()
-      .then(request)
+    void request()
       .then((updated) => {
         const nextMachine = visibleMachine(updated);
         setMachineOverlay({ machine: nextMachine, pendingAction: null });
@@ -245,25 +227,14 @@ export function MyMachineDialog({
       }
       return;
     }
-    if (action === 'provision') runMachineAction(
+    const request = action === 'provision' ? client.provisionMachine
+      : action === 'stop' ? client.stopMachine
+      : action === 'start' ? client.startMachine
+      : action === 'recreate' ? client.recreateMachine
+      : client.destroyMachine;
+    runMachineAction(
       action,
-      () => client.provisionMachine(machine.id).then(({ machine: updated }) => updated),
-    );
-    if (action === 'stop') runMachineAction(
-      action,
-      () => client.stopMachine(machine.id).then(({ machine: updated }) => updated),
-    );
-    if (action === 'start') runMachineAction(
-      action,
-      () => client.startMachine(machine.id).then(({ machine: updated }) => updated),
-    );
-    if (action === 'recreate') runMachineAction(
-      action,
-      () => client.recreateMachine(machine.id).then(({ machine: updated }) => updated),
-    );
-    if (action === 'destroy') runMachineAction(
-      action,
-      () => client.destroyMachine(machine.id).then(({ machine: updated }) => updated),
+      () => request(machine.id).then(({ machine: updated }) => updated),
     );
   };
 
