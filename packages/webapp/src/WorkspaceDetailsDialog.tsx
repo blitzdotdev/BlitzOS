@@ -3,7 +3,6 @@ import type {
   ListMachineTypesResponse,
   MachineType,
   TemplateRepoView,
-  WorkspaceMemberRole,
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient, MemberView } from './api';
@@ -12,7 +11,7 @@ import { ModalOverlay } from './ModalOverlay';
 import { WorkspaceMembersEditor } from './WorkspaceMembersEditor';
 import { WorkspaceCredentialsTab } from './WorkspaceCredentialsTab';
 import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
-import type { CloudWorkspaceModel } from './workspace-store';
+import type { CloudWorkspaceModel, WorkspaceAction } from './workspace-store';
 import { caughtErrorMessage } from './error-message';
 import {
   useErrorReporter,
@@ -55,6 +54,7 @@ export function WorkspaceDetailsDialog({
   listMachineTypes,
   refreshWorkspaces,
   initialTab = 'members',
+  commitWorkspaceMutation,
   focusAddMember = false,
   viewerMembershipId = null,
   orgName = 'the organization',
@@ -76,6 +76,7 @@ export function WorkspaceDetailsDialog({
    * polled ones, so a settled write asks for the next poll rather than
    * leaving the list stale until the 15 s tick. */
   refreshWorkspaces: () => void;
+  commitWorkspaceMutation: (action: WorkspaceAction) => void;
   initialTab?: WorkspaceDetailsTab;
   /** Opens with the add-member field focused, for the tile menu's Invite. */
   focusAddMember?: boolean;
@@ -105,7 +106,7 @@ export function WorkspaceDetailsDialog({
     client,
     workspace,
     orgMembers,
-    refreshWorkspaces,
+    commitWorkspaceMutation,
   });
 
   // Invite lands on the picker rather than on the close button: the one thing
@@ -231,14 +232,7 @@ export function WorkspaceDetailsDialog({
                     pendingMembershipIds: optimistic.pendingMembershipIds,
                     pendingMachineActions: optimistic.pendingMachineActions,
                     onAdd: optimistic.addWorkspaceMember,
-                    onRoleChange: (membershipId, role: WorkspaceMemberRole) => run(
-                      client.updateWorkspaceMember(workspace.id, membershipId, { role }),
-                      {
-                        title: 'Couldn’t change member role',
-                        action: `Updating a member in ${workspace.title}.`,
-                        workspaceId,
-                      },
-                    ),
+                    onRoleChange: optimistic.updateWorkspaceMemberRole,
                     onMachineTypeChange: changeMachineType,
                     onMachineAction: optimistic.machineAction,
                     onRemove: optimistic.removeWorkspaceMember,
@@ -319,4 +313,3 @@ export function WorkspaceDetailsDialog({
     </ModalOverlay>
   );
 }
-

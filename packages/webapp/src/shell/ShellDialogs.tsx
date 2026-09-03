@@ -12,7 +12,7 @@ import {
   type WorkspaceDetailsTab,
 } from '../WorkspaceDetailsDialog';
 import { MyMachineDialog } from '../MyMachineDialog';
-import type { CloudWorkspaceModel } from '../workspace-store';
+import type { CloudWorkspaceModel, WorkspaceAction } from '../workspace-store';
 
 /** The workspace this dialog stack is about to delete, and the name the
  * confirmation shows. */
@@ -35,6 +35,9 @@ export type ShellDialogsProps = {
   /** Runs the workspace poll now, so a dialog write reaches the rows without
    * waiting for the next tick. Keep it stable across renders. */
   refreshWorkspaces: () => void;
+  /** Commits the authoritative response of a workspace mutation and invalidates
+   * any workspace poll that began before it. */
+  commitWorkspaceMutation: (action: WorkspaceAction) => void;
   /** The workspace a "new workspace from existing" copies, or null. */
   cloneFromWorkspaceId: string | null;
   onCancelCreateWorkspace: () => void;
@@ -73,6 +76,7 @@ export function ShellDialogs({
   createWorkspaceError,
   listMachineTypes,
   refreshWorkspaces,
+  commitWorkspaceMutation,
   cloneFromWorkspaceId,
   onCancelCreateWorkspace,
   onCreateWorkspace,
@@ -128,6 +132,7 @@ export function ShellDialogs({
           workspace={detailsWorkspace}
           listMachineTypes={listMachineTypes}
           refreshWorkspaces={refreshWorkspaces}
+          commitWorkspaceMutation={commitWorkspaceMutation}
           initialTab={details.tab}
           focusAddMember={details.focusAddMember ?? false}
           viewerMembershipId={viewer?.membership.id ?? null}
@@ -147,7 +152,7 @@ export function ShellDialogs({
           workspace={machineWorkspace}
           membershipId={viewer?.membership.id ?? null}
           listMachineTypes={listMachineTypes}
-          refreshWorkspaces={refreshWorkspaces}
+          commitWorkspaceMutation={commitWorkspaceMutation}
           onClose={onCloseMachine}
         />
       )}

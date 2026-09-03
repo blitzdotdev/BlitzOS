@@ -17,11 +17,10 @@ import {
   machinePendingLabel,
   type MachineAction,
 } from './WorkspaceMembersEditor';
-import type { CloudWorkspaceModel } from './workspace-store';
+import type { CloudWorkspaceModel, WorkspaceAction } from './workspace-store';
 import { useErrorReporter } from './error-dialog/ErrorReporter';
 import {
   MACHINE_ACTION_FAILURE_TITLES,
-  machineReconciled,
   type MachineOverlay,
   visibleMachine,
 } from './machine-overlay';
@@ -133,7 +132,7 @@ export function MyMachineDialog({
   workspace,
   membershipId,
   listMachineTypes,
-  refreshWorkspaces,
+  commitWorkspaceMutation,
   onClose,
 }: {
   client: ControlPlaneClient;
@@ -141,7 +140,7 @@ export function MyMachineDialog({
   /** The requesting member's membership, which is what keys a machine. */
   membershipId: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
-  refreshWorkspaces: () => void;
+  commitWorkspaceMutation: (action: WorkspaceAction) => void;
   onClose: () => void;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -154,6 +153,9 @@ export function MyMachineDialog({
   const [machineOverlay, setMachineOverlay] = useState<MachineOverlay | null>(null);
   const reportError = useErrorReporter();
   const machines: MachineType[] = catalog.machineTypes;
+  const workspaceKey = `${workspace.id}:${membershipId ?? ''}`;
+  const workspaceKeyRef = useRef(workspaceKey);
+  workspaceKeyRef.current = workspaceKey;
 
   useEffect(() => { closeButton.current?.focus(); }, []);
   useEffect(() => {
@@ -171,17 +173,10 @@ export function MyMachineDialog({
   }, [listMachineTypes]);
 
   const member = workspace.members.find((row) => row.membershipId === membershipId);
-  const polledMachine = member?.machine ?? null;
-  const machine = machineOverlay?.machine ?? polledMachine;
+  const machine = machineOverlay?.machine ?? member?.machine ?? null;
   const pendingAction = machineOverlay?.pendingAction ?? null;
 
-  useEffect(() => {
-    setMachineOverlay((current) => current !== null
-      && current.pendingAction === null
-      && machineReconciled(polledMachine, current.machine)
-      ? null
-      : current);
-  }, [polledMachine]);
+  useEffect(() => { setMachineOverlay(null); }, [membershipId, workspace.id]);
   // A workspace admin, or an org admin reaching in implicitly (§3).
   const admin = workspace.myRole === 'admin' || workspace.myRole === null;
   const type = machines.find(({ id }) => id === machine?.machineTypeId);
@@ -192,11 +187,18 @@ export function MyMachineDialog({
     request: () => Promise<MachineView | null>,
     title = MACHINE_ACTION_FAILURE_TITLES[action],
   ) => {
+    if (member === undefined) return;
     setMachineOverlay({ machine, pendingAction: action });
     void request()
       .then((updated) => {
         const nextMachine = visibleMachine(updated);
-        setMachineOverlay({ machine: nextMachine, pendingAction: null });
+        commitWorkspaceMutation({
+          type: 'workspace_member_machine_updated',
+          workspaceId: workspace.id,
+          membershipId: member.membershipId,
+          machine: nextMachine,
+        });
+        if (workspaceKeyRef.current === workspaceKey) setMachineOverlay(null);
         if (nextMachine?.state === 'error') {
           reportError(new Error(nextMachine.error ?? 'The machine entered an error state.'), {
             title,
@@ -204,10 +206,9 @@ export function MyMachineDialog({
             workspaceId: workspace.id,
           });
         }
-        refreshWorkspaces();
       })
       .catch((caught) => {
-        setMachineOverlay(null);
+        if (workspaceKeyRef.current === workspaceKey) setMachineOverlay(null);
         reportError(caught, {
           title,
           action: `Your machine in ${workspace.title}.`,
@@ -227,14 +228,25 @@ export function MyMachineDialog({
       }
       return;
     }
-    const request = action === 'provision' ? client.provisionMachine
-      : action === 'stop' ? client.stopMachine
-      : action === 'start' ? client.startMachine
-      : action === 'recreate' ? client.recreateMachine
-      : client.destroyMachine;
-    runMachineAction(
+    if (action === 'provision') runMachineAction(
       action,
-      () => request(machine.id).then(({ machine: updated }) => updated),
+      () => client.provisionMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'stop') runMachineAction(
+      action,
+      () => client.stopMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'start') runMachineAction(
+      action,
+      () => client.startMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'recreate') runMachineAction(
+      action,
+      () => client.recreateMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'destroy') runMachineAction(
+      action,
+      () => client.destroyMachine(machine.id).then(({ machine: updated }) => updated),
     );
   };
 

@@ -323,7 +323,7 @@ export type WorkspaceMembersEditorMode =
       machineTypeId: string;
       persistentVolume: boolean;
     }) => void;
-    onRoleChange: (membershipId: string, role: WorkspaceMemberRole) => void;
+    onRoleChange: (member: WorkspaceMemberView, role: WorkspaceMemberRole) => void;
     onMachineTypeChange: (member: WorkspaceMemberView, machineTypeId: string) => void;
     onMachineAction: (
       member: WorkspaceMemberView,
@@ -465,7 +465,7 @@ export function WorkspaceMembersEditor({
               readOnly={readOnly}
               pending={mode.pendingMembershipIds.has(member.membershipId)}
               pendingAction={mode.pendingMachineActions.get(member.membershipId) ?? null}
-              onRoleChange={(role) => mode.onRoleChange(member.membershipId, role)}
+              onRoleChange={(role) => mode.onRoleChange(member, role)}
               onMachineTypeChange={(machineTypeId) => mode.onMachineTypeChange(member, machineTypeId)}
               onPersistentVolumeChange={(persistentVolume) => setVolumeIntent((current) => ({
                 ...current,

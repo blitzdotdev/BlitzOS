@@ -1,4 +1,4 @@
-import { act } from 'react';
+import { act, useCallback, useState } from 'react';
 import type {
   MachineState,
   MachineResponse,
@@ -12,6 +12,10 @@ import { ApiRequestError, type ControlPlaneClient } from '../src/api.js';
 import { WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
 import { SessionRail } from '../src/shell/SessionRail.js';
 import { machineActionsFor } from '../src/WorkspaceMembersEditor.js';
+import {
+  workspaceReducer,
+  type WorkspaceAction,
+} from '../src/workspace-store.js';
 import { describe, expect, it, vi } from 'vitest';
 import { deferred, render, settle } from './dom.js';
 import { workspaceModelFixture } from './workspace-fixtures.js';
@@ -98,19 +102,43 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
 const listMachineTypesStub = async () => ({ machineTypes, failures: [] });
 const noop = () => undefined;
 
+function WorkspaceDetailsHarness({
+  overrides,
+}: {
+  overrides: Partial<Parameters<typeof WorkspaceDetailsDialog>[0]>;
+}) {
+  const {
+    workspace: initialWorkspace = workspace,
+    commitWorkspaceMutation: observeCommit,
+    ...rest
+  } = overrides;
+  const [model, setModel] = useState(initialWorkspace);
+  const commitWorkspaceMutation = useCallback((action: WorkspaceAction) => {
+    observeCommit?.(action);
+    setModel((current) => workspaceReducer({
+      workspaces: [current],
+      viewer: null,
+    }, action).workspaces[0] ?? current);
+  }, [observeCommit]);
+  return (
+    <WorkspaceDetailsDialog
+      client={client()}
+      workspace={model}
+      listMachineTypes={listMachineTypesStub}
+      refreshWorkspaces={noop}
+      commitWorkspaceMutation={commitWorkspaceMutation}
+      onClose={noop}
+      onClone={noop}
+      onDelete={noop}
+      {...rest}
+    />
+  );
+}
+
 function dialog(overrides: Partial<Parameters<typeof WorkspaceDetailsDialog>[0]> = {}) {
   return (
     <ErrorReporterProvider>
-      <WorkspaceDetailsDialog
-        client={client()}
-        workspace={workspace}
-        listMachineTypes={listMachineTypesStub}
-        refreshWorkspaces={noop}
-        onClose={noop}
-        onClone={noop}
-        onDelete={noop}
-        {...overrides}
-      />
+      <WorkspaceDetailsHarness overrides={overrides} />
     </ErrorReporterProvider>
   );
 }
@@ -168,11 +196,6 @@ describe('WorkspaceDetailsDialog', () => {
       role: 'member',
     });
     expect(view.container.textContent).toContain('Nia Newcomer');
-    const optimisticRow = [...view.container.querySelectorAll('.workspace-member-row')]
-      .find((row) => row.textContent?.includes('Nia Newcomer'));
-    expect(optimisticRow?.querySelector('.machine-chip')?.textContent).toBe('Provisioning');
-    expect(optimisticRow?.querySelector('[aria-label="Persistent volume for Nia Newcomer"]'))
-      .not.toBeNull();
     expect(view.container.querySelector('[aria-label="Remove Nia Newcomer"]'))
       .toHaveProperty('disabled', true);
 
@@ -186,11 +209,49 @@ describe('WorkspaceDetailsDialog', () => {
       },
     });
     await settle();
-    // The request can settle before its forced poll does. The returned member
-    // remains over these intentionally stale props until a later poll carries it.
+    // The response is committed directly; no workspace poll is required.
     expect(view.container.textContent).toContain('Nia Newcomer');
     expect(view.container.querySelector('[aria-label="Remove Nia Newcomer"]'))
       .toHaveProperty('disabled', false);
+    await view.unmount();
+  });
+
+  it('shows a role change immediately and rolls it back on rejection', async () => {
+    const request = deferred<WorkspaceMemberResponse>();
+    const updateWorkspaceMember = vi.fn(() => request.promise);
+    const view = await render(dialog({ client: client({ updateWorkspaceMember }) }));
+    await settle();
+
+    const role = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Role for Grace Viewer"]',
+    );
+    await act(async () => role?.click());
+    const member = [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+      .find((option) => option.textContent === 'Member');
+    await act(async () => {
+      member?.click();
+      await Promise.resolve();
+    });
+
+    expect(updateWorkspaceMember).toHaveBeenCalledWith(
+      workspace.id,
+      grace.membershipId,
+      { role: 'member' },
+    );
+    expect(role?.textContent).toContain('Member');
+    expect(role?.disabled).toBe(true);
+    expect(view.container.querySelector('.machine-chip')?.textContent).toBe('running');
+    expect(view.container.querySelectorAll('.machine-chip')[1]?.textContent)
+      .toBe('Provisioning');
+
+    request.reject(new ApiRequestError('role is protected', 409, 'poll'));
+    await settle();
+    expect(role?.textContent).toContain('Viewer');
+    expect(role?.disabled).toBe(false);
+    expect(view.container.querySelector('[aria-label="Machine type for Grace Viewer"]'))
+      .toBeNull();
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Couldn’t change member role');
     await view.unmount();
   });
 

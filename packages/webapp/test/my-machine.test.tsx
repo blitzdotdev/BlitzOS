@@ -96,7 +96,7 @@ function dialog(overrides: Partial<Parameters<typeof MyMachineDialog>[0]> = {}) 
         workspace={workspace}
         membershipId="membership-2"
         listMachineTypes={async () => ({ machineTypes, failures: [] })}
-        refreshWorkspaces={() => undefined}
+        commitWorkspaceMutation={() => undefined}
         onClose={() => undefined}
         {...overrides}
       />
@@ -113,7 +113,11 @@ function buttons(container: HTMLElement): HTMLButtonElement[] {
 describe('MyMachineDialog', () => {
   it('describes the member’s own machine and stops it', async () => {
     const stopMachine = vi.fn().mockResolvedValue({ machine: me.machine });
-    const view = await render(dialog({ client: client({ stopMachine }) }));
+    const commitWorkspaceMutation = vi.fn();
+    const view = await render(dialog({
+      client: client({ stopMachine }),
+      commitWorkspaceMutation,
+    }));
     await settle();
 
     // One view, no tab row: there is one thing to read here.
@@ -130,6 +134,13 @@ describe('MyMachineDialog', () => {
     expect(stop?.disabled).toBe(false);
     await act(async () => stop?.click());
     expect(stopMachine).toHaveBeenCalledWith('machine-mo');
+    await settle();
+    expect(commitWorkspaceMutation).toHaveBeenCalledWith({
+      type: 'workspace_member_machine_updated',
+      workspaceId: workspace.id,
+      membershipId: me.membershipId,
+      machine: me.machine,
+    });
     await view.unmount();
   });
 
