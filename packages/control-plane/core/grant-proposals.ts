@@ -1,4 +1,5 @@
 import { boxCaller } from "./agent-routes.js";
+import { first, rows, type Db, type Query } from "./db.js";
 import {
   HttpError,
   isBoolean,
@@ -40,10 +41,13 @@ import type {
  * applies without that person (or an org admin) approving it — and what
  * applies is what they approve, which may be narrower than what was asked.
  *
- * Proposals live in memory on the CP runtime. Nothing is persisted: the
- * durable record of an approval is the grant rows it writes and their
- * `credential_events`. A worker recycle drops a pending proposal, which the
- * agent sees as a 404 on its next poll and answers by proposing again.
+ * A proposal is one row in `grant_proposals` (migration 0049): the agent
+ * files it on one request and a person answers it on another, and on Workers
+ * those land on whichever isolate is awake, so the hand-off needs the one
+ * store both reach. The row is the hand-off, not an audit — the durable
+ * record of an approval is still the grant rows it writes and their
+ * `credential_events`. Expiry is lazy: a pending row read past its TTL flips
+ * to `expired` on the spot, and inserts sweep rows nobody will read again.
  */
 
 interface GrantProposal {
@@ -69,44 +73,101 @@ export const GRANT_PROPOSAL_TTL_MS = 60 * 60 * 1000;
  * migration. */
 export const GRANT_PROPOSAL_MAX_CHANGES = 200;
 
-type GrantProposalStore = Map<string, GrantProposal>;
+/** The row as D1 hands it back. `proposed` and `applied` are the JSON change
+ * lists exactly as the wire carries them. */
+interface GrantProposalRow {
+  id: string;
+  org_id: string;
+  machine_id: string;
+  membership_id: string;
+  reason: string;
+  proposed: string;
+  applied: string | null;
+  state: GrantProposalState;
+  created_at: number;
+}
+
+const PROPOSAL_COLUMNS =
+  "id, org_id, machine_id, membership_id, reason, proposed, applied, state, created_at";
+
+/** Our own writes, read back through the same parser the wire uses, so a
+ * row never yields a shape the routes did not accept. */
+function proposalFromRow(row: GrantProposalRow): GrantProposal {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    machineId: row.machine_id,
+    membershipId: row.membership_id,
+    reason: row.reason,
+    proposed: parseGrantChanges(JSON.parse(row.proposed), "proposed"),
+    applied: row.applied === null ? null : parseGrantChanges(JSON.parse(row.applied), "applied"),
+    state: row.state,
+    createdAt: row.created_at,
+  };
+}
 
 /** The one read. Expiry is enforced here, lazily, with no timer: a pending
- * proposal read past its TTL flips to `expired` on the spot. */
-function grantProposalById(
-  proposals: GrantProposalStore,
+ * proposal read past its TTL flips to `expired` on the spot, on the row too,
+ * so every later reader agrees. */
+async function grantProposalById(
+  db: Db,
   id: string,
   now = Date.now(),
-): GrantProposal | null {
-  const proposal = proposals.get(id);
-  if (proposal === undefined) return null;
+): Promise<GrantProposal | null> {
+  const row = await first<GrantProposalRow>(db, {
+    q: `SELECT ${PROPOSAL_COLUMNS} FROM grant_proposals WHERE id = ?1 LIMIT 1`,
+    v: [id],
+  });
+  if (row === null) return null;
+  const proposal = proposalFromRow(row);
   if (proposal.state === "pending" && now - proposal.createdAt > GRANT_PROPOSAL_TTL_MS) {
+    await rows(db, {
+      q: `UPDATE grant_proposals SET state = 'expired', resolved_at = ?1
+          WHERE id = ?2 AND state = 'pending'`,
+      v: [now, id],
+    });
     proposal.state = "expired";
   }
   return proposal;
 }
 
-function pendingGrantProposalsForOrg(
-  proposals: GrantProposalStore,
+async function pendingGrantProposalsForOrg(
+  db: Db,
   orgId: string,
   now: number,
-): GrantProposal[] {
-  return [...proposals.keys()]
-    .flatMap((id) => {
-      const proposal = grantProposalById(proposals, id, now);
-      return proposal !== null && proposal.orgId === orgId && proposal.state === "pending"
-        ? [proposal]
-        : [];
-    })
-    .sort((a, b) => a.createdAt - b.createdAt);
+): Promise<GrantProposal[]> {
+  const pending = await rows<GrantProposalRow>(db, {
+    q: `SELECT ${PROPOSAL_COLUMNS} FROM grant_proposals
+        WHERE org_id = ?1 AND state = 'pending' AND created_at > ?2
+        ORDER BY created_at`,
+    v: [orgId, now - GRANT_PROPOSAL_TTL_MS],
+  });
+  return pending.map(proposalFromRow);
 }
 
 /** Inserts sweep what nobody will read again: anything past its TTL has
  * either been resolved and polled or has expired. */
-function evictStaleProposals(proposals: GrantProposalStore, now: number): void {
-  for (const [id, proposal] of proposals) {
-    if (now - proposal.createdAt > GRANT_PROPOSAL_TTL_MS) proposals.delete(id);
-  }
+async function evictStaleProposals(db: Db, now: number): Promise<void> {
+  await rows(db, {
+    q: "DELETE FROM grant_proposals WHERE created_at <= ?1",
+    v: [now - GRANT_PROPOSAL_TTL_MS],
+  });
+}
+
+/** The row update that settles a proposal, shaped to ride inside the same
+ * transaction as the grant rows an approval writes. The state guard makes a
+ * second resolve of the same row change nothing. */
+function settleProposalQuery(
+  id: string,
+  state: Exclude<GrantProposalState, "pending">,
+  applied: GrantChange[] | null,
+  now: number,
+): Query {
+  return {
+    q: `UPDATE grant_proposals SET state = ?1, applied = ?2, resolved_at = ?3
+        WHERE id = ?4 AND state = 'pending'`,
+    v: [state, applied === null ? null : JSON.stringify(applied), now, id],
+  };
 }
 
 function grantProposalView(proposal: GrantProposal): GrantProposalView {
@@ -198,13 +259,23 @@ function changesPastAuthority(
   });
 }
 
-function refusePastAuthority(offenders: readonly GrantChange[]): void {
+function refusePastAuthority(offenders: readonly GrantChange[], hint = ""): void {
   if (offenders.length === 0) return;
   throw new HttpError(
     403,
-    `changes past your authority: ${offenders.map(describeChange).join("; ")}`,
+    `changes past your authority: ${offenders.map(describeChange).join("; ")}${hint}`,
   );
 }
+
+/** What the proposer hears with a refusal: the changes it cannot carry are
+ * not lost, they are somebody else's to grant. Asking for the credential by
+ * name files an access request with whoever can, so the agent has a second
+ * path and not only a narrower retry. The approver's refusal at resolve
+ * time carries no hint — a person is reading that one. */
+const ESCALATION_HINT =
+  ". These are not yours to propose: ask for each credential by name at"
+  + " POST /agent/credentials/<name>/token, and the 404 files an access request"
+  + " with whoever can grant it; re-propose the rest.";
 
 const subjectKey = (grant: Pick<OrgCredentialGrantView, "subjectKind" | "subjectId">): string =>
   `${grant.subjectKind}:${grant.subjectId ?? ""}`;
@@ -254,14 +325,16 @@ interface ProposeGrantChangesInput {
  * offenders, and nothing is stored — the agent narrows and retries. */
 async function proposeGrantChanges(
   runtime: CoreRuntime,
-  proposals: GrantProposalStore,
   input: ProposeGrantChangesInput,
   now = Date.now(),
 ): Promise<GrantProposal> {
   const credentials = await credentialsNamed(runtime, input.orgId, input.changes);
-  refusePastAuthority(changesPastAuthority(input.changes, credentials, input.caller));
+  refusePastAuthority(
+    changesPastAuthority(input.changes, credentials, input.caller),
+    ESCALATION_HINT,
+  );
   await refuseInvalidSubjects(runtime, input.orgId, input.changes);
-  evictStaleProposals(proposals, now);
+  await evictStaleProposals(runtime.db, now);
   const proposal: GrantProposal = {
     id: crypto.randomUUID(),
     orgId: input.orgId,
@@ -273,7 +346,20 @@ async function proposeGrantChanges(
     state: "pending",
     createdAt: now,
   };
-  proposals.set(proposal.id, proposal);
+  await rows(runtime.db, {
+    q: `INSERT INTO grant_proposals
+        (id, org_id, machine_id, membership_id, reason, proposed, applied, state, created_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 'pending', ?7)`,
+    v: [
+      proposal.id,
+      proposal.orgId,
+      proposal.machineId,
+      proposal.membershipId,
+      proposal.reason,
+      JSON.stringify(proposal.proposed),
+      proposal.createdAt,
+    ],
+  });
   return proposal;
 }
 
@@ -288,9 +374,13 @@ interface GrantSetEdit {
 }
 
 /** Applies a change list to one grant set, in order, and says which changes
- * made a difference. An add replaces whatever the same subject held (the
- * store allows one grant per subject); a remove deletes the exact grant
- * named. A change that alters nothing is not "applied". */
+ * made a difference. The store allows one grant per subject, so an add
+ * replaces what the same subject held — but only upward: an add never
+ * lowers access. A subject that holds write keeps it when a proposal adds
+ * read, because the approver reads "add read" as widening, not as the
+ * revocation of a write they granted themselves; lowering is what `remove`
+ * says out loud. A remove deletes the exact grant named. A change that
+ * alters nothing is not "applied". */
 function applyChangesToGrantSet(
   current: readonly OrgCredentialGrantView[],
   changes: readonly GrantChange[],
@@ -300,8 +390,9 @@ function applyChangesToGrantSet(
   for (const change of changes) {
     const grant = changeGrant(change);
     if (change.action === "add") {
-      if (next.some((held) => sameGrant(held, grant))) continue;
-      next = [...next.filter((held) => subjectKey(held) !== subjectKey(grant)), grant];
+      const held = next.find((candidate) => subjectKey(candidate) === subjectKey(grant));
+      if (held !== undefined && (held.access === grant.access || held.access === "write")) continue;
+      next = [...next.filter((candidate) => subjectKey(candidate) !== subjectKey(grant)), grant];
     } else {
       if (!next.some((held) => sameGrant(held, grant))) continue;
       next = next.filter((held) => !sameGrant(held, grant));
@@ -331,6 +422,7 @@ async function resolveGrantProposal(
     throw new HttpError(409, `grant proposal is ${proposal.state}`);
   }
   if (!input.approve) {
+    await rows(runtime.db, settleProposalQuery(proposal.id, "denied", null, now));
     proposal.state = "denied";
     return proposal;
   }
@@ -360,12 +452,15 @@ async function resolveGrantProposal(
     applied.push(...effective);
     return [{ credential, grants: next }];
   });
+  // The row settles in the same transaction as the grants it approved, so a
+  // worker that dies between the two cannot leave an applied proposal pending.
   await replaceOrgCredentialGrantSets(
     runtime,
     proposal.orgId,
     input.approver.membershipId,
     replacements,
     now,
+    [settleProposalQuery(proposal.id, "approved", applied, now)],
   );
   proposal.applied = applied;
   proposal.state = "approved";
@@ -374,14 +469,14 @@ async function resolveGrantProposal(
 
 /** A proposal the session route names, inside the caller's org. Another
  * org's id, an unknown id and a forgotten id all read the same: 404. */
-function requestedProposal(
-  proposals: GrantProposalStore,
+async function requestedProposal(
+  db: Db,
   context: CoreContext,
   orgId: string,
   now: number,
-): GrantProposal {
+): Promise<GrantProposal> {
   const id = requiredString(context.req.param("pid"), "pid", 64);
-  const proposal = grantProposalById(proposals, id, now);
+  const proposal = await grantProposalById(db, id, now);
   if (proposal === null || proposal.orgId !== orgId) {
     throw new HttpError(404, "grant proposal not found");
   }
@@ -398,8 +493,6 @@ export function addGrantProposalRoutes(
   runtimeFactory: RuntimeFactory,
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
-  const proposals: GrantProposalStore = new Map();
-
   /** The agent's ask. Authority is the machine's member, resolved at call
    * time like every other agent route. */
   router.post("/agent/credentials/grant-proposals", async (context) => {
@@ -407,7 +500,7 @@ export function addGrantProposalRoutes(
     const caller = await boxCaller(runtime, context.req.raw);
     const membershipId = activeMembership(caller.principal);
     const input = parseProposeGrantChangesRequest(await readJson(context.req.raw));
-    const proposal = await proposeGrantChanges(runtime, proposals, {
+    const proposal = await proposeGrantChanges(runtime, {
       orgId: caller.workspace.org_id,
       machineId: caller.machineId,
       membershipId,
@@ -431,7 +524,7 @@ export function addGrantProposalRoutes(
     const runtime = runtimeFactory(context);
     const caller = await boxCaller(runtime, context.req.raw);
     const id = requiredString(context.req.param("id"), "id", 64);
-    const proposal = grantProposalById(proposals, id);
+    const proposal = await grantProposalById(runtime.db, id);
     if (proposal === null || proposal.orgId !== caller.workspace.org_id) {
       throw new HttpError(404, "grant proposal not found");
     }
@@ -442,9 +535,11 @@ export function addGrantProposalRoutes(
    * admin everything in the organization. */
   router.get("/orgs/:id/grant-proposals", async (context) => {
     const principal = await requirePrincipal(context);
+    const runtime = runtimeFactory(context);
     const orgId = requestedOrgId(context, principal);
     const membershipId = activeMembership(principal);
-    const visible = pendingGrantProposalsForOrg(proposals, orgId, Date.now()).filter((proposal) =>
+    const pending = await pendingGrantProposalsForOrg(runtime.db, orgId, Date.now());
+    const visible = pending.filter((proposal) =>
       principal.role === "admin" || proposal.membershipId === membershipId);
     return context.json<ListGrantProposalsResponse>({
       proposals: visible.map(grantProposalView),
@@ -459,7 +554,7 @@ export function addGrantProposalRoutes(
     const orgId = requestedOrgId(context, principal);
     const membershipId = activeMembership(principal);
     const now = Date.now();
-    const proposal = requestedProposal(proposals, context, orgId, now);
+    const proposal = await requestedProposal(runtime.db, context, orgId, now);
     if (principal.role !== "admin" && proposal.membershipId !== membershipId) {
       throw new HttpError(403, "only the acting member or an org admin may resolve this proposal");
     }

@@ -230,7 +230,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // The grant-approval feed (plans/ORG-CREDENTIALS.md §7a): a pending
   // proposal addressed to this member pops the dialog on whichever page they
   // are on, so it polls whenever they are signed in to an org.
-  const grantProposals = useGrantProposals(client, !signedOut && store.viewer !== null);
+  const grantProposals = useGrantProposals(
+    client,
+    !signedOut && store.viewer !== null,
+    store.viewer?.membership.id ?? null,
+  );
   // The latest `blitz connections open` focus for the active workspace; a
   // fresh object per event so the panel re-selects on a repeat ask.
   const [connectionsFocus, setConnectionsFocus] = useState<ConnectionsPanelFocus | null>(null);
