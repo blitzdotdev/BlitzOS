@@ -65,6 +65,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | Contract | Sides | Fixtures | Conformance tests |
 |---|---|---|---|
 | box-image manifest | `scripts/lib/worker-source.mjs` producer ↔ Python inside `core/bootstrap.ts` | `fixtures/box-image-manifest/` | `test/box-image-files.test.ts`, `test/bootstrap-python.test.mjs` (runs real `python3`) |
+| version report | `core/version.ts` producer ↔ `scripts/check-box-image.mjs` (reads `commit`) and the verify step of `.github/workflows/canary.yml` (reads `commit` and `boxImageTag` with jq) | `fixtures/version/` | `test/version.test.ts` + `test/deploy-tooling.test.mjs` |
 | phone-home v1 | bash in `core/bootstrap.ts` + `microvm-host/guest/blitz-microvm-enroll.js` ↔ `core/workspaces.ts` | `fixtures/phone-home/` | `test/phone-home-conformance.test.ts`, `guest/blitz-microvm-enroll.test.js` |
 | MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/compute/microvm-hosts.js` imported by both |
 | dufs WebDAV listing | `core/files/sync.ts` parser ↔ dufs in the box image | `fixtures/dav-listing/` | `test/dav-listing-fixtures.test.ts` (TS side; guest side revalidates at box-image rebuild) |
@@ -226,8 +227,10 @@ The four rules a change must not break:
 - `write:packages` lives only inside that workflow, so no workspace or agent
   credential can push to GHCR. Never cut a tag to refresh an image: the same tag
   ships client prod.
-- Rebake canary with the procedure in `docs/BOX-IMAGE.md`. The pin lands in
-  `.github/workflows/canary.yml` as `BLITZ_DEPLOY_VAR_BOX_IMAGE_*`.
+- Every push to `main` makes the `image` job in `.github/workflows/canary.yml`
+  derive a release from the Dockerfile inputs, reuse its valid versioned R2
+  archive or build it with Lody on and publish it, then pass the exact pin to
+  the deploy job. A human does not rebake or edit canary pins.
 
 ## Hetzner: one project behind both deployments
 

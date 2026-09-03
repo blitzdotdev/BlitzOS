@@ -97,6 +97,20 @@ function ubuntuSources(mirror) {
   return `Types: deb\nURIs: ${mirror}/ubuntu\nSuites: noble noble-updates\nComponents: main universe\n`;
 }
 
+test("manifest parts stay beneath a versioned box-image release prefix", () => {
+  const releaseId = "0123456789abcdef".repeat(4);
+  const bootstrap = buildBootstrapScript({
+    ...BOOTSTRAP_BASE,
+    boxImageRef: `https://cp.example/box-image/${releaseId}/manifest.json`,
+    boxImageTag: `blitz-box:${releaseId}`,
+    boxImageSha256: "a".repeat(64),
+  });
+  // A versioned manifest owns parts under its release directory, so deriving
+  // the base from the complete ref must preserve box-image/<releaseId>/.
+  assert.ok(bootstrap.includes('manifest_base=${BOX_IMAGE_REF%/*}'));
+  assert.ok(bootstrap.includes('download "$manifest_base/$part_name" "$part_path"'));
+});
+
 /** The box runs Ubuntu, so the emitted `sed -i -E` is GNU sed. BSD sed reads
  * `-i -E` as an edit-in-place suffix and changes nothing. Exit statuses stay
  * under test everywhere; only the rewritten bytes need the real tool. */

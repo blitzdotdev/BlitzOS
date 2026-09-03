@@ -1,5 +1,6 @@
 {
   "commit": "0bd4a8b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7",
   "boxImageRef": "ghcr.io/blitzdotdev/blitz-box@sha256:8f0f227dc468f4a9ac3000000000000000000000000000000000000000000000",
+  "boxImageTag": "",
   "migration": "0028_drop_generic_connections.sql"
 }

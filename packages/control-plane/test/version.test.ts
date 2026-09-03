@@ -19,9 +19,15 @@ describe("GET /version", () => {
   it("reports the commit, the box image, and the applied migration", async () => {
     const { app } = harness();
     const body = (await (await appRequest(app, "/version")).json()) as VersionReport;
-    expect(Object.keys(body).sort()).toEqual(["boxImageRef", "commit", "migration"]);
+    expect(Object.keys(body).sort()).toEqual([
+      "boxImageRef",
+      "boxImageTag",
+      "commit",
+      "migration",
+    ]);
     expect(typeof body.commit).toBe("string");
     expect(typeof body.boxImageRef).toBe("string");
+    expect(body.boxImageTag).toBe("blitz-box:test-amd64");
     expect(body.migration === null || typeof body.migration === "string").toBe(true);
   });
 
@@ -33,16 +39,22 @@ describe("GET /version", () => {
     expect(body.commit).toBe("unknown");
   });
 
-  // The consumer is packages/control-plane/scripts/check-box-image.mjs, in
-  // another runtime. Fixtures are the contract; neither side may change alone.
+  // The consumers are packages/control-plane/scripts/check-box-image.mjs and
+  // the canary workflow's verify step. Fixtures pin the whole response across
+  // those runtimes, so neither a producer nor a consumer can hide a new field.
   it.each(Object.keys(fixtureSources))(
-    "fixture %s matches the response shape",
-    (path) => {
+    "fixture %s matches the full response shape",
+    async (path) => {
+      const { app } = harness();
+      const response = (await (await appRequest(app, "/version")).json()) as VersionReport;
+      // SAFETY: Every VersionReport field is validated below before the value
+      // is treated as a complete response fixture.
       const value = JSON.parse(fixtureSources[path]) as VersionReport;
-      expect(Object.keys(value).sort()).toEqual(["boxImageRef", "commit", "migration"]);
+      expect(Object.keys(value).sort()).toEqual(Object.keys(response).sort());
       expect(typeof value.commit).toBe("string");
       expect(value.commit).not.toBe("");
       expect(typeof value.boxImageRef).toBe("string");
+      expect(typeof value.boxImageTag).toBe("string");
       expect(value.migration === null || typeof value.migration === "string").toBe(true);
     },
   );

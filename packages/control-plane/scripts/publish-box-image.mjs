@@ -18,7 +18,11 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createGzip } from "node:zlib";
 import { parse as parseToml } from "smol-toml";
-import { createBoxImageAssetSet, validateBoxImageManifest } from "./lib/asset-pack.mjs";
+import {
+  createBoxImageAssetSet,
+  validateBoxImageManifest,
+  validateBoxImagePrefix,
+} from "./lib/asset-pack.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = path.resolve(SCRIPT_DIR, "..");
@@ -50,6 +54,10 @@ Options:
                        in wrangler.toml, else ${DEFAULT_BUCKET}).
   --app-url <origin>   Control-plane origin used in the printed BOX_IMAGE_REF
                        (default: APP_URL in wrangler.toml).
+  --prefix <key-prefix>
+                       R2 logical-key prefix for every object and BOX_IMAGE_REF
+                       (default: box-image).
+  --json <file>        Write {ref,tag,sha256,prefix} as JSON after publishing.
   --part-size-mb <n>   Part size in MiB, at least 1 (default ${DEFAULT_PART_SIZE_MIB}).
   --dry-run            Build and verify the release and print the values; skip the
                        upload.
@@ -127,7 +135,13 @@ export async function writeBoxImageParts(source, outDir, partSizeBytes) {
 /** Splits `source` into parts, writes manifest.json, and re-verifies the whole
  * staged release with createBoxImageAssetSet — the exact loader the upload
  * toolchain consumes. Returns { manifest, manifestPath, parts, assetSet }. */
-export async function stageBoxImageRelease({ source, outDir, imageTag, partSizeBytes }) {
+export async function stageBoxImageRelease({
+  source,
+  outDir,
+  imageTag,
+  partSizeBytes,
+  prefix = "box-image",
+}) {
   await mkdir(outDir, { recursive: true });
   const manifestPath = path.join(outDir, "manifest.json");
   for (const staged of [manifestPath, path.join(outDir, boxImagePartName(0))]) {
@@ -139,7 +153,7 @@ export async function stageBoxImageRelease({ source, outDir, imageTag, partSizeB
   const { parts, totalSha256 } = await writeBoxImageParts(source, outDir, partSizeBytes);
   const manifest = buildBoxImageManifest(parts, totalSha256, imageTag);
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  const assetSet = await createBoxImageAssetSet(manifestPath);
+  const assetSet = await createBoxImageAssetSet(manifestPath, prefix);
   return { manifest, manifestPath, parts, assetSet };
 }
 
@@ -176,6 +190,8 @@ function parseCli(argv) {
     outDir: undefined,
     bucket: undefined,
     appUrl: undefined,
+    prefix: "box-image",
+    jsonPath: undefined,
     partSizeMib: DEFAULT_PART_SIZE_MIB,
     dryRun: false,
     help: false,
@@ -190,7 +206,16 @@ function parseCli(argv) {
       options.dryRun = true;
       continue;
     }
-    if (!["--image", "--archive", "--out", "--bucket", "--app-url", "--part-size-mb"].includes(arg)) {
+    if (![
+      "--image",
+      "--archive",
+      "--out",
+      "--bucket",
+      "--app-url",
+      "--prefix",
+      "--json",
+      "--part-size-mb",
+    ].includes(arg)) {
       throw new Error(`unknown argument: ${arg}`);
     }
     const value = argv[index + 1];
@@ -201,11 +226,18 @@ function parseCli(argv) {
     else if (arg === "--out") options.outDir = path.resolve(value);
     else if (arg === "--bucket") options.bucket = value;
     else if (arg === "--app-url") options.appUrl = value;
+    else if (arg === "--prefix") options.prefix = value;
+    else if (arg === "--json") options.jsonPath = path.resolve(value);
     else options.partSizeMib = Number(value);
   }
   if (options.imageTag === undefined) throw new Error("--image is required");
   if (!Number.isInteger(options.partSizeMib) || options.partSizeMib <= 0) {
     throw new Error("--part-size-mb must be a positive integer");
+  }
+  try {
+    validateBoxImagePrefix(options.prefix);
+  } catch {
+    throw new Error(`--prefix is invalid: ${options.prefix}`);
   }
   // Validate the tag early through the shared contract parser (a probe part
   // stands in for the not-yet-built archive) so an invalid tag fails before
@@ -351,6 +383,7 @@ export async function main(argv = process.argv.slice(2)) {
         outDir,
         imageTag: options.imageTag,
         partSizeBytes,
+        prefix: options.prefix,
       });
     } catch (stageError) {
       // A docker failure truncates the stream; its error explains the
@@ -371,12 +404,21 @@ export async function main(argv = process.argv.slice(2)) {
     }
 
     const origin = appUrl === "" ? "https://<your-worker-origin>" : appUrl;
+    const published = {
+      ref: `${origin}/${options.prefix}/manifest.json`,
+      tag: staged.manifest.imageTag,
+      sha256: staged.manifest.totalSha256,
+      prefix: options.prefix,
+    };
+    if (options.jsonPath !== undefined) {
+      await writeFile(options.jsonPath, `${JSON.stringify(published)}\n`, "utf8");
+    }
     process.stdout.write(`
 Set these in packages/control-plane/wrangler.toml [vars], then redeploy:
 
-BOX_IMAGE_REF = "${origin}/box-image/manifest.json"
-BOX_IMAGE_TAG = "${staged.manifest.imageTag}"
-BOX_IMAGE_SHA256 = "${staged.manifest.totalSha256}"
+BOX_IMAGE_REF = "${published.ref}"
+BOX_IMAGE_TAG = "${published.tag}"
+BOX_IMAGE_SHA256 = "${published.sha256}"
 `);
   } finally {
     if (!keepStaged) await rm(outDir, { recursive: true, force: true });

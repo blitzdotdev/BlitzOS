@@ -4,10 +4,10 @@ import type { CoreRouter, RuntimeFactory } from "./runtime.js";
 /**
  * What `GET /version` answers.
  *
- * Deploy tooling reads this to learn which commit an instance runs, so the
- * shape is a cross-runtime contract: the fixture corpus lives in
- * `packages/schema/fixtures/version/`, and both this route and
- * `scripts/check-box-image.mjs` are tested against it.
+ * Deploy tooling reads this to learn which commit and box image an instance
+ * runs. The Node advisory and canary workflow are cross-runtime consumers, so
+ * the full report is pinned by `packages/schema/fixtures/version/` and both
+ * conformance tests.
  *
  * Every field is public on purpose. A commit SHA of an open-source repository
  * and a public GHCR image reference disclose nothing an attacker cannot read
@@ -22,6 +22,8 @@ export interface VersionReport {
   commit: string;
   /** The box image this deployment hands to each new workspace. */
   boxImageRef: string;
+  /** The local Docker tag expected after an archive-backed image is loaded. */
+  boxImageTag: string;
   /**
    * The newest applied D1 migration, by filename. `null` when the migration
    * table cannot be read, which is the honest answer for a database that
@@ -39,6 +41,7 @@ export function addVersionRoutes(
     const report: VersionReport = {
       commit: runtime.vars.gitCommitSha ?? "unknown",
       boxImageRef: runtime.vars.boxImageRef,
+      boxImageTag: runtime.vars.boxImageTag,
       migration: await appliedMigration(runtime),
     };
     return context.json(report);

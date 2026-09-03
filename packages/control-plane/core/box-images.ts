@@ -1,6 +1,13 @@
 import { streamBlob } from "./blobs.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 
+const BOX_IMAGE_RELEASE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+const BOX_IMAGE_PART_PATTERN = /^part-[0-9]{3,}$/u;
+
+function boxImageNotFound(context: CoreContext): Response {
+  return context.json({ error: "not found", retryAction: null }, 404);
+}
+
 async function streamBoxImage(
   context: CoreContext,
   runtimeFactory: RuntimeFactory,
@@ -11,9 +18,7 @@ async function streamBoxImage(
     key,
     context.req.raw,
   );
-  return (
-    response ?? context.json({ error: "not found", retryAction: null }, 404)
-  );
+  return response ?? boxImageNotFound(context);
 }
 
 export function addBoxImageRoutes(
@@ -30,4 +35,19 @@ export function addBoxImageRoutes(
       `box-image/${context.req.param("part")}`,
     ),
   );
+  router.get("/box-image/:release/:part", (context) => {
+    const release = context.req.param("release");
+    const part = context.req.param("part");
+    if (
+      !BOX_IMAGE_RELEASE_PATTERN.test(release)
+      || (part !== "manifest.json" && !BOX_IMAGE_PART_PATTERN.test(part))
+    ) {
+      return boxImageNotFound(context);
+    }
+    return streamBoxImage(
+      context,
+      runtimeFactory,
+      `box-image/${release}/${part}`,
+    );
+  });
 }
