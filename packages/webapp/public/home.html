@@ -279,7 +279,7 @@ section,footer{padding-left:var(--pad-x);padding-right:var(--pad-x)}
   border-radius:0 0 7px 7px;z-index:2;
 }
 .screen{
-  position:relative;aspect-ratio:3024/1964;width:100%;overflow:hidden;
+  position:relative;aspect-ratio:3008/1604;width:100%;overflow:hidden;
   border-radius:7px 7px 0 0;background:var(--surface);
   display:flex;flex-direction:column;
 }
@@ -290,7 +290,7 @@ section,footer{padding-left:var(--pad-x);padding-right:var(--pad-x)}
 /* ---------- real product screenshot inside the laptop frame ---------- */
 img.screen{
   display:block;width:100%;height:auto;
-  aspect-ratio:3022/1600;object-fit:cover;object-position:top center;
+  aspect-ratio:3008/1604;object-fit:cover;object-position:top center;
   background:var(--surface);
 }
 
@@ -368,11 +368,11 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
   <div class="frame-wrap">
     <div class="frame">
       <span class="notch" aria-hidden="true"></span>
-      <img class="screen" src="/workspace.png" width="3022" height="1600"
+      <img class="screen" src="/workspace.png" width="3008" height="1604"
            fetchpriority="high" decoding="async"
-           alt="A BlitzOS workspace in the browser: the workspace list in the sidebar, a Claude agent session in the middle, and a file browser on the right.">
+           alt="A BlitzOS workspace in the browser: the session rail with worktrees and chats on the left, an agent session in the middle, and its diff on the right.">
     </div>
-    <p class="frame-caption">A BlitzOS workspace: agent session, files, teenyapps, and connections, in the browser.</p>
+    <p class="frame-caption">A BlitzOS workspace: the session rail, an agent session, and its diff, in the browser.</p>
   </div>
 </section>
 

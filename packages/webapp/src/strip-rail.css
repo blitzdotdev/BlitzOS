@@ -406,6 +406,12 @@
   color: var(--soft-ink);
 }
 
+/* The owner's machine is off: the grant is real, the box is not there. */
+.session-rail-shared--off {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* The row: gutter · title · trailing slot. Never more.
  *
  * The row became a `div` wrapping `.shell-s__open` when the trailing slot
