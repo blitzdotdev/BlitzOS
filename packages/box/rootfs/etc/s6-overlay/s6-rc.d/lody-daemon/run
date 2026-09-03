@@ -16,9 +16,12 @@
 #
 # WHY LODY_MCP_HTTP_DISABLED=1: the daemon otherwise starts an MCP HTTP host on
 # an EPHEMERAL loopback port, which the gateway's port discovery would offer the
-# member as a phantom preview. Agents keep stdio MCP, which needs no port. If a
-# later phase needs the HTTP host, pin it with LODY_MCP_HTTP_PREFERRED_PORT and
-# reserve that port in all four places RESERVED_PREVIEW_PORTS lives.
+# member as a phantom preview. The stdio variant — one `lody-mcp-server` child
+# per agent, a second copy of the whole bundle — is removed from the bundle by
+# packages/box/patches/lody-builtin-mcp-off.mjs, so agents get no Lody MCP at
+# all. If a later phase needs the HTTP host, pin it with
+# LODY_MCP_HTTP_PREFERRED_PORT and reserve that port in all four places
+# RESERVED_PREVIEW_PORTS lives.
 #
 # The daemon still binds one loopback port it cannot be talked out of: 17789,
 # its single-instance host lease. That port IS in the reserved set.
@@ -38,7 +41,11 @@ fi
 # The daemon hosts the ACP agent child processes, so it is user work and it
 # inherits the placement the deleted actor had (docs/MEMORY-BOUNDARY.md). An
 # agent spawns its own CLI copy out of reach of any wrapper here, so placing
-# the daemon itself is what puts every agent it starts under the ceiling.
+# the daemon itself is what puts every agent it starts under the ceiling. The
+# daemon's own sandbox then moves each agent into a leaf of its own,
+# blitz-user.slice/lody-sessions/lody-session-<id>, and ends the session with
+# cgroup.kill — blitz-cgroup init builds that parent and
+# packages/box/patches/lody-session-sandbox.mjs points the daemon at it.
 #
 # The gateway, not the daemon, is what the control plane talks to. A dead
 # daemon costs the sessions surface; it does not cost the box its tunnel, its

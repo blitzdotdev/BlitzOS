@@ -1660,12 +1660,14 @@ obligation at every version bump**.
 | `packages/box/patches/lody-local-platform.mjs` | `lody/dist/index.js` | 4× `resolvePlatformKind("cloud")` | `lody@0.88.1` on npm is the CLOUD build: its Vite config inlines the platform as a literal, so the local composition root is unreachable and the daemon blocks on a device-authorization login. The patch restores the `LODY_PLATFORM` env read. Without it a box cannot start the daemon at all. |
 | `packages/box/patches/lody-acp-auth-queue.mjs` | `lody/dist/index.js` | the `extractQueueKey` switch tail in `MessageProcessor` | Every `machine/*` message falls to `extractQueueKey`'s `default: return null`, and `ConcurrentQueue` maps `null` onto ONE serial chain (`__default__`). `machine/acp-authenticate` with `action: 'start'` runs `claude auth login --claudeai`, which blocks on stdin until the member pastes the code back — so the `submit-code` carrying that code queues behind the login waiting for it, and so does `cancel`. The patch gives a `start` its own per-agent chain. Without it an interactive agent sign-in can never be completed, only timed out after 285 s. |
 | `packages/box/patches/lody-code-collab-worktree-root.mjs` | `lody/dist/index.js` | the `project?.kind === "local"` branch of `resolveCodeCollabWorkspaceRoot` | That branch answers with the local project's ROOT PATH and never reads `project.useWorktree` or `meta.isWorktree`, so once no live `Session` object is left the whole Code Collab surface of a worktree session — All Changes, the Files tab, every file chip — resolves to the `/workspace/<repo>` clone instead of the worktree. The clone is clean by design, so the panel renders an empty SUCCESS ("No changes yet.") rather than an error. The patch answers with the worktree when the session is a worktree session and the worktree exists. Without it the side panel of every BlitzOS worktree session is silently empty. |
+| `packages/box/patches/lody-builtin-mcp-off.mjs` | `lody/dist/index.js` | the first line of `AgentClient.buildMcpServers` (`const builtin = this.buildBuiltinMcpServers(workdir);`) and the `LODY_MCP_TOOLS_REMINDER` declaration in `buildPrompt` | Every ACP agent is handed one stdio MCP server, `lody __internal lody-mcp-server`, which is the whole `lody` bundle loaded again as a child of the agent: 266 MB resident per session (measured on a cx33, 2026-09-02), the largest per-session fixed cost on a box, serving tools BlitzOS does not use (`lody_session_*`, `lody_task_*`, `lody_review_submit`, `lody_report_preview_candidate`). Codex starts it in its own process group, so the daemon's group kill never reaches it and it outlives its agent. The patch makes the built-in list empty — workspace-configured MCP servers still load — and blanks the per-turn reminder that would otherwise advertise the missing tools. |
+| `packages/box/patches/lody-session-sandbox.mjs` | `lody/dist/index.js` | the `parentDir` line of `LinuxCgroupSessionSandbox.initialize` and the `memoryMaxBytes`/`cpuMax` lines of `calculateAutomaticSessionSandboxLimits` | The daemon ends a session by signalling the agent's process group, but codex runs tool commands under their own session id and starts MCP servers in their own groups, and Claude Code's Bash tool is detached — so `npm test` trees and MCP servers outlive the session. Lody's per-session cgroup sandbox (`cgroup.kill` on termination) is the fix and is inert on a box, because it derives its parent from the daemon's own cgroup, which cannot hand controllers to children while holding the daemon (cgroup v2's no-internal-process rule). The patch parents the leaves beside `lody.scope` instead, under `blitz-user.slice/lody-sessions`, which `blitz-cgroup init` builds with `+memory +pids +cpu` and hands to uid 1000; and it drops upstream's memory/cpu capacity split (25% reserved, the rest divided across open sessions), so the leaves write `max` and keep only `pids.max` 1024. The box's own ceiling stays the only budget. |
 
 Applied in that order. **The order is not cosmetic:** `lody-local-platform`
 guards on a sha256 of `dist/index.js` AS PUBLISHED, so nothing may rewrite the
-file before it runs. The other two therefore guard on the installed package's
+file before it runs. The other four therefore guard on the installed package's
 version plus their own anchor at exactly one occurrence — a file hash can
-only ever pin the first patch in a chain. All three are idempotent: re-running
+only ever pin the first patch in a chain. All five are idempotent: re-running
 any of them on an already-patched bundle reports it and exits 0, which is what
 lets `packages/webapp/test/lody-daemon-harness.ts` copy a real box's bundle and
 re-apply the image build's patches to the copy.
@@ -1704,6 +1706,28 @@ finds the worktree on disk. Every other session, and a worktree session whose
 worktree is gone, keeps the answer it has today.
 `packages/webapp/test/lody-worktree-session.test.ts` measures both directions
 against a real daemon.
+
+`lody-builtin-mcp-off.mjs` is guarded the same two ways, with two anchors that
+must each occur exactly once. Re-auditing it means confirming that
+`AgentClient.buildMcpServers` (`apps/cli/src/agent/agent-client.ts`) still
+prepends the built-in `lody` stdio server unconditionally and that
+`buildPrompt` (`apps/cli/src/session/session-execution-helpers.ts`) still
+appends `LODY_MCP_TOOLS_REMINDER`. The patch is strictly NARROWING: the
+`externalLoad` branch of the same method, which carries a workspace's own MCP
+servers, is untouched. **If a bump makes the built-in server optional, DELETE
+this patch and use the option instead.**
+
+`lody-session-sandbox.mjs` is guarded the same two ways, with two anchors that
+must each occur exactly once. Re-auditing it means confirming that
+`LinuxCgroupSessionSandbox.initialize` (`apps/cli/src/session/session-sandbox.ts`)
+still derives `parentDir` from the daemon's own cgroup and still requires
+`cpu.max` in the leaf, and that `calculateAutomaticSessionSandboxLimits` still
+splits capacity across sessions. Both halves are load-bearing: the first is what
+makes the sandbox start on a box at all, the second is what keeps it from
+capping a session. **If a bump makes the parent or the limits configurable,
+DELETE this patch and set the options instead.** The box side is
+`packages/box/rootfs/usr/local/bin/blitz-cgroup` (the `lody-sessions` parent and
+`+cpu`) and `packages/box/test/smoke.sh` asserts the layout.
 
 Re-auditing means: confirm the anchor still selects the platform, confirm the
 count, run `LODY_PLATFORM=local lody start` and see "Starting in local platform
