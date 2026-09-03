@@ -6,6 +6,7 @@ import type {
   MachineType,
   PutWorkspaceCredentialRequest,
   TemplateRepoView,
+  UpdateWorkspaceRequest,
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient, MemberView } from './api';
@@ -15,10 +16,7 @@ import { WorkspaceMembersEditor } from './WorkspaceMembersEditor';
 import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
 import type { CloudWorkspaceModel, WorkspaceAction } from './workspace-store';
 import { caughtErrorMessage } from './error-message';
-import {
-  useErrorReporter,
-  type ErrorContext,
-} from './error-dialog/ErrorReporter';
+import { useErrorReporter } from './error-dialog/ErrorReporter';
 import { useWorkspaceOptimisticMembers } from './use-workspace-optimistic-members';
 
 export type WorkspaceDetailsTab = 'members' | 'credentials' | 'settings';
@@ -74,8 +72,8 @@ function CredentialsTab({
 }: {
   credentials: CloudWorkspaceModel['credentials'];
   canManage: boolean;
-  onPut: (input: PutWorkspaceCredentialRequest) => void;
-  onRevoke: (name: string) => void;
+  onPut: (input: PutWorkspaceCredentialRequest) => Promise<void>;
+  onRevoke: (name: string) => Promise<void>;
   onImport: (input: ImportWorkspaceCredentialsRequest) => Promise<ImportWorkspaceCredentialsResponse>;
   onImportError: (caught: Error) => void;
 }) {
@@ -88,6 +86,9 @@ function CredentialsTab({
   const [preview, setPreview] = useState<ImportWorkspaceCredentialsResponse | null>(null);
   const [imported, setImported] = useState<ImportWorkspaceCredentialsResponse | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [revokingNames, setRevokingNames] = useState<Set<string>>(() => new Set());
   const fileInput = useRef<HTMLInputElement | null>(null);
 
   // The preview IS the import, minus the writes: the same request with
@@ -121,8 +122,10 @@ function CredentialsTab({
   }, [importText, importLabel, onImport]);
 
   const runImport = () => {
+    if (importing) return;
     const request: ImportWorkspaceCredentialsRequest = { text: importText };
     if (importLabel !== '') request.label = importLabel;
+    setImporting(true);
     onImport(request)
       .then((response) => {
         setImportError(null);
@@ -130,7 +133,8 @@ function CredentialsTab({
         setImportText('');
         setImportLabel('');
       })
-      .catch(onImportError);
+      .catch(onImportError)
+      .finally(() => setImporting(false));
   };
 
   const chooseFile = (file: File | undefined) => {
@@ -142,17 +146,34 @@ function CredentialsTab({
     });
   };
   const submit = () => {
-    if (name.trim() === '' || value === '') return;
+    if (name.trim() === '' || value === '' || saving) return;
     const input: PutWorkspaceCredentialRequest = { name: name.trim(), value };
     if (label.trim() !== '') input.label = label.trim();
     // Absent keeps a rotated key's comment; the field left empty is absence,
     // not a clear, so rotating through this form cannot erase one.
     if (comment.trim() !== '') input.comment = comment.trim();
-    onPut(input);
-    setName('');
-    setLabel('');
-    setComment('');
-    setValue('');
+    setSaving(true);
+    void onPut(input)
+      .then(() => {
+        setName('');
+        setLabel('');
+        setComment('');
+        setValue('');
+      })
+      .catch(() => undefined)
+      .finally(() => setSaving(false));
+  };
+  const revoke = (credentialName: string) => {
+    setRevokingNames((current) => new Set(current).add(credentialName));
+    void onRevoke(credentialName)
+      .catch(() => undefined)
+      .finally(() => {
+        setRevokingNames((current) => {
+          const next = new Set(current);
+          next.delete(credentialName);
+          return next;
+        });
+      });
   };
   return (
     <section
@@ -187,10 +208,11 @@ function CredentialsTab({
                 <button
                   className="webapp-action"
                   type="button"
-                  aria-label={`Revoke ${credential.name}`}
-                  onClick={() => onRevoke(credential.name)}
+                  aria-label={'Revoke ' + credential.name}
+                  disabled={revokingNames.has(credential.name)}
+                  onClick={() => revoke(credential.name)}
                 >
-                  Revoke
+                  {revokingNames.has(credential.name) ? 'Revoking…' : 'Revoke'}
                 </button>
               )}
             </div>
@@ -207,6 +229,7 @@ function CredentialsTab({
             <button
               className="webapp-action"
               type="button"
+              disabled={importing}
               onClick={() => fileInput.current?.click()}
             >
               Choose file…
@@ -216,6 +239,7 @@ function CredentialsTab({
               type="file"
               hidden
               aria-label="Choose an env file"
+              disabled={importing}
               onChange={(event) => chooseFile(event.currentTarget.files?.[0])}
             />
             <span className="credential-import-summary">
@@ -224,6 +248,7 @@ function CredentialsTab({
           </div>
           <textarea
             aria-label="Env file text"
+            disabled={importing}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
@@ -273,12 +298,15 @@ function CredentialsTab({
             <button
               className="webapp-action webapp-action--primary"
               type="button"
-              disabled={preview === null || importCount(preview) === 0}
+              disabled={importing || preview === null || importCount(preview) === 0}
               onClick={runImport}
             >
-              {preview === null
-                ? 'Import'
-                : `Import ${importCount(preview)} key${importCount(preview) === 1 ? '' : 's'}`}
+              {importing
+                ? 'Importing…'
+                : preview === null
+                  ? 'Import'
+                  : 'Import ' + importCount(preview) + ' key'
+                    + (importCount(preview) === 1 ? '' : 's')}
             </button>
           </div>
         </div>
@@ -296,6 +324,7 @@ function CredentialsTab({
               autoCorrect="off"
               spellCheck={false}
               placeholder="STRIPE_API_KEY"
+              disabled={saving}
               value={name}
               onChange={(event) => setName(event.currentTarget.value)}
             />
@@ -304,6 +333,7 @@ function CredentialsTab({
             Label (optional)
             <input
               aria-label="Credential label"
+              disabled={saving}
               value={label}
               onChange={(event) => setLabel(event.currentTarget.value)}
             />
@@ -313,6 +343,7 @@ function CredentialsTab({
             <input
               aria-label="Credential comment"
               placeholder="what this key is for — agents read this"
+              disabled={saving}
               value={comment}
               onChange={(event) => setComment(event.currentTarget.value)}
             />
@@ -323,6 +354,7 @@ function CredentialsTab({
               aria-label="Credential value"
               type="password"
               autoComplete="off"
+              disabled={saving}
               value={value}
               onChange={(event) => setValue(event.currentTarget.value)}
             />
@@ -331,10 +363,10 @@ function CredentialsTab({
             <button
               className="webapp-action webapp-action--primary"
               type="button"
-              disabled={name.trim() === '' || value === ''}
+              disabled={saving || name.trim() === '' || value === ''}
               onClick={submit}
             >
-              Save credential
+              {saving ? 'Saving…' : 'Save credential'}
             </button>
           </div>
         </div>
@@ -435,13 +467,26 @@ export function WorkspaceDetailsDialog({
     return () => { cancelled = true; };
   }, [client, listMachineTypes, workspaceId]);
 
-  /** Non-optimistic writes still refresh their polled rows, but every action
-   * failure now goes to the shared copyable dialog instead of the load banner. */
-  const run = useCallback((action: Promise<unknown>, failure: ErrorContext) => {
-    void action
-      .then(refreshWorkspaces)
-      .catch((caught) => reportError(caught, failure));
-  }, [refreshWorkspaces, reportError]);
+  const putCredential = useCallback(async (input: PutWorkspaceCredentialRequest) => {
+    try {
+      const { credential } = await client.putWorkspaceCredential(workspaceId, input);
+      commitWorkspaceMutation({
+        type: 'workspace_credential_upserted',
+        workspaceId,
+        credential,
+      });
+    } catch (caught) {
+      reportError(
+        caught instanceof Error ? caught : new Error('The action could not be completed.'),
+        {
+          title: 'Couldn’t save credential',
+          action: 'Saving ' + input.name + ' in ' + workspace.title + '.',
+          workspaceId,
+        },
+      );
+      throw caught;
+    }
+  }, [client, commitWorkspaceMutation, reportError, workspace.title, workspaceId]);
 
   /** The import shares one call with its preview, so only the run that writes
    * asks for a poll — a dry run has nothing for it to find. */
@@ -453,6 +498,54 @@ export function WorkspaceDetailsDialog({
     },
     [client, refreshWorkspaces, workspaceId],
   );
+
+  const revokeCredential = useCallback(async (name: string) => {
+    try {
+      await client.revokeWorkspaceCredential(workspaceId, name);
+      commitWorkspaceMutation({
+        type: 'workspace_credential_removed',
+        workspaceId,
+        name,
+      });
+    } catch (caught) {
+      reportError(caught instanceof Error ? caught : new Error('The credential could not be revoked.'), {
+        title: 'Couldn’t revoke credential',
+        action: 'Revoking ' + name + ' from ' + workspace.title + '.',
+        workspaceId,
+      });
+      throw caught;
+    }
+  }, [client, commitWorkspaceMutation, reportError, workspace.title, workspaceId]);
+
+  const saveSettings = useCallback(async (input: UpdateWorkspaceRequest) => {
+    try {
+      const { workspace: updated } = await client.updateWorkspace(workspaceId, input);
+      commitWorkspaceMutation({
+        type: 'workspace_settings_updated',
+        workspaceId,
+        settings: {
+          serverName: updated.name,
+          defaultMachineTypeId: updated.defaultMachineTypeId,
+          autoProvision: updated.autoProvision,
+          agentRuleId: updated.agentRuleId,
+          updatedAt: updated.updatedAt,
+        },
+      });
+      return {
+        name: updated.name,
+        defaultMachineTypeId: updated.defaultMachineTypeId,
+        autoProvision: updated.autoProvision,
+        agentRuleId: updated.agentRuleId,
+      };
+    } catch (caught) {
+      reportError(caught instanceof Error ? caught : new Error('The settings could not be saved.'), {
+        title: 'Couldn’t save workspace settings',
+        action: 'Saving settings for ' + workspace.title + '.',
+        workspaceId,
+      });
+      throw caught;
+    }
+  }, [client, commitWorkspaceMutation, reportError, workspace.title, workspaceId]);
 
   /** A repo write answers with the list it produced, so the panel shows what
    * the server holds rather than what the browser hoped for. A remove answers
@@ -559,16 +652,8 @@ export function WorkspaceDetailsDialog({
             <CredentialsTab
               credentials={workspace.credentials}
               canManage={canManage}
-              onPut={(input) => run(client.putWorkspaceCredential(workspace.id, input), {
-                title: 'Couldn’t save credential',
-                action: `Saving ${input.name} in ${workspace.title}.`,
-                workspaceId,
-              })}
-              onRevoke={(name) => run(client.revokeWorkspaceCredential(workspace.id, name), {
-                title: 'Couldn’t revoke credential',
-                action: `Revoking ${name} from ${workspace.title}.`,
-                workspaceId,
-              })}
+              onPut={putCredential}
+              onRevoke={revokeCredential}
               onImport={importCredentials}
               onImportError={(caught) => reportError(caught, {
                 title: 'Couldn’t import credentials',
@@ -584,11 +669,7 @@ export function WorkspaceDetailsDialog({
               machines={machines}
               repos={repos}
               canManage={canManage}
-              onSave={(input) => run(client.updateWorkspace(workspaceId, input), {
-                title: 'Couldn’t save workspace settings',
-                action: `Saving settings for ${workspace.title}.`,
-                workspaceId,
-              })}
+              onSave={saveSettings}
               onAddRepo={addRepo}
               onRemoveRepo={removeRepo}
             />

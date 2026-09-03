@@ -21,7 +21,7 @@ import {
 } from '../src/workspace-store.js';
 import { describe, expect, it, vi } from 'vitest';
 import { deferred, render, settle } from './dom.js';
-import { workspaceModelFixture } from './workspace-fixtures.js';
+import { workspaceModelFixture, workspaceViewFixture } from './workspace-fixtures.js';
 import { ErrorReporterProvider } from '../src/error-dialog/ErrorReporter.js';
 
 const machineTypes: MachineType[] = [
@@ -152,11 +152,9 @@ function dialog(overrides: Partial<Parameters<typeof WorkspaceDetailsDialog>[0]>
   );
 }
 
-/** What a credential write can and cannot answer with: the routes report an
- * outcome, never the list, so the rows come from the workspace poll alone.
- * The harness plays that poll — `refreshWorkspaces` is the only way the rows
- * this store holds reach the dialog, so a dialog that never asks shows the
- * list it opened with, which is the reported bug. */
+/** Credential values never come back in a mutation response. Metadata from a
+ * single write is committed directly; imports refresh because their response
+ * reports outcomes rather than canonical credential rows. */
 function CredentialsHarness({
   wire,
   store,
@@ -166,6 +164,16 @@ function CredentialsHarness({
 }) {
   const [credentials, setCredentials] = useState<WorkspaceCredentialView[]>(store.rows);
   const refreshWorkspaces = useCallback(() => { setCredentials([...store.rows]); }, [store]);
+  const commitWorkspaceMutation = useCallback((action: WorkspaceAction) => {
+    if (action.type === 'workspace_credential_upserted') {
+      setCredentials((current) => [
+        ...current.filter(({ name }) => name !== action.credential.name),
+        action.credential,
+      ]);
+    } else if (action.type === 'workspace_credential_removed') {
+      setCredentials((current) => current.filter(({ name }) => name !== action.name));
+    }
+  }, []);
   const model = useMemo(() => ({ ...workspace, credentials }), [credentials]);
   return (
     <ErrorReporterProvider>
@@ -175,7 +183,7 @@ function CredentialsHarness({
         listMachineTypes={listMachineTypesStub}
         refreshWorkspaces={refreshWorkspaces}
         initialTab="credentials"
-        commitWorkspaceMutation={noop}
+        commitWorkspaceMutation={commitWorkspaceMutation}
         onClose={noop}
         onClone={noop}
         onDelete={noop}
@@ -546,16 +554,8 @@ describe('WorkspaceDetailsDialog', () => {
 
   it('shows a saved credential without waiting for the next poll tick', async () => {
     const store = { rows: [...workspace.credentials] };
-    const putWorkspaceCredential = vi.fn(
-      async (_workspaceId: string, input: PutWorkspaceCredentialRequest) => {
-        // A rotation is this same write under a name the store already holds,
-        // so both add and rotate settle through this one path.
-        store.rows = [
-          ...store.rows.filter((row) => row.name !== input.name),
-          storedCredential(input.name),
-        ];
-      },
-    );
+    const request = deferred<{ credential: WorkspaceCredentialView }>();
+    const putWorkspaceCredential = vi.fn(() => request.promise);
     const view = await render(
       <CredentialsHarness wire={client({ putWorkspaceCredential })} store={store} />,
     );
@@ -573,6 +573,10 @@ describe('WorkspaceDetailsDialog', () => {
     const save = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent === 'Save credential');
     await act(async () => save?.click());
+    expect(save?.textContent).toBe('Saving…');
+    expect(field('Credential name').value).toBe('DEPLOY_KEY');
+    expect(field('Credential value').value).toBe('secret-value');
+    request.resolve({ credential: storedCredential('DEPLOY_KEY') });
     await settle();
 
     expect(putWorkspaceCredential).toHaveBeenCalledWith(
@@ -586,9 +590,12 @@ describe('WorkspaceDetailsDialog', () => {
 
   it('drops a revoked credential row without waiting for the next poll tick', async () => {
     const store = { rows: [...workspace.credentials] };
-    const revokeWorkspaceCredential = vi.fn(async (_workspaceId: string, name: string) => {
-      store.rows = store.rows.filter((row) => row.name !== name);
-    });
+    const request = deferred<void>();
+    const revokeWorkspaceCredential = vi.fn((_workspaceId: string, name: string) => (
+      request.promise.then(() => {
+        store.rows = store.rows.filter((row) => row.name !== name);
+      })
+    ));
     const view = await render(
       <CredentialsHarness wire={client({ revokeWorkspaceCredential })} store={store} />,
     );
@@ -598,6 +605,9 @@ describe('WorkspaceDetailsDialog', () => {
       'button[aria-label="Revoke STRIPE_API_KEY"]',
     );
     await act(async () => revoke?.click());
+    expect(revoke?.textContent).toBe('Revoking…');
+    expect(revoke?.disabled).toBe(true);
+    request.resolve(undefined);
     await settle();
 
     expect(revokeWorkspaceCredential).toHaveBeenCalledWith(workspace.id, 'STRIPE_API_KEY');
@@ -607,13 +617,18 @@ describe('WorkspaceDetailsDialog', () => {
 
   it('shows imported credentials at once, and asks for nothing after a dry run', async () => {
     const store = { rows: [...workspace.credentials] };
+    const request = deferred<ImportWorkspaceCredentialsResponse>();
+    const response: ImportWorkspaceCredentialsResponse = {
+      results: [{ name: 'NEW_KEY', line: 1, outcome: 'stored' }],
+      linesRead: 1,
+    };
     const importWorkspaceCredentials = vi.fn(
-      async (
-        _workspaceId: string,
-        input: ImportWorkspaceCredentialsRequest,
-      ): Promise<ImportWorkspaceCredentialsResponse> => {
-        if (input.dryRun !== true) store.rows = [...store.rows, storedCredential('NEW_KEY')];
-        return { results: [{ name: 'NEW_KEY', line: 1, outcome: 'stored' }], linesRead: 1 };
+      (_workspaceId: string, input: ImportWorkspaceCredentialsRequest) => {
+        if (input.dryRun === true) return Promise.resolve(response);
+        return request.promise.then((confirmed) => {
+          store.rows = [...store.rows, storedCredential('NEW_KEY')];
+          return confirmed;
+        });
       },
     );
     const view = await render(
@@ -634,6 +649,9 @@ describe('WorkspaceDetailsDialog', () => {
     const importButton = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.startsWith('Import'));
     await act(async () => importButton?.click());
+    expect(importButton?.textContent).toBe('Importing…');
+    expect(textarea.value).toContain('NEW_KEY=x');
+    request.resolve(response);
     await settle();
 
     expect(view.container.querySelector('.workspace-credential-rows')?.textContent)
@@ -667,7 +685,8 @@ describe('WorkspaceDetailsDialog', () => {
   });
 
   it('writes only the settings fields that actually changed', async () => {
-    const updateWorkspace = vi.fn().mockResolvedValue({ workspace: {} });
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['updateWorkspace']>>>();
+    const updateWorkspace = vi.fn(() => request.promise);
     const view = await render(dialog({ client: client({ updateWorkspace }) }));
     await settle();
     await act(async () => tab(view.container, 'Settings')?.click());
@@ -690,13 +709,27 @@ describe('WorkspaceDetailsDialog', () => {
     await act(async () => toggle?.click());
 
     expect(save()?.disabled).toBe(false);
-    await act(async () => save()?.click());
+    const saveButton = save();
+    await act(async () => saveButton?.click());
+    expect(saveButton?.textContent).toBe('Saving…');
+    expect(name.disabled).toBe(true);
     // The default machine type and the agent rule were never touched, so they
     // travel as absent fields rather than as a restatement of what is stored.
     expect(updateWorkspace).toHaveBeenCalledWith(workspace.id, {
       name: 'renamed-workspace',
       autoProvision: false,
     });
+    request.resolve({ workspace: workspaceViewFixture({
+      id: workspace.id,
+      name: 'server-normalized',
+      defaultMachineTypeId: workspace.defaultMachineTypeId,
+      autoProvision: false,
+      agentRuleId: workspace.agentRuleId,
+    }) });
+    await settle();
+    expect(saveButton?.textContent).toBe('Save settings');
+    expect(name.value).toBe('server-normalized');
+    expect(saveButton?.disabled).toBe(true);
     await view.unmount();
   });
 

@@ -1,9 +1,11 @@
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createControlPlaneClient } from '../src/api.js';
+import { createControlPlaneClient, type ControlPlaneClient } from '../src/api.js';
+import type { FolderGrantView, FolderView } from '../src/file-library-api.js';
+import { ShareFolderDialog } from '../src/files/ShareFolderDialog.js';
 import type { TenantMe } from '../src/api-adapter.js';
 import { FilesDrive } from '../src/files/FilesDrive.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -14,7 +16,7 @@ const viewer: TenantMe = {
   organizations: [],
 };
 
-const ownedFolder = {
+const ownedFolder: FolderView = {
   id: 'folder-mine',
   name: 'shared-notes',
   role: 'owner',
@@ -260,6 +262,98 @@ describe('drive sharing', () => {
     await settle();
     const patch = fetcher.mock.calls.find(([, init]) => init?.method === 'PATCH');
     expect(patch?.[1]?.body).toBe(JSON.stringify({ orgRole: 'viewer' }));
+    await view.unmount();
+  });
+});
+
+describe('folder sharing feedback', () => {
+  it('shows general access immediately and rolls it back on rejection', async () => {
+    const request = deferred<void>();
+    const client = {
+      listMembers: vi.fn(async () => ({ members: [] })),
+      setFolderOrgRole: vi.fn(() => request.promise),
+    } as unknown as ControlPlaneClient;
+    const view = await render(<ShareFolderDialog
+      client={client}
+      folder={ownedFolder}
+      viewerEmail={viewer.identity.email}
+      orgName="acme"
+      onClose={() => undefined}
+      onChanged={async () => undefined}
+      onSnack={() => undefined}
+    />);
+    await settle();
+
+    const select = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Access for everyone at acme"]',
+    );
+    if (select === null) throw new Error('general access select is missing');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')
+        ?.set?.call(select, 'viewer');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(select.value).toBe('viewer');
+    expect(select.disabled).toBe(true);
+    expect(view.container.querySelector('[role="status"]')?.textContent)
+      .toBe('Updating general access…');
+
+    request.reject(new Error('sharing policy changed'));
+    await settle();
+    expect(select.value).toBe('off');
+    expect(select.disabled).toBe(false);
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('sharing policy changed');
+    await view.unmount();
+  });
+
+  it('shows a new person immediately and replaces it with the canonical grant', async () => {
+    const request = deferred<{ grant: FolderGrantView }>();
+    const member = {
+      id: 'membership-nia',
+      email: 'nia@example.com',
+      name: 'Nia',
+      avatarUrl: null,
+      role: 'member' as const,
+      status: 'active' as const,
+    };
+    const createFolderGrant = vi.fn(() => request.promise);
+    const onChanged = vi.fn(async () => undefined);
+    const client = {
+      listMembers: vi.fn(async () => ({ members: [member] })),
+      createFolderGrant,
+    } as unknown as ControlPlaneClient;
+    const view = await render(<ShareFolderDialog
+      client={client}
+      folder={ownedFolder}
+      viewerEmail={viewer.identity.email}
+      orgName="acme"
+      onClose={() => undefined}
+      onChanged={onChanged}
+      onSnack={() => undefined}
+    />);
+    await settle();
+
+    const input = view.container.querySelector<HTMLInputElement>('[aria-label="Add people"]');
+    await act(async () => input?.focus());
+    const suggestion = view.container.querySelector<HTMLButtonElement>('.drive-suggestion');
+    await act(async () => suggestion?.click());
+    expect(view.container.textContent).toContain('Nia');
+    expect(view.container.querySelector('[role="status"]')?.textContent)
+      .toBe('Adding Nia…');
+    expect(createFolderGrant).toHaveBeenCalledWith('folder-mine', 'membership-nia', 'editor');
+
+    request.resolve({ grant: {
+      id: 'grant-canonical',
+      membershipId: 'membership-nia',
+      role: 'viewer',
+      createdAt: 10,
+      member: { name: 'Nia Canonical', email: member.email, avatarUrl: null },
+    } });
+    await settle();
+    expect(view.container.textContent).toContain('Nia Canonical');
+    expect(view.container.querySelector('[role="status"]')).toBeNull();
+    expect(onChanged).toHaveBeenCalledOnce();
     await view.unmount();
   });
 });

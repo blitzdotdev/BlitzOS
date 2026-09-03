@@ -14,6 +14,7 @@ import type {
   UpdateWorkspaceMemberRequest,
   SessionShareView,
   WorkspaceMemberResponse,
+  WorkspaceCredentialView,
   PutAgentRuleRequest,
   PutAgentRuleResponse,
   ImportWorkspaceCredentialsRequest,
@@ -139,6 +140,7 @@ export interface InviteView {
 
 interface MemberListResponse { members: MemberView[] }
 interface MemberResponse { member: MemberView }
+interface WorkspaceCredentialResponse { credential: WorkspaceCredentialView }
 interface InviteListResponse { invites: InviteView[]; ttlDays: number }
 interface CreatedInviteResponse { invite: InviteView; code: string; ttlDays: number }
 interface InviteStatusResponse { invite: InviteView; ttlDays: number }
@@ -223,7 +225,7 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   putWorkspaceCredential(
     workspaceId: string,
     input: PutWorkspaceCredentialRequest,
-  ): Promise<void>;
+  ): Promise<WorkspaceCredentialResponse>;
   importWorkspaceCredentials(
     workspaceId: string,
     input: ImportWorkspaceCredentialsRequest,
@@ -695,7 +697,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       `/machines/${encodeURIComponent(machineId)}`,
       { method: "DELETE" },
     ),
-    putWorkspaceCredential: (workspaceId, input) => request<void>(
+    putWorkspaceCredential: (workspaceId, input) => request<WorkspaceCredentialResponse>(
       `/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
       { method: "PUT", headers: jsonHeaders, body: JSON.stringify(input) },
     ),
