@@ -33,6 +33,7 @@ const reasons = {
   path: "The desktop path-launch branch is Electron-only.",
   native: "The native operation checks the Electron/native shell before IPC.",
   settings: "Blitz stubs the settings route, so these native controls are not mounted.",
+  autoLaunch: "Both callers are stubbed settings routes, and each operation returns unless its Electron flag is true.",
   shortcuts: "Both shortcut settings and their dispatcher are disabled in Blitz Web.",
   default: "This is the intentional lazy Electron-compatible window client.",
 };
@@ -78,14 +79,17 @@ const AMBIENT_IPC_ALLOWLIST: readonly AmbientIpcAllowance[] = [
   allowance("vendor/lody/packages/components/src/components/settings/about-setting.tsx", "getIpcServices", "handleCheckForUpdates", 2, reasons.settings),
   allowance("vendor/lody/packages/components/src/components/settings/about-setting.tsx", "getIpcServices", "handleQuitAndInstall", 2, reasons.settings),
   ...[
-    ["readElectronNotificationPermission", 2], ["MobileGeneralSettings", 3],
-    ["openSystemNotificationSettings", 2], ["handleToggleAutoLaunch", 2],
+    ["readElectronNotificationPermission", 2], ["MobileGeneralSettings", 2],
+    ["openSystemNotificationSettings", 2],
   ].map(([scope, count]) => allowance("vendor/lody/packages/components/src/components/mobile/mobile-general-settings.tsx", "getIpcServices", String(scope), Number(count), reasons.settings)),
   ...[
     ["useElectronEnabledSetting", 1], ["readElectronNotificationPermission", 1],
-    ["GeneralSettingsComponent", 2], ["openSystemNotificationSettings", 1],
-    ["handleToggleAutoLaunch", 2], ["handleToggleCliAutoStart", 2],
+    ["GeneralSettingsComponent", 1], ["openSystemNotificationSettings", 1],
+    ["handleToggleCliAutoStart", 2],
   ].map(([scope, count]) => allowance("vendor/lody/packages/components/src/components/settings/general-setting.tsx", "getIpcServices", String(scope), Number(count), reasons.settings)),
+  ...["useElectronAutoLaunch", "updateEnabled", "updateHideWindow"].map((scope) =>
+    allowance("vendor/lody/packages/components/src/hooks/use-electron-auto-launch.ts", "getIpcServices", scope, 1, reasons.autoLaunch)
+  ),
   allowance("vendor/lody/packages/components/src/hooks/use-electron-updater-state.ts", "getIpcServices", "useElectronUpdaterState", 2, reasons.electron),
   allowance("vendor/lody/packages/components/src/hooks/use-electron-updater-state.ts", "onIpcEvent", "useElectronUpdaterState", 1, reasons.electron),
   allowance("vendor/lody/packages/components/src/lib/native-global-shortcuts.ts", "getIpcServices", "getGlobalShortcuts", 2, reasons.shortcuts),

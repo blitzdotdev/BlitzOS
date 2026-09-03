@@ -8,17 +8,21 @@ list, and `plans/LODY-SESSIONS.md` §5 for the rules. The merge procedure is
 | Field | Value |
 |---|---|
 | Upstream | https://github.com/LodyAI/Lody (Apache-2.0) |
-| Pinned commit | `f34748945028ffc04316861ad25edc24535c0235` |
-| Commit date | 2026-08-30 (`fix(electron): detect system language before onboarding (#175)`) |
-| Vendored on | 2026-08-30 (first merge; initial import 2026-08-29 at `966623d0`) |
+| Pinned commit | `f4b1ba259eb754cd954da776d8e7384a8c30f1c9` |
+| Commit date | 2026-09-04 (`fix(ci): harden Electron signing credentials [risk:high] (#358)`) |
+| Vendored on | 2026-09-03 (second merge; initial import 2026-08-29 at `966623d0`) |
 | npm `lody` (daemon) | 0.88.1 |
-| Subtree commit here | `Squashed 'vendor/lody/' changes from 966623d0..f3474894` |
+| Subtree commit here | `Squashed 'vendor/lody/' changes from f3474894..f4b1ba25` |
 
 The npm pin did NOT move with this merge, and that is the documented answer
-rather than an omission: npm's latest is still `0.88.1`, so there is no release
-that corresponds to the newer subtree. `docs/LODY-MERGE.md` §3 states the rule —
-a renderer merge with an unchanged daemon is a supported state; a guessed daemon
-version is not.
+rather than an omission: npm now publishes through `0.89.4`, but no release has
+been verified as the daemon pair for this newer public-tree commit (whose
+changelog already names 0.90.0). `docs/LODY-MERGE.md` §3 permits an unchanged
+daemon only while the daemon-backed gates remain compatible. Here
+`lody-session-surface.test.tsx` proves 0.88.1 rejects the renderer's narrowed
+`machine/acp-capabilities-refresh` request as `invalid_request`, so this branch
+must not ship until a matching daemon is identified and verified; guessing
+0.89.4 is not the rule.
 
 The renderer and the daemon must move together. `apps/cli/package.json` in this
 subtree says 0.76.0 while npm publishes 0.88.1 — the public tree lags releases,

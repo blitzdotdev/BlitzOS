@@ -236,10 +236,6 @@ describe.skipIf(!lodyDaemonAvailable())("phase 3: the mounted Lody session surfa
         machineId: snapshot.machineId,
         workspaceId: snapshot.workspace.workspaceId,
         configId: "blitz-claude",
-        cliType: "builtin",
-        agentType: "claude",
-        runtimeOverrides: { claudeCodeExecutable: "/usr/local/bin/claude" },
-        env: {},
       },
     });
     const elapsedMs = Date.now() - started;

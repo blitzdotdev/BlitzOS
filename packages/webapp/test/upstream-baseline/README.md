@@ -18,7 +18,7 @@ mobile-only file. `components/chat/chat-landing.tsx` is patched by seam patches
 7, 15 and 16 and has NO baseline here: adding one means declaring seam patch 7's
 removals in that file as well, which is a job for whoever needs it.
 
-**Taken from `f34748945028ffc04316861ad25edc24535c0235`**, the commit
+**Taken from `f4b1ba259eb754cd954da776d8e7384a8c30f1c9`**, the commit
 `vendor/lody/UPSTREAM.md` pins. The test reads that pin out of `UPSTREAM.md` and
 fails when this file no longer names it, so a merge cannot move the pin and
 leave these behind.

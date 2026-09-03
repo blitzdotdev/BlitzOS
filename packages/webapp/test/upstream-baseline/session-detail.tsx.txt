@@ -44,6 +44,7 @@ import {
   type ProjectRef,
   type SessionId,
   type SessionMeta,
+  type SessionStatus,
   type VisualAnnotationReferencePayload,
   type WorkspaceId,
 } from '@lody/shared';
@@ -85,9 +86,24 @@ import {
   terminalDockCanCreateAtom,
   terminalDockOpenAtom,
 } from '@/components/terminal/terminal-controller';
-import { isElectronRenderer } from '@/lib/electron';
-import { sidebarCollapsedAtom } from '@/atoms/sidebar-state';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { isElectronRenderer, isMacOSElectronRenderer, useElectronFullscreen } from '@/lib/electron';
+import { useWindowsCaptionPadClass } from '@/ui/window-drag-region';
+import {
+  getZenAwarePanelToggleState,
+  navigationSidebarHiddenAtom,
+  showNavigationSidebarAtom,
+  zenLayoutModeAtom,
+} from '@/atoms/layout-state';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
 import { useDocumentTitle } from '@/hooks/use-document-title';
 import { useTabStatus, type TabStatus } from '@/hooks/use-tab-status';
 import {
@@ -150,8 +166,9 @@ import {
 } from '@/components/files/mobile-project-file-browser';
 import { getAppShareUrl } from '@/lib/app-location';
 import { getCommandKeybindings, useCommand } from '@/lib/commands';
+import { useDesktopTabCloser } from '@/lib/desktop-tab-or-window-close';
 import { cn, getBasename } from '@/lib';
-import { isMacOSElectronRenderer, useElectronFullscreen } from '@/lib/electron';
+
 import {
   resolveSessionFileOpenTarget,
   type SessionFileOpenPathKind,
@@ -183,12 +200,14 @@ import {
 import { useSessionDiffSummary } from './use-session-diff-summary';
 import { userAtom } from '@/atoms';
 import {
+  appendTabOrderId,
   createDraftSessionTab,
   filterPendingPromotedChildSessions,
   getDraftTabLabel,
   isDraftSessionTabId,
   mergeTabOrderGroup,
   readPersistedDraftTabs,
+  readStoredLastActiveTabState,
   readStoredTabOrder,
   removeTabOrderId,
   replaceTabOrderId,
@@ -208,15 +227,22 @@ import {
   resolveSessionWorkspacePath,
 } from '@/lib/session-workspace-path';
 import {
+  formatExplicitSessionTabSearch,
   formatSessionTabSearch,
-  getSessionTabUrlSyncAction,
   parseSessionTabSearch,
+  resolveActiveSessionTab,
+  type ParsedSessionTabSearch,
 } from '@/lib/session-tab-url';
 import {
   getSessionNavigationLocation,
   type SessionNavigationTarget,
 } from '@/lib/session-navigation';
 import { getSessionDetailInitialTabState } from '@/lib/session-detail-initial-state';
+import { recordSessionRenderTrace, shortTraceId } from '@/lib/session-render-trace';
+/* Relative, not `@/providers/*`: the Electron web tsconfig maps only an
+   allowlist of `@/` subpaths and has no `@/providers/*` entry, so the alias
+   spelling type-checks here but breaks `@lody/electron`. */
+import { useWorkspaceRouteTargetSlug } from '../../providers/workspace-route-target';
 import {
   resolveSessionFileProviderOpenPath,
   type SessionFileProviderOpenPathResolution,
@@ -675,9 +701,12 @@ const SessionDetail = ({
   const router = useRouter();
   const postHog = usePostHog();
   const isMobile = useIsMobile();
+  const isZenLayoutMode = useAtomValue(zenLayoutModeAtom);
+  const setZenLayoutMode = useSetAtom(zenLayoutModeAtom);
   const hidesBillingUi = isMobile || isNativeAppShell();
   const { openSettings } = useOpenSettings();
   const isElectronFullscreen = useElectronFullscreen();
+  const windowsCaptionPadClass = useWindowsCaptionPadClass();
   // Publish ephemeral "viewing this session" presence (drives the owning
   // machine's PR poller priority); actively cleared on switch/hide/unmount.
   usePublishSessionViewing(sessionId);
@@ -692,16 +721,28 @@ const SessionDetail = ({
   >(new Map());
   const sendingDraftIdsRef = useRef<Set<DraftSessionTab['id']>>(new Set());
   const desktopTabFocusRegionRef = useRef<SessionTabFocusRegion>('conversation');
-  const initialTabState = getSessionDetailInitialTabState(sessionId, urlTab);
+  const initialTabState = getSessionDetailInitialTabState(sessionId, urlTab, {
+    oneActiveSurface: isMobile,
+  });
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => initialTabState.sidePanel.open);
+  const isSidebarVisible = isSidebarOpen && !isZenLayoutMode;
+  const revealRightSidebar = useCallback(() => {
+    setZenLayoutMode(false);
+    setIsSidebarOpen(true);
+  }, [setZenLayoutMode]);
   /* Bumped whenever `isSidebarOpen` changes because side-panel state was
      RESTORED (session switch, `?pr=` deep link) rather than toggled by the
      user, so the desktop layout snaps the panel to its target width instead of
      animating a transition nobody asked for. See
      DesktopSessionDetailLayout.sidebarRestoreSeq. */
   const [sidebarRestoreSeq, setSidebarRestoreSeq] = useState(0);
-  /* The `?pr=` restore below applies once per (session, PR number). */
-  const restoredPrSidebarRef = useRef<number | null>(null);
+  /* The `?pr=` restore below applies once per (session, PR number) — a STATE
+     guard for a render-phase adjustment, keyed by session id so no separate
+     session-switch reset is needed. */
+  const [restoredPrSidebar, setRestoredPrSidebar] = useState<{
+    sessionId: SessionId;
+    prNumber: number;
+  } | null>(null);
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab | null>(
     () => initialTabState.sidePanel.tab
   );
@@ -753,9 +794,6 @@ const SessionDetail = ({
   const [mobileFileViewerTabId, setMobileFileViewerTabId] = useState<string | null>(null);
   const [mobileFileViewerOpen, setMobileFileViewerOpen] = useState(false);
   const mobileFilesBrowserRef = useRef<MobileProjectFileBrowserHandle>(null);
-  const [activeTabSessionIdRaw, setActiveTabSessionId] = useState<string>(
-    () => initialTabState.activeTabSessionId
-  );
   const [localStateSessionId, setLocalStateSessionId] = useState(sessionId);
   const [commentReferenceKeysBySession, setCommentReferenceKeysBySession] = useState<
     Record<string, string[]>
@@ -767,10 +805,20 @@ const SessionDetail = ({
   const [externalHistoryRefreshBySessionId, setExternalHistoryRefreshBySessionId] = useState<
     Record<string, ExternalHistoryRefreshViewState>
   >({});
-  const workspaceSlug = useAtomValue(currentWorkspaceSlugAtom);
+  /* The render-phase route target wins over the atom. During a
+     cross-workspace client navigation, `currentWorkspaceSlugAtom` still holds
+     the PREVIOUS workspace's non-null slug until the ancestor `$workspaceName`
+     route's own effect publishes the new one — a `?tab`/`?pr` write issued in
+     that window with the atom slug navigates back into the old workspace.
+     Every consumer here builds a URL for the CURRENT route, so all of them
+     use the effective slug (same rule as `LoroAppSidebar`); the atom is only
+     the fallback for hosts mounted without `WorkspaceRouteTargetProvider`. */
+  const routeTargetWorkspaceSlug = useWorkspaceRouteTargetSlug();
+  const atomWorkspaceSlug = useAtomValue(currentWorkspaceSlugAtom);
+  const workspaceSlug = routeTargetWorkspaceSlug ?? atomWorkspaceSlug;
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom) as WorkspaceId | null;
-  const isLeftSidebarCollapsed = useAtomValue(sidebarCollapsedAtom);
-  const setLeftSidebarCollapsed = useSetAtom(sidebarCollapsedAtom);
+  const isLeftSidebarHidden = useAtomValue(navigationSidebarHiddenAtom);
+  const showNavigationSidebar = useSetAtom(showNavigationSidebarAtom);
   const runtime = useAtomValue(activeWorkspaceRuntimeAtom);
   const runtimeInitializing = useAtomValue(runtimeInitializingAtom);
   const localMachineId = useAtomValue(localMachineIdAtom);
@@ -825,7 +873,7 @@ const SessionDetail = ({
     [viewerTabs]
   );
   const isFileProviderSidebarActive =
-    isSidebarOpen && (activeSidebarTab === 'files' || activeSidebarTab === 'changes');
+    isSidebarVisible && (activeSidebarTab === 'files' || activeSidebarTab === 'changes');
   const isSessionStateCurrent = localStateSessionId === sessionId;
   const activeSessionFileProviderRequested = Boolean(
     activeSession &&
@@ -871,9 +919,6 @@ const SessionDetail = ({
     ? CODE_COLLAB_CHECKING_MESSAGE
     : activeSessionCodeCollabFiles.message;
   const parsedUrlTab = useMemo(() => parseSessionTabSearch(urlTab), [urlTab]);
-  const urlTabRef = useRef(urlTab);
-  const didHydrateUrlTabForSessionRef = useRef(false);
-  const skipNextMissingUrlSyncRef = useRef(false);
 
   // Multi-tab: load child sessions
   const childSessionsAtom = useMemo(() => childSessionsAtomFamily(sessionId), [sessionId]);
@@ -918,11 +963,12 @@ const SessionDetail = ({
   const fireDetailNotFoundOnce = useFireOncePerKey<SessionId>();
 
   if (localStateSessionId !== sessionId) {
-    const nextInitialTabState = getSessionDetailInitialTabState(sessionId, urlTab);
+    const nextInitialTabState = getSessionDetailInitialTabState(sessionId, urlTab, {
+      oneActiveSurface: isMobile,
+    });
     detailLoadStartMsRef.current = getPerformanceNowMs();
     sendingDraftIdsRef.current.clear();
     desktopTabFocusRegionRef.current = 'conversation';
-    restoredPrSidebarRef.current = null;
     setLocalStateSessionId(sessionId);
     setSidebarRestoreSeq((seq) => seq + 1);
     setIsSidebarOpen(nextInitialTabState.sidePanel.open);
@@ -944,7 +990,6 @@ const SessionDetail = ({
     setMobileDiffState(null);
     setMobileFilesBrowserOpen(false);
     setFileProviderRequestedByInteraction(false);
-    setActiveTabSessionId(nextInitialTabState.activeTabSessionId);
   }
 
   const setDraftTabs = useCallback(
@@ -1064,19 +1109,44 @@ const SessionDetail = ({
     writePersistedDraftTabs(sessionId, draftTabs);
   }, [draftTabs, sessionId]);
 
-  useEffect(() => {
-    urlTabRef.current = urlTab;
-  }, [urlTab]);
-
-  // Validate active tab synchronously: if it doesn't match any existing tab,
-  // fall back to the parent session so we never render a blank content area.
-  const activeTabSessionId = useMemo(() => {
-    if (activeTabSessionIdRaw === sessionId) return sessionId; // parent is always valid
-    const stillExists =
-      visibleChildSessions.some((s) => s.id === activeTabSessionIdRaw) ||
-      draftTabs.some((draft) => draft.id === activeTabSessionIdRaw);
-    return stillExists ? activeTabSessionIdRaw : sessionId;
-  }, [activeTabSessionIdRaw, visibleChildSessions, draftTabs, sessionId]);
+  // The `?tab` search value is the single source of truth for the active
+  // conversation tab; tab activation navigates instead of setting state, so
+  // there is no second store to reconcile and no URL/state feedback loop
+  // (#193). `resolveActiveSessionTab` owns the derivation rule: the URL is
+  // taken at its word, so a named child whose meta has not reached the local
+  // replica yet stays active (a pending surface renders below) instead of
+  // bouncing the user back to the parent conversation.
+  const activeTabSessionId = useMemo(
+    () =>
+      resolveActiveSessionTab(parsedUrlTab, {
+        parentSessionId: sessionId,
+        // Side chats never own a top tab, so a URL addressing one (an
+        // opened-by link to a side-chat session) renders the parent.
+        childSessionIdsResolvedToParent: [
+          ...archivedChildSessions.map((s) => s.id),
+          ...sideSessions.map((s) => s.id),
+        ],
+        draftTabIds: draftTabs.map((draft) => draft.id),
+        promotedChildSessionIdsByDraftId: pendingDraftChildSessionIds,
+      }),
+    [
+      parsedUrlTab,
+      archivedChildSessions,
+      draftTabs,
+      pendingDraftChildSessionIds,
+      sessionId,
+      sideSessions,
+    ]
+  );
+  // A URL-named child the meta replica has not delivered yet: keep it active
+  // and render a pending surface instead of silently showing the parent.
+  const activeTabIsPendingChild =
+    activeTabSessionId !== sessionId &&
+    !isDraftSessionTabId(activeTabSessionId) &&
+    !visibleChildSessions.some((s) => s.id === activeTabSessionId);
+  // The ordinary pending window (a just-promoted draft) lasts one replica
+  // tick; the delayed flag keeps that from flashing a spinner.
+  const showPendingChildTabState = useDelayedFlag(activeTabIsPendingChild, 300);
   const activeSessionTabId = useMemo<SessionId | null>(() => {
     if (activeTabSessionId === sessionId) return sessionId;
     return visibleChildSessions.find((s) => s.id === activeTabSessionId)?.id ?? null;
@@ -1219,7 +1289,7 @@ const SessionDetail = ({
       });
       if (placement === 'tab') {
         setTabOrderState((current) =>
-          current.includes(targetSessionId) ? current : [...current, targetSessionId]
+          appendTabOrderId(current, sessionGroupIds, targetSessionId)
         );
       }
       if (response.partial && response.warnings.length > 0) {
@@ -1228,7 +1298,7 @@ const SessionDetail = ({
         );
       }
     },
-    [canForkSession, currentWorkspaceId, pendingForks, postHog, runtime, t, user?.id]
+    [canForkSession, currentWorkspaceId, pendingForks, postHog, runtime, sessionGroupIds, t, user?.id]
   );
   const pendingForkSourceByTargetSessionId = useMemo(() => {
     const sourceByTarget = new Map<SessionId, string>();
@@ -1363,32 +1433,6 @@ const SessionDetail = ({
   // totaling provider entries that can resolve at different times.
   const changesDiffStat = activeSession?.diffStats?.allChange ?? null;
   const activeBrowserSession = activeDraftTab ? null : activeTabSession;
-  const requestedUrlTabSessionId = parsedUrlTab.kind === 'session' ? parsedUrlTab.sessionId : null;
-  const isWaitingForUrlTabResolution =
-    requestedUrlTabSessionId !== null &&
-    requestedUrlTabSessionId !== sessionId &&
-    activeTabSessionIdRaw === requestedUrlTabSessionId &&
-    activeTabSessionId !== requestedUrlTabSessionId &&
-    !docMetaCacheReady;
-  const shouldClearUrlTab = useMemo(() => {
-    if (parsedUrlTab.kind === 'missing') {
-      return false;
-    }
-
-    if (parsedUrlTab.kind === 'invalid') {
-      return true;
-    }
-
-    if (parsedUrlTab.sessionId === sessionId) {
-      return true;
-    }
-
-    if (!activeSession || !docMetaCacheReady) {
-      return false;
-    }
-
-    return !childSessions.some((childSession) => childSession.id === parsedUrlTab.sessionId);
-  }, [activeSession, childSessions, docMetaCacheReady, parsedUrlTab, sessionId]);
   const workspaceOwnerSession = activeTabSession?.parentSessionId
     ? activeSession
     : activeTabSession;
@@ -1567,11 +1611,22 @@ const SessionDetail = ({
   const latestPrNumber = getPullRequestNumber(latestPr);
   const latestPrRepoFullName = getPullRequestRepoFullName(latestPr) ?? repoFullName;
 
-  const replaceSessionUrlTab = useCallback(
-    (nextTab: string | undefined) => {
+  const writeSessionUrlTab = useCallback(
+    (nextTab: string | undefined, { push = false }: { push?: boolean } = {}) => {
       if (!workspaceSlug) {
         return;
       }
+      /* A `?tab` write is scoped to this session's route. An asynchronous
+         caller resolving after the user already left (a draft send completing
+         mid-switch, a queued replace) must be dropped, not allowed to yank the
+         router back to the session it captured. */
+      if (!router.state.location.pathname.includes(`/sessions/${sessionId}`)) {
+        recordSessionRenderTrace(`nav-dropped s=${shortTraceId(sessionId)} tab=${nextTab ?? '∅'}`);
+        return;
+      }
+      recordSessionRenderTrace(
+        `nav s=${shortTraceId(sessionId)} tab=${nextTab ?? '∅'} ${push ? 'push' : 'replace'}`
+      );
 
       void router.navigate({
         to: '/$workspaceName/sessions/$sessionId',
@@ -1593,10 +1648,24 @@ const SessionDetail = ({
 
           return { ...prev, tab: nextTab };
         },
-        replace: true,
+        replace: !push,
       });
     },
     [router, sessionId, workspaceSlug]
+  );
+
+  /* Activating a tab IS a navigation: the handlers below write the `?tab`
+     search value and the active tab derives back out of it. Every in-session
+     activation encodes explicitly — the parent as `session:<parentId>`, drafts
+     as their full `draft:<id>` id — because the absent value is reserved for
+     external entries, which the route restores from the last-active store.
+     User-driven switches PUSH so tabs participate in history back; structural
+     rewrites (draft promotion, closing a dead tab) replace. */
+  const navigateToSessionTab = useCallback(
+    (tabId: string, options?: { push?: boolean }) => {
+      writeSessionUrlTab(formatExplicitSessionTabSearch(tabId), options);
+    },
+    [writeSessionUrlTab]
   );
 
   const replaceSessionUrlPr = useCallback(
@@ -1847,15 +1916,23 @@ const SessionDetail = ({
       modelId: null,
     });
     setDraftTabs((prev) => [...prev, draft]);
+    setTabOrderState((prev) => appendTabOrderId(prev, sessionGroupIds, draft.id));
     if (isMobile) {
       setActiveViewerTabId(null);
     }
-    setActiveTabSessionId(draft.id);
+    navigateToSessionTab(draft.id, { push: true });
     captureSessionDetailEvent('session/tab_draft_created', {
       draft_tab_id: draft.id,
       source_session_id: activeSession.id,
     });
-  }, [activeSession, captureSessionDetailEvent, isMobile, setDraftTabs]);
+  }, [
+    activeSession,
+    captureSessionDetailEvent,
+    isMobile,
+    navigateToSessionTab,
+    sessionGroupIds,
+    setDraftTabs,
+  ]);
 
   const handleDraftChange = useCallback(
     (draftId: DraftSessionTab['id'], patch: Partial<DraftSessionTab>) => {
@@ -1871,13 +1948,14 @@ const SessionDetail = ({
       setDraftTabs((prev) => prev.filter((draft) => draft.id !== draftId));
       setTabOrderState((prev) => removeTabOrderId(prev, draftId));
       if (activeTabSessionId === draftId) {
-        setActiveTabSessionId(sessionId);
+        // Explicit parent, replacing the dead draft URL in place.
+        navigateToSessionTab(sessionId);
       }
       captureSessionDetailEvent('session/tab_draft_closed', {
         draft_tab_id: draftId,
       });
     },
-    [activeTabSessionId, captureSessionDetailEvent, sessionId, setDraftTabs]
+    [activeTabSessionId, captureSessionDetailEvent, navigateToSessionTab, sessionId, setDraftTabs]
   );
 
   const handleSendDraft = useCallback(
@@ -1955,6 +2033,12 @@ const SessionDetail = ({
             parentSessionId: activeSession.id,
             title: draftTitle || undefined,
             titleSource: draftTitle ? 'draft' : undefined,
+            ...(payload.agentRoleId && typeof payload.agentRoleRevision === 'number'
+              ? {
+                  agentRoleId: payload.agentRoleId,
+                  agentRoleRevision: payload.agentRoleRevision,
+                }
+              : {}),
           },
           pendingHistoryEntry
         );
@@ -1991,15 +2075,24 @@ const SessionDetail = ({
           setSessionChatInputTextDraft(childSessionId, payload.preservedInputText);
         }
         setDraftTabs((prev) => prev.filter((draft) => draft.id !== payload.draftId));
-        setPendingDraftChildSessionIds((prev) => {
-          const { [payload.draftId]: _removed, ...rest } = prev;
-          return rest;
-        });
-        setTabOrderState((prev) => replaceTabOrderId(prev, payload.draftId, childSessionId));
+        setTabOrderState((prev) =>
+          replaceTabOrderId(
+            appendTabOrderId(prev, sessionGroupIds, payload.draftId),
+            payload.draftId,
+            childSessionId
+          )
+        );
         if (isMobile) {
           setActiveViewerTabId(null);
         }
-        setActiveTabSessionId(childSessionId);
+        /* One replace navigation swaps `draft:<id>` for `session:<child>`.
+           The `pendingDraftChildSessionIds` entry deliberately SURVIVES the
+           promotion as a resolution alias: React commits the draft removal
+           before the router commits the new `?tab`, and in that window (and
+           until the child meta reaches the local replica) the URL must keep
+           resolving to the new conversation, never bounce back to the parent.
+           The map resets with the session-switch state reset. */
+        navigateToSessionTab(childSessionId);
         void requestSessionDispatch(childSessionId, historyEntry.id, {
           inputConfig: payload.inputConfig,
           machineId: activeSession.machineId,
@@ -2096,8 +2189,10 @@ const SessionDetail = ({
       deleteSessions,
       hidesBillingUi,
       isMobile,
+      navigateToSessionTab,
       openSettings,
       requestSessionDispatch,
+      sessionGroupIds,
       setDraftTabs,
       startSession,
       t,
@@ -2140,8 +2235,9 @@ const SessionDetail = ({
         }
         // Switch to the parent tab only once the close is durable; a failed
         // close keeps the tab selected instead of yanking the user off it.
+        // Explicit parent, replacing the closed tab's URL in place.
         if (tabSessionId === activeTabSessionId) {
-          setActiveTabSessionId(sessionId);
+          navigateToSessionTab(sessionId);
         }
       } catch (error) {
         // A silent failure reads as "the close button does nothing" — surface
@@ -2162,6 +2258,7 @@ const SessionDetail = ({
       childSessions,
       closeDraftTab,
       deleteSessions,
+      navigateToSessionTab,
       sessionId,
       t,
     ]
@@ -2497,35 +2594,49 @@ const SessionDetail = ({
     }
   }, [isMobile, replaceSessionUrlBrowser, urlBrowser]);
 
-  // Sync ?pr=<number> URL param into the desktop sidebar. The mobile path reads
-  // `urlPrNumber` directly for its full-screen drawer.
-  //
-  // This can only run once `latestPr` has resolved from the session doc, so on
-  // a deep link it lands a commit or two AFTER the switch — the panel would
-  // otherwise animate open from whatever width the session the user just left
-  // had. It is a restore, not a user action: bump `sidebarRestoreSeq` so the
-  // layout applies it in one frame. Applied once per (session, PR number);
-  // re-running on every `latestPr` identity change would reopen a panel the
-  // user had closed.
-  useEffect(() => {
-    if (isMobile) return;
-    if (!urlPrNumber) {
-      restoredPrSidebarRef.current = null;
-      return;
-    }
-    if (!latestPr || !repoFullName || urlPrNumber !== latestPrNumber) return;
-    if (restoredPrSidebarRef.current === urlPrNumber) return;
-    restoredPrSidebarRef.current = urlPrNumber;
-    setSidebarRestoreSeq((seq) => seq + 1);
-    setIsSidebarOpen(true);
-    activateSidebarTab('pr');
-  }, [activateSidebarTab, isMobile, latestPr, latestPrNumber, repoFullName, urlPrNumber]);
+  /* Sync ?pr=<number> into the desktop sidebar. The mobile path reads
+     `urlPrNumber` directly for its full-screen drawer.
 
-  // When the user switches away from the PR sidebar tab (or closes the sidebar)
-  // on desktop, clear the ?pr= param so the URL stays consistent. We skip
-  // clearing while the session data is still loading so deep-linking into
-  // `?pr=42` survives the first render (where `latestPr` is still null and
-  // `activeSidebarTab` hasn't been synced to 'pr' yet).
+     The restore is a RENDER-PHASE state adjustment ("adjusting state when a
+     prop changes" — react.dev/learn/you-might-not-need-an-effect), not an
+     effect: as a sibling effect it armed in the same commit as the clear below
+     — the first where `latestPr` resolved — and the clear then read the
+     restore's target state BEFORE it landed (sidebar still closed, persisted
+     viewer tab still active), stripping a fresh `?pr` deep link. Adjusted
+     during render, the restored sidebar state is COMMITTED before any effect
+     can observe it, so the ordering race is unrepresentable — and the restore
+     lands in the same commit as `sidebarRestoreSeq`, which the layout
+     invariant requires anyway. Applied once per (session, PR number) via a
+     STATE guard (an aborted concurrent render retries instead of consuming
+     the restore); re-applying on every `latestPr` identity change would
+     reopen a panel the user had closed. */
+  if (!isMobile && urlPrNumber !== undefined) {
+    if (
+      latestPr &&
+      repoFullName &&
+      urlPrNumber === latestPrNumber &&
+      (restoredPrSidebar?.sessionId !== sessionId || restoredPrSidebar.prNumber !== urlPrNumber)
+    ) {
+      setRestoredPrSidebar({ sessionId, prNumber: urlPrNumber });
+      setSidebarRestoreSeq((seq) => seq + 1);
+      setIsSidebarOpen(true);
+      activateSidebarTab('pr');
+    }
+  } else if (restoredPrSidebar !== null) {
+    setRestoredPrSidebar(null);
+  }
+
+  // The PR restore token is committed with the open panel and restore sequence.
+  // Clear the transient Zen override before paint without writing Jotai during render.
+  useLayoutEffect(() => {
+    if (restoredPrSidebar !== null) setZenLayoutMode(false);
+  }, [restoredPrSidebar, setZenLayoutMode]);
+
+  // Once restored, a user switching away from the PR tab (or closing the
+  // sidebar) clears `?pr` so the URL stays consistent. The URL write must be
+  // an effect, but it can never observe pre-restore state: the render-phase
+  // adjustment above commits the restored sidebar in the same render that
+  // arms this effect.
   useEffect(() => {
     if (isMobile) return;
     if (urlPrNumber === undefined) return;
@@ -2545,50 +2656,58 @@ const SessionDetail = ({
     urlPrNumber,
   ]);
 
-  useEffect(() => {
-    didHydrateUrlTabForSessionRef.current = false;
-  }, [sessionId]);
-
+  /* A child session's root URL redirects to its parent. Corrupted meta can
+     hold a parentSessionId CYCLE (X↔P): following it unguarded redirects
+     forever, remounting every chat surface per hop until React's nested
+     update limit crashes the renderer (#185). A reverse hop of the redirect
+     just taken is always such a cycle — a parent that is itself a child is
+     invalid nesting — so it stays put (the parent-guard early return above
+     renders null) instead of looping. */
+  const lastParentRedirectRef = useRef<{ from: SessionId; to: SessionId } | null>(null);
   useEffect(() => {
     const parentSessionId = activeSession?.parentSessionId;
     if (!parentSessionId || parentSessionId === sessionId) {
       return;
     }
+    const last = lastParentRedirectRef.current;
+    if (last && last.from === parentSessionId && last.to === sessionId) {
+      recordSessionRenderTrace(
+        `parent-cycle s=${shortTraceId(sessionId)} parent=${shortTraceId(parentSessionId)}`
+      );
+      console.error('Session parentSessionId cycle detected; not following it', {
+        sessionId,
+        parentSessionId,
+      });
+      return;
+    }
+    lastParentRedirectRef.current = { from: sessionId, to: parentSessionId };
+    recordSessionRenderTrace(
+      `parent-redirect s=${shortTraceId(sessionId)} parent=${shortTraceId(parentSessionId)}`
+    );
     redirectToParentSessionUrl(parentSessionId, sessionId);
   }, [activeSession?.parentSessionId, redirectToParentSessionUrl, sessionId]);
 
+  /* Entry-scoped last-active-tab restoration lives in the session ROUTE's
+     `beforeLoad` (one replace redirect before anything renders), not here:
+     the route has this navigation's own params, so the workspace-slug
+     staleness dance and the one-shot claim ref are gone with it. */
+
+  /* Mobile keeps one active surface: a `?tab` change dismisses the file
+     viewer, matching what explicit tab selection does. Ref-compared so the
+     session-entry run cannot clobber viewer state the entry just restored. */
+  const lastUrlTabSyncRef = useRef<{ sessionId: SessionId; parsed: ParsedSessionTabSearch }>({
+    sessionId,
+    parsed: parsedUrlTab,
+  });
   useEffect(() => {
-    if (!didHydrateUrlTabForSessionRef.current) {
-      didHydrateUrlTabForSessionRef.current = true;
-      if (parsedUrlTab.kind === 'missing') {
-        return;
-      }
-    }
-
-    const ignoreMissingUrlSync =
-      parsedUrlTab.kind === 'missing' && skipNextMissingUrlSyncRef.current;
-    if (ignoreMissingUrlSync) {
-      skipNextMissingUrlSyncRef.current = false;
-    }
-
-    const urlSyncAction = getSessionTabUrlSyncAction(parsedUrlTab, {
-      ignoreMissing: ignoreMissingUrlSync,
-    });
-    if (urlSyncAction.kind === 'noop') {
+    const last = lastUrlTabSyncRef.current;
+    lastUrlTabSyncRef.current = { sessionId, parsed: parsedUrlTab };
+    if (last.sessionId !== sessionId || last.parsed === parsedUrlTab) {
       return;
     }
-
     if (isMobile) {
       setActiveViewerTabId(null);
     }
-    if (urlSyncAction.kind === 'activate-session') {
-      setActiveTabSessionId((prev) =>
-        prev === urlSyncAction.sessionId ? prev : urlSyncAction.sessionId
-      );
-      return;
-    }
-
-    setActiveTabSessionId((prev) => (prev === sessionId ? prev : sessionId));
   }, [isMobile, parsedUrlTab, sessionId]);
 
   const resolveDiffFilePaths = useCallback(
@@ -2626,10 +2745,10 @@ const SessionDetail = ({
         setActiveViewerTabId((prevActiveId) => (prevActiveId === tab.id ? prevActiveId : tab.id));
       } else {
         selectSidePanelTab(tab.id);
-        setIsSidebarOpen(true);
+        revealRightSidebar();
       }
     },
-    [isMobile, selectSidePanelTab]
+    [isMobile, revealRightSidebar, selectSidePanelTab]
   );
 
   const nextFocusRequestSeq = useCallback(() => {
@@ -2882,7 +3001,7 @@ const SessionDetail = ({
         surface: 'mobile_sheet',
       });
     } else {
-      setIsSidebarOpen(true);
+      revealRightSidebar();
       activateSidebarTab('changes');
       captureSessionDetailEvent('session/sidebar_tab_selected', {
         source: 'info_bar_diff_stat',
@@ -2896,6 +3015,7 @@ const SessionDetail = ({
     changeFilePaths,
     isMobile,
     nextFocusRequestSeq,
+    revealRightSidebar,
   ]);
 
   const handleOpenPrTab = useCallback(
@@ -2915,7 +3035,7 @@ const SessionDetail = ({
             minWidthPx: PR_SIDEBAR_MIN_WIDTH_PX,
           }));
         }
-        setIsSidebarOpen(true);
+        revealRightSidebar();
         activateSidebarTab('pr');
       }
       captureSessionDetailEvent('session/pr_tab_opened', {
@@ -2932,6 +3052,7 @@ const SessionDetail = ({
       isMobile,
       isSidebarOpen,
       replaceSessionUrlPr,
+      revealRightSidebar,
     ]
   );
 
@@ -2981,7 +3102,7 @@ const SessionDetail = ({
     (tabSessionId?: SessionId, navigateCandidate = false) => {
       const browserSessionId = tabSessionId ?? activeBrowserSession?.id;
       if (tabSessionId) {
-        setActiveTabSessionId(tabSessionId);
+        navigateToSessionTab(tabSessionId, { push: true });
       }
       if (browserSessionId && navigateCandidate) {
         setBrowserCandidateNavigationRequest({
@@ -2992,7 +3113,7 @@ const SessionDetail = ({
       if (isMobile) {
         replaceSessionUrlBrowser(true, { push: true });
       } else {
-        setIsSidebarOpen(true);
+        revealRightSidebar();
         activateSidebarTab('browser');
       }
       captureSessionDetailEvent('session/browser_tab_opened', {
@@ -3005,6 +3126,8 @@ const SessionDetail = ({
       activateSidebarTab,
       captureSessionDetailEvent,
       isMobile,
+      navigateToSessionTab,
+      revealRightSidebar,
       replaceSessionUrlBrowser,
     ]
   );
@@ -3207,7 +3330,8 @@ const SessionDetail = ({
   const handleSessionTabSelect = useCallback(
     (tabId: string) => {
       desktopTabFocusRegionRef.current = 'conversation';
-      setActiveTabSessionId(tabId);
+      // A user-driven switch PUSHES so tabs participate in history back.
+      navigateToSessionTab(tabId, { push: true });
       if (isMobile) {
         setActiveViewerTabId(null);
       }
@@ -3217,7 +3341,13 @@ const SessionDetail = ({
         tab_kind: isDraftSessionTabId(tabId) ? 'draft' : tabId === sessionId ? 'parent' : 'child',
       });
     },
-    [captureThrottledTabSelected, isMobile, sessionDetailAnalyticsProperties, sessionId]
+    [
+      captureThrottledTabSelected,
+      isMobile,
+      navigateToSessionTab,
+      sessionDetailAnalyticsProperties,
+      sessionId,
+    ]
   );
 
   const handleForkedConversationPrepared = useCallback(
@@ -3226,7 +3356,7 @@ const SessionDetail = ({
       if (!taken) return;
       if (taken.placement === 'side-panel') {
         selectSidePanelTab(getSideSessionPanelTabId(targetSessionId));
-        setIsSidebarOpen(true);
+        revealRightSidebar();
         return;
       }
       if (taken.placement === 'worktree') {
@@ -3240,7 +3370,14 @@ const SessionDetail = ({
       }
       handleSessionTabSelect(targetSessionId);
     },
-    [handleSessionTabSelect, router, selectSidePanelTab, takePendingFork, workspaceSlug]
+    [
+      handleSessionTabSelect,
+      revealRightSidebar,
+      router,
+      selectSidePanelTab,
+      takePendingFork,
+      workspaceSlug,
+    ]
   );
   const handleForkedConversationPrepareError = useCallback(
     (sourceSessionId: string, targetSessionId: SessionId) => {
@@ -3276,14 +3413,14 @@ const SessionDetail = ({
         setActiveViewerTabId(tabId);
       } else {
         selectSidePanelTab(tabId);
-        setIsSidebarOpen(true);
+        revealRightSidebar();
       }
       captureSessionDetailEvent('session/viewer_tab_selected', {
         viewer_tab_id: tabId,
         viewer_tab_type: tabId.startsWith('file:') ? 'file' : 'diff',
       });
     },
-    [captureSessionDetailEvent, isMobile, selectSidePanelTab]
+    [captureSessionDetailEvent, isMobile, revealRightSidebar, selectSidePanelTab]
   );
 
   const handleSidebarTabSelect = useCallback(
@@ -3507,13 +3644,27 @@ const SessionDetail = ({
   );
 
   const handleToggleSidebar = useCallback(() => {
-    const nextOpen = !isSidebarOpen;
-    captureSessionDetailEvent(nextOpen ? 'session/sidebar_opened' : 'session/sidebar_closed', {
-      default_tab: activeSidebarTab,
-      change_file_count: changeEntries.length,
+    const next = getZenAwarePanelToggleState({
+      zenMode: isZenLayoutMode,
+      panelOpen: isSidebarOpen,
     });
-    setIsSidebarOpen((prev) => !prev);
-  }, [activeSidebarTab, captureSessionDetailEvent, changeEntries.length, isSidebarOpen]);
+    captureSessionDetailEvent(
+      next.panelOpen ? 'session/sidebar_opened' : 'session/sidebar_closed',
+      {
+        default_tab: activeSidebarTab,
+        change_file_count: changeEntries.length,
+      }
+    );
+    setZenLayoutMode(next.zenMode);
+    setIsSidebarOpen(next.panelOpen);
+  }, [
+    activeSidebarTab,
+    captureSessionDetailEvent,
+    changeEntries.length,
+    isSidebarOpen,
+    isZenLayoutMode,
+    setZenLayoutMode,
+  ]);
 
   const handleCloseViewerTab = useCallback(
     (tabId: string) => {
@@ -3695,8 +3846,14 @@ const SessionDetail = ({
     title: t('commands.session.toggleCurrentPinned', 'Toggle Current Chat Pinned'),
     category: 'Session',
     keybindings: getCommandKeybindings('session.toggleCurrentPinned'),
+    /* While the URL-named child is still pending, `activeTabSession` falls
+       back to the parent for display; mutating commands must not take that
+       fallback as their target while the UI says a child is active. */
     when: () =>
-      Boolean(activeTabSession) && !activeDraftTab && activeTabSession?.isArchived !== true,
+      Boolean(activeTabSession) &&
+      !activeDraftTab &&
+      !activeTabIsPendingChild &&
+      activeTabSession?.isArchived !== true,
     run: handleToggleCurrentSessionPinned,
   });
 
@@ -3792,8 +3949,12 @@ const SessionDetail = ({
     title: t('commands.session.renameCurrent', 'Rename Current Chat'),
     category: 'Session',
     keybindings: getCommandKeybindings('session.renameCurrent'),
+    /* Same pending-child rule as toggleCurrentPinned above. */
     when: () =>
-      Boolean(activeTabSession) && !activeDraftTab && activeTabSession?.isArchived !== true,
+      Boolean(activeTabSession) &&
+      !activeDraftTab &&
+      !activeTabIsPendingChild &&
+      activeTabSession?.isArchived !== true,
     run: handleRenameCurrentSession,
   });
 
@@ -3816,42 +3977,16 @@ const SessionDetail = ({
   });
 
   useEffect(() => {
-    if (!shouldClearUrlTab) {
-      return;
-    }
-    replaceSessionUrlTab(undefined);
-  }, [replaceSessionUrlTab, shouldClearUrlTab]);
-
-  useEffect(() => {
-    if (parsedUrlTab.kind === 'invalid' || shouldClearUrlTab || isWaitingForUrlTabResolution) {
-      return;
-    }
-
-    const desiredUrlTab = activeDraftTab
-      ? undefined
-      : formatSessionTabSearch(activeTabSessionId, sessionId);
-    if (urlTab === desiredUrlTab) {
-      return;
-    }
-
-    if (activeDraftTab && desiredUrlTab === undefined) {
-      skipNextMissingUrlSyncRef.current = true;
-    }
-    replaceSessionUrlTab(desiredUrlTab);
-  }, [
-    activeDraftTab,
-    activeTabSessionId,
-    isWaitingForUrlTabResolution,
-    parsedUrlTab.kind,
-    replaceSessionUrlTab,
-    sessionId,
-    shouldClearUrlTab,
-    urlTab,
-  ]);
-
-  useEffect(() => {
+    /* Only a RESOLVED tab is worth remembering as last-active: persisting a
+       still-syncing child would make the next entry restore a tab that may
+       never resolve. Panel and viewer changes made while it loads are still
+       the user's, so the write happens regardless — the conversation slot
+       just keeps its previously stored value until the child resolves. */
+    const persistedSessionTabId = activeTabIsPendingChild
+      ? (readStoredLastActiveTabState(sessionId)?.sessionTabId ?? sessionId)
+      : activeTabSessionId;
     writeStoredLastActiveTabState(sessionId, {
-      sessionTabId: activeTabSessionId,
+      sessionTabId: persistedSessionTabId,
       viewerTab: activeViewerTab,
       sidePanel: {
         open: isSidebarOpen,
@@ -3863,6 +3998,7 @@ const SessionDetail = ({
   }, [
     activeSidebarTab,
     activeSideSessionId,
+    activeTabIsPendingChild,
     activeTabSessionId,
     activeViewerTab,
     isSidebarOpen,
@@ -3997,7 +4133,7 @@ const SessionDetail = ({
     () =>
       getSessionTabCloseTarget({
         focusRegion: desktopTabFocusRegionRef.current,
-        sidePanelOpen: isSidebarOpen,
+        sidePanelOpen: isSidebarVisible,
         activeSidePanelTabId,
         activeConversationTabId: activeTabSessionId,
         parentConversationTabId: sessionId,
@@ -4006,36 +4142,29 @@ const SessionDetail = ({
     [
       activeSidePanelTabId,
       activeTabSessionId,
-      isSidebarOpen,
+      isSidebarVisible,
       orderedSessionTabIds.length,
       sessionId,
     ]
   );
 
-  useCommand({
-    id: 'session.closeFocusedTab',
-    title: t('commands.session.closeFocusedTab', 'Close Focused Tab'),
-    category: 'Session',
-    keybindings: getCommandKeybindings('session.closeFocusedTab'),
-    // Consume the native close-window chord anywhere on a desktop session page. The lone
-    // parent tab returns to chat landing; a parent with siblings remains non-closeable.
-    when: () => !isMobile && Boolean(activeSession),
-    // Cmd/Ctrl+W is a tab-management command even while the composer or editor owns focus.
-    allowInTextInput: true,
-    run: () => {
+  useDesktopTabCloser(
+    () => {
       const target = resolveFocusedTabCloseTarget();
-      if (!target) return;
+      if (!target) return 'handled';
       if (target.kind === 'landing') {
         handleBackToList();
-        return;
+        return 'handled';
       }
       if (target.kind === 'side-panel') {
         handleSidePanelTabClose(target.tabId);
-        return;
+        return 'handled';
       }
       void handleTabClose(target.tabId);
+      return 'handled';
     },
-  });
+    !isMobile && Boolean(activeSession)
+  );
 
   useEffect(() => {
     if (
@@ -4072,25 +4201,27 @@ const SessionDetail = ({
       void resolveForkWorktreeAvailability(activeTabSession);
     }
   }, [activeTabSession, mobileMenuSheetOpen, resolveForkWorktreeAvailability]);
-  // Reactive per-conversation "working" state. Rules-of-hooks forbids calling
+  // Reactive per-conversation live status. Rules-of-hooks forbids calling
   // useAtomValue per tab in a map, so read them all through ONE derived atom
   // keyed on the (memoized) real-session id list (drafts have no live status).
+  // The sheet needs the status TYPE, not just presence: a tab blocked on a
+  // permission request must read as "needs you", not as one more spinner.
   const conversationSessionIds = useMemo(
     () => orderedSessionTabIds.filter((id) => !isDraftSessionTabId(id)),
     [orderedSessionTabIds]
   );
-  const conversationWorkingAtom = useMemo(
+  const conversationLiveStatusAtom = useMemo(
     () =>
       atom((get) => {
-        const map: Record<string, boolean> = {};
+        const map: Record<string, SessionStatus | null> = {};
         for (const id of conversationSessionIds) {
-          map[id] = get(sessionLiveStatusAtomFamily(id as SessionId)) != null;
+          map[id] = get(sessionLiveStatusAtomFamily(id as SessionId));
         }
         return map;
       }),
     [conversationSessionIds]
   );
-  const conversationWorkingMap = useAtomValue(conversationWorkingAtom);
+  const conversationLiveStatusMap = useAtomValue(conversationLiveStatusAtom);
 
   const mobileConversations = useMemo<ConversationTabEntry[]>(() => {
     const conversationTabActive = effectiveActiveViewerTabId == null;
@@ -4102,6 +4233,7 @@ const SessionDetail = ({
       const draft = meta ? null : (draftTabs.find((d) => d.id === tabId) ?? null);
       const lastMessageAt = typeof meta?.lastMessageAt === 'number' ? meta.lastMessageAt : null;
       const lastReadAt = typeof meta?.lastReadAt === 'number' ? meta.lastReadAt : null;
+      const liveStatus = meta != null ? (conversationLiveStatusMap[tabId] ?? null) : null;
       return {
         id: tabId,
         title:
@@ -4110,7 +4242,8 @@ const SessionDetail = ({
           t('sessions.tabs.newTab', 'New Tab'),
         active: conversationTabActive && tabId === activeTabSessionId,
         main: tabId === sessionId,
-        running: meta != null && conversationWorkingMap[tabId] === true,
+        running: liveStatus != null,
+        waitingPermission: liveStatus?.type === 'requestPermission',
         unread:
           meta != null &&
           lastMessageAt !== null &&
@@ -4126,7 +4259,7 @@ const SessionDetail = ({
     draftTabs,
     activeTabSessionId,
     effectiveActiveViewerTabId,
-    conversationWorkingMap,
+    conversationLiveStatusMap,
     t,
   ]);
 
@@ -4298,6 +4431,22 @@ const SessionDetail = ({
     visibleMachineIds,
   ]);
 
+  /* One compact line per SessionDetail render into the crash-report ring
+     buffer (`session-render-trace.ts`): a React #185 report shows only where
+     the nested-update limit tripped; this shows what oscillated. Consecutive
+     identical lines collapse, so steady-state renders cost one repeat bump. */
+  recordSessionRenderTrace(
+    `detail s=${shortTraceId(sessionId)} tab=${urlTab ?? '∅'} active=${shortTraceId(
+      activeTabSessionId
+    )}${activeTabIsPendingChild ? '(pending)' : ''} children=[${visibleChildSessions
+      .map((s) => shortTraceId(s.id))
+      .join(',')}] side=${sideSessions.length} archived=${archivedChildSessions.length} drafts=${
+      draftTabs.length
+    } meta=${activeSession ? 'y' : 'n'} presence=${sessionPresenceState} ready=${
+      docMetaCacheReady ? 'y' : 'n'
+    }`
+  );
+
   useEffect(() => {
     if (sessionPresenceState === 'loading') {
       return;
@@ -4353,6 +4502,26 @@ const SessionDetail = ({
   if (activeSession.parentSessionId && activeSession.parentSessionId !== sessionId) {
     return null;
   }
+
+  /* The URL names a child tab whose meta has not reached this replica yet
+     (a just-promoted draft, or a tab still syncing from another device).
+     The tab STAYS active — bouncing to the parent is exactly the bug this
+     replaces — and this surface holds the space until its meta arrives. */
+  const pendingChildTabSurface = activeTabIsPendingChild ? (
+    <div className="absolute inset-0 flex h-full flex-col items-center justify-center gap-3">
+      {showPendingChildTabState ? (
+        <>
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            {t('sessions.tabWaitingForSync', 'Waiting for this conversation to sync…')}
+          </p>
+          <Button variant="ghost" size="sm" onClick={() => handleSessionTabSelect(sessionId)}>
+            {t('sessions.tabBackToMain', 'Back to main conversation')}
+          </Button>
+        </>
+      ) : null}
+    </div>
+  ) : null;
 
   const deleteConfirmDialog = (
     <Dialog open={deleteConfirmOpen} onOpenChange={(open) => setDeleteConfirmOpen(open)}>
@@ -4991,6 +5160,7 @@ const SessionDetail = ({
               </div>
             );
           })}
+          {!hasActiveViewerTab ? pendingChildTabSurface : null}
           {/* Viewer content — shown when a viewer tab is active (mobile). Solid
               top padding (not scroll-under) so viewer toolbars clear the
               floating frosted header. */}
@@ -5348,7 +5518,7 @@ const SessionDetail = ({
         className="bg-background"
         // The side panel stays mounted while collapsed, so GitHub polling has
         // to be paused explicitly — same signal SessionBrowserPanel takes.
-        visible={isSidebarOpen}
+        visible={isSidebarVisible}
       />
     ) : activeSidebarTab === 'changes' ? (
       <SessionChangesSidebar
@@ -5376,7 +5546,7 @@ const SessionDetail = ({
         >
           <SessionBrowserPanel
             session={activeBrowserSession}
-            active={activeSidebarTab === 'browser' && isSidebarOpen}
+            active={activeSidebarTab === 'browser' && isSidebarVisible}
             candidateNavigationRequestId={
               browserCandidateNavigationRequest?.sessionId === activeBrowserSession.id
                 ? browserCandidateNavigationRequest.id
@@ -5417,22 +5587,22 @@ const SessionDetail = ({
       size="icon"
       onClick={handleToggleSidebar}
       aria-label={
-        isSidebarOpen
+        isSidebarVisible
           ? t('sessions.sidebar.hide', 'Hide sidebar')
           : t('sessions.sidebar.show', 'Show sidebar')
       }
-      className={cn('h-7 w-7 shrink-0 text-muted-foreground', !isSidebarOpen && 'mr-[9px]')}
+      className={cn('h-7 w-7 shrink-0 text-muted-foreground', !isSidebarVisible && 'mr-[9px]')}
     >
       <PanelRight className="h-4 w-4" />
     </Button>
   );
 
-  const leftSidebarExpandButton = isLeftSidebarCollapsed ? (
+  const leftSidebarExpandButton = isLeftSidebarHidden ? (
     <Button
       type="button"
       variant="ghost"
       size="icon"
-      onClick={() => setLeftSidebarCollapsed(false)}
+      onClick={() => showNavigationSidebar()}
       aria-label={t('sessions.leftSidebar.show', 'Show navigation sidebar')}
       className="h-7 w-7 shrink-0 text-muted-foreground"
     >
@@ -5453,7 +5623,7 @@ const SessionDetail = ({
       headerEndSlot={
         <>
           <TerminalDockToggleButton />
-          {!isSidebarOpen ? sidebarToggleButton : null}
+          {!isSidebarVisible ? sidebarToggleButton : null}
         </>
       }
       titleSyncing={activeSessionDocIsSyncing}
@@ -5529,7 +5699,8 @@ const SessionDetail = ({
         // 6px higher for them to land on that same line: 2 + (44 - 32) / 2 = 8.
         // Re-derive this if the row or the pill height changes.
         'mt-0.5 h-11',
-        isLeftSidebarCollapsed && hasMacOSTitlebarInset && 'pl-[4.5rem]'
+        isLeftSidebarHidden && hasMacOSTitlebarInset && 'pl-[4.5rem]',
+        !isSidebarVisible && windowsCaptionPadClass
       )}
     />
   );
@@ -5637,6 +5808,7 @@ const SessionDetail = ({
           </div>
         );
       })}
+      {pendingChildTabSurface}
     </SessionMentionDropLayer>
   );
 
@@ -5646,9 +5818,9 @@ const SessionDetail = ({
       <div
         key={tab.id}
         className={isActive ? 'h-full' : 'hidden h-full'}
-        aria-hidden={!isActive || !isSidebarOpen}
+        aria-hidden={!isActive || !isSidebarVisible}
       >
-        {renderViewerTabContent(tab, 'h-full', isActive && isSidebarOpen)}
+        {renderViewerTabContent(tab, 'h-full', isActive && isSidebarVisible)}
       </div>
     );
   });
@@ -5670,7 +5842,7 @@ const SessionDetail = ({
           aria-hidden={!isActive}
         >
           <SessionChatInterface
-            {...getSharedChatSurfaceProps(sideSession, isActive, isActive && isSidebarOpen)}
+            {...getSharedChatSurfaceProps(sideSession, isActive, isActive && isSidebarVisible)}
             isChildTab
           />
         </div>
@@ -5701,7 +5873,8 @@ const SessionDetail = ({
           'border-b border-border/50 bg-background',
           // Right panel is never under the macOS traffic lights (top-left) —
           // it must not reserve the titlebar inset the left sidebar needs.
-          'h-11'
+          'h-11',
+          windowsCaptionPadClass
         )}
       />
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -5748,7 +5921,7 @@ const SessionDetail = ({
         chatSurfaces={desktopChatSurfaces}
         terminalDock={<TerminalDockHost />}
         secondaryPanel={desktopSecondaryPanel}
-        sidebarOpen={isSidebarOpen}
+        sidebarOpen={isSidebarVisible}
         onSidebarCollapse={handleToggleSidebar}
         deleteConfirmDialog={deleteConfirmDialog}
         sidebarMinWidthRequest={prSidebarWidthRequest}

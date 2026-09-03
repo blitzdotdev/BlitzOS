@@ -53,18 +53,18 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // hunk 1: the `react` import gains `type ReactNode`
       [1, "import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';"],
       // hunk 2: `ViewerTabItem` gains `'custom'` and `icon`
-      [42, "/** A viewer tab item (file or diff) displayed in the tab bar. */"],
-      [45, "  type: 'file' | 'diff';"],
+      [44, "/** A viewer tab item (file or diff) displayed in the tab bar. */"],
+      [47, "  type: 'file' | 'diff';"],
       // hunk 4: `parentSession` becomes optional
-      [58, "  parentSession: SessionMeta;"],
+      [60, "  parentSession: SessionMeta;"],
       // hunk 3: `ViewerTabContent` draws the host's glyph
-      [466, "        {tab.type === 'file' && tab.filePath ? ("],
-      [470, "        )}"],
+      [465, "        {tab.type === 'file' && tab.filePath ? ("],
+      [469, "        )}"],
       // hunk 5: `visibleTabIds` reads the parent id only when there is one
-      [726, "    () => (showSessionTabs ? [parentSession.id, ...sortableIds] : sortableIds),"],
-      [727, "    [parentSession.id, showSessionTabs, sortableIds]"],
+      [725, "    () => (showSessionTabs ? [parentSession.id, ...sortableIds] : sortableIds),"],
+      [726, "    [parentSession.id, showSessionTabs, sortableIds]"],
       // hunk 6: the parent strip item is guarded on the same thing
-      [765, "        {showSessionTabs && ("],
+      [770, "        {showSessionTabs && ("],
     ]);
   });
 
@@ -73,46 +73,37 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // Seam patch 4's hunks are additive and remove nothing, which is why they
       // are absent from this list and still covered by the subsequence check.
       // So are three of seam patch 6's four; its fourth is the last anchor here.
-      // hunk 7: the `react` import gains `type ReactNode`
-      [
-        90,
-        "import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';",
-      ],
+      // hunk 7 only adds `type ReactNode` to upstream's multiline `react`
+      // import now, so the subsequence check covers it without a removed line.
       // hunk 11: the strip's variant follows the host's list
-      [5505, '      variant="session"'],
+      [5675, '      variant="session"'],
       // hunk 14: an active host tab deselects the conversation surfaces
-      [5587, "        const isActive = tabSession.id === activeTabSessionId;"],
-      [5621, "        const isActive = draft.id === activeTabSessionId;"],
-      // hunk 17: the state setter becomes a chokepoint that announces the
-      // conversation tab it selected, so the `useState` keeps the raw setter
-      // under a new name
-      [756, "  const [activeTabSessionIdRaw, setActiveTabSessionId] = useState<string>("],
-      // hunk 18: the three writers that are a CORRECTION rather than a
-      // selection keep the raw setter
-      [947, "    setActiveTabSessionId(nextInitialTabState.activeTabSessionId);"],
-      [2585, "      setActiveTabSessionId((prev) =>"],
-      [2591, "    setActiveTabSessionId((prev) => (prev === sessionId ? prev : sessionId));"],
+      [5758, "        const isActive = tabSession.id === activeTabSessionId;"],
+      [5792, "        const isActive = draft.id === activeTabSessionId;"],
+      // Upstream moved conversation selection into `?tab`, so hunk 17 now
+      // adds an announcement inside the single URL writer and hunk 18's local
+      // correction writers no longer exist. Both are additive at this pin.
       // Seam patch 6 hunk 24: the Side Chat launcher gains a third reason to be
       // disabled. Its other three hunks add lines and remove none, so they are
       // covered by the subsequence check rather than named here.
-      [3358, "      disabled: launcherState === 'disabled' || isCreatingSideSession,"],
+      [3495, "      disabled: launcherState === 'disabled' || isCreatingSideSession,"],
       // Seam patch 7 hunk 12: the page's GitHub state answers the
       // `githubIntegration` capability, so the two lines of the memo it was
       // built by are rewritten. Its other three hunks in this file add lines
       // and remove none.
-      [1564, "    () => getSessionGitHubState(activeTabSession, workspaceOwnerSession),"],
-      [1565, "    [activeTabSession, workspaceOwnerSession]"],
+      [1608, "    () => getSessionGitHubState(activeTabSession, workspaceOwnerSession),"],
+      [1609, "    [activeTabSession, workspaceOwnerSession]"],
       // Seam patch 7 hunk 15: `session.focusInput` takes `useCommand`'s second
       // argument, so its closing line gains one. This is the ONE `});` in the
       // file the seam declares, which is why the anchor is a line number.
-      [3719, "  });"],
+      [3876, "  });"],
       // Seam patch 15 hunk 11: the page's catch-up flag answers
       // `hideConnectionStatus`, so the one line the `useDelayedFlag` was built
       // from is rewritten. This takes the mobile header's spinner and the
       // `titleSyncing` override together. Its other four hunks in this file add
       // lines and remove none.
       [
-        1110,
+        1180,
         "    activeSessionTabId !== null && isSyncingRoomSyncState(activeSessionDocSyncState),",
       ],
       // ── Seam patch 16, the mobile branch ─────────────────────────────────
@@ -123,41 +114,41 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       //
       // hunk 16: `MobileProjectInfo` answers the `githubIntegration`
       // capability instead of re-deriving the repo from the session
-      [567, "  const repoFullName = (resolveProjectGitHubRepo(project) ?? session.repoFullName)?.trim() ?? '';"],
-      [568, "  const isGitHub = project?.kind === 'github' || !!repoFullName;"],
+      [593, "  const repoFullName = (resolveProjectGitHubRepo(project) ?? session.repoFullName)?.trim() ?? '';"],
+      [594, "  const isGitHub = project?.kind === 'github' || !!repoFullName;"],
       // hunk 12: the menu sheet's visibility row takes `hideCloudMenuItems`
-      [4662, "    if (activeSessionSharing) {"],
+      [4831, "    if (activeSessionSharing) {"],
       // hunk 13: Copy URL is guarded, which re-indents the push it wraps
-      [4752, "    mobileMenuActions.push({"],
-      [4753, "      id: 'copy-url',"],
-      [4754, '      icon: <Link className="h-3.5 w-3.5" />,'],
-      [4755, "      label: t('sessions.copyUrl', 'Copy URL'),"],
-      [4756, "      onClick: () => {"],
-      [4757, "        void handleCopyUrl();"],
-      [4758, "      },"],
-      [4759, "    });"],
+      [4921, "    mobileMenuActions.push({"],
+      [4922, "      id: 'copy-url',"],
+      [4923, '      icon: <Link className="h-3.5 w-3.5" />,'],
+      [4924, "      label: t('sessions.copyUrl', 'Copy URL'),"],
+      [4925, "      onClick: () => {"],
+      [4926, "        void handleCopyUrl();"],
+      [4927, "      },"],
+      [4928, "    });"],
       // hunk 14: Share with team gains the third term the desktop menu has
-      [4763, "    if (activeSessionSharing && activeSessionSharing.visibility !== 'team') {"],
+      [4932, "    if (activeSessionSharing && activeSessionSharing.visibility !== 'team') {"],
       // hunk 15: Change owner gains the same third term
-      [4889, "            isMultiMemberWorkspace && !activeSession.isArchived"],
+      [5058, "            isMultiMemberWorkspace && !activeSession.isArchived"],
       // hunk 8: an active HOST tab hides the conversations and the drafts,
       // which is seam patch 5 hunk 13's desktop rule on the mobile branch
-      [4908, "            const isActive = !hasActiveViewerTab && tabSession.id === activeTabSessionId;"],
-      [4975, "            const isActive = !hasActiveViewerTab && draft.id === activeTabSessionId;"],
+      [5077, "            const isActive = !hasActiveViewerTab && tabSession.id === activeTabSessionId;"],
+      [5144, "            const isActive = !hasActiveViewerTab && draft.id === activeTabSessionId;"],
     ]);
   });
 
   it("removes nothing from the two mobile files but seam patch 16's anchors", () => {
     expectSeamAgainstBaseline("components/mobile/mobile-session-tab-sheet.tsx", [
       // hunk 1: `ViewerTabEntry['kind']` gains `'custom'`
-      [58, "  kind: 'file' | 'diff' | 'pr' | 'browser' | 'files';"],
+      [67, "  kind: 'file' | 'diff' | 'pr' | 'browser' | 'files';"],
       // hunk 4: the row draws the host's glyph when it has one, which wraps
       // the element it replaces
-      [233, "                        <Icon"],
-      [234, '                          className="h-4 w-4 shrink-0 text-muted-foreground"'],
-      [235, "                          strokeWidth={1.8}"],
-      [236, '                          aria-hidden="true"'],
-      [237, "                        />"],
+      [244, "                        <Icon"],
+      [245, '                          className="h-4 w-4 shrink-0 text-muted-foreground"'],
+      [246, "                          strokeWidth={1.8}"],
+      [247, '                          aria-hidden="true"'],
+      [248, "                        />"],
     ]);
 
     expectSeamAgainstBaseline("components/mobile/mobile-home-screen.tsx", [
@@ -205,12 +196,12 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     ]) {
       expect(detail, `seam patch 5 declares ${prop}`).toContain(prop);
     }
-    // Hunks 17-18, pinned as a CALL and not only as a declaration. A declared
+    // Hunk 17, pinned as a CALL and not only as a declaration. A declared
     // prop that nothing invokes is exactly the shape of the defect it fixes:
     // the host keeps its tab selected, hunk 15 keeps drawing it, and a click on
     // a session tab does nothing a member can see.
-    expect(detail, "the announcing setter exists").toContain(
-      "const setActiveTabSessionId = useCallback((tabId: string) => {",
+    expect(detail, "the announcing URL writer exists").toContain(
+      "const navigateToSessionTab = useCallback(",
     );
     expect(detail, "and it announces").toContain("onSessionTabSelectRef.current?.(tabId);");
   });
@@ -218,36 +209,32 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
   /**
    * THE CHOKEPOINT IS ONLY A CHOKEPOINT WHILE NOTHING WALKS AROUND IT.
    *
-   * Ten call sites move the conversation selection and the first version of the
-   * fix notified from one of them, which left the strip's `+` opening a draft
-   * tab underneath the terminal — the same defect one button along. What the
-   * seam relies on now is that the raw setter has exactly three callers, all
-   * declared, so a merge that adds an eleventh writer either goes through the
-   * wrapper or fails here.
+   * Upstream moved conversation selection into `?tab`. What the seam relies on
+   * now is that every explicit conversation activation formats that URL through
+   * one writer, so the host notification cannot be bypassed by a second store.
    */
-  it("routes every conversation-tab SELECTION through the announcing setter", () => {
+  it("routes every conversation-tab SELECTION through the announcing URL writer", () => {
     const detail = readFileSync(join(vendorDir, "session-detail.tsx"), "utf8");
-    const rawWrites = [...detail.matchAll(/^\s*setActiveTabSessionIdState\(/gmu)];
-    expect(
-      rawWrites.length,
-      "the raw setter is called only inside the wrapper and by hunk 18's three corrections",
-    ).toBe(4);
-
-    // The writers that were inert with the click-only notification, named so a
-    // merge that reroutes one of them says which.
-    const announcing = new Set(
-      [...detail.matchAll(/^\s*(?:void )?setActiveTabSessionId\((.+?)\);?$/gmu)].map(
-        (match) => match[1],
-      ),
+    expect(detail, "the removed local selection store stays gone").not.toContain(
+      "setActiveTabSessionId",
     );
-    for (const [argument, what] of [
-      ["tabId", "the strip's own tab click, and everything routed through it"],
-      ["draft.id", "the strip's + — a new draft tab"],
-      ["childSessionId", "a draft promoted to a real child session"],
-      ["sessionId", "a close falling back to the parent"],
-      ["tabSessionId", "the browser panel opening a tab"],
+    expect(
+      [...detail.matchAll(/writeSessionUrlTab\(formatExplicitSessionTabSearch\(tabId\), options\)/gu)]
+        .length,
+      "explicit conversation selection has one URL chokepoint",
+    ).toBe(1);
+
+    for (const [call, what] of [
+      ["navigateToSessionTab(draft.id, { push: true });", "the strip's + — a new draft tab"],
+      ["navigateToSessionTab(childSessionId);", "a draft promoted to a real child session"],
+      ["navigateToSessionTab(sessionId);", "a close falling back to the parent"],
+      [
+        "navigateToSessionTab(tabSessionId, { push: true });",
+        "the browser panel opening a tab",
+      ],
+      ["navigateToSessionTab(tabId, { push: true });", "the strip's own tab click"],
     ] as const) {
-      expect(announcing, `${what} announces`).toContain(argument);
+      expect(detail, `${what} uses the announcing URL writer`).toContain(call);
     }
     // The next/previous cycle and the archived-tab restore reach the same
     // setter through `handleSessionTabSelect` rather than directly.

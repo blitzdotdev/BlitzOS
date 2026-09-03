@@ -34,14 +34,14 @@ Every hunk is strictly additive — the predicate can only become true where it
 was false — so upstream Electron behaviour is unchanged. Open upstream as
 "allow a non-Electron local bridge".
 
-| # | File | Line (at `f3474894`) | Upstream anchor | What it gates |
+| # | File | Line (at `f4b1ba25`) | Upstream anchor | What it gates |
 |---|---|---|---|---|
 | 1 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 120 | `window.__LODY_ELECTRON__ &&` inside `canUseLocalMachineRpc`'s `Boolean(...)` | every local Machine RPC, including `session/dispatch-turn` |
 | 2 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 182 | `const isElectron = typeof window !== 'undefined' && window.__LODY_ELECTRON__;` | `file/preview-local`; without it a local path is sent to Streams |
-| 3 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 1001 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectGitState` | the sidebar's branch/worktree state |
-| 4 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 1057 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectControl` | every `local-project/*` and `worktree/*` call |
-| 5 | `packages/components/src/providers/create-workspace-runtime.ts` | 2058 | `if (!window.__LODY_ELECTRON__) {` in `canUseLocalSessionControl` | `session/create`, `session/chat`, `machine/*` |
-| 6 | `packages/components/src/window-globals.d.ts` | 31 | `__LODY_ELECTRON__?: true;` | declares `__LODY_LOCAL_BRIDGE__?: true;` so the five above typecheck |
+| 3 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 999 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectGitState` | the sidebar's branch/worktree state |
+| 4 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 1055 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectControl` | every `local-project/*` and `worktree/*` call |
+| 5 | `packages/components/src/providers/create-workspace-runtime.ts` | 2074 | `if (!window.__LODY_ELECTRON__) {` in `canUseLocalSessionControl` | `session/create`, `session/chat`, `machine/*` |
+| 6 | `packages/components/src/window-globals.d.ts` | 30 | `__LODY_ELECTRON__?: true;` | declares `__LODY_LOCAL_BRIDGE__?: true;` so the five above typecheck |
 
 Hunks 1, 3 and 4 read:
 
@@ -56,7 +56,7 @@ renaming it would grow the diff past the one idea being carried. Hunk 5 reads
 `if (!window.__LODY_ELECTRON__ && !window.__LODY_LOCAL_BRIDGE__) {`. Hunk 6 adds
 one declaration line.
 
-`create-workspace-runtime.ts:299` (`isElectronLocalDataPlaneEnabled`) is
+`create-workspace-runtime.ts:300` (`isElectronLocalDataPlaneEnabled`) is
 deliberately NOT patched. It only picks a default `syncMode` when the caller
 supplies none, and `packages/webapp/src/lody/runtime.ts` always passes
 `syncMode: 'local'` explicitly.
@@ -110,12 +110,12 @@ them, as the smallest additive change that could be upstreamed unchanged. The
 upstream PR is drafted in `plans/evidence/lody-sidebar-props-pr.md`; **drop this
 patch when it merges.**
 
-| # | File | Line (at `f3474894`) | Upstream anchor | What it does |
+| # | File | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|---|
-| 1 | `packages/components/src/components/loro-sidebar.tsx` | 175 | after `bottomFloatingContent?: ReactNode;` in `LoroSidebarProps` | declares `hideHeader?: boolean` and `hideFooter?: boolean` |
-| 2 | same | 649 | after `bottomFloatingContent,` in the destructuring | defaults both to `false` |
-| 3 | same | 893 | the `group/sidebar-header` `<div>` | wraps it in `{hideHeader ? null : ( … )}` |
-| 4 | same | 1234 | the `getLoroSidebarFooterClassName(isMobile)` `<div>` | wraps it in `{hideFooter ? null : ( … )}` |
+| 1 | `packages/components/src/components/loro-sidebar.tsx` | 171 | after `bottomFloatingContent?: ReactNode;` in `LoroSidebarProps` | declares `hideHeader?: boolean` and `hideFooter?: boolean` |
+| 2 | same | 635 | after `bottomFloatingContent,` in the destructuring | defaults both to `false` |
+| 3 | same | 880 | the `group/sidebar-header` `<div>` | wraps it in `{hideHeader ? null : ( … )}` |
+| 4 | same | 1224 | the `getLoroSidebarFooterClassName(isMobile)` `<div>` | wraps it in `{hideFooter ? null : ( … )}` |
 
 Hunks 3 and 4 are a guard plus a re-indent of the block they wrap, which is why
 the raw diff is ~170 lines and the meaningful one is four:
@@ -131,7 +131,7 @@ Every hunk is strictly additive: with both props absent the component renders
 byte-for-byte what it rendered before, and no upstream call site passes either.
 
 **What a host that hides the footer takes on.** The footer is the only place the
-filter popover renders on MOBILE (`:1265`); the desktop trigger lives in the
+filter popover renders on MOBILE (`:1260`); the desktop trigger lives in the
 first section header instead. So a mobile host that hides the footer owns the
 organize/scope control. BlitzOS does not offer one in phase 4 — the rail has
 exactly three sections and no organize modes — and the prop's doc comment says
@@ -158,7 +158,7 @@ global BlitzOS must never set:
 +  Boolean(getIpcServices());
 ```
 
-| # | File | Line (at `f3474894`) | Upstream anchor | What it gates |
+| # | File | Line (at `f4b1ba25`) | Upstream anchor | What it gates |
 |---|---|---|---|---|
 | 1 | `packages/components/src/lib/electron-session-file-sender.ts` | 19 | `isElectronRenderer() && Boolean(getIpcServices());` | `localProjects.sendSessionFileLocal`, read by `use-chat-landing-file-draft.ts:104` and `session-chat-input-area.tsx:524` |
 
@@ -201,16 +201,16 @@ were considered and rejected. Borrowing either would put a false statement on th
 screen: the session is neither archived nor on a removed machine, and both change
 the header copy as well as the composer.
 
-| # | File | Line (at `f3474894`) | Upstream anchor | What it does |
+| # | File | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|---|
 | 1 | `packages/components/src/components/sessions/session-chat-interface.tsx` | 1740 | after `hideMessageArea?: boolean;` in the props interface | declares `readOnly?: boolean` |
 | 2 | same | 1910 | after `hideMessageArea = false,` in the destructuring | defaults it to `false` |
-| 3 | same | 5876 | `{shouldReplaceComposerWithPermission ? null : (` | adds `readOnly ||`, so the composer is not rendered |
-| 4 | same | 5761 | the `<FloatingPermissionRequest …/>` element | wraps it in `{readOnly ? null : ( … )}` — its options are answers, and an answer this viewer cannot write is a button that does nothing |
-| 5 | `packages/components/src/components/sessions/session-detail.tsx` | 667 | the inline props type and destructuring of `SessionDetail` | declares and defaults `readOnly` |
-| 6 | same | 4930, 5558 | the `<SessionChatInterface>` that renders a session tab | passes `readOnly={readOnly}` |
+| 3 | same | 5988 | `{shouldReplaceComposerWithPermission ? null : (` | adds `readOnly ||`, so the composer is not rendered |
+| 4 | same | 5875 | the `<FloatingPermissionRequest …/>` element | wraps it in `{readOnly ? null : ( … )}` — its options are answers, and an answer this viewer cannot write is a button that does nothing |
+| 5 | `packages/components/src/components/sessions/session-detail.tsx` | 692, 698 | the inline props type and destructuring of `SessionDetail` | declares and defaults `readOnly` |
+| 6 | same | 5769, 5844 | the `<SessionChatInterface>` that renders a session tab | passes `readOnly={readOnly}` |
 
-The `headerVariant="toolbar"` instance at `:5448` is deliberately NOT passed the
+The `headerVariant="toolbar"` instance at `:5622` is deliberately NOT passed the
 prop: it carries `hideMessageArea`, so it renders no composer and no permission
 card, and passing a prop that selects nothing would suggest it did.
 
@@ -250,14 +250,14 @@ variant tells not to draw.
 
 `packages/components/src/components/sessions/session-tab-bar.tsx`
 
-| # | Line (at `f3474894`) | Upstream anchor | What it does |
+| # | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|
 | 1 | 1 | the `react` import | adds `type ReactNode` |
-| 2 | 43 | `export interface ViewerTabItem` | widens `type` to `'file' \| 'diff' \| 'custom'` and adds `icon?: ReactNode` |
-| 3 | 464 | the `<span className="shrink-0">` glyph in `ViewerTabContent` | draws `tab.icon` when the host supplied one |
-| 4 | 58 | `parentSession: SessionMeta;` | makes it `parentSession?: SessionMeta;` |
-| 5 | 726 | `[parentSession.id, ...sortableIds]` | reads the id only when `showSessionTabs` AND a session was given |
-| 6 | 766 | `<AdaptiveTabStripItem itemId={parentSession.id}>` | the existing `showSessionTabs &&` guard gains `parentSession &&` |
+| 2 | 44 | `export interface ViewerTabItem` | widens `type` to `'file' \| 'diff' \| 'custom'` and adds `icon?: ReactNode` |
+| 3 | 465 | the `<span className="shrink-0">` glyph in `ViewerTabContent` | draws `tab.icon` when the host supplied one |
+| 4 | 60 | `parentSession: SessionMeta;` | makes it `parentSession?: SessionMeta;` |
+| 5 | 725 | `[parentSession.id, ...sortableIds]` | reads the id only when `showSessionTabs` AND a session was given |
+| 6 | 770 | `<AdaptiveTabStripItem itemId={parentSession.id}>` | the existing `showSessionTabs &&` guard gains `parentSession &&` |
 
 Hunks 4–6 are the "a strip need not be rooted in a session" half, and they are
 what `packages/webapp/src/lody/TerminalTabsStrip.tsx` mounts: the same component,
@@ -265,22 +265,22 @@ what `packages/webapp/src/lody/TerminalTabsStrip.tsx` mounts: the same component
 
 `packages/components/src/components/sessions/session-detail.tsx`
 
-| # | Line (at `f3474894`) | Upstream anchor | What it does |
+| # | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|
-| 7 | 90 | the `react` import | adds `type ReactNode` |
-| 8 | 657 | after `TerminalDockToggleButton` | declares `SessionSurfaceTab` and the `EMPTY_SURFACE_TABS` default |
-| 9 | 667 | after `readOnly = false,` and its type entry (seam patch 4's anchor) | declares and defaults `surfaceTabs`, `activeSurfaceTabId`, `onSurfaceTabSelect`, `onSurfaceTabClose` |
-| 10 | 3393 | immediately above `viewerTabItems` | maps `surfaceTabs` to `ViewerTabItem[]`, memoized so a page contributing none hands `SessionTabBar` one stable empty array |
-| 11 | 5510 | `variant="session"` in the `SessionTabBar` element | `variant={surfaceTabs.length > 0 ? 'mixed' : 'session'}` |
-| 12 | 5517 | after `onNewTab={handleNewTab}` | passes `viewerTabs`, `activeViewerTabId`, `onViewerTabSelect`, `onViewerTabClose` |
-| 13 | 5586 | before `desktopChatSurfaces` | `activeChatSurfaceId`: an active HOST tab deselects every conversation surface, the same rule `hasActiveViewerTab` applies to the strip |
-| 14 | 5587, 5626 | the two `const isActive = … === activeTabSessionId;` | read `activeChatSurfaceId` instead |
-| 15 | 5624 | the end of `desktopChatSurfaces`'s children | maps `surfaceTabs` to `<div className={cn('absolute inset-0', !isActive && 'hidden')}>{tab.content}</div>`, the same shape the drafts get |
-| 16 | 667 | beside hunk 9's four props | declares `onSessionTabSelect` |
-| 17 | 756 | `const [activeTabSessionIdRaw, setActiveTabSessionId] = useState<string>(` | keeps the raw setter as `setActiveTabSessionIdState` and adds `setActiveTabSessionId`, a wrapper that announces the tab it selected |
-| 18 | 947, 2585, 2591 | the three `setActiveTabSessionId` writers that are a CORRECTION | take the raw setter instead |
-| 19 | 728 | beside hunk 16's `onSessionTabSelect` | declares `onSessionMissing`, and holds it in a ref beside `onSessionTabSelectRef` |
-| 20 | 4408 | inside upstream's `sessionPresenceState === 'not-found'` effect, above `fireDetailNotFoundOnce` | calls `onSessionMissing?.(sessionId)` |
+| 7 | 105 | the `react` import | adds `type ReactNode` |
+| 8 | 682 | after `TerminalDockToggleButton` | declares `SessionSurfaceTab` and the `EMPTY_SURFACE_TABS` default |
+| 9 | 692, 698 | after `readOnly = false,` and its type entry (seam patch 4's anchor) | declares and defaults `surfaceTabs`, `activeSurfaceTabId`, `onSurfaceTabSelect`, `onSurfaceTabClose` |
+| 10 | 3527 | immediately above `viewerTabItems` | maps `surfaceTabs` to `ViewerTabItem[]`, memoized so a page contributing none hands `SessionTabBar` one stable empty array |
+| 11 | 5675 | `variant="session"` in the `SessionTabBar` element | `variant={surfaceTabs.length > 0 ? 'mixed' : 'session'}` |
+| 12 | 5682 | after `onNewTab={handleNewTab}` | passes `viewerTabs`, `activeViewerTabId`, `onViewerTabSelect`, `onViewerTabClose` |
+| 13 | 5751 | before `desktopChatSurfaces` | `activeChatSurfaceId`: an active HOST tab deselects every conversation surface, the same rule `hasActiveViewerTab` applies to the strip |
+| 14 | 5758, 5792 | the two `const isActive = … === activeTabSessionId;` | read `activeChatSurfaceId` instead |
+| 15 | 5810 | the end of `desktopChatSurfaces`'s children | maps `surfaceTabs` to `<div className={cn('absolute inset-0', !isActive && 'hidden')}>{tab.content}</div>`, the same shape the drafts get |
+| 16 | 692, 698 | beside hunk 9's four props | declares `onSessionTabSelect` |
+| 17 | 1665 | `navigateToSessionTab`, upstream's single explicit `?tab` writer | announces the selected conversation before writing the URL |
+| 18 | — | retired by upstream's URL-derived selection | no correction writers remain: `activeTabSessionId` is derived from `?tab`, so hunk 17 is the sole explicit writer |
+| 19 | 692, 698 | beside hunk 16's `onSessionTabSelect` | declares `onSessionMissing`, and holds it in a ref beside `onSessionTabSelectRef` |
+| 20 | 4455 | inside upstream's `sessionPresenceState === 'not-found'` effect, above `fireDetailNotFoundOnce` | calls `onSessionMissing?.(sessionId)` |
 
 **Hunks 19–20 are the OTHER thing the host cannot see: the strip is gone.**
 `SessionDetail` returns above the tab strip on two branches — loading and
@@ -299,34 +299,30 @@ upstream's.
 
 **Hunks 16–18 are the seam's only OUTWARD edge, and they exist because hunk 13
 has no way back.** An active host tab hides every conversation surface, so the
-host's selection has to end when the page selects a conversation tab — and that
-selection is `useState` (`activeTabSessionIdRaw`), per parent session, not in the
-URL and not in any atom. Without a notification the host tab stays selected,
-hunk 15 keeps drawing it, and clicking a session tab in the strip does nothing a
-member can see.
+host's selection has to end when the page selects a conversation tab. Upstream
+now derives that selection from `?tab` and funnels explicit selections through
+`navigateToSessionTab`; hunk 17 announces from that single URL writer. Without
+the notification the host tab stays selected, hunk 15 keeps drawing it, and
+clicking a session tab in the strip does nothing a member can see.
 
-**Why the SETTER and not `handleSessionTabSelect`.** Ten call sites move that
-state, and the first version of this patch notified from the strip's own handler
-alone. That left the other nine inert — the strip's `+` created a draft tab that
-opened underneath the host tab and never appeared, which is the same defect one
-button along. A wrapper is one mechanism for all of them, and it is one place to
-add the next one.
+**Why the URL writer and not `handleSessionTabSelect`.** The strip is not the
+only caller: draft creation, promotion, close fallback and browser-panel opening
+also select a conversation. `navigateToSessionTab` is upstream's chokepoint for
+all explicit `?tab` writes, so one notification covers the current callers and
+the next one.
 
-**Why a wrapper and not an effect on the value.** An effect fires on a CHANGE,
+**Why the writer and not an effect on the value.** An effect fires on a CHANGE,
 and the click that most needs the call changes nothing: the parent tab is
 already `activeTabSessionId` while a host tab covers it, so the one transition
 the field report was about is exactly the one a change check swallows.
 
-Hunk 18's three exclusions are `setActiveTabSessionId((prev) => …)` corrections
-rather than selections: the session-switch reset (which runs during RENDER,
-where a host callback may not be called at all) and the two `?tab=` URL syncs,
-which re-assert a selection that already happened and re-fire whenever the
-parsed value's identity changes. Their signature difference — an updater, not an
-id — is what makes the exclusion structural rather than a judgement call: the
-wrapper takes a `string`.
+Hunk 18 no longer carries code. The upstream URL migration removed the old
+render-time reset and URL-to-local-state correction writers; the parsed URL is
+the state. The guard now pins that no second local selection store returns and
+that explicit URL selection has exactly one announcing writer.
 
 **Hunk 10's position is load-bearing, and it is not where the design put it.**
-`SessionDetail` returns early below `:3400` (the loading and missing-session
+`SessionDetail` returns early below `:3527` (the loading and missing-session
 branches), so a `useMemo` beside the `tabBar` element runs on some renders and
 not others — React reports "Rendered more hooks than during the previous
 render", the page dies into `CatchBoundary`, and the session never draws. It
@@ -369,7 +365,7 @@ nothing. Mounted inline and hidden-not-unmounted, a host tab survives every tab
 switch inside one session.
 
 **The mobile branch is deliberately NOT patched.** `MobileSessionTabSheet` keeps
-a fourth, hand-maintained kind enum (`mobile/mobile-session-tab-sheet.tsx:55`);
+a fourth, hand-maintained kind enum (`mobile/mobile-session-tab-sheet.tsx:67`);
 the props are inert there and the mobile drawer keeps today's behaviour.
 
 Strictly additive: with every new prop absent, `SessionDetail` and
@@ -420,12 +416,12 @@ exist, and the option comes back a second later.
 
 `packages/components/src/components/sessions/session-detail.tsx`
 
-| # | Line (at `f3474894`) | Upstream anchor | What it does |
+| # | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|
-| 21 | 666, 672 | `onMobileBack,` and `onMobileBack?: () => void;` — seam patch 5's own anchor | declares and defaults `sideChatRequiresAssistantTurn`, `false` |
-| 22 | 1080 | immediately above `const activeSessionTabId = useMemo<SessionId \| null>` | holds the active tab id in a ref and adds `activeTabAssistantTurnId` state |
-| 23 | 1691 | `chatRefsMap.current.set(tabId, ref);` inside `setChatTabRef` | mirrors `getLastAssistantTurnId()` into that state on ATTACH |
-| 24 | 3358 | `disabled: launcherState === 'disabled' \|\| isCreatingSideSession,` in `sideChatOption` | adds the third term, gated on the prop |
+| 21 | 692, 698 | `onMobileBack,` and `onMobileBack?: () => void;` — seam patch 5's own anchor | declares and defaults `sideChatRequiresAssistantTurn`, `false` |
+| 22 | 1149 | immediately above `const activeSessionTabId = useMemo<SessionId \| null>` | holds the active tab id in a ref and adds `activeTabAssistantTurnId` state |
+| 23 | 1760 | `chatRefsMap.current.set(tabId, ref);` inside `setChatTabRef` | mirrors `getLastAssistantTurnId()` into that state on ATTACH |
+| 24 | 3495 | `disabled: launcherState === 'disabled' \|\| isCreatingSideSession,` in `sideChatOption` | adds the third term, gated on the prop |
 
 Hunk 24 is the only one that replaces an upstream line, so it is the only one
 named in `lody-surface-tabs.test.tsx`'s anchor table; the other three add lines
@@ -436,7 +432,7 @@ answers when somebody asks, which is right for a click and useless for a rendere
 state — nothing re-renders when a turn lands. Hunk 23 turns the ref write into a
 state write, and `useImperativeHandle` is what makes it current: the handle's own
 dependency list carries `lastCompletedAssistantMessageId`
-(`session-chat-interface.tsx:4661`), so React re-attaches the ref on the commit
+(`session-chat-interface.tsx:4842`), so React re-attaches the ref on the commit
 that first has a turn. No new subscription, no second document read.
 
 **Hunk 23 IGNORES THE DETACH, and that is the whole of the loop safety.** Every
@@ -524,7 +520,7 @@ field there.
 #### The hunks
 
 Line numbers are the vendored tree's BEFORE this patch. For `session-detail.tsx`
-they are the `f3474894` baseline's own numbers (that file is pinned by
+they are the `f4b1ba25` baseline's own numbers (that file is pinned by
 `packages/webapp/test/upstream-baseline/`); for `session-chat-interface.tsx`
 seam patch 4 shifted everything below its line 1910 by five.
 
@@ -534,44 +530,44 @@ GitHub surface reads through
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
 | 1 | 78 | `export const getSessionGitHubState = (` | adds a third parameter, `gitHubIntegrationAvailable = true`, and the doc comment that says when to pass it |
-| 2 | 81, 82 | `const repoFullName = (resolveProjectGitHubRepo(...))` and `const latestPr = getLatestPullRequest(sourceSession);` | both answer the flag: `''` and `null` with it off |
+| 2 | 81, 83 | `const repoFullName = (resolveProjectGitHubRepo(...))` and `const latestPr = getLatestPullRequest(sourceSession);` | both answer the flag: `''` and `null` with it off |
 
 Hunk 2 is why the rest is small. `canShowGitHubActions` is `!!repoFullName`,
 `hasExistingPr` is `!!repoFullName && !!latestPr`, and every consumer named in
-the matrix — the info bar (`session-info-action-state.ts:43`), the PR tab
-(`session-detail.tsx:3475`, `:5508`), the PR badge
-(`session-chat-interface.tsx:5135`), the diff panel's `commentsEnabled` and
-`prLinked` (`session-conversation-diff-panel.tsx:662`, `:665`) — is downstream
+the matrix — the info bar (`session-info-action-state.ts:43`), the PR tab in
+`session-detail.tsx`, the PR badge (`session-chat-interface.tsx:5325`), and the
+diff panel's `commentsEnabled` and `prLinked`
+(`session-conversation-diff-panel.tsx:668`, `:671`) — is downstream
 of those two values.
 
 `packages/components/src/components/sessions/session-chat-interface.tsx`
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 3 | 152 | the `@/lib/app-location` import | imports `useAppCapability` |
-| 4 | 1005 | `compact = false,` in `SessionHeaderMenu`'s destructuring | defaults `hideCloudMenuItems` to `false` |
-| 5 | 1032 | `compact?: boolean;` in its inline props type | declares `hideCloudMenuItems?: boolean` |
-| 6 | 1343 | `{owner && !isArchived ? (` | adds `&& !hideCloudMenuItems` — IC83 |
-| 7 | 1388 | `{sharing && sharing.visibility !== 'team' ? (` | the same term — IC84 |
-| 8 | 1473 | the `Copy URL` `<DropdownMenuItem>` | wraps it in `{hideCloudMenuItems ? null : ( … )}` — IC88 |
-| 9 | 1740 | `readOnly?: boolean;` in `SessionChatInterfaceProps` | declares `hideCloudMenuItems`, `hideNotificationPrompt`, `hideAgentRoles` |
-| 10 | 1910 | `readOnly = false,` in the destructuring | defaults all three to `false` |
-| 11 | 2146 | above the `getSessionGitHubState` memo | reads the `githubIntegration` capability |
-| 12 | 2156, 2157 | the memo's body and dependency list | passes it as the third argument |
-| 13 | 5581 | `onOpenReviewSettings={…}` on `<SessionHeaderMenu>` | passes `hideCloudMenuItems` |
-| 14 | 5774 | `<NotificationPermissionPrompt … />` | wraps it in `{hideNotificationPrompt ? null : ( … )}` — IC60 |
-| 15 | 5879 | `session={session}` on `<SessionChatInputArea>` | passes `hideAgentRoles` |
+| 3 | 159 | the `date-fns/locale` import | imports `useAppCapability` |
+| 4 | 1021 | `compact = false,` in `SessionHeaderMenu`'s destructuring | defaults `hideCloudMenuItems` to `false` |
+| 5 | 1048 | `compact?: boolean;` in its inline props type | declares `hideCloudMenuItems?: boolean` |
+| 6 | 1359 | `{owner && !isArchived ? (` | adds `&& !hideCloudMenuItems` — IC83 |
+| 7 | 1404 | `{sharing && sharing.visibility !== 'team' ? (` | the same term — IC84 |
+| 8 | 1489 | the `Copy URL` `<DropdownMenuItem>` | wraps it in `{hideCloudMenuItems ? null : ( … )}` — IC88 |
+| 9 | 1746 | `readOnly?: boolean;` in `SessionChatInterfaceProps` | declares `hideCloudMenuItems`, `hideNotificationPrompt`, `hideAgentRoles` |
+| 10 | 1917 | `readOnly = false,` in the destructuring | defaults all three to `false` |
+| 11 | 2247 | above the `getSessionGitHubState` memo | reads the `githubIntegration` capability |
+| 12 | 2257, 2258 | the memo's body and dependency list | passes it as the third argument |
+| 13 | 5698 | `onOpenReviewSettings={…}` on `<SessionHeaderMenu>` | passes `hideCloudMenuItems` |
+| 14 | 5886 | `<NotificationPermissionPrompt … />` | wraps it in `{hideNotificationPrompt ? null : ( … )}` — IC60 |
+| 15 | 5991 | `session={session}` on `<SessionChatInputArea>` | passes `hideAgentRoles` |
 
 `packages/components/src/components/sessions/session-detail.tsx` (pinned)
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 16 | 214 | the `@/lib/session-github-state` import block | imports `useAppCapability` |
-| 17 | 695 | `readOnly = false,` in the destructuring | defaults the four new props |
-| 18 | 711 | `readOnly?: boolean;` in the inline props type | declares `hideCloudMenuItems`, `hideNotificationPrompt`, `hideAgentRoles`, `keyboardShortcutsAvailable` |
-| 19 | 1563 | above the `getSessionGitHubState` memo | reads the `githubIntegration` capability |
-| 20 | 1564, 1565 | the memo's body and dependency list | passes it as the third argument |
-| 21 | 3719 | the `});` that closes the `session.focusInput` registration | passes `keyboardShortcutsAvailable` as `useCommand`'s second argument — C100 |
+| 16 | 224 | the `@/lib/session-github-state` import block | imports `useAppCapability` |
+| 17 | 692 | `readOnly = false,` in the destructuring | defaults the four new props |
+| 18 | 698 | `readOnly?: boolean;` in the inline props type | declares `hideCloudMenuItems`, `hideNotificationPrompt`, `hideAgentRoles`, `keyboardShortcutsAvailable` |
+| 19 | 1606 | above the `getSessionGitHubState` memo | reads the `githubIntegration` capability |
+| 20 | 1608, 1609 | the memo's body and dependency list | passes it as the third argument |
+| 21 | 3876 | the `});` that closes the `session.focusInput` registration | passes `keyboardShortcutsAvailable` as `useCommand`'s second argument — C100 |
 | 22 | 5723 | `readOnly,` in the shared chat-surface props builder | forwards the three `hide*` props to every chat surface the page mounts |
 
 Hunks 20 and 21 are the only three lines this patch removes from the baseline,
@@ -581,30 +577,30 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 23 | 17 | the `@/lib/agent-role-form` import | imports `useAppCapability` |
-| 24 | 372 | `session: SessionMeta;` in `SessionChatInputAreaProps` | declares `hideAgentRoles?: boolean` |
-| 25 | 460 | `session,` in the destructuring | defaults it to `false` |
-| 26 | 1926 | `const repoFullName = useMemo(() => resolveSessionRepoFullName(session), [session]);` | answers the capability, so `@issue`/`@pr` and the `#123` hydrator go dark — C17, C18, C19 |
-| 27 | 2168 | `agentRoles={agentRolesProp}` on the mobile run-config sheet | `undefined` when hidden |
-| 28 | 2201 | `agentRoles={agentRolesProp}` on `<DesktopRunConfigMenu>` | `undefined` when hidden — C86-C89, and with no Role selectable C91 cannot fire |
+| 23 | 18 | the `@/hooks/use-session-agent-role` import | imports `useAppCapability` |
+| 24 | 380 | `session: SessionMeta;` in `SessionChatInputAreaProps` | declares `hideAgentRoles?: boolean` |
+| 25 | 493 | `session,` in the destructuring | defaults it to `false` |
+| 26 | 2043 | `const repoFullName = useMemo(() => resolveSessionRepoFullName(session), [session]);` | answers the capability, so `@issue`/`@pr` and the `#123` hydrator go dark — C17, C18, C19 |
+| 27 | 2332 | `agentRoles={agentRolesProp}` on the mobile run-config sheet | `undefined` when hidden |
+| 28 | 2365 | `agentRoles={agentRolesProp}` on `<DesktopRunConfigMenu>` | `undefined` when hidden — C86-C89, and with no Role selectable C91 cannot fire |
 
 `packages/components/src/components/chat/chat-landing.tsx`
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 29 | 382 | `onSelectionUrlSync?: …` in `ChatLandingProps` | declares `hideProductHints` and `hideAgentRoles` |
-| 30 | 559 | `onSelectionUrlSync,` in the destructuring | defaults both to `false` |
-| 31 | 3774 | `agentRoles={{ … }}` on the desktop run-config menu | `undefined` when hidden |
-| 32 | 4080 | `agentRoles={{ … }}` on the mobile one | the same |
-| 33 | 4163 | above `selectedLocalProjectGithubRepoFullName` | reads the `githubIntegration` capability and returns `undefined` without it |
-| 34 | 4273 | `return { kind: 'github' …, repoFullName: selectedRepo, … }` in `mentionSource` | drops the repo name without the capability |
-| 35 | 6541 | `hintType={hintType}` | `null` when `hideProductHints` — S7, S8, S9, S10 in one line |
+| 29 | 384 | `onSelectionUrlSync?: …` in `ChatLandingProps` | declares `hideProductHints` and `hideAgentRoles` |
+| 30 | 561 | `onSelectionUrlSync,` in the destructuring | defaults both to `false` |
+| 31 | 3777 | `agentRoles={{ … }}` on the desktop run-config menu | `undefined` when hidden |
+| 32 | 4083 | `agentRoles={{ … }}` on the mobile one | the same |
+| 33 | 4166 | above `selectedLocalProjectGithubRepoFullName` | reads the `githubIntegration` capability and returns `undefined` without it |
+| 34 | 4276 | `return { kind: 'github' …, repoFullName: selectedRepo, … }` in `mentionSource` | drops the repo name without the capability |
+| 35 | 6545 | `hintType={hintType}` | `null` when `hideProductHints` — S7, S8, S9, S10 in one line |
 
 `packages/components/src/components/chat/unified-project-selector.tsx`
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 36 | 20 | the `@/lib/github-avatar` import | imports `useAppCapability` |
+| 36 | 20 | the `@/components/session-sharing` import | imports `useAppCapability` |
 | 37 | 398 | `const { t } = useTranslation();` in `UnifiedProjectSelectorView` | reads the capability |
 | 38 | 635 | the `repos.connectMore` `<DropdownMenuItem>` | renders it only with the capability — C65 |
 
@@ -679,16 +675,16 @@ this patch when it merges.**
 
 Line numbers are the vendored tree's BEFORE this patch. For
 `session-chat-input-area.tsx` they are seam patch 7's numbers, which sit five
-below `f3474894` for that file.
+below `f4b1ba25` for that file.
 
 `packages/components/src/components/sessions/session-chat-input-area.tsx`
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 1 | 1116 | `if (canSendFileLocally && session.machineId) {` in `startFileUpload`, with its comment block | MOVES that block above the guard at 1100 and adds `workspaceId &&` to its condition — the guard still owns the cloud path below it |
-| 2 | 1100 | `if (!workspaceId || !authToken) {` in `startFileUpload` | unchanged text, now reached only after the local path declined |
-| 3 | 919 | `if (!workspaceId || !authToken) {` in `startUpload` (images) | becomes `if (!workspaceId || (!authToken && !canSendFileLocally)) {` |
-| 4 | 965 | `const uploaded = await uploadSessionImage({` | throws `imageUploadMissingAuthLabel` first when there is no token, so a tokenless image lands in the `catch` upstream already wrote |
+| 1 | 1158 | `if (canSendFileLocally && session.machineId) {` in `startFileUpload`, with its comment block | MOVES that block above the guard at 1142 and adds `workspaceId &&` to its condition — the guard still owns the cloud path below it |
+| 2 | 1142 | `if (!workspaceId || !authToken) {` in `startFileUpload` | unchanged text, now reached only after the local path declined |
+| 3 | 961 | `if (!workspaceId || !authToken) {` in `startUpload` (images) | becomes `if (!workspaceId || (!authToken && !canSendFileLocally)) {` |
+| 4 | 1007 | `const uploaded = await uploadSessionImage({` | throws `imageUploadMissingAuthLabel` first when there is no token, so a tokenless image lands in the `catch` upstream already wrote |
 
 `packages/components/src/hooks/use-chat-landing-file-draft.ts`
 
@@ -698,7 +694,7 @@ below `f3474894` for that file.
 
 **Hunk 4 is why the image path needed no new fallback.** Upstream already
 degrades a failed image upload to a pending FILE attachment over the local
-transport (`session-chat-input-area.tsx:997-1056`, toast
+transport (`session-chat-input-area.tsx:1007-1072`, toast
 `sessions.imageStoredAsLocalFile`). A missing token is exactly "there is no
 cloud upload to attempt", so hunks 3 and 4 route it into that same `catch`
 rather than write a second fallback beside it. The one behaviour change inside
@@ -770,9 +766,9 @@ Line numbers are the vendored tree's BEFORE this patch.
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
 | 1 | 85 | `SessionRowLeadingSlot,` in the `@/components/sidebar-row-shared` import list | adds `SessionRowWorktreeIndicator,` |
-| 2 | 813 | `const showMergeablePill = isMergeable && !isSelected;` | adds `const showWorktreeIcon = session.isWorktree === true;` beside it — the same name and the same expression as `loro-app-sidebar.tsx:596` |
-| 3 | 1004 | `) : hasPr \|\| hasChanges \|\| showMergeablePill \|\| isMobile ? (` | gains `\|\| showWorktreeIcon`, so a worktree session with no PR and no diff still renders the metric cluster |
-| 4 | 1025 | `{hasPr ? (` inside that cluster | renders `<SessionRowWorktreeIndicator isWorktree={showWorktreeIcon} />` immediately before the PR icon |
+| 2 | 795 | `const showMergeablePill = isMergeable && !isSelected;` | adds `const showWorktreeIcon = session.isWorktree === true;` beside it — the same name and the same expression as `loro-app-sidebar.tsx:596` |
+| 3 | 989 | `) : hasPr \|\| hasChanges \|\| showMergeablePill \|\| isMobile ? (` | gains `\|\| showWorktreeIcon`, so a worktree session with no PR and no diff still renders the metric cluster |
+| 4 | 1009 | `{hasPr ? (` inside that cluster | renders `<SessionRowWorktreeIndicator isWorktree={showWorktreeIcon} />` immediately before the PR icon |
 
 **Placement is copied, not chosen.** `loro-app-sidebar.tsx:717-721` puts the
 glyph to the LEFT of the PR icon and to the RIGHT of the line diff, so a
@@ -822,7 +818,7 @@ site passes any of them. Our side is one field in
 
 #### The hunks
 
-Line numbers for `session-detail.tsx` are the `f3474894` baseline's own
+Line numbers for `session-detail.tsx` are the `f4b1ba25` baseline's own
 (`packages/webapp/test/upstream-baseline/`); every other file is numbered at the
 vendored tree BEFORE this patch. **Every hunk in the pinned file is purely
 ADDITIVE** — this patch removes no upstream line, so it declares no new anchor
@@ -832,11 +828,11 @@ in `lody-surface-tabs.test.tsx`.
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 1 | 5761 | `{archiveConfirmDialog}` in the DESKTOP return | mounts `{fileQuickOpenDialog}` beside it — BUG-1. It portals out, so tree position does not matter; the comment above that block already says so for the two dialogs already there. |
-| 2 | 5340 | `viewStateKey={\`session-files:${activeSession.id}\`}` on `<FileTreeView>` | passes `onProviderRetry` — BUG-2 |
-| 3 | 666 | `onMobileBack,` in the destructuring | defaults `hideLanguageServiceActions` to `false` |
-| 4 | 672 | `onMobileBack?: () => void;` in the inline props type | declares `hideLanguageServiceActions?: boolean` |
-| 5 | 4524 | `preferNativeMarkdownSelection={isMobile}` on `<SessionFileContentView>` | passes `lspAvailable={!hideLanguageServiceActions}` — SP26, and `renderViewerTabContent` is shared by both branches, so one line covers desktop and mobile |
+| 1 | 5934 | `{archiveConfirmDialog}` in the DESKTOP return | mounts `{fileQuickOpenDialog}` beside it — BUG-1. It portals out, so tree position does not matter; the comment above that block already says so for the two dialogs already there. |
+| 2 | 5510 | `viewStateKey={\`session-files:${activeSession.id}\`}` on `<FileTreeView>` | passes `onProviderRetry` — BUG-2 |
+| 3 | 692 | `onMobileBack,` in the destructuring | defaults `hideLanguageServiceActions` to `false` |
+| 4 | 698 | `onMobileBack?: () => void;` in the inline props type | declares `hideLanguageServiceActions?: boolean` |
+| 5 | 4693 | `preferNativeMarkdownSelection={isMobile}` on `<SessionFileContentView>` | passes `lspAvailable={!hideLanguageServiceActions}` — SP26, and `renderViewerTabContent` is shared by both branches, so one line covers desktop and mobile |
 
 `packages/components/src/hooks/use-code-collab-session-file-provider.ts` — BUG-2's
 mechanism
@@ -856,13 +852,13 @@ errors; an offline → online edge can fire at most once per outage, and the
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
 | 8 | 67 | `viewStateKey?: string;` in `FileTreeViewProps` | declares `onProviderRetry?: () => void` |
-| 9 | 511 | the `renderBranch === 'unavailable'` `FileTreeStatePanel` | gives it the same `action` the `local-error` branch already draws — the same `RefreshCw` + `sessions.codeSession.files.retry` — when the caller passes a retry |
+| 9 | 518 | the `renderBranch === 'unavailable'` `FileTreeStatePanel` | gives it the same `action` the `local-error` branch already draws — the same `RefreshCw` + `sessions.codeSession.files.retry` — when the caller passes a retry |
 
 `packages/components/src/components/sessions/session-file-content-view.tsx`
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 10 | 1412 | the `showSearchButton` `<button>` in the viewer toolbar | adds the "Copy file path" button before it, and adds its `handleCopyFilePath` callback plus `showCopyPathButton` to `showViewerTopBar` — SP28 |
+| 10 | 1411 | the `showSearchButton` `<button>` in the viewer toolbar | adds the "Copy file path" button before it, and adds its `handleCopyFilePath` callback plus `showCopyPathButton` to `showViewerTopBar` — SP28 |
 | 11 | 989 | `const isLspEnabled =` | declares `lspAvailable?: boolean` (default `true`), answers it in `isLspEnabled`, and passes `lspActions={lspAvailable}` to `<SessionMonacoTextViewer>` — SP26 |
 
 `packages/components/src/components/sessions/session-monaco-text-viewer.tsx` and
@@ -968,9 +964,9 @@ in `lody-surface-tabs.test.tsx`.
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
 | 3 | 17 | `import { findTriggerCandidates, isMentionNavigationPrefix } from './mention-trigger';` | also imports `getMentionDrillDownParent` |
-| 4 | 698 | `          if (tryNavigateBack()) event.preventDefault();` inside `case 'ArrowLeft'` | calls `tryNavigateUp()` instead — one level, not the whole prefix. `case 'Backspace'` keeps `tryNavigateBack()` |
-| 6 | 636 | the closing `}` of `tryNavigateBack` | adds `tryNavigateUp` beside it |
-| 7 | 461 | `      if (!context.onMentionClick) return;` | the chip hit-test no longer needs a handler to run, and a hit SELECTS the range before the optional handler is called — BUG-CA-05 |
+| 4 | 777 | `          if (tryNavigateBack()) event.preventDefault();` inside `case 'ArrowLeft'` | calls `tryNavigateUp()` instead — one level, not the whole prefix. `case 'Backspace'` keeps `tryNavigateBack()` |
+| 6 | 716 | the closing `}` of `tryNavigateBack` | adds `tryNavigateUp` beside it |
+| 7 | 543 | `      if (!context.onMentionClick) return;` | the chip hit-test no longer needs a handler to run, and a hit SELECTS the range before the optional handler is called — BUG-CA-05 |
 
 `packages/components/src/components/mentions/mention-registry.ts`
 
@@ -1035,7 +1031,7 @@ inside a session (it degrades to a file), and an image on the LANDING is the
 single combination that still fails with "Missing workspace or auth token".
 
 The behaviour that closes it is upstream's own, and it already ships one surface
-away. `session-chat-input-area.tsx:1004-1066` turns an image it cannot upload
+away. `session-chat-input-area.tsx:1007-1072` turns an image it cannot upload
 into a pending FILE attachment over the local transport, with the toast
 `sessions.imageStoredAsLocalFile`. In-session that is one component holding both
 state machines, so the image moves from `pendingImages` into `pendingFiles` in
@@ -1140,15 +1136,15 @@ had a page it could not reach.
 rail. So the item list becomes the prop, and `hideFooter` keeps its meaning as
 the shorter spelling for "none of them".
 
-| # | File | Line (at `fe94a920`) | Upstream anchor | What it does |
+| # | File | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|---|
-| 1 | `packages/components/src/components/loro-sidebar.tsx` | 65 | after `export type LoroSidebarNavKey` | declares `LoroSidebarFooterItem` and `LORO_SIDEBAR_FOOTER_ITEMS`, the default |
-| 2 | same | 183 | after `hideFooter?: boolean;` in `LoroSidebarProps` | declares `footerItems?: readonly LoroSidebarFooterItem[]` |
-| 3 | same | 650 | after `hideFooter = false,` in the destructuring | defaults it to every item |
-| 4 | same | 1237 | the `Settings` `IconButton` | wraps it in `{footerItems.includes('settings') ? ( … ) : null}` |
-| 5 | same | 1241 | the Help `DropdownMenu` | the same term for `'help'` |
-| 6 | same | 1267 | the `Archive` `IconButton` | the same term for `'archive'` |
-| 7 | same | 1272 | `{isMobile ? (` on `SidebarFilterPopover` | adds `&& footerItems.includes('filter')` |
+| 1 | `packages/components/src/components/loro-sidebar.tsx` | 68 | after `export type LoroSidebarNavKey` | declares `LoroSidebarFooterItem` and `LORO_SIDEBAR_FOOTER_ITEMS`, the default |
+| 2 | same | 171 | after `hideFooter?: boolean;` in `LoroSidebarProps` | declares `footerItems?: readonly LoroSidebarFooterItem[]` |
+| 3 | same | 635 | after `hideFooter = false,` in the destructuring | defaults it to every item |
+| 4 | same | 1224 | the `Settings` `IconButton` | wraps it in `{footerItems.includes('settings') ? ( … ) : null}` |
+| 5 | same | 1230 | the Help `DropdownMenu` | the same term for `'help'` |
+| 6 | same | 1256 | the `Archive` `IconButton` | the same term for `'archive'` |
+| 7 | same | 1260 | `{isMobile ? (` on `SidebarFilterPopover` | adds `&& footerItems.includes('filter')` |
 
 Strictly additive: with the prop absent every item is in the list and the footer
 renders byte-for-byte what it rendered before. No upstream call site passes it.
@@ -1185,20 +1181,20 @@ renders and cannot work.
    capability for "this workspace has one member" and inventing one would be a
    bigger claim than the suppression.
 
-| # | File | Line (at `fe94a920`) | Upstream anchor | What it does |
+| # | File | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|---|
 | 1 | `packages/components/src/components/archive/archive-view.tsx` | 27 | the `@/lib/utils` import | imports `useAppCapability` |
 | 2 | same | 317 | `function getArchivedSessionItemViewModel(` | adds a third parameter, `gitHubIntegrationAvailable = true`, and the doc comment that says when to pass it |
-| 3 | same | 327 | `const pullRequests = session.pullRequests ?? [];` | answers the flag: an empty list with it off, which zeroes `prUrl`, `prStatusMeta`, `PrIcon` and `prTooltipLabel` together |
-| 4 | same | 403 | the `DesktopArchivedSessionItem` destructuring | reads the capability and passes it |
-| 5 | same | 620 | the `MobileArchivedSessionItem` destructuring | the same |
-| 6 | same | 1003 | `export function ArchiveView()` | declares `ArchiveViewProps` with `hideTeamScope?: boolean`, defaulted `false` |
-| 7 | same | 1013 | `const [archiveScope, setArchiveScope] = useAtom(archiveScopeAtom);` | renames the stored value and pins the ANSWER to `'my'` with the prop on — the atom is still written, so turning the prop off restores the member's own last choice |
-| 8 | same | 1456 | `{isMobile ? (` on the toolbar's scope dropdown | adds `&& !hideTeamScope` |
-| 9 | same | 1718 | `<WebArchiveScreen archiveScope={archiveScope}` | forwards `hideTeamScope` |
-| 10 | `packages/components/src/components/archive/web-archive-screen.tsx` | 22 | `archiveScope: ArchiveScope;` in `WebArchiveScreenProps` | declares `hideTeamScope?: boolean` |
-| 11 | same | 37 | `archiveScope,` in the destructuring | defaults it to `false` |
-| 12 | same | 126 | the `div.ml-2` that holds the scope `DropdownMenu` | wraps it in `{hideTeamScope ? null : ( … )}` |
+| 3 | same | 328 | `const pullRequests = session.pullRequests ?? [];` | answers the flag: an empty list with it off, which zeroes `prUrl`, `prStatusMeta`, `PrIcon` and `prTooltipLabel` together |
+| 4 | same | 404 | the `DesktopArchivedSessionItem` destructuring | reads the capability and passes it |
+| 5 | same | 634 | the `MobileArchivedSessionItem` destructuring | the same |
+| 6 | same | 1034 | `export function ArchiveView()` | declares `ArchiveViewProps` with `hideTeamScope?: boolean`, defaulted `false` |
+| 7 | same | 1046 | `const [archiveScope, setArchiveScope] = useAtom(archiveScopeAtom);` | renames the stored value and pins the ANSWER to `'my'` with the prop on — the atom is still written, so turning the prop off restores the member's own last choice |
+| 8 | same | 1489 | `{isMobile ? (` on the toolbar's scope dropdown | adds `&& !hideTeamScope` |
+| 9 | same | 1752 | `<WebArchiveScreen archiveScope={archiveScope}` | forwards `hideTeamScope` |
+| 10 | `packages/components/src/components/archive/web-archive-screen.tsx` | 23 | `archiveScope: ArchiveScope;` in `WebArchiveScreenProps` | declares `hideTeamScope?: boolean` |
+| 11 | same | 38 | `archiveScope,` in the destructuring | defaults it to `false` |
+| 12 | same | 131 | the `div.ml-2` that holds the scope `DropdownMenu` | wraps it in `{hideTeamScope ? null : ( … )}` |
 
 Hunk 3 is why the rest is small, and it is hunk 2 of seam patch 7 in a second
 place: every PR value the row draws is downstream of that one list.
@@ -1249,8 +1245,8 @@ that the host says it and the vendored surface says nothing.
 | The info bar's ambient catch-up spinner | `session-info-bar.tsx:339` | `SessionSyncingIndicator`, pinned to the bar's right edge (IC65) |
 | The mobile session header's catch-up spinner | `session-detail.tsx`'s `MobileProjectInfo` | the same indicator beside the session title |
 | The page header's spinner and offline cloud glyph | `SessionProjectInfo` in `session-chat-interface.tsx` | unreachable from BlitzOS today — the page mounts every chat surface with `hideHeader: true` — and gated anyway, so the prop means one thing everywhere |
-| The file viewer's status bar | `session-file-content-view.tsx:1533` | an `Offline` cloud glyph titled `Machine is offline`, beside the save and live-sync items |
-| The mobile home connection banner | `chat-landing.tsx:6300` | `连接中… / 正在重连… / 离线 / 已连接`, which upstream's own comment calls a mirror of the desktop `ConnectionPill` |
+| The file viewer's status bar | `session-file-content-view.tsx:1545` | an `Offline` cloud glyph titled `Machine is offline`, beside the save and live-sync items |
+| The mobile home connection banner | `chat-landing.tsx:6333` | `连接中… / 正在重连… / 离线 / 已连接`, which upstream's own comment calls a mirror of the desktop `ConnectionPill` |
 
 **WHAT THIS PATCH DELIBERATELY LEAVES ALONE**, and each one is a decision:
 
@@ -1313,7 +1309,7 @@ single point every one of these states resolves through
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 1 | 34 | `export function resolveSessionStatusStripState(args: {` | adds `connectionStatusHidden?: boolean` to the argument type, with the doc comment that says when a host passes it |
+| 1 | 38 | `export function resolveSessionStatusStripState(args: {` | adds `connectionStatusHidden?: boolean` to the argument type, with the doc comment that says when a host passes it |
 | 2 | 40, 42 | `if (!args.browserOnline) return { kind: 'browser-offline' };` and `if (args.machineOnlineStatus === 'offline') {` | both answer the flag. The `machine-removed` branch between them does NOT |
 
 Hunk 2 is why the rest of the chip is untouched: `StatusChip` renders `null` for
@@ -1324,22 +1320,22 @@ together, on desktop and on mobile.
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 3 | 1774 | `hideAgentRoles?: boolean;` in `SessionChatInterfaceProps` (seam patch 7's own anchor) | declares `hideConnectionStatus?: boolean` |
-| 4 | 1947 | `hideAgentRoles = false,` in the destructuring | defaults it to `false` |
-| 5 | 2503, 2509 | the `resolveSessionStatusStripState` memo body and its dependency list | passes `connectionStatusHidden: hideConnectionStatus` |
-| 6 | 5677 | `isSyncing={effectiveTitleSyncing}` on `<SessionProjectInfo>` | adds `!hideConnectionStatus &&` |
-| 7 | 5678 | `isMachineOffline={sessionMachineOnlineStatus === 'offline'}` | the same term |
-| 8 | 5913 | `syncing={!isMobile && effectiveTitleSyncing}` on `<SessionInfoBar>` | the same term |
+| 3 | 1746 | `hideAgentRoles?: boolean;` in `SessionChatInterfaceProps` (seam patch 7's own anchor) | declares `hideConnectionStatus?: boolean` |
+| 4 | 1917 | `hideAgentRoles = false,` in the destructuring | defaults it to `false` |
+| 5 | 2490, 2492 | the `resolveSessionStatusStripState` memo body and its dependency list | passes `connectionStatusHidden: hideConnectionStatus` |
+| 6 | 5750 | `isSyncing={effectiveTitleSyncing}` on `<SessionProjectInfo>` | adds `!hideConnectionStatus &&` |
+| 7 | 5751 | `isMachineOffline={sessionMachineOnlineStatus === 'offline'}` | the same term |
+| 8 | 5979 | `syncing={!isMobile && effectiveTitleSyncing}` on `<SessionInfoBar>` | the same term |
 
 `packages/components/src/components/sessions/session-detail.tsx` (pinned)
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 9 | 666 | `onMobileBack,` in the destructuring (seam patch 10's own anchor) | defaults `hideConnectionStatus` to `false` |
-| 10 | 672 | `onMobileBack?: () => void;` in the inline props type | declares `hideConnectionStatus?: boolean` |
-| 11 | 1110 | `    activeSessionTabId !== null && isSyncingRoomSyncState(activeSessionDocSyncState),` | adds `!hideConnectionStatus &&`, which takes the mobile header spinner and the `titleSyncing` override together |
-| 12 | 4524 | `preferNativeMarkdownSelection={isMobile}` on `<SessionFileContentView>` (seam patch 10's own anchor) | passes `hideConnectionStatus` |
-| 13 | 5552 | `hideHeader: true,` in the shared chat-surface props builder | forwards `hideConnectionStatus` to every chat surface the page mounts |
+| 9 | 692 | `onMobileBack,` in the destructuring (seam patch 10's own anchor) | defaults `hideConnectionStatus` to `false` |
+| 10 | 698 | `onMobileBack?: () => void;` in the inline props type | declares `hideConnectionStatus?: boolean` |
+| 11 | 1180 | `    activeSessionTabId !== null && isSyncingRoomSyncState(activeSessionDocSyncState),` | adds `!hideConnectionStatus &&`, which takes the mobile header spinner and the `titleSyncing` override together |
+| 12 | 4693 | `preferNativeMarkdownSelection={isMobile}` on `<SessionFileContentView>` (seam patch 10's own anchor) | passes `hideConnectionStatus` |
+| 13 | 5723 | `hideHeader: true,` in the shared chat-surface props builder | forwards `hideConnectionStatus` to every chat surface the page mounts |
 
 Hunk 11 is the ONE line this patch removes from the baseline, and it is declared
 in `packages/webapp/test/lody-surface-tabs.test.tsx`'s anchor table with the
@@ -1349,16 +1345,16 @@ others. Hunks 9, 10, 12 and 13 add lines and remove none.
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 14 | 170, 223 | `lspAvailable?: boolean;` and `lspAvailable = true,` (seam patch 10's own anchors) | declares `hideConnectionStatus?: boolean`, defaulted `false` |
-| 15 | 1533 | `machineOffline={` on `<SessionFileRealtimeStatusBar>` | answers it, so the bar keeps its save and live-sync items and drops the offline glyph |
+| 14 | 161, 213 | `lspAvailable?: boolean;` and `lspAvailable = true,` (seam patch 10's own anchors) | declares `hideConnectionStatus?: boolean`, defaulted `false` |
+| 15 | 1492 | `machineOffline={` on `<SessionFileRealtimeStatusBar>` | answers it, so the bar keeps its save and live-sync items and drops the offline glyph |
 
 `packages/components/src/components/chat/chat-landing.tsx`
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 16 | 394 | `hideProductHints?: boolean;` in `ChatLandingProps` (seam patch 7's own anchor) | declares `hideConnectionStatus?: boolean` |
-| 17 | 578 | `hideProductHints = false,` in the destructuring | defaults it to `false` |
-| 18 | 6300 | `connectionUiState={mobileHomeConnectionUiState}` on `<MobileHomeScreen>` | passes `undefined` when hidden |
+| 16 | 384 | `hideProductHints?: boolean;` in `ChatLandingProps` (seam patch 7's own anchor) | declares `hideConnectionStatus?: boolean` |
+| 17 | 561 | `hideProductHints = false,` in the destructuring | defaults it to `false` |
+| 18 | 6260 | `connectionUiState={mobileHomeConnectionUiState}` on `<MobileHomeScreen>` | passes `undefined` when hidden |
 
 Hunk 18 needs no change in `mobile-home-screen.tsx`: that prop is already
 optional there and already defaults to `'online'`, the one state at which the
@@ -1405,10 +1401,10 @@ props are inert there and the mobile drawer keeps today's behaviour."* That was
 correct while both routes dropped the mobile branch. It is the gap now.
 
 **THE STRUCTURAL CAUSE, AND IT IS ONE SENTENCE.** `session-detail.tsx` returns
-for mobile at `:4803`, and `getSharedChatSurfaceProps` — the builder that
+for mobile above `:5432`, and `getSharedChatSurfaceProps` — the builder that
 forwards `hideCloudMenuItems`, `hideNotificationPrompt`, `hideAgentRoles` and
 seam patch 15's `hideConnectionStatus` to every chat surface — is defined at
-`:5755`, 952 lines BELOW it. The mobile branch hand-writes its own
+`:5710`, below it. The mobile branch hand-writes its own
 `SessionChatInterface` props and carried `readOnly` alone. So **props are lost
 at the mobile fork and capabilities are not**: every
 `useAppCapability('githubIntegration')` call sits above the return and answers
@@ -1416,7 +1412,7 @@ on both branches, which is why seam patch 7's GitHub half needs nothing here and
 its other groups need everything.
 
 The same fork explains the landing. `hideProductHints` is read at
-`chat-landing.tsx:6584`, and the mobile branch returns at `:6174`/`:6282`.
+`chat-landing.tsx:6545`, and the mobile branch returns above `:6260`/`:6416`.
 
 **WHAT SEAM PATCH 15 ALREADY DOES, SO THIS PATCH DOES NOT.** Connectivity is
 that patch's subject and it reaches the mobile branch on its own in two of the
@@ -1436,14 +1432,14 @@ forwarded here. One flag, one prop, one gate story.
 
 `packages/components/src/components/mobile/mobile-session-tab-sheet.tsx`
 
-| # | Line (at `f3474894`) | Upstream anchor | What it does |
+| # | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|
-| 1 | 58 | `kind: 'file' \| 'diff' \| 'pr' \| 'browser' \| 'files';` | adds `\| 'custom'` |
-| 2 | 55-60 | `ViewerTabEntry` | adds `icon?: ReactNode` (already imported at `:1`) |
-| 3 | 102-108 | `const VIEWER_ICON: Record<ViewerTabEntry['kind'], typeof FileIcon>` | adds the `custom` entry — the `Record` is total, so hunk 1 does not compile without it |
-| 4 | 226-238 | `const Icon = VIEWER_ICON[v.kind];` and the `leading` element | draws `v.icon` when the host supplied one, exactly as seam patch 5 hunk 3 does on the desktop strip (`session-tab-bar.tsx:476`) |
+| 1 | 67 | `kind: 'file' \| 'diff' \| 'pr' \| 'browser' \| 'files';` | adds `\| 'custom'` |
+| 2 | 64-68 | `ViewerTabEntry` | adds `icon?: ReactNode` (already imported at `:1`) |
+| 3 | 116-122 | `const VIEWER_ICON: Record<ViewerTabEntry['kind'], typeof FileIcon>` | adds the `custom` entry — the `Record` is total, so hunk 1 does not compile without it |
+| 4 | 244-248 | `const Icon = VIEWER_ICON[v.kind];` and the `leading` element | draws `v.icon` when the host supplied one, exactly as seam patch 5 hunk 3 does on the desktop strip (`session-tab-bar.tsx:465`) |
 
-**HUNK 1 IS ALSO A BUG FIX.** `session-detail.tsx:4368` already writes
+**HUNK 1 IS ALSO A BUG FIX.** `session-detail.tsx:4295` already writes
 `kind: v.type` from a `ViewerTabItem`, whose `type` seam patch 5 hunk 2 widened
 to `'file' | 'diff' | 'custom'`. The mobile enum did not follow, so that
 assignment has been unsound since wave 3. It is unreachable today only because
@@ -1460,14 +1456,14 @@ a terminal closes from its BlitzOS rail row (`SessionRailSidebar`'s
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 5 | 4262 | `const hasActiveViewerTab =` | adds `hasActiveSurfaceTab`, the mobile counterpart of seam patch 5 hunk 13's `activeChatSurfaceId` |
-| 6 | 4364-4387 | the `for (const v of viewerTabItems)` loop in `mobileViewers`, and its dependency list | appends `surfaceTabItems` as `{ kind: 'custom', icon, active }` |
-| 7 | 4421-4460 | `handleMobileViewerSelect` and its dependency list | routes a host tab id to `onSurfaceTabSelect` before the file/viewer arms |
-| 8 | 4908, 4975 | the two `const isActive = !hasActiveViewerTab && …` | an active host tab hides the conversations and the drafts, the rule seam patch 5 hunk 13 gives the desktop |
-| 9 | 5206-5220 | after the non-file viewer surfaces, inside `div[role="main"]` | mounts every host tab's `content`, hidden unless active — the mobile mirror of seam patch 5 hunk 15 |
+| 5 | 4192 | `const hasActiveViewerTab =` | adds `hasActiveSurfaceTab`, the mobile counterpart of seam patch 5 hunk 13's `activeChatSurfaceId` |
+| 6 | 4305-4313 | the `for (const v of viewerTabItems)` loop in `mobileViewers`, and its dependency list | appends `surfaceTabItems` as `{ kind: 'custom', icon, active }` |
+| 7 | 4371-4389 | `handleMobileViewerSelect` and its dependency list | routes a host tab id to `onSurfaceTabSelect` before the file/viewer arms |
+| 8 | 5077, 5144 | the two `const isActive = !hasActiveViewerTab && …` | an active host tab hides the conversations and the drafts, the rule seam patch 5 hunk 13 gives the desktop |
+| 9 | 5181 | after the non-file viewer surfaces, inside `div[role="main"]` | mounts every host tab's `content`, hidden unless active — the mobile mirror of seam patch 5 hunk 15 |
 
 Hunks 5-9 need no new prop: `surfaceTabs`, `activeSurfaceTabId` and
-`onSurfaceTabSelect` are seam patch 5's, declared at `:728` and already inert by
+`onSurfaceTabSelect` are seam patch 5's, declared at `:748` and already inert by
 default. `onSurfaceTabClose` stays desktop-only for the reason above.
 
 #### Half B — the v1 scope cuts, on the mobile path
@@ -1476,14 +1472,14 @@ default. `onSurfaceTabClose` stays desktop-only for the reason above.
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 10 | 5128-5179 | the mobile `<SessionChatInterface>` | forwards `hideCloudMenuItems`, `hideNotificationPrompt` and `hideAgentRoles` beside the `readOnly` it already had — IC60, C86-C89, C91 |
+| 10 | 5089-5151 | the mobile `<SessionChatInterface>` surfaces | forwards `hideCloudMenuItems`, `hideNotificationPrompt` and `hideAgentRoles` beside the `readOnly` they already had — IC60, C86-C89, C91 |
 | 11 | the same element | the same | forwards seam patch 15's `hideConnectionStatus`, which its hunk 13 gives the desktop surfaces through the shared builder — IC64 |
-| 12 | 4870 | `if (activeSessionSharing) {` in `mobileMenuInfoRows` | adds `&& !hideCloudMenuItems` — the visibility row states cloud sharing on a host that serves sharing itself |
-| 13 | 4960 | the `copy-url` `mobileMenuActions.push` | wraps it in the same term — IC88, the mobile twin of seam patch 7 hunk 8 |
-| 14 | 4763 | `if (activeSessionSharing && activeSessionSharing.visibility !== 'team')` | adds the third term — IC84, the mobile twin of seam patch 7 hunk 7 |
-| 15 | 4889 | `owner={isMultiMemberWorkspace && !activeSession.isArchived ? …}` | adds the third term — IC83, the mobile twin of seam patch 7 hunk 6 |
-| 16 | 567-568, 602 | `MobileProjectInfo`'s `repoFullName` / `isGitHub` | takes a `gitHubAvailable` prop, so the header stops drawing the octocat and the repo slug for a local clone that merely has a GitHub remote |
-| 17 | 5053-5057 | the `<MobileProjectInfo>` element | passes the capability |
+| 12 | 4831 | `if (activeSessionSharing) {` in `mobileMenuInfoRows` | adds `&& !hideCloudMenuItems` — the visibility row states cloud sharing on a host that serves sharing itself |
+| 13 | 4921 | the `copy-url` `mobileMenuActions.push` | wraps it in the same term — IC88, the mobile twin of seam patch 7 hunk 8 |
+| 14 | 4932 | `if (activeSessionSharing && activeSessionSharing.visibility !== 'team')` | adds the third term — IC84, the mobile twin of seam patch 7 hunk 7 |
+| 15 | 5058 | `owner={isMultiMemberWorkspace && !activeSession.isArchived ? …}` | adds the third term — IC83, the mobile twin of seam patch 7 hunk 6 |
+| 16 | 593-594, 607 | `MobileProjectInfo`'s `repoFullName` / `isGitHub` | takes a `gitHubAvailable` prop, so the header stops drawing the octocat and the repo slug for a local clone that merely has a GitHub remote |
+| 17 | 5015-5018 | the `<MobileProjectInfo>` element | passes the capability |
 
 **Hunk 16 is a CAPABILITY bug, not a prop one, and it is the only one of its
 kind on this page.** `MobileProjectInfo` re-derives `repoFullName` from the
@@ -1497,10 +1493,10 @@ upstream as a bug fix; there is no prop to drop when it merges.**
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
-| 18 | 394-400 | `hideProductHints?: boolean;` in `ChatLandingProps` | declares `hideSettingsEntry` |
-| 19 | 578-579 | the destructuring | defaults it to `false` |
-| 20 | 6309 | `onAddGitHubRepository={handleConnectGitRepo}` | `undefined` without the `githubIntegration` capability `:4200` already reads — the row's handler opens a GitHub settings screen we do not serve |
-| 21 | 6456-6461 | `onSettingsOpen={() => …}` | `undefined` when `hideSettingsEntry` — the gear navigates to `/$workspaceName/settings`, which is a stub route that renders nothing |
+| 18 | 384-390 | `hideProductHints?: boolean;` in `ChatLandingProps` | declares `hideSettingsEntry` |
+| 19 | 561 | the destructuring | defaults it to `false` |
+| 20 | 6269 | `onAddGitHubRepository={handleConnectGitRepo}` | `undefined` without the `githubIntegration` capability `:4166` already reads — the row's handler opens a GitHub settings screen we do not serve |
+| 21 | 6416-6422 | `onSettingsOpen={() => …}` | `undefined` when `hideSettingsEntry` — the gear navigates to `/$workspaceName/settings`, which is a stub route that renders nothing |
 
 `packages/components/src/components/mobile/mobile-home-screen.tsx`
 
@@ -1508,7 +1504,7 @@ upstream as a bug fix; there is no prop to drop when it merges.**
 |---|---|---|---|
 | 22 | `MobileHomeScreenProps` | beside `showTasksTab` | declares `showGitHubProjects` (default `true`) and `hideOnboarding` (default `false`) |
 | 23 | 1334-1341 | `const showChatOnboarding =` | adds `!hideOnboarding` — the "Lody runs on your computer / Download Lody" takeover is the mobile twin of the desktop hint band's `download-client` (S7), and `hideProductHints` never reached it |
-| 24 | 1100-1141, 1837-1949, 1641 | `ProjectsSubTabSelector`, `ProjectsTabView` and its call site | take `showGitHub`, drop the GitHub segment without it, and pin the rendered sub-tab to `local` so a stale `'github'` choice cannot reach an empty list |
+| 24 | 1105-1141, 1850-1930, 1654 | `ProjectsSubTabSelector`, `ProjectsTabView` and its call site | take `showGitHub`, drop the GitHub segment without it, and pin the rendered sub-tab to `local` so a stale `'github'` choice cannot reach an empty list |
 
 The numbering counts anchors, not source lines: hunks 22 and 24 are several
 anchors each in one file with two new props.
@@ -1576,7 +1572,7 @@ world: `cachedProvider` / `cachedSessionStore` / `cachedWorkspacesStore` /
 `snapshotPollingStarted` are module-scope singletons, and the poll settles on
 the FIRST `localPlatform.getSnapshot` and never reads again for the life of the
 page. So the second workspace a member visits gets `useImplicitLocalWorkspace()`
-= the FIRST box's `lw_<uuid>`, and `RuntimeProvider` (`runtime-provider.tsx:130`,
+= the FIRST box's `lw_<uuid>`, and `RuntimeProvider` (`runtime-provider.tsx:239`,
 the local branch) builds its runtime from it: it opens `lody-loro-repo-db-<A>`
 and subscribes to box A's rooms while the data plane dials box B. Nothing syncs,
 no error is raised, and the rail stays empty until a full reload — the one thing
@@ -1599,9 +1595,9 @@ three uses) only so the reset can clear a poll that has not settled yet.
 
 | # | File | Line | Upstream anchor | What it does |
 |---|---|---|---|---|
-| 1 | `packages/components/src/providers/local-platform-provider.ts` | 35-40 | after `let snapshotPollingStarted = false;` | declares module-scope `snapshotPollInterval` |
-| 2 | same | 46, 79-89, 96 | `let intervalId` in `startLocalPlatformSnapshotPolling` | drops the local `intervalId`, uses `snapshotPollInterval` in its place (declare/clear-on-settle/clear-on-error/assign) |
-| 3 | same | 123-155 | after `ensureLocalPlatformSnapshotPolling()` | exports `resetLocalPlatformSnapshotState()` |
+| 1 | `packages/components/src/providers/local-platform-provider.ts` | 31-34 | after `let snapshotPollingStarted = false;` | declares module-scope `snapshotPollInterval` |
+| 2 | same | 40-95 | `let intervalId` in `startLocalPlatformSnapshotPolling` | drops the local `intervalId`, uses `snapshotPollInterval` in its place (declare/clear-on-settle/clear-on-error/assign) |
+| 3 | same | 111-117 | after `ensureLocalPlatformSnapshotPolling()` | exports `resetLocalPlatformSnapshotState()` |
 
 Guard: `packages/webapp/test/lody-local-platform-reset.test.tsx` drives the real
 vendored hook across a box switch and fails without hunk 3.
@@ -1719,6 +1715,7 @@ count is unchanged:
 | `components/mobile/mobile-general-settings.tsx` | Blitz stubs every settings route; these notification and OS-setting controls are never mounted. |
 | `components/settings/about-setting.tsx` | Blitz stubs every settings route; these updater actions are never mounted. |
 | `components/settings/general-setting.tsx` | Blitz stubs every settings route; these notification and OS-setting controls are never mounted. |
+| `hooks/use-electron-auto-launch.ts` | Both callers are stubbed settings routes, and every operation returns unless its Electron flag is true. |
 | `hooks/use-electron-updater-state.ts` | The effect returns unless `window.__LODY_ELECTRON__` is true. |
 | `lib/native-global-shortcuts.ts` | All callers are Electron-only shortcut settings; Blitz disables both that surface and its dispatcher. |
 | `lib/electron-ipc-client.ts` | The intentional compatibility default and sole production reader of `window.ipc`. |
@@ -1825,8 +1822,9 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   three of its commands would ignore a host tab if they were.**
   `session.archiveCurrent` (`$mod+Alt+a`), `session.closeFocusedTab` and the
   `session.nextTab` / `session.previousTab` cycle all resolve against
-  `SessionDetail`'s own `activeTabSessionId` (`session-detail.tsx:3783`, `:3901`,
-  `:4116`), which is the CONVERSATION selection — a host tab is invisible to
+  `SessionDetail`'s own URL-derived `activeTabSessionId` (the archive/close/cycle
+  handlers around `session-detail.tsx:2483`, `:4013`, `:4361`), which is the
+  CONVERSATION selection — a host tab is invisible to
   every one of them, so with a terminal on screen they would act on the chat
   behind it. **They cannot be reached in the BlitzOS mount**: the registry's
   capture-phase keydown listener is attached by `commands.attach(window)` in
@@ -1869,7 +1867,7 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   their stored theme to the shell's on every mount so the two never disagree.
 - **`createWorkspaceRuntime`'s startup ACP capabilities pass never runs for a
   BlitzOS box**: its `listMachineIds` port reads the Convex-authorized machine
-  set (`:2416`), and the box is visible only through
+  set (`:2455`), and the box is visible only through
   `buildVisibleMachineIndex`'s owner fallback, which is excluded from it.
   `packages/webapp/src/lody/agent-configs.ts` runs their own
   `runStartupAcpCapabilitiesRefresh` over BlitzOS ports instead. Candidate
@@ -1894,10 +1892,10 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   **Candidate upstream PR for the first one: pass the conflict the runtime
   already has** (`SaveTextConflictError.conflict`) into that `t()` call.
 - **The archive path cannot resolve a local project's root path** (phase 5).
-  `resolveWorktreeCleanupTarget` (`apps/cli/src/lib/message-handler.ts:4334`)
+  `resolveWorktreeCleanupTarget` (`apps/cli/src/lib/message-handler.ts:4330`)
   merges `machineMeta.localProjects` with `getMachineFlockLocalProjects(
   options.machineFlockRows)`. The DELETE caller passes `machineFlockRows`
-  (`:4518`); the ARCHIVE caller does not (`:3989`) — and the same asymmetry is in
+  (`:4514`); the ARCHIVE caller does not (`:3986`) — and the same asymmetry is in
   the shipped bundle (`lody/dist/index.js:169066` vs `:169476` at 0.88.1). Since
   `local-project/add` writes only the FLOCK row (`lody-fleet.ts:1552` →
   `local-project-meta.ts:76`), archive resolves nothing on a box, returns `null`,
@@ -1917,7 +1915,7 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   failed the daemon's `.strict()` parse until phase 5.
 - **A local project's repo name is dropped unless the cloud already knows the
   repo** (phase 5). `resolveLocalProjectGithubRepoFullName`
-  (`components/chat/chat-landing.tsx:481`) returns the name the daemon derived
+  (`components/chat/chat-landing.tsx:522`) returns the name the daemon derived
   from the clone's remote only if it also appears in `repositories`, the
   workspace's cloud-connected GitHub repo list. With no cloud that list is empty,
   so a worktree session's `ProjectRef` never carries `githubRepoFullName` — and
