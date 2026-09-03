@@ -236,10 +236,10 @@ prominently in the pull request body.
 
 ## 5. Re-audit the npm-artifact patches
 
-Three scripts in `packages/box/patches/` are applied to the **published npm
+Five scripts in `packages/box/patches/` are applied to the **published npm
 artifact**, in the Dockerfile's order. The order is load-bearing:
 `lody-local-platform.mjs` guards on a sha256 of the file AS PUBLISHED, so nothing
-may rewrite it first. All three are idempotent — re-running any of them on an
+may rewrite it first. All five are idempotent — re-running any of them on an
 already-patched bundle reports it and exits 0, which is what lets the daemon test
 harness copy a real box's bundle and re-apply them to the copy.
 
@@ -324,6 +324,60 @@ npx vitest run test/lody-worktree-session.test.ts   # in packages/webapp, on a b
 **If the new version resolves a local-project worktree session to its worktree,
 DELETE this patch rather than updating it.** Their own
 `lib/terminal-workdir-resolver.ts:97` already does, so the two may converge.
+
+### 5d. The built-in MCP server patch
+
+`packages/box/patches/lody-builtin-mcp-off.mjs` empties the built-in list in
+`AgentClient.buildMcpServers`, so no session spawns
+`lody __internal lody-mcp-server` — a second copy of the whole bundle, 266 MB
+resident per session on a cx33 (2026-09-02), serving tools BlitzOS does not
+use — and blanks `LODY_MCP_TOOLS_REMINDER`, the sentence `buildPrompt` appends
+to every turn to advertise them. Workspace-configured MCP servers are untouched.
+
+Its guards are the installed package version and two anchors at exactly one
+occurrence each. Re-auditing means:
+
+```sh
+grep -c 'const builtin = this.buildBuiltinMcpServers(workdir);' /tmp/package/dist/index.js  # expect 1
+grep -c 'const LODY_MCP_TOOLS_REMINDER = ' /tmp/package/dist/index.js                        # expect 1
+node packages/box/patches/lody-builtin-mcp-off.mjs /tmp/package/dist/index.js
+```
+
+Then start a session on a box built from the bundle and confirm `ps` shows no
+`lody-mcp-server` child under the agent.
+
+**If the new version makes the built-in server optional, DELETE this patch and
+set the option instead.**
+
+### 5e. The session sandbox patch
+
+`packages/box/patches/lody-session-sandbox.mjs` makes Lody's per-session cgroup
+sandbox start on a box and strips its capacity split. Upstream derives the
+session parent from the daemon's own cgroup, which cannot hand controllers to
+children while it holds the daemon, so on a box every session logs "Execution
+sandbox unavailable" and runs with no `cgroup.kill` — which is how `npm test`
+trees and MCP servers outlive the session that started them. The patch parents
+the leaves at `blitz-user.slice/lody-sessions`, which `blitz-cgroup init` builds
+and delegates, and turns `calculateAutomaticSessionSandboxLimits` into
+`pids.max` only, because the box already has its ceiling and does not want a
+second budget that shrinks with every open session.
+
+Its guards are the installed package version and two anchors at exactly one
+occurrence each. Re-auditing means:
+
+```sh
+grep -c 'trimLeadingSlash(selfCgroupPath), DEFAULT_SESSION_PARENT' /tmp/package/dist/index.js  # expect 1
+grep -c 'memoryMaxBytes: Math.max(1, Math.floor(executionMemoryBudgetBytes / sessionCount))' /tmp/package/dist/index.js  # expect 1
+node packages/box/patches/lody-session-sandbox.mjs /tmp/package/dist/index.js
+```
+
+Then, on a box built from the bundle, open a session and confirm its agent sits
+in `/blitz-user.slice/lody-sessions/lody-session-<id>` (`/proc/<pid>/cgroup`),
+that the daemon log no longer says "Execution sandbox unavailable", and that
+archiving the session leaves nothing behind in `ps`.
+
+**If the new version makes the parent directory or the automatic limits
+configurable, DELETE this patch and set the options instead.**
 
 ## 6. Dependencies and the patch-file audit
 

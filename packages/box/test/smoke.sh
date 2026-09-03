@@ -210,6 +210,27 @@ for delegated_path in \
 done
 owner=$(docker exec "$container" stat -c %u:%g /sys/fs/cgroup/blitz-system.slice/cgroup.procs)
 [ "$owner" = 0:0 ] || fail "the system slice is writable by $owner; it must stay root-owned"
+
+# The Lody daemon's per-session leaves live BESIDE its own leaf, under a
+# parent that already hands them every controller the sandbox requires, and
+# that the Blitz identity owns — the daemon mkdirs and rmdirs the leaves
+# itself. cpu is asserted only where the host delegates it; the boundary does
+# not need it, the sandbox does, and blitz-cgroup enables it best-effort for
+# that reason.
+docker exec "$container" test -d /sys/fs/cgroup/blitz-user.slice/lody-sessions \
+  || fail "the lody-sessions parent was not created"
+owner=$(docker exec "$container" stat -c %u:%g /sys/fs/cgroup/blitz-user.slice/lody-sessions/cgroup.procs)
+[ "$owner" = "$blitz_identity" ] \
+  || fail "lody-sessions belongs to $owner, not the Blitz identity $blitz_identity"
+session_controllers=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/lody-sessions/cgroup.subtree_control)
+for controller in memory pids; do
+  grep -qw "$controller" <<<"$session_controllers" \
+    || fail "lody-sessions does not hand $controller to its leaves: [$session_controllers]"
+done
+if docker exec "$container" grep -qw cpu /sys/fs/cgroup/cgroup.controllers; then
+  grep -qw cpu <<<"$session_controllers" \
+    || fail "cpu is delegated here, yet lody-sessions does not hand it to its leaves: [$session_controllers]"
+fi
 echo "PASS memory boundary layout"
 fi
 
