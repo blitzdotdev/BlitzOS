@@ -714,17 +714,20 @@ describe("F8 — the agent-auth banner belongs to session content", () => {
     // The banner says a CONVERSATION's agent is signed out and carries that
     // conversation's sign-in panel. Above the strip while a terminal owns the
     // pane it is a band about something the member is not looking at.
-    const surface = readFileSync(
-      join(repoRoot, "packages/webapp/src/lody/SessionSurface.tsx"),
+    const owners = readFileSync(
+      join(repoRoot, "packages/webapp/src/lody/surface-active-owners.tsx"),
       "utf8",
     );
-    expect(surface).toContain(
-      "props.surfaceTabs !== undefined && props.surfaceTabs.activeTabId !== null",
+    expect(owners).toContain(
+      "const { surfaceTabs } = useLodySurfaceActiveState();",
     );
-    // Rendered through one gate, so there is no second call site to forget.
-    expect(surface).toContain("const agentAuthNotice = (machineId: string): ReactNode =>");
-    expect(surface).toContain("hostTabOwnsPane");
-    expect(surface.match(/<LodyAgentAuthNotice/gu)).toHaveLength(1);
+    expect(owners).toContain(
+      "if (surfaceTabs !== undefined && surfaceTabs.activeTabId !== null) return null;",
+    );
+    // Rendered through one gate in this owner, so there is no second call site
+    // to forget when the active host-tab state changes.
+    expect(owners).toContain("export function LodySurfaceAgentAuthNotice(props: {");
+    expect(owners.match(/<LodyAgentAuthNotice/gu)).toHaveLength(1);
   });
 });
 
