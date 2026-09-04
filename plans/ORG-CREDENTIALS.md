@@ -381,7 +381,7 @@ own authority (`write` on that credential); anything past it fails the whole
 proposal with a 403 naming the offending changes — the agent narrows and
 retries.
 
-### Proposals live in memory — no row, no migration
+### Proposals are rows — `grant_proposals`, migration 0049
 
 ```ts
 interface GrantProposal {
@@ -397,11 +397,18 @@ interface GrantProposal {
 }
 ```
 
-Held in an in-memory store on the CP runtime, TTL ~1 h. Nothing is
-persisted: the durable record of an approval is the grant rows it writes and
-their `credential_events`. A worker recycle can drop a pending proposal —
-the poll then answers 404 (there is nothing left to build a view from), the
-rules tell the agent to read that as `expired`, and it proposes again.
+One row per proposal in `grant_proposals`, TTL ~1 h enforced lazily on read
+(a pending row read past its TTL flips to `expired`; inserts sweep rows past
+it). The row is the hand-off, not an audit: the durable record of an approval
+is still the grant rows it writes and their `credential_events`, and an
+approval settles the row inside the same transaction as those grants.
+
+This was an in-memory Map on the CP runtime first, and on Workers that is one
+Map per isolate: a proposal filed on one isolate answered 404 on the next, so
+the agent's poll and the approval feed each saw it only by luck (observed
+2026-09-02, one hit in four polls). A 404 on the poll still means "gone" —
+an unknown id, another org's, or a row the sweep took — and the rules still
+tell the agent to read it as `expired` and propose again.
 
 ### Routes
 
@@ -442,7 +449,10 @@ approves it in a panel that shows your proposal as an editable diff.
       --data '{"changes":[...], "reason":"one sentence; the user reads this"}'
 
 Change shapes are in GET /agent/api. A 403 names changes past your user's
-own authority — narrow and retry.
+own authority — narrow and retry. Those changes are somebody else's to
+grant: ask for each such credential by name at
+`POST $CP/agent/credentials/<name>/token` instead. A name not granted to
+you answers 404 and files an access request with whoever can grant it.
 
 Tell the user a proposal is waiting for them, then poll:
 
@@ -518,8 +528,11 @@ The spec the implementation must keep:
   credentials readable in this workspace (via a workspace grant, an org-wide
   grant, or the viewer's own membership grant), with add/rotate opening the
   same org-level forms. No local store, no promote, no shadow states.
-- **Grant-approval dialog** (§7a): pops when a pending proposal targets the
-  signed-in member; mock at `plans/mockups/grant-approval.html`.
+- **Grant-approval dialog** (§7a): pops only when the pending proposal's
+  acting member IS the signed-in member — their own agent asking them. An
+  org admin still gets the whole org's feed, but only as rows in Requests,
+  where Review opens the dialog on purpose; nobody is interrupted by another
+  person's agent. Mock at `plans/mockups/grant-approval.html`.
 - The connect-inbox flow is untouched.
 
 ## 10. Build order

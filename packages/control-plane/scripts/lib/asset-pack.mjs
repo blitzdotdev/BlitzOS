@@ -91,7 +91,21 @@ export async function createWebAppAssetSet(distDir = DEFAULT_UI_DIST_DIR) {
 
 const BOX_IMAGE_PART_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const BOX_IMAGE_TAG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/u;
+const BOX_IMAGE_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/iu;
+
+export function validateBoxImagePrefix(prefix) {
+  if (
+    String(prefix) !== prefix
+    || !BOX_IMAGE_PREFIX_PATTERN.test(prefix)
+    || prefix.endsWith("/")
+  ) {
+    throw new Error(
+      "box-image prefix must start with an alphanumeric character, contain only alphanumerics, dot, underscore, slash, or hyphen, and have no trailing slash",
+    );
+  }
+  return prefix;
+}
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- The CLI reads an untyped JSON manifest and validates every primitive before file access. */
 export function validateBoxImageManifest(value) {
@@ -127,7 +141,8 @@ export function validateBoxImageManifest(value) {
 }
 /* oxlint-enable anti-slop/no-runtime-typeof */
 
-export async function createBoxImageAssetSet(manifestPath) {
+export async function createBoxImageAssetSet(manifestPath, prefix = "box-image") {
+  const logicalPrefix = validateBoxImagePrefix(prefix);
   const manifest = validateBoxImageManifest(JSON.parse(await readFile(manifestPath, "utf8")));
   const directory = path.dirname(manifestPath);
   const aggregate = createHash("sha256");
@@ -139,7 +154,7 @@ export async function createBoxImageAssetSet(manifestPath) {
     if (actual !== part.sha256) throw new Error(`box-image part SHA-256 mismatch: ${part.name}`);
     partFiles.push({
       kind: "box-image",
-      logicalPath: `box-image/${part.name}`,
+      logicalPath: `${logicalPrefix}/${part.name}`,
       mediaType: "application/octet-stream",
       sizeBytes: metadata.size,
       sha256: actual,
@@ -151,7 +166,7 @@ export async function createBoxImageAssetSet(manifestPath) {
   const manifestMetadata = await stat(manifestPath);
   const manifestFile = {
     kind: "box-image",
-    logicalPath: "box-image/manifest.json",
+    logicalPath: `${logicalPrefix}/manifest.json`,
     mediaType: "application/json; charset=utf-8",
     sizeBytes: manifestMetadata.size,
     sha256: await sha256File(manifestPath),
@@ -160,4 +175,3 @@ export async function createBoxImageAssetSet(manifestPath) {
   };
   return { kind: "box-image", releaseId: manifest.totalSha256, files: [...partFiles, manifestFile] };
 }
-

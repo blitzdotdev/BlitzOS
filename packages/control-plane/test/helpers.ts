@@ -572,6 +572,8 @@ export async function resetDatabase(): Promise<void> {
     "credential_events",
     "credential_requests",
     "credential_leases",
+    // A proposal points at its org and its acting member; it goes before both.
+    "grant_proposals",
     "org_credential_grants",
     "org_credentials",
     "workspace_members",

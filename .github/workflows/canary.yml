@@ -20,15 +20,12 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
-    name: Deploy canary from main
+  gate:
+    name: Check canary deploy configuration
     runs-on: ubuntu-latest
     environment: canary
-    # The push trigger is already main-only, but workflow_dispatch lets a person
-    # pick any ref in the Actions UI. Without this, the one failure mode this
-    # workflow exists to remove — a branch deployed to the shared canary Worker —
-    # is still reachable by hand.
-    if: github.ref == 'refs/heads/main'
+    outputs:
+      configured: ${{ steps.gate.outputs.configured }}
     steps:
       # A fork, or this repository before the secrets exist, skips with a
       # notice instead of failing. Same shape as release.yml's gate.
@@ -45,19 +42,147 @@ jobs:
             echo "configured=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Full history: the box-image advisory below diffs against the commit the
-      # running canary reports, which a depth-1 checkout cannot reach.
+  image:
+    name: Plan and publish the canary box image
+    needs: gate
+    runs-on: ubuntu-latest
+    environment: canary
+    outputs:
+      ref: ${{ steps.pin.outputs.ref }}
+      tag: ${{ steps.pin.outputs.tag }}
+      sha256: ${{ steps.pin.outputs.sha256 }}
+      release_id: ${{ steps.pin.outputs.release_id }}
+      built: ${{ steps.pin.outputs.built }}
+    # The push trigger is already main-only, but workflow_dispatch lets a person
+    # pick any ref in the Actions UI. Without this, the one failure mode this
+    # workflow exists to remove — a branch deployed to the shared canary Worker —
+    # is still reachable by hand. An unconfigured fork stops here after the
+    # gate's notice.
+    if: github.ref == 'refs/heads/main' && needs.gate.outputs.configured == 'true'
+    steps:
+      # A depth-one checkout is enough: the release key reads the four image
+      # inputs' Git object ids directly from HEAD and never needs a merge base.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        if: steps.gate.outputs.configured == 'true'
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        if: steps.gate.outputs.configured == 'true'
         with:
           node-version-file: package.json
           cache: npm
       - run: npm ci
-        if: steps.gate.outputs.configured == 'true'
+
+      # The publisher always passes this config to wrangler, and both it and the
+      # planner need the canary account's bucket and APP_URL before deployment.
+      # The secret must be comment-free because the deploy config patcher rejects
+      # comments. It does not have to be up to date: the later deploy fills in any
+      # key wrangler.toml.example has gained and generates
+      # assets.run_worker_first from core's route registrations. Only
+      # account-specific identifiers (account_id, database_id, zone ids,
+      # APP_URL) have to be set here.
+      - name: Write the canary wrangler.toml
+        env:
+          CANARY_WRANGLER_TOML: ${{ secrets.CANARY_WRANGLER_TOML }}
+        run: printf '%s\n' "$CANARY_WRANGLER_TOML" > packages/control-plane/wrangler.toml
+
+      - name: Read the deployment origin
+        id: origin
+        run: |
+          url="$(node -e 'const fs=require("node:fs");import("smol-toml").then(({parse})=>{const v=parse(fs.readFileSync("packages/control-plane/wrangler.toml","utf8")).vars||{};process.stdout.write(v.APP_URL||"")})')"
+          if [ -z "$url" ]; then
+            echo "::error::CANARY_WRANGLER_TOML must set vars.APP_URL so the box-image release can be planned and published."
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      # This is a gate now, not an advisory. A valid matching manifest reuses
+      # its immutable pin; only a 404 means build. Invalid content, a wrong tag,
+      # another HTTP status, or a network failure stops before Worker deployment.
+      - name: Plan the box-image release
+        id: plan
+        env:
+          APP_URL: ${{ steps.origin.outputs.url }}
+        run: |
+          node packages/control-plane/scripts/plan-box-image.mjs --url "$APP_URL" --json plan.json
+          published="$(jq -r '.published' plan.json)"
+          if [ "$published" != "true" ] && [ "$published" != "false" ]; then
+            echo "::error::The box-image plan did not report whether the release is published."
+            exit 1
+          fi
+          {
+            printf 'published=%s\n' "$published"
+            printf 'tag=%s\n' "$(jq -r '.imageTag' plan.json)"
+            printf 'prefix=%s\n' "$(jq -r '.prefix' plan.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      # env.defaults tracks Lody off for self-hosters. Canary turns it on with a
+      # validated Docker build arg, replacing the manual edit that once let a
+      # clean rebake silently ship Lody off. The repository root is the build
+      # context because the Dockerfile also copies the broker and schema fixtures.
+      - name: Build the box image
+        if: steps.plan.outputs.published == 'false'
+        env:
+          IMAGE_TAG: ${{ steps.plan.outputs.tag }}
+        run: docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 -f packages/box/Dockerfile -t "$IMAGE_TAG" .
+
+      # Each content-derived release gets a versioned R2 prefix, so old boxes
+      # retain the exact bytes named by their pin. The publisher uploads every
+      # part before manifest.json; a failed upload never activates half a release.
+      - name: Publish the box-image release
+        if: steps.plan.outputs.published == 'false'
+        env:
+          APP_URL: ${{ steps.origin.outputs.url }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          IMAGE_TAG: ${{ steps.plan.outputs.tag }}
+          PREFIX: ${{ steps.plan.outputs.prefix }}
+        run: node packages/control-plane/scripts/publish-box-image.mjs --image "$IMAGE_TAG" --prefix "$PREFIX" --app-url "$APP_URL" --json publish.json
+
+      - name: Expose the box-image pin
+        id: pin
+        env:
+          PUBLISHED: ${{ steps.plan.outputs.published }}
+        run: |
+          release_id="$(jq -r '.releaseId' plan.json)"
+          expected_ref="$(jq -r '.ref' plan.json)"
+          expected_tag="$(jq -r '.imageTag' plan.json)"
+          expected_prefix="$(jq -r '.prefix' plan.json)"
+          if [ "$PUBLISHED" = "true" ]; then
+            ref="$expected_ref"
+            tag="$expected_tag"
+            sha256="$(jq -r '.sha256' plan.json)"
+            built=false
+          else
+            ref="$(jq -r '.ref' publish.json)"
+            tag="$(jq -r '.tag' publish.json)"
+            sha256="$(jq -r '.sha256' publish.json)"
+            prefix="$(jq -r '.prefix' publish.json)"
+            if [ "$ref" != "$expected_ref" ] || [ "$tag" != "$expected_tag" ] || [ "$prefix" != "$expected_prefix" ]; then
+              echo "::error::Published box-image metadata does not match the planned release."
+              exit 1
+            fi
+            built=true
+          fi
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ] || [ -z "$ref" ] || [ "$ref" = "null" ] || [ -z "$tag" ] || [ "$tag" = "null" ] || [[ ! "$sha256" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "::error::The box-image release did not produce a complete pin."
+            exit 1
+          fi
+          {
+            printf 'ref=%s\n' "$ref"
+            printf 'tag=%s\n' "$tag"
+            printf 'sha256=%s\n' "$sha256"
+            printf 'release_id=%s\n' "$release_id"
+            printf 'built=%s\n' "$built"
+          } >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy canary from main
+    needs: image
+    runs-on: ubuntu-latest
+    environment: canary
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
 
       # wrangler's config patcher rejects a TOML that holds comments, so this
       # secret must be comment-free — the deploy writes to it on every run.
@@ -66,39 +191,21 @@ jobs:
       # from core's route registrations. Only account-specific identifiers
       # (account_id, database_id, zone ids, APP_URL) have to be set here.
       - name: Write the canary wrangler.toml
-        if: steps.gate.outputs.configured == 'true'
         env:
           CANARY_WRANGLER_TOML: ${{ secrets.CANARY_WRANGLER_TOML }}
         run: printf '%s\n' "$CANARY_WRANGLER_TOML" > packages/control-plane/wrangler.toml
 
       - name: Read the deployment origin
         id: origin
-        if: steps.gate.outputs.configured == 'true'
         run: |
           url="$(node -e 'const fs=require("node:fs");import("smol-toml").then(({parse})=>{const v=parse(fs.readFileSync("packages/control-plane/wrangler.toml","utf8")).vars||{};process.stdout.write(v.APP_URL||"")})')"
+          if [ -z "$url" ]; then
+            echo "::error::CANARY_WRANGLER_TOML must set vars.APP_URL so the deployment can be verified."
+            exit 1
+          fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
-      # Advisory, never a gate. Box and broker changes ride the image and reach
-      # new workspaces only, and images are built by hand for canary. Say so
-      # loudly rather than deploy a worker-only half of a change in silence.
-      - name: Report whether the box image is now stale
-        if: steps.gate.outputs.configured == 'true'
-        run: |
-          if [ -z "${{ steps.origin.outputs.url }}" ]; then
-            echo "::warning::The canary config sets no APP_URL, so the box image cannot be checked from here."
-            exit 0
-          fi
-          set +e
-          output="$(node packages/control-plane/scripts/check-box-image.mjs --url "${{ steps.origin.outputs.url }}" 2>&1)"
-          code=$?
-          echo "$output"
-          if [ "$code" = "2" ]; then
-            echo "::warning::The box image is now behind this commit. Deploying the Worker alone leaves those changes in no workspace. Build and pin a new canary image."
-          fi
-          exit 0
-
       - name: Deploy
-        if: steps.gate.outputs.configured == 'true'
         # Both hosted deployments require every org to bring its own cloud
         # credential. A self-hoster runs `npm run deploy` without this and
         # keeps the example default, deployment-fallback.
@@ -137,27 +244,26 @@ jobs:
           #
           # The split exists because `write:packages` lives only inside
           # release.yml, and that workflow also deploys client prod — so a tag
-          # is the wrong instrument for refreshing a canary image. Canary
-          # rebakes into its own bucket instead and reaches nothing of the
-          # customer's.
+          # is the wrong instrument for refreshing a canary image. The image
+          # job instead publishes into canary's bucket and reaches nothing of
+          # the customer's.
           #
           # None of the three is a secret. The VM bootstrap fetches the archive
-          # with no credential, so the URL is public by design; keeping the pin
-          # in this file makes it reviewable, which a value inside
-          # CANARY_WRANGLER_TOML is not. Each becomes `wrangler deploy --var`,
-          # overriding that one key and leaving the rest of the stored config
-          # alone.
+          # with no credential, so the URL is public by design. The exact pin is
+          # computed from the merged tree and a validated versioned manifest,
+          # then passed as job outputs; these deploy vars override only their
+          # three stored-config keys.
           #
-          # Rebake with the procedure in docs/BOX-IMAGE.md and update all three
-          # together: the digest is of the archive the tag names.
-          BLITZ_DEPLOY_VAR_BOX_IMAGE_REF: https://blitz-control-plane.minjunesv0.workers.dev/box-image/manifest.json
-          BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: blitz-box:23b2c707-lody
-          BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: 7dd60fb6d40c973bd98431f8ebf8e052fac592df28674921947f53ccc6d0e1e3
+          # The versioned box-image/<releaseId> layout keeps old pins valid, and
+          # the digest is always taken from the manifest that the tag names.
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_REF: ${{ needs.image.outputs.ref }}
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: ${{ needs.image.outputs.tag }}
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: ${{ needs.image.outputs.sha256 }}
           # The Lody session surface, half two (plans/LODY-SESSIONS.md §13.3).
-          # Half one is BLITZ_LODY_SESSIONS inside the image above, which is
-          # already baked on: the daemon has to be listening before a browser
-          # dials it, and the reverse order gives every member on canary a rail
-          # that cannot list a session.
+          # Half one is baked into new canary archives by the image job's
+          # BLITZ_LODY_SESSIONS=1 build arg: the daemon has to be listening
+          # before a browser dials it, and the reverse order gives every member
+          # on canary a rail that cannot list a session.
           #
           # It is set HERE and not in env.defaults because env.defaults is the
           # tracked default for every deployment, including a self-hosted fork
@@ -178,21 +284,23 @@ jobs:
         run: npm run deploy -w packages/control-plane
 
       # A green deploy command proves upload, not content. Ask the running
-      # deployment which commit it is, and fail when it disagrees.
-      - name: Verify the deployment reports this commit
-        if: steps.gate.outputs.configured == 'true'
+      # deployment which commit and computed image tag it serves, and fail when
+      # either disagrees.
+      - name: Verify the deployment reports this commit and box image
         env:
+          EXPECTED_BOX_IMAGE_TAG: ${{ needs.image.outputs.tag }}
           ORIGIN: ${{ steps.origin.outputs.url }}
         run: |
-          if [ -z "$ORIGIN" ]; then
-            echo "::warning::The canary config sets no APP_URL, so this deploy could not be verified. A gate that could not run is not a gate that passed."
-            exit 0
-          fi
           for attempt in 1 2 3 4 5; do
-            reported="$(curl -fsS "$ORIGIN/version" | jq -r '.commit // empty' || true)"
-            [ "$reported" = "$GITHUB_SHA" ] && echo "canary reports $reported" && exit 0
-            echo "attempt $attempt: reported '${reported:-none}', expected $GITHUB_SHA"
+            version="$(curl -fsS "$ORIGIN/version" || true)"
+            reported_commit="$(printf '%s' "$version" | jq -r '.commit // empty' 2>/dev/null || true)"
+            reported_tag="$(printf '%s' "$version" | jq -r '.boxImageTag // empty' 2>/dev/null || true)"
+            if [ "$reported_commit" = "$GITHUB_SHA" ] && [ "$reported_tag" = "$EXPECTED_BOX_IMAGE_TAG" ]; then
+              echo "canary reports commit $reported_commit and box image $reported_tag"
+              exit 0
+            fi
+            echo "attempt $attempt: reported commit '${reported_commit:-none}' and box image '${reported_tag:-none}'; expected $GITHUB_SHA and $EXPECTED_BOX_IMAGE_TAG"
             [ "$attempt" = "5" ] || sleep 6
           done
-          echo "::error::$ORIGIN/version reports '${reported:-none}', not $GITHUB_SHA. The deploy uploaded, but the origin is serving something else."
+          echo "::error::$ORIGIN/version reports commit '${reported_commit:-none}' and box image '${reported_tag:-none}', not $GITHUB_SHA and $EXPECTED_BOX_IMAGE_TAG. The deploy uploaded, but the origin is serving something else."
           exit 1

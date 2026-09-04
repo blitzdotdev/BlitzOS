@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { LocalProjectId, MachineId } from '@lody/shared';
 import {
   ArrowUpRight,
@@ -408,6 +408,14 @@ export function UnifiedProjectSelectorView({
   const deferredQuery = useDeferredValue(query);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // A URL or saved draft can retain a GitHub selection after the host removes
+  // the integration. Clear that controlled value as well as hiding its rows so
+  // the unsupported project cannot still be submitted from stale state.
+  useEffect(() => {
+    if (githubIntegrationAvailable || value.kind !== 'github') return;
+    onChange({ kind: 'none' });
+  }, [githubIntegrationAvailable, onChange, value.kind]);
+
   const options = useMemo<UnifiedProjectOption[]>(() => {
     const combined: UnifiedProjectOption[] = [];
     for (const project of localProjects) {
@@ -425,18 +433,20 @@ export function UnifiedProjectSelectorView({
         sharing: project.sharing,
       });
     }
-    for (const repository of repositories ?? []) {
-      combined.push({
-        value: `github:${repository.fullName}`,
-        label: repository.fullName,
-        description: repository.description ?? undefined,
-        icon: <GitHubOwnerAvatarIcon repoFullName={repository.fullName} />,
-        selection: { kind: 'github', repoFullName: repository.fullName },
-        lastUsedAt: latestMessageAtByRepo?.get(repository.fullName),
-      });
+    if (githubIntegrationAvailable) {
+      for (const repository of repositories ?? []) {
+        combined.push({
+          value: `github:${repository.fullName}`,
+          label: repository.fullName,
+          description: repository.description ?? undefined,
+          icon: <GitHubOwnerAvatarIcon repoFullName={repository.fullName} />,
+          selection: { kind: 'github', repoFullName: repository.fullName },
+          lastUsedAt: latestMessageAtByRepo?.get(repository.fullName),
+        });
+      }
     }
     return combined.sort(compareUnifiedProjectOptions);
-  }, [latestMessageAtByRepo, localProjects, repositories]);
+  }, [githubIntegrationAvailable, latestMessageAtByRepo, localProjects, repositories]);
 
   const selectedValue = getSelectionValue(value);
   const selectedOption = useMemo(

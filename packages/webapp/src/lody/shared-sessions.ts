@@ -41,6 +41,10 @@ export interface SharedSessionRow {
   ownerName: string;
   /** The session's own title, or `null` while the owner's box has not answered. */
   title: string | null;
+  /** Whether the owner's machine is `running` in the workspace view. A stopped
+   * box answers 409 from the shared proxy forever, so a row whose owner is off
+   * is drawn but never mounted (`use-shared-sessions.ts`). */
+  ownerMachineRunning: boolean;
 }
 
 /** The one protocol-v7 frame this module sends. */

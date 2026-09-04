@@ -1,20 +1,22 @@
 // Answers one question: does this deploy need a new box image?
 //
-// Box and broker changes ride the image, and a box never upgrades in place, so
-// they reach new workspaces only. Worker and webapp changes ride the deploy and
-// reach every workspace at once. Mixing the two up ships half a change.
+// Repository inputs copied by the Dockerfile ride the image, and a box never
+// upgrades in place, so they reach new workspaces only. Worker and webapp
+// changes ride the deploy and reach every workspace at once. Mixing the two up
+// ships half a change.
 //
-// The runbook asks a human to run `git diff --stat <deployed-sha>..HEAD` before
-// each deploy. That step needs the deployed SHA, which is what GET /version now
-// reports, so the whole check runs unattended.
+// The self-host runbook offers this advisory before a manual image publish.
+// It needs the deployed SHA, which is what GET /version reports, so an operator
+// does not have to reconstruct the comparison by hand.
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { BOX_IMAGE_INPUTS } from "./lib/box-image-inputs.mjs";
 import { isNonEmptyString } from "./lib/values.mjs";
 
-// Everything baked into the image. packages/box holds the gateway and the
-// rootfs; packages/broker holds the credential broker binary.
-export const IMAGE_PATHS = Object.freeze(["packages/box", "packages/broker"]);
+// Keep the old export because callers used this advisory before image keys
+// shared the Dockerfile input list.
+export const IMAGE_PATHS = BOX_IMAGE_INPUTS;
 
 /**
  * Decides whether an image rebuild is due.

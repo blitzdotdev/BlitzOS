@@ -156,9 +156,12 @@ will be wrong.
 
 Still outstanding:
 
-1. **Rebake canary** per `docs/BOX-IMAGE.md` so existing fleets pick up the
-   unpinned image; the running boxes update themselves either way, but a fresh
-   box should not start a version behind.
+1. **Land the image change on `main`.** The automatic canary `image` job
+   described in
+   [BOX-IMAGE.md](BOX-IMAGE.md#automatic-canary-image-publish) publishes and
+   pins the matching versioned R2 archive. There is no separate manual image
+   step; running boxes update their CLI in place, while fresh boxes start from
+   the newly pinned image.
 2. **`@latest` costs this layer its reproducibility.** Two builds a week apart
    ship different CLIs. That is the deliberate trade — the pin never held a
    version in practice, because the first self-update moved it — but it means

@@ -19,7 +19,7 @@
  */
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ListSessionSharesResponse, WorkspaceView } from "@blitzos/schema";
+import type { ListSessionSharesResponse, MachineState, WorkspaceView } from "@blitzos/schema";
 import type { AppRoute } from "../src/sessions-page-state.js";
 import type { LodyRailSessions, LodyRailState } from "../src/lody/use-lody-rail.js";
 import type { SharedSessionsState } from "../src/lody/use-shared-sessions.js";
@@ -32,16 +32,20 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-// SAFETY: the hook reads `id` and `members`; the resolver reads `id`. Stating
-// every other field of a `WorkspaceView` would say nothing about this test and
-// would have to be restated at every schema change.
-const workspace = {
-  id: "ws-1",
-  members: [
-    { membershipId: "mem-owner", name: "Ada", avatarUrl: null, role: "editor", machine: null },
-    { membershipId: "mem-me", name: "Me", avatarUrl: null, role: "editor", machine: null },
-  ],
-} as unknown as WorkspaceView;
+// SAFETY: the hook reads `id`, `members` and each member's `machine.state`;
+// the resolver reads `id`. Stating every other field of a `WorkspaceView` would
+// say nothing about this test and would have to be restated at every schema
+// change.
+function workspaceWithOwner(state: MachineState): WorkspaceView {
+  return {
+    id: "ws-1",
+    members: [
+      { membershipId: "mem-owner", name: "Ada", avatarUrl: null, role: "editor", machine: { state } },
+      { membershipId: "mem-me", name: "Me", avatarUrl: null, role: "editor", machine: null },
+    ],
+  } as unknown as WorkspaceView;
+}
+const workspace = workspaceWithOwner("running");
 
 const RECEIVED: ListSessionSharesResponse = {
   granted: [],
@@ -152,7 +156,9 @@ interface Mounted {
 async function mount(options: {
   path: string;
   listSessionShares?: () => Promise<ListSessionSharesResponse>;
+  workspace?: WorkspaceView;
 }) {
+  const mountedWorkspace = options.workspace ?? workspace;
   vi.resetModules();
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
   const { useLodyRail } = await import("../src/lody/use-lody-rail.js");
@@ -170,7 +176,12 @@ async function mount(options: {
   function Host() {
     const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname));
     const rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, SESSIONS_PRESENT);
-    const shared = useSharedSessions({ client, workspace, resolver, chat: rail.chat });
+    const shared = useSharedSessions({
+      client,
+      workspace: mountedWorkspace,
+      resolver,
+      chat: rail.chat,
+    });
     seen.rail = rail;
     seen.shared = shared;
     seen.route = route;
@@ -253,6 +264,26 @@ describe("the rail's shared sessions", () => {
     // A deep link to a revoked grant dials no box. The alternative is a ticket
     // mint the control plane answers 403 to, and a blank surface either way.
     expect(seen.shared?.open).toBe(null);
+    await view.unmount();
+  });
+
+  it("draws the rows but mounts nothing while the owner's machine is off", async () => {
+    stubOwnerBox({ "sess-alpha": "never read" });
+    const { seen, view } = await mount({
+      path: "/workspaces/ws-1/chat/shared/mem-owner/sess-alpha",
+      workspace: workspaceWithOwner("stopped"),
+    });
+    expect(seen.shared?.rows.map((row) => [row.sessionId, row.ownerMachineRunning])).toEqual([
+      ["sess-alpha", false],
+      ["sess-beta", false],
+    ]);
+    // A stopped box answers 409 from the shared proxy for as long as it is
+    // stopped, and the surface's platform poller retries every non-OK answer.
+    // Mounting nothing is what keeps the member's own sessions on screen. The
+    // box is not dialled for titles either: the fetch stub is never reached.
+    expect(seen.shared?.open).toBe(null);
+    expect(seen.shared?.rows.every((row) => row.title === null)).toBe(true);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
     await view.unmount();
   });
 

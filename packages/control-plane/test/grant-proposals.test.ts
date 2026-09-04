@@ -356,6 +356,50 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
     ]);
   });
 
+  it("never lowers access on an add: a subject holding write keeps it", async () => {
+    const { app, providers } = harness();
+    const admin = await operatorSession(app);
+    const workspace = await createWorkspace(app, admin);
+    await storeOrgCredential(app, admin, "KEY_A");
+    // The person already gave the workspace write, by hand, in the panel.
+    expect((await appRequest(app, "/orgs/self/credentials/KEY_A/grants", withCookie(admin, json({
+      grants: [
+        { subjectKind: "membership", subjectId: "personal", access: "write" },
+        { subjectKind: "workspace", subjectId: workspace.id, access: "write" },
+      ],
+    }, "PUT")))).status).toBe(200);
+    const token = await machineToken(app, providers, workspace.id);
+
+    // The agent asks for read on the same workspace and read for the org.
+    // Approving must not turn that write into a read: only the org read lands.
+    const changes = [
+      add("KEY_A", "workspace", workspace.id, "read"),
+      add("KEY_A", "org", null, "read"),
+    ];
+    const id = await proposed(app, token, changes);
+    const resolved = await resolve(app, admin, id, { approve: true, changes });
+    expect(resolved.status).toBe(200);
+    expect((await resolved.json<ResolveGrantProposalResponse>()).proposal.applied).toEqual([
+      add("KEY_A", "org", null, "read"),
+    ]);
+    expect((await grantsOf(app, admin)).KEY_A).toEqual([
+      { subjectKind: "membership", subjectId: "personal", access: "write" },
+      { subjectKind: "org", subjectId: null, access: "read" },
+      { subjectKind: "workspace", subjectId: workspace.id, access: "write" },
+    ]);
+
+    // The other direction still widens: write over read replaces it.
+    const raise = [add("KEY_A", "org", null, "write")];
+    const raised = await resolve(app, admin, await proposed(app, token, raise), { approve: true, changes: raise });
+    expect(raised.status).toBe(200);
+    expect((await grantsOf(app, admin)).KEY_A).toContainEqual(
+      { subjectKind: "org", subjectId: null, access: "write" },
+    );
+    expect((await grantsOf(app, admin)).KEY_A).not.toContainEqual(
+      { subjectKind: "org", subjectId: null, access: "read" },
+    );
+  });
+
   it("refuses a proposal past the member's authority with a 403 naming the changes", async () => {
     const { app, providers } = harness();
     const admin = await operatorSession(app);
@@ -379,6 +423,9 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
     expect(error).toContain("ADMIN_KEY add workspace:" + workspace.id + " read");
     expect(error).toContain("NO_SUCH_KEY remove org read");
     expect(error).not.toContain("MY_KEY");
+    // The refused changes are somebody else's to grant, and the agent is
+    // told where that ask goes instead of only "narrow and retry".
+    expect(error).toContain("POST /agent/credentials/<name>/token");
     // Nothing was stored: the feed is empty for member and admin alike.
     await expect(feed(app, member.cookie)).resolves.toEqual([]);
     await expect(feed(app, admin)).resolves.toEqual([]);
@@ -402,7 +449,11 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
       approve: true, changes: [add("MY_KEY", "org", null, "read")],
     });
     expect(late.status).toBe(403);
-    expect((await late.json<{ error: string }>()).error).toContain("MY_KEY add org read");
+    const lateError = (await late.json<{ error: string }>()).error;
+    expect(lateError).toContain("MY_KEY add org read");
+    // A person reads the approver's refusal; the agent's escalation hint
+    // would only confuse them.
+    expect(lateError).not.toContain("/agent/credentials/");
     // Still pending: the admin, whose authority covers it, can approve.
     expect((await resolve(app, admin, id, {
       approve: true, changes: [add("MY_KEY", "org", null, "read")],
@@ -546,8 +597,10 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
       .status).toBe(404);
     // An id nobody issued reads the same as another org's.
     expect((await poll(app, token, "no-such-proposal")).status).toBe(404);
-    // A recycled runtime owns a fresh in-memory store, so the proposal is gone.
-    expect((await poll(harness().app, token, id)).status).toBe(404);
+    // A recycled runtime (another isolate, say) reads the same row, so the
+    // proposal is still there — this is what the row is for.
+    await expect(poll(harness().app, token, id).then((r) => r.json()))
+      .resolves.toMatchObject({ id, state: "pending" });
     // Ours is untouched.
     await expect(poll(app, token, id).then((r) => r.json()))
       .resolves.toMatchObject({ state: "pending" });

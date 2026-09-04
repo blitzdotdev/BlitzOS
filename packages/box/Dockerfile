@@ -50,13 +50,17 @@ RUN npm install --global --omit=dev \
 COPY packages/box/patches/lody-local-platform.mjs /tmp/lody-local-platform.mjs
 COPY packages/box/patches/lody-acp-auth-queue.mjs /tmp/lody-acp-auth-queue.mjs
 COPY packages/box/patches/lody-code-collab-worktree-root.mjs /tmp/lody-code-collab-worktree-root.mjs
+COPY packages/box/patches/lody-builtin-mcp-off.mjs /tmp/lody-builtin-mcp-off.mjs
+COPY packages/box/patches/lody-session-sandbox.mjs /tmp/lody-session-sandbox.mjs
 # Order matters only for the first: its guard is a sha256 of the bundle AS
 # PUBLISHED, so nothing may rewrite the file before it runs. The others guard on
 # the package version and their own anchor instead, for that reason.
 RUN node /tmp/lody-local-platform.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
     && node /tmp/lody-acp-auth-queue.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
     && node /tmp/lody-code-collab-worktree-root.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
-    && rm /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs
+    && node /tmp/lody-builtin-mcp-off.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
+    && node /tmp/lody-session-sandbox.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
+    && rm /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs /tmp/lody-builtin-mcp-off.mjs /tmp/lody-session-sandbox.mjs
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime-base
 
@@ -145,6 +149,17 @@ RUN set -eux; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \
     chown -R blitz:blitz /opt/blitz/npm
+
+# Canary ships Lody on while env.defaults keeps it off for self-hosters. This
+# build argument replaces a manual sed that once let a clean rebake silently
+# ship canary with Lody off.
+ARG BLITZ_LODY_SESSIONS=
+RUN set -eu; \
+    if [ -n "$BLITZ_LODY_SESSIONS" ]; then \
+      case "$BLITZ_LODY_SESSIONS" in 0|1) ;; *) echo "BLITZ_LODY_SESSIONS must be 0 or 1" >&2; exit 1 ;; esac; \
+      sed -i "s/^BLITZ_LODY_SESSIONS=.*/BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS/" /etc/blitz/env.defaults; \
+      grep -qx "BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS" /etc/blitz/env.defaults; \
+    fi
 
 # /usr/local/bin comes FIRST, ahead of the npm prefix, so the PATH shims at
 # /usr/local/bin/claude and /usr/local/bin/codex win over the real binaries they
