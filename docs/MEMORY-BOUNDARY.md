@@ -85,6 +85,32 @@ to park anything in the protected slice, which stays root-owned.
 - **Every knob is an env var** (`BLITZ_CG_*`, see `blitz-cgroup`), read from
   the container environment, overridable per box via
   `/etc/blitz/box-limits.env` on the VM without an image rebuild.
+- **Sustained thrash takes the heaviest agent session, not the daemon.** The
+  ceiling stops a runaway from taking the box; it does not stop the box from
+  spending hours in reclaim below the ceiling, which is what a cx23 did on
+  2026-09-03 under an agent's test run (200 % CPU, thousands of read IOPS,
+  the daemon answering its probe and the browser's deadline-less boot sync
+  never completing). `lody-watchdog` reads `memory.pressure` on the user
+  slice and, after three minutes of `full avg60` at 20 % or more, writes
+  `cgroup.kill` into the `lody-session-*` leaf with the largest
+  `memory.current` — provided that leaf holds at least 512 MiB, because
+  pressure with only light sessions means a terminal tab or an inner
+  container is the weight, and those belong to `memory.max`. The daemon and
+  every other session survive; the killed session ends with an error. A
+  daemon restart stays reserved for a daemon that stops answering, and that
+  restart is judged: a daemon whose loop is blocked cannot run its SIGTERM
+  handler (on 2026-09-04 one sat under the memory.high throttle for twelve
+  hours with a timer 24,116 s late while `s6-svc -r` was sent every few
+  minutes), so an unchanged pid after `BLITZ_WATCHDOG_KILL_GRACE` seconds
+  gets SIGKILL. The same day showed the ceiling's other face: on a cx23 the
+  user slice's `memory.high` is 2.4 GB and this repo's `npm install` alone is
+  1.7 GB resident, so a resumed session pinned the slice at `memory.high`
+  within minutes of boot (52,880 `high` events in five minutes) and every
+  process in it crawled without a single OOM kill. Knobs:
+  `BLITZ_WATCHDOG_PRESSURE_FULL_AVG60`, `BLITZ_WATCHDOG_KILL_FLOOR_BYTES`,
+  `BLITZ_WATCHDOG_KILL_GRACE`.
+  Pinned by `packages/box/guest-tests/test/lody-watchdog-service.test.ts`,
+  which runs the real script against a fake cgroup tree.
 
 ## The load campaign
 

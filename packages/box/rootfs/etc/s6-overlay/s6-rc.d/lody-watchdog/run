@@ -1,5 +1,6 @@
 #!/command/with-contenv bash
-# Restart the Lody session daemon when it stops answering its own health probe.
+# Restart the Lody session daemon when it stops answering its own health probe,
+# and kill the heaviest agent session when the box is thrashing underneath it.
 #
 # WHY THIS EXISTS. A daemon that HANGS is invisible to everything else on the
 # box. s6 restarts a longrun when its run script RETURNS, and a wedged daemon
@@ -19,6 +20,44 @@
 #
 # WHY A TIMEOUT AND NOT A CONNECT CHECK. The failure being caught accepts the
 # connection and then never answers, so only a bounded read tells the two apart.
+#
+# WHY THE RESTART ESCALATES TO SIGKILL. `s6-svc -r` sends SIGTERM, and the
+# daemon handles SIGTERM on its event loop: it stops sessions, flushes its
+# documents and exits. A daemon whose loop is blocked cannot run that handler,
+# and s6 escalates on its own only for `s6-svc -d` with a `timeout-kill` file,
+# not for `-r`. On 2026-09-04 the daemon on a cx23 logged a one-second timer
+# that fired 24,116 s late — its loop had been stalled by the user slice's
+# memory.high throttle since 05:26 — and this service's restart every few
+# minutes was a signal it never acted on. Twelve hours of the same spinner
+# ended in a VM rebuild. So the restart is judged: if the daemon's pid has not
+# changed after `kill_grace` seconds, it is sent SIGKILL, and s6 brings up a
+# fresh one because the service still wants up.
+#
+# WHY A SECOND SIGNAL. The probe catches a daemon that hangs. It does not catch
+# a daemon that is merely STARVED. On 2026-09-03 a cx23 (4 GB) ran agent
+# sessions whose test runs pushed the user slice past memory.high; the VM spent
+# seven hours at 200 % CPU and thousands of read IOPS re-faulting its own
+# binaries, `/healthz` still answered inside its budget, and the browser's boot
+# — a Loro sync with no deadline (`agent-configs.ts`) — never completed. Same
+# spinner, no restart, and a reload landed in the same wait.
+#
+# WHY KERNEL PRESSURE AND NOT PROBE LATENCY. `memory.pressure` on the user
+# slice is the kernel's own statement that tasks in that subtree are stalled on
+# memory. Its `full avg60` is the share of the last minute in which EVERY
+# non-idle task there was stalled — the thrash signature — and it needs no
+# number tuned against how fast the daemon usually answers. A box that cannot
+# own cgroups has no such file, and then this signal is simply absent.
+#
+# WHY KILL ONE SESSION AND NOT RESTART THE DAEMON. Since #197 each agent runs in
+# its own leaf, `blitz-user.slice/lody-sessions/lody-session-<id>`, so the
+# runaway can be named by `memory.current` and taken out with `cgroup.kill` —
+# the same write the daemon's sandbox uses to end a session. The daemon
+# survives, every other session survives, the surface comes back on its own,
+# and the killed session ends with an error the member can read. A restart
+# would cost all of that to free the same memory. The leaf is killed only when
+# it holds enough to be the cause: pressure with no heavy leaf means the weight
+# is a terminal tab or an inner container, which are not this service's to
+# kill — the boundary's own memory.max decides those (docs/MEMORY-BOUNDARY.md).
 set -uo pipefail
 
 state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
@@ -26,6 +65,11 @@ data_dir=${LODY_DATA_DIR:-$state_dir/lody}
 # `lody-oss` is the local (OSS) installation profile, and the box always runs
 # local. Kept in step with the same constant in blitz-lody-bridge.
 probe_socket="$data_dir/run/lody-oss-probe.sock"
+# The same tree blitz-cgroup builds. Overridable so a test can hand this script
+# a directory of plain files in place of cgroupfs.
+cgroup_root=${BLITZ_WATCHDOG_CGROUP_ROOT:-/sys/fs/cgroup}
+user_slice="$cgroup_root/blitz-user.slice"
+sessions_dir="$user_slice/lody-sessions"
 
 # Dark whenever the daemon is (plans/LODY-SESSIONS.md §9.1). `sleep infinity`
 # rather than exit: s6 restarts a longrun the moment its run script returns, so
@@ -35,16 +79,132 @@ if [ "${BLITZ_LODY_SESSIONS:-0}" != "1" ]; then
 	exec sleep infinity
 fi
 
-interval=60
+interval=${BLITZ_WATCHDOG_INTERVAL:-60}
+# The pause after any action. `lody start` has to open its sockets before it
+# can answer, and `avg60` takes a full minute to forget the pressure a kill just
+# relieved; judging again before either has happened only compounds the action.
+hold=${BLITZ_WATCHDOG_HOLD:-120}
 # Three misses, not one: a single slow answer under load is not a wedge, and a
 # restart costs every open session on the box.
 misses_before_restart=3
+# Three ticks of `full avg60` at or above this many percent. Healthy heavy work
+# — a build, a test suite that fits — keeps memory `full` near zero; thrash
+# holds it in the tens for as long as the thrash lasts.
+pressure_limit=${BLITZ_WATCHDOG_PRESSURE_FULL_AVG60:-20}
+pressure_ticks_before_kill=3
+# The smallest leaf worth killing, in bytes (512 MiB). An idle agent session
+# is ~270 MiB; one running a test suite is gigabytes.
+kill_floor=${BLITZ_WATCHDOG_KILL_FLOOR_BYTES:-536870912}
+# How long a SIGTERM gets before the restart is judged failed and escalated.
+# Thirty seconds is well past a healthy shutdown, which flushes and exits in
+# under five, and short next to the interval this service already waits.
+kill_grace=${BLITZ_WATCHDOG_KILL_GRACE:-30}
+# 0 runs forever, which is the service. A test bounds it.
+max_ticks=${BLITZ_WATCHDOG_TICKS:-0}
+
 misses=0
+pressure_ticks=0
+ticks=0
+
+# The integer percent of `full avg60` from the user slice, or failure when the
+# file is absent (flat box) or unparsable.
+pressure_full_avg60() {
+	local line
+	line=$(grep '^full ' "$user_slice/memory.pressure" 2>/dev/null) || return 1
+	line=${line#*avg60=}
+	line=${line%% *}
+	line=${line%%.*}
+	case "$line" in '' | *[!0-9]*) return 1 ;; esac
+	printf '%s' "$line"
+}
+
+# "<bytes> <leaf>" for the session leaf with the largest memory.current, or
+# failure when there is none.
+heaviest_session() {
+	local leaf bytes best= best_bytes=-1
+	for leaf in "$sessions_dir"/lody-session-*; do
+		[ -d "$leaf" ] || continue
+		bytes=$(cat "$leaf/memory.current" 2>/dev/null) || continue
+		case "$bytes" in '' | *[!0-9]*) continue ;; esac
+		if [ "$bytes" -gt "$best_bytes" ]; then
+			best_bytes=$bytes
+			best=$leaf
+		fi
+	done
+	[ -n "$best" ] || return 1
+	printf '%s %s' "$best_bytes" "$best"
+}
+
+daemon_pid() {
+	/command/s6-svstat -o pid /run/service/lody-daemon 2>/dev/null || printf '?'
+}
+
+# Asks s6 for a restart, then makes sure one happened.
+restart_daemon() {
+	local before after waited=0
+	before=$(daemon_pid)
+	echo "lody-watchdog: restarting lody-daemon"
+	# `|| true` for the same reason machine-stats has it: the sessions surface is
+	# not worth the box. A dead daemon costs sessions; it does not cost the
+	# member their tunnel, their terminal or their files.
+	/command/s6-svc -r /run/service/lody-daemon || true
+	while [ "$waited" -lt "$kill_grace" ]; do
+		sleep 5
+		waited=$((waited + 5))
+		after=$(daemon_pid)
+		[ "$after" != "$before" ] && return 0
+	done
+	echo "lody-watchdog: lody-daemon ignored SIGTERM for ${kill_grace}s; sending SIGKILL"
+	/command/s6-svc -k /run/service/lody-daemon || true
+}
+
+# Returns 0 when it killed a leaf, 1 when it decided not to.
+relieve_pressure() {
+	local heaviest bytes leaf
+	if ! heaviest=$(heaviest_session); then
+		echo "lody-watchdog: no agent session to kill; the weight is not a session"
+		return 1
+	fi
+	bytes=${heaviest%% *}
+	leaf=${heaviest#* }
+	if [ "$bytes" -lt "$kill_floor" ]; then
+		echo "lody-watchdog: heaviest session ${leaf##*/lody-session-} holds only $((bytes / 1048576)) MiB; the weight is not a session"
+		return 1
+	fi
+	if ! printf '1\n' >"$leaf/cgroup.kill" 2>/dev/null; then
+		echo "lody-watchdog: could not write $leaf/cgroup.kill"
+		return 1
+	fi
+	echo "lody-watchdog: killed session ${leaf##*/lody-session-} holding $((bytes / 1048576)) MiB to relieve memory pressure"
+	return 0
+}
 
 # Sleeping FIRST is what keeps this from fighting the daemon's own startup —
 # the first probe lands a full interval after s6 brought it up.
 while true; do
+	if [ "$max_ticks" -gt 0 ] && [ "$ticks" -ge "$max_ticks" ]; then
+		exit 0
+	fi
+	ticks=$((ticks + 1))
 	sleep "$interval"
+
+	# Pressure is judged before the probe: a starved daemon that misses its
+	# probe is explained by the pressure, and killing the runaway is the cheaper
+	# repair. Only a kill that actually happened skips the probe.
+	if full=$(pressure_full_avg60) && [ "$full" -ge "$pressure_limit" ]; then
+		pressure_ticks=$((pressure_ticks + 1))
+		echo "lody-watchdog: memory pressure full avg60=${full}% ($pressure_ticks/$pressure_ticks_before_kill)"
+		if [ "$pressure_ticks" -ge "$pressure_ticks_before_kill" ]; then
+			pressure_ticks=0
+			if relieve_pressure; then
+				misses=0
+				sleep "$hold"
+				continue
+			fi
+		fi
+	else
+		pressure_ticks=0
+	fi
 
 	if curl --silent --fail --max-time 10 --unix-socket "$probe_socket" \
 		http://localhost/healthz >/dev/null 2>&1; then
@@ -56,14 +216,7 @@ while true; do
 	echo "lody-watchdog: healthz did not answer ($misses/$misses_before_restart)"
 	[ "$misses" -ge "$misses_before_restart" ] || continue
 
-	# `|| true` for the same reason machine-stats has it: the sessions surface is
-	# not worth the box. A dead daemon costs sessions; it does not cost the
-	# member their tunnel, their terminal or their files.
-	echo "lody-watchdog: restarting lody-daemon"
-	/command/s6-svc -r /run/service/lody-daemon || true
+	restart_daemon
 	misses=0
-	# Do not judge the restart at the next interval: `lody start` has to open its
-	# sockets before it can answer, and a second restart on top of the first only
-	# moves the box further from a working daemon.
-	sleep 120
+	sleep "$hold"
 done
