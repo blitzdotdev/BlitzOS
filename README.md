@@ -14,7 +14,7 @@
 
 ## What you can do with BlitzOS
 
-### Teammates use agents with zero setup
+### Help teammates use agents with zero setup
 
 Teammates start using agents instead of learning how to use them. Set up a workspace once: git repos, credentials, agent rules, and skills. Add a teammate and they get their own cloud computer with the same setup, and start work immediately.
 
