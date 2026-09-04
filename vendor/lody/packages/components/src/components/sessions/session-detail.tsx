@@ -41,7 +41,6 @@ import {
   type LocalProjectId,
   type LocalProjectMeta,
   type PrStatus,
-  type PreviewTarget,
   type ProjectRef,
   type SessionId,
   type SessionMeta,
@@ -781,7 +780,6 @@ const SessionDetail = ({
   hostSidePanelTabs = EMPTY_HOST_SIDE_PANEL_TABS,
   sidePanelRequest = null,
   onSidePanelStateChange,
-  resolveManagedPreviewViewerUrl,
 }: {
   sessionId: SessionId;
   urlTab?: string;
@@ -891,18 +889,6 @@ const SessionDetail = ({
    * `SessionSidePanelHostState`. Read through a ref, so a fresh closure on
    * every host render costs nothing. */
   onSidePanelStateChange?: (state: SessionSidePanelHostState) => void;
-  /**
-   * Answer a loopback or private-LAN Browser target with a viewer URL of the
-   * host's own, or `null` to let the panel resolve it as it does today.
-   *
-   * The Browser panel knows two engines for such a target: a local endpoint
-   * (Electron only) and a remote tunnel. A host that already proxies the
-   * session machine's ports can serve the page itself; the URL it returns is
-   * put in the managed-preview iframe AS GIVEN — absolute, since the frame's
-   * origin is read from it — with no annotation runtime expected behind it.
-   * Passed to every `SessionBrowserPanel` this page mounts.
-   */
-  resolveManagedPreviewViewerUrl?: (target: PreviewTarget) => string | null;
 }) => {
   const { t } = useTranslation();
   const router = useRouter();
@@ -5717,7 +5703,6 @@ const SessionDetail = ({
                   session={activeBrowserSession}
                   active={Boolean(urlBrowser)}
                   className="h-full"
-                  resolveManagedPreviewViewerUrl={resolveManagedPreviewViewerUrl}
                   candidateNavigationRequestId={
                     browserCandidateNavigationRequest?.sessionId === activeBrowserSession.id
                       ? browserCandidateNavigationRequest.id
@@ -5846,7 +5831,6 @@ const SessionDetail = ({
           <SessionBrowserPanel
             session={activeBrowserSession}
             active={activeSidebarTab === 'browser' && isSidebarOpen}
-            resolveManagedPreviewViewerUrl={resolveManagedPreviewViewerUrl}
             candidateNavigationRequestId={
               browserCandidateNavigationRequest?.sessionId === activeBrowserSession.id
                 ? browserCandidateNavigationRequest.id

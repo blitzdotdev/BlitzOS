@@ -1,5 +1,5 @@
 /**
- * Seam patches 19 and 20, the halves that can be driven without a daemon.
+ * Seam patch 19, the halves that can be driven without a daemon.
  *
  * WHAT IS MOUNTED. The real vendored `SessionSidePanelTabBar` and
  * `SessionSidePanelEmptyState`, given a `custom` option the way seam patch 19's
@@ -167,7 +167,6 @@ describe("the page-level halves are declared where the pin reads them", () => {
       "hostSidePanelTabs?: readonly SessionHostSidePanelTab[];",
       "sidePanelRequest?: SessionSidePanelRequest | null;",
       "onSidePanelStateChange?: (state: SessionSidePanelHostState) => void;",
-      "resolveManagedPreviewViewerUrl?: (target: PreviewTarget) => string | null;",
     ]) {
       expect(detail, `session-detail.tsx declares ${text}`).toContain(text);
     }
@@ -176,32 +175,5 @@ describe("the page-level halves are declared where the pin reads them", () => {
     // next load, which is why it is pinned as a CALL and not only as a type.
     expect(detail).toContain("tab: isHostSidePanelTab(activeSidebarTab) ? null : activeSidebarTab,");
     expect(detail).toContain("tabs: openedSidebarTabs.filter(isPersistedSidePanelTab),");
-    // And the resolver reaches BOTH Browser mounts.
-    expect(
-      detail.match(/resolveManagedPreviewViewerUrl=\{resolveManagedPreviewViewerUrl\}/gu),
-    ).toHaveLength(2);
-  });
-
-  it("threads seam patch 20 from the panel to the frame", () => {
-    const panel = vendored("session-browser-panel.tsx");
-    expect(panel).toContain(
-      "resolveManagedPreviewViewerUrl?: (target: PreviewTarget) => string | null;",
-    );
-    // The host's answer is asked for BEFORE the runtime and the user are
-    // required — a host that serves the page needs neither.
-    const hostBranch = panel.indexOf("resolveManagedPreviewViewerUrl?.(managedAddress.target)");
-    const runtimeGuard = panel.indexOf("if (!runtime || !user?.id) {\n        setError(\n          t(\n            'sessions.browser.errors.runtimeUnavailable',\n            'The session runtime is unavailable. The page was not opened.'");
-    expect(hostBranch).toBeGreaterThan(-1);
-    expect(runtimeGuard).toBeGreaterThan(hostBranch);
-    expect(panel).toContain("shareAvailable={currentAddress !== null && !hostViewer}");
-    expect(panel).toContain("hostViewer={hostViewer}");
-
-    const surface = vendored("managed-preview-surface.tsx");
-    expect(surface).toContain("hostViewer?: boolean;");
-    expect(surface).toContain("hostViewer = false,");
-    // Reload keeps the host's URL verbatim rather than re-deriving the path.
-    expect(surface).toContain("if (hostViewer) {\n      // The host's URL is the page");
-    // And the load handler stops before arming the runtime handshake.
-    expect(surface).toContain("if (hostViewer) return;\n    if (runtimeHandshakeTimerRef.current)");
   });
 });

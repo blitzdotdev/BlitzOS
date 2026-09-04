@@ -7,6 +7,7 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { WorkspaceRailStrip } from '../src/WorkspaceRailStrip.js';
 import {
+  BROWSER_SIDE_PANEL_ID,
   CONNECTIONS_SIDE_PANEL_ID,
   type SessionSidePanelHostState,
 } from '../src/lody/side-panel.js';
@@ -25,7 +26,7 @@ function sessionState(
       { id: 'side-session', disabled: false },
       { id: 'files', disabled: false },
       { id: 'changes', disabled: false },
-      { id: 'browser', disabled: false },
+      { id: BROWSER_SIDE_PANEL_ID, disabled: false },
       { id: CONNECTIONS_SIDE_PANEL_ID, disabled: false },
     ],
     ...overrides,
@@ -95,11 +96,11 @@ describe('WorkspaceRailStrip', () => {
     const view = await render(
       <WorkspaceRailStrip
         sidePanel={sessionState({
-          openedTabIds: ['browser'],
+          openedTabIds: ['files'],
           availableOptions: [
             { id: 'side-session', disabled: true },
-            { id: 'files', disabled: false },
             { id: 'changes', disabled: false },
+            { id: BROWSER_SIDE_PANEL_ID, disabled: false },
             { id: CONNECTIONS_SIDE_PANEL_ID, disabled: false },
           ],
         })}
@@ -109,8 +110,8 @@ describe('WorkspaceRailStrip', () => {
       />,
     );
     expect(button(view.container, 'Side Chat').disabled).toBe(true);
-    // Browser left the `+` menu because it is open; the strip still offers it.
-    expect(button(view.container, 'Browser').disabled).toBe(false);
+    // Files left the `+` menu because it is open; the strip still offers it.
+    expect(button(view.container, 'Files').disabled).toBe(false);
     await view.unmount();
   });
 

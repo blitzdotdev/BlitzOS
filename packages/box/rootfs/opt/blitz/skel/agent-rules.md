@@ -9,16 +9,21 @@ restarts, so do not edit it. Put project-specific rules in
 When you start a web UI, dev server, or static HTML page for the user, run:
 
 ```
-blitz teenyapp open <port>
+blitz browser open <port>             # a local app listening on that port
+blitz browser open ./site/index.html  # an HTML file under /workspace
+blitz browser open https://x.app.teenyapp.com   # an app on the teenyapp platform
 ```
 
-This makes the platform **open the app for the user**. It works for any local
-app, not only teenyapps. Do it as soon as the server is listening. Never tell
-a first-time user to go hunt for a teenyapp tab — open it for them.
-(`blitz preview open` is an alias for the same command.)
+This makes the platform **open it for the user**, in the browser panel beside
+their session. Do it as soon as the server is listening or the file is
+written. Never tell a first-time user to go hunt for a tab — open it for
+them. (`blitz teenyapp open <port>` and `blitz preview open <port>` are
+aliases for the port form.)
 
-- `--path <path>` deep-links to a route, e.g. `blitz teenyapp open 3000 --path /dashboard`.
-- `--title <name>` names the app, e.g. `blitz teenyapp open 5173 --title "Docs"`.
+- `--path <path>` deep-links a port to a route, e.g. `blitz browser open 3000 --path /dashboard`.
+- `--title <name>` names the tab, e.g. `blitz browser open 5173 --title "Docs"`.
+- A file must be under `/workspace`; a relative path resolves from your working
+  directory. An app URL must be `https`.
 
 ### How local apps reach the browser
 
@@ -26,8 +31,9 @@ a first-time user to go hunt for a teenyapp tab — open it for them.
   **17445**; the box uses those.
 - Bind to an IPv4 loopback or wildcard address (**`127.0.0.1`** or **`0.0.0.0`**).
   Do **not** bind IPv6-only (`::1`) — it will not be reached.
-- Within a few seconds the port appears in a workspace teenyapp tab. It
-  is served to the browser at `/workspaces/<workspace-id>/webapp/7445/preview/<port>/`.
+- Within a few seconds the port appears in the workspace's browser panel. It
+  is served to the browser at `/workspaces/<workspace-id>/webapp/7445/preview/<port>/`,
+  and a file under `/workspace` at `.../webapp/7445/workspace/<path>`.
 - Do **not** try to fetch that URL yourself from inside the box. The browser
   holds an auth token that the box does not, so the request will fail from here.
   Just start the server and open the app.

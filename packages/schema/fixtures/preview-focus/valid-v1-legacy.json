@@ -1,7 +1,6 @@
 {
   "input": {
-    "version": 2,
-    "kind": "port",
+    "version": 1,
     "port": 5173,
     "path": "/dashboard",
     "title": "Docs",
@@ -9,8 +8,7 @@
   },
   "expected": {
     "focus": {
-      "version": 2,
-      "kind": "port",
+      "version": 1,
       "port": 5173,
       "path": "/dashboard",
       "title": "Docs",

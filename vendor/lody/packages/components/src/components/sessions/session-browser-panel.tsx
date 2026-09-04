@@ -63,17 +63,6 @@ type SessionBrowserPanelProps = {
   visualAnnotationReferenceKeys?: readonly string[];
   onAddVisualAnnotationToChat?: (reference: VisualAnnotationReferencePayload) => boolean | void;
   onToggleVisualAnnotationInChat?: (reference: VisualAnnotationReferencePayload) => boolean | void;
-  /**
-   * Answer a managed-preview target with a viewer URL of the host's own, or
-   * `null` to resolve it as today (local endpoint or remote tunnel).
-   *
-   * Asked before the runtime and the user are required, so a host that has
-   * neither can still serve the page. The URL goes into the iframe AS GIVEN —
-   * absolute, since the frame's origin is read from it — and no annotation
-   * runtime is expected behind it: annotation stays unavailable and Share,
-   * which would mint a tunnel for a page the host serves, is off.
-   */
-  resolveManagedPreviewViewerUrl?: (target: PreviewTarget) => string | null;
 };
 
 type PendingManagedAction = {
@@ -117,7 +106,6 @@ function SessionBrowserPanelController({
   visualAnnotationReferenceKeys,
   onAddVisualAnnotationToChat,
   onToggleVisualAnnotationInChat,
-  resolveManagedPreviewViewerUrl,
 }: SessionBrowserPanelProps) {
   const { t } = useTranslation();
   const runtime = useAtomValue(activeWorkspaceRuntimeAtom);
@@ -144,9 +132,6 @@ function SessionBrowserPanelController({
   const [address, setAddress] = useState(suggestedAddress);
   const [currentAddress, setCurrentAddress] = useState<BrowserAddress | null>(null);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
-  // Whether `viewerUrl` came from `resolveManagedPreviewViewerUrl` rather than
-  // from an endpoint or a tunnel of this panel's own.
-  const [hostViewer, setHostViewer] = useState(false);
   const [localEndpoint, setLocalEndpoint] = useState<SessionPreviewEndpoint | null>(null);
   const localEndpointRef = useRef<SessionPreviewEndpoint | null>(null);
   const [history, setHistory] = useState<SessionBrowserNavigationHistory>({
@@ -247,7 +232,6 @@ function SessionBrowserPanelController({
     setAddress(resumeState?.currentAddress.logicalUrl ?? '');
     setCurrentAddress(null);
     setViewerUrl(null);
-    setHostViewer(false);
     setLocalEndpoint(null);
     setHistory(resumeState?.history ?? { entries: [], index: -1 });
     setPublicState(null);
@@ -416,7 +400,6 @@ function SessionBrowserPanelController({
     ) => {
       const sequence = ++navigationSequenceRef.current;
       setError(null);
-      setHostViewer(false);
       if (next.engine === 'public-web') {
         await releaseLocalEndpoint();
         if (sequence !== navigationSequenceRef.current) return;
@@ -432,17 +415,6 @@ function SessionBrowserPanelController({
         engine: 'managed-preview';
         target: PreviewTarget;
       };
-      // The host's answer comes first, before the runtime and the user are
-      // required: a host that serves the page itself needs neither.
-      const hostViewerUrl = resolveManagedPreviewViewerUrl?.(managedAddress.target) ?? null;
-      if (hostViewerUrl !== null) {
-        await releaseLocalEndpoint();
-        if (sequence !== navigationSequenceRef.current) return;
-        setHostViewer(true);
-        commitOpenedAddress(managedAddress, hostViewerUrl, options?.historyIndex);
-        setManagedNavigationPhase(null);
-        return;
-      }
       if (!runtime || !user?.id) {
         setError(
           t(
@@ -589,7 +561,6 @@ function SessionBrowserPanelController({
       createRemotePreview,
       effectivePreview.connection,
       releaseLocalEndpoint,
-      resolveManagedPreviewViewerUrl,
       resolveMachinePlane,
       runtime,
       session.id,
@@ -992,7 +963,7 @@ function SessionBrowserPanelController({
         annotationEnabled={annotationEnabled}
         annotationAvailable={annotationAvailable}
         sharing={sharing}
-        shareAvailable={currentAddress !== null && !hostViewer}
+        shareAvailable={currentAddress !== null}
         hasShareUrl={currentAddress?.engine === 'managed-preview' && !!activeShareUrl}
         busy={navigationBusy}
         onAddressChange={setAddress}
@@ -1052,7 +1023,6 @@ function SessionBrowserPanelController({
         <ManagedPreviewSurface
           session={session}
           viewerUrl={viewerUrl}
-          hostViewer={hostViewer}
           annotationEnabled={annotationEnabled}
           logicalUrl={currentAddress.logicalUrl}
           command={managedCommand}

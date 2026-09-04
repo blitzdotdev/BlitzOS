@@ -338,10 +338,9 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           onSessionTabSelect: surfaceTabs.onDeselect,
           onSessionMissing: surfaceTabs.onSessionMissing,
         };
-    // Seam patches 19 and 20: the right icon strip drives the side panel and
-    // our Connections panel lives in it; loopback addresses in the Browser
-    // panel resolve through the box gateway. Absent when no shell drives the
-    // panel, for the same inertness reason as the six above.
+    // Seam patch 19: the right icon strip drives the side panel and our
+    // Browser and Connections panels live in it. Absent when no shell drives
+    // the panel, for the same inertness reason as the six above.
     //
     // The state report goes through a ref so the page's effect reads the
     // latest shell closure without re-running on every render of ours, and
@@ -360,7 +359,6 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           hostSidePanelTabs: sidePanel.hostTabs,
           sidePanelRequest: sidePanel.request,
           onSidePanelStateChange: sidePanel.onStateChange,
-          resolveManagedPreviewViewerUrl: sidePanel.resolveManagedPreviewViewerUrl,
         };
     // Hooks above, the mobile early return below: the phone branch draws the
     // session as a drawer over the landing (see the doc comment).

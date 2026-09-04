@@ -403,7 +403,7 @@ port those values into `tokens.css` rather than restyle by taste.
 editor panes, or the mobile drawer semantics. *(2026-09-02: the right icon
 strip has since become a quick-action bar over Lody's side panel — Side Chat,
 Files, All Changes, Browser, Connections — and the native Files and teenyapps
-panels are gone; see `vendor/lody/BLITZ-PATCHES.md` seam patches 19 and 20 and
+panels are gone; see `vendor/lody/BLITZ-PATCHES.md` seam patch 19 and
 `packages/webapp/src/lody/side-panel.tsx`. The "Files, Ports, Connections"
 surface icons in the row below are superseded by that bar.)* **No sessions yet** — the
 rail lists the managed tab types that already exist under a workspace

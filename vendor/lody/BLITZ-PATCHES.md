@@ -94,9 +94,8 @@ hunks to `session-detail.tsx`, seam patch 7's five new ones:
 `components/sessions/session-conversation-diff-panel.tsx`, and seam patch 8's
 one new one: `hooks/use-chat-landing-file-draft.ts`, which also adds hunks to
 `session-chat-input-area.tsx`.
-Seam patches 19 and 20 add three more under `components/sessions/`:
-`session-side-panel-tab-bar.tsx`, `session-browser-panel.tsx` and
-`managed-preview-surface.tsx`; their own entries carry the running count.
+Seam patch 19 adds one more under `components/sessions/`:
+`session-side-panel-tab-bar.tsx`; its entry carries the running count.
 
 ### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
 
@@ -1791,124 +1790,17 @@ option. Upstream PR drafted at `plans/evidence/lody-side-panel-host-tabs-pr.md`;
   pass that instead; the BlitzOS half is one binding in
   `packages/webapp/src/lody/`.
 
-### 20. A host-resolved viewer URL for the Browser panel (2026-09-02)
-
-**One idea, fifteen hunks in three files, and it is inert without one prop.**
-The Browser panel has strict dual engines (`components/sessions/AGENTS.md`):
-a public host goes to Electron's `WebContentsView`, and a loopback or
-private-LAN target goes to Managed Preview — an Electron-only local endpoint, or
-a Lody-cloud tunnel minted by the session runtime. In a BlitzOS browser neither
-exists: there is no `WebContentsView`, no local plane, and no cloud to mint a
-tunnel from, so `openAddress` stops at `if (!runtime || !user?.id)` (or, with a
-runtime, at a confirmation dialog for a tunnel that can never be created) and
-the panel is dead.
-
-What BlitzOS does have is a box gateway that already proxies every loopback
-port on the machine to the browser, at
-`<origin>/workspaces/<id>/webapp/7445/preview/<port>/<path>`. That is a viewer
-URL for exactly the targets Managed Preview exists for. The seam lets the host
-answer a target with one, and the panel puts it in the iframe it already has.
-
-`packages/components/src/components/sessions/session-detail.tsx` (pinned)
-
-| # | Line (at `f3474894`) | Upstream anchor | What it does |
-|---|---|---|---|
-| 1 | 43 | `type PrStatus,` in the `@lody/shared` import list | imports `type PreviewTarget` |
-| 2 | 666, 672 | `onMobileBack,` and `onMobileBack?: () => void;` — the same anchor as seam patch 19 hunk 6 | declares and destructures `resolveManagedPreviewViewerUrl` |
-| 3 | 5258, 5377 | the two `<SessionBrowserPanel` elements (the mobile drawer and the desktop side panel) | passes it through — mobile too, so there is one prop and not a desktop-only one |
-
-`packages/components/src/components/sessions/session-browser-panel.tsx`
-
-| # | Line (at `f3474894`) | Upstream anchor | What it does |
-|---|---|---|---|
-| 4 | 65 | `onToggleVisualAnnotationInChat?:` in `SessionBrowserPanelProps` | declares `resolveManagedPreviewViewerUrl?: (target: PreviewTarget) => string \| null` |
-| 5 | 108 | `onToggleVisualAnnotationInChat,` in the destructuring | destructures it |
-| 6 | 134 | `const [viewerUrl, setViewerUrl] = useState<string \| null>(null);` | adds `hostViewer` state: whether `viewerUrl` is the host's |
-| 7 | 234 | `setViewerUrl(null);` in the per-session reset effect | resets it |
-| 8 | 402 | `setError(null);` at the top of `openAddress` | resets it per navigation |
-| 9 | 417 | the `};` closing `managedAddress`, BEFORE `if (!runtime \|\| !user?.id)` | the host branch: release any local endpoint, `commitOpenedAddress(managedAddress, hostViewerUrl, historyIndex)`, done |
-| 10 | 563 | `releaseLocalEndpoint,` in `openAddress`'s dependency list | adds the resolver |
-| 11 | 966 | `shareAvailable={currentAddress !== null}` | `&& !hostViewer` — Share would mint a tunnel for a page the host serves |
-| 12 | 1025 | `viewerUrl={viewerUrl}` on `<ManagedPreviewSurface` | passes `hostViewer` |
-
-`packages/components/src/components/sessions/managed-preview-surface.tsx`
-
-| # | Line (at `f3474894`) | Upstream anchor | What it does |
-|---|---|---|---|
-| 13 | 78, 278 | `documentHtml?: string;` and `documentHtml,` | declares `hostViewer?: boolean`, defaults `false` |
-| 14 | 403 | `onLoadingChange(false);` in `handleIframeLoad` | returns before arming the 3 s runtime handshake, whose expiry reports "the annotation runtime did not become ready" |
-| 15 | 434 | the `}` closing the `documentHtml` branch of `hardReloadFrame` | a host branch that sets `iframe.src = viewerUrl` AS GIVEN, instead of `buildManagedViewerUrlForLogicalUrl` |
-
-Hunk 11 is the only line this patch replaces, and it is the one anchor named for
-this file in `lody-surface-tabs.test.tsx`; every other hunk adds lines.
-
-```ts
-/** Answer a loopback or private-LAN Browser target with a viewer URL of the
- *  host's own, or `null` to let the panel resolve it as it does today. */
-resolveManagedPreviewViewerUrl?: (target: PreviewTarget) => string | null;
-```
-
-**Hunk 9 sits where it does for one reason: the user atom.** BlitzOS's
-`userAtom` may be empty, and `openAddress` requires `user?.id` two lines later
-for every managed target. The host's answer is asked for before that guard,
-because a host that serves the page needs neither the runtime nor the user —
-and every navigation path lands here: the address bar (`navigate`), history
-(`handleBack` / `handleForward` → `navigateHistory` → `openAddress` with
-`historyIndex`), the auto-restore effect (`openAddress` with `restore`), the
-info bar's candidate click, and `handleReload` when the endpoint is gone.
-
-**Hunk 15 is why the URL must be taken verbatim.** A reload with no live
-runtime — which in host mode is every reload — goes through `hardReloadFrame`,
-and upstream rebuilds the frame's `src` from the LOGICAL URL's root-relative
-path, carrying only the capability params over. A gateway prefix is neither, so
-`http://localhost:3000/foo` would come back as `<origin>/foo`. The frame cache
-(`managed-preview-frame-cache.ts:117`, `:158`) already sets `src` from
-`viewerUrl` as given, so it needs no hunk. The URL must be ABSOLUTE:
-`previewOrigin` is `new URL(viewerUrl).origin`, and that line is upstream's.
-
-**Hunk 14 is why the panel does not error three seconds after every load.**
-The managed page is expected to carry Lody's injected annotation runtime, and
-`handleIframeLoad` arms a timer that reports its absence as an error. A page the
-host proxies has no runtime, so annotation is simply unavailable
-(`onAnnotationAvailabilityChange(false)`, which the handler already called) and
-the timer is never armed. `runtimeAliveRef` stays `false`, so `reload` takes the
-`hardReloadFrame` path above rather than a postMessage nothing answers, and
-`managedState` stays `null`, so Back / Forward fall through to the panel's own
-history.
-
-**What the host mode does NOT do.** Visual annotation, preview comments and
-Share are off — the first two need the runtime, the third would create a tunnel
-for a page the host is already serving. The `sessions.browser.emptyNoCandidate`
-copy and the candidate flow are upstream's, so a session whose agent reported a
-dev server opens it on the first click, as it does in Electron.
-
-Strictly additive: with the prop absent `hostViewerUrl` is `null` on every
-navigation, `hostViewer` is `false` on every commit, and each of hunks 11, 14
-and 15 takes the branch it took before. `packages/webapp/test/lody-seam-pin.test.ts`
-pins the three files against their baselines. Upstream PR drafted at
-`plans/evidence/lody-managed-preview-host-viewer-pr.md`; **drop this patch when
-it merges.**
-
-**Merge conflict drill.**
-
-- If `openAddress` is restructured, re-apply hunk 9 by the one rule: **the
-  host's answer is asked for before anything that needs the runtime or the
-  user**, and after the address has been classified as managed.
-- If `hardReloadFrame` stops re-deriving the URL — say upstream keeps the
-  acquire-time `src` — hunk 15 goes, and hunk 14 stands alone.
-- If upstream grows a third engine of its own for a host-served page, or a
-  capability that names one, drop all fifteen hunks and pass that instead; the
-  BlitzOS half is one function in `packages/webapp/src/lody/`.
-
 Verify this divergence by diffing OUR subtree against the upstream commit it was
 imported from, exactly as seam patch 1 describes. **Expected after seam patch
-20: THIRTY-FIVE**, measured on 2026-09-04 with the command above. Seam patch
-19 adds `components/sessions/session-side-panel-tab-bar.tsx`; seam patch 20 adds
-`components/sessions/session-browser-panel.tsx` and
-`components/sessions/managed-preview-surface.tsx`; seam patch 18 adds no file,
-`components/loro-sidebar.tsx` being seam patch 2's. (Seam patch 16 said THIRTY
-and seam patch 17 added one, which leaves one file the running count had
-already lost track of; the measurement is the authority.)
+19: THIRTY-THREE**, measured on 2026-09-04 with the command above: seam patch
+16's thirty, seam patch 17's `providers/local-platform-provider.ts`, one file
+the running count had already lost track of, and this patch's
+`components/sessions/session-side-panel-tab-bar.tsx`. Seam patch 18 adds no
+file, `components/loro-sidebar.tsx` being seam patch 2's. Seam patch 20 (a
+host-resolved viewer URL for Lody's Browser panel) was declared on 2026-09-02
+and withdrawn on 2026-09-04 before it shipped: BlitzOS draws its own browser
+panel as a host tab (`packages/webapp/src/browser/`), so Lody's Browser tab
+carries no hunk of ours.
 
 ## Patches to the published npm artifact (NOT to this tree)
 

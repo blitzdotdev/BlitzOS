@@ -1435,8 +1435,8 @@ func TestServePreviewFocusFixtures(t *testing.T) {
 			}
 		})
 	}
-	if fixtureCount != 8 {
-		t.Fatalf("preview-focus fixture count = %d, want 8", fixtureCount)
+	if fixtureCount != 15 {
+		t.Fatalf("preview-focus fixture count = %d, want 15", fixtureCount)
 	}
 }
 

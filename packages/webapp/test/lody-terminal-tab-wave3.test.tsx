@@ -19,7 +19,7 @@
  *    seam hunks this wave adds are pinned by reading the vendored file, the
  *    precedent `lody-surface-tabs.test.tsx` set for hunks 13-18.
  */
-import { act, useState, type ReactNode } from "react";
+import { act, useEffect, useState, type ReactNode } from "react";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -143,6 +143,10 @@ function shellClient(state: Map<string, unknown>): ControlPlaneClient {
 }
 
 interface ShellOptions {
+  /** Whether the stand-in surface reports a session detail's side panel, as the
+   * real page does once one is on screen. Off, the shell falls back to the
+   * native panel tab, which is what the Connections cases pin. */
+  sidePanelOnScreen?: boolean;
   path: string;
   tabs: WorkspaceTab[];
   activeId: number | null;
@@ -157,6 +161,7 @@ interface ShellOptions {
 interface SurfaceRecord {
   hidden: boolean;
   surfaceTabs: import("../src/lody/surface-tabs.js").SurfaceTabsBinding | undefined;
+  sidePanel: import("../src/lody/side-panel.js").SidePanelBinding | undefined;
 }
 
 async function mountShell(options: ShellOptions) {
@@ -169,14 +174,19 @@ async function mountShell(options: ShellOptions) {
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
   }));
-  // The box's `/connections-focus` marker, mutable per case; every other box
-  // door answers the platform catalog, which is the only one the shell parses.
+  // The box's `/connections-focus` and `/preview-focus` markers, mutable per
+  // case; every other box door answers the platform catalog, which is the only
+  // one the shell parses.
   const focusMarker: { body: unknown } = { body: { focus: null } };
+  const previewFocusMarker: { body: unknown } = { body: { focus: null } };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/connections-focus")) {
         return new Response(JSON.stringify(focusMarker.body), { status: 200 });
+      }
+      if (String(input).includes("/preview-focus")) {
+        return new Response(JSON.stringify(previewFocusMarker.body), { status: 200 });
       }
       // A door that never answers holds the capability at `probing`, which is
       // where every cold load starts and where the native strip used to show.
@@ -193,6 +203,7 @@ async function mountShell(options: ShellOptions) {
   const surface: SurfaceRecord = {
     hidden: true,
     surfaceTabs: undefined,
+    sidePanel: undefined,
   };
   // The real surface is 3.5 MB of vendored renderer and needs a daemon. This
   // records what the shell hands it and draws the ONE control it portals into
@@ -203,9 +214,18 @@ async function mountShell(options: ShellOptions) {
       hidden?: boolean;
       rail?: { newTabControl?: ReactNode };
       surfaceTabs?: SurfaceRecord["surfaceTabs"];
+      sidePanel?: SurfaceRecord["sidePanel"];
     }) => {
       surface.hidden = props.hidden === true;
       surface.surfaceTabs = props.surfaceTabs;
+      surface.sidePanel = props.sidePanel;
+      // The real page reports its side panel back once it mounts; the shell's
+      // browser routing reads that report, so the stand-in answers with an
+      // open, empty panel — from an effect, as the page does, never mid-render.
+      const report = options.sidePanelOnScreen === true ? props.sidePanel?.onStateChange : undefined;
+      useEffect(() => {
+        report?.({ open: true, activeTabId: null, openedTabIds: [], availableOptions: [] });
+      }, [report]);
       return <div data-testid="lody-surface">{props.rail?.newTabControl}</div>;
     },
   }));
@@ -236,7 +256,7 @@ async function mountShell(options: ShellOptions) {
   await settle();
   await settle();
   await settle();
-  return { view, surface, state, focusMarker };
+  return { view, surface, state, focusMarker, previewFocusMarker };
 }
 
 /** The persistence write is debounced 150 ms; a case that reads the stored
@@ -450,6 +470,36 @@ describe("S4 — opening a utility panel shows it", () => {
     });
     await settle();
     expect(mounted.surface.surfaceTabs?.activeTabId).toBe("blitz-tab:8");
+    await mounted.view.unmount();
+  });
+
+  it("opens the browser panel on the box's `blitz browser open` marker", async () => {
+    const mounted = await mountShell({
+      path: "/workspaces/ws-1/chat/terminal/7",
+      tabs: [{ id: 7, type: "terminal" }],
+      activeId: 7,
+      sidePanelOnScreen: true,
+    });
+    // Our two host tabs ride into Lody's side panel through seam patch 19.
+    expect(mounted.surface.sidePanel?.hostTabs.map(({ id }) => id))
+      .toEqual(["host:browser", "host:connections"]);
+    mounted.previewFocusMarker.body = {
+      focus: {
+        version: 2,
+        kind: "url",
+        url: "https://demo.app.teenyapp.com/",
+        title: "demo",
+        requestedAt: 1_700_000_000_000,
+      },
+    };
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, PORTS_POLL_INTERVAL_MS + 500));
+    });
+    await settle();
+    // With a session detail on screen the marker is a request to open OUR
+    // browser tab, not a preview tab in the strip.
+    expect(mounted.surface.sidePanel?.request).toMatchObject({ tabId: "host:browser", action: "open" });
+    expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toEqual(["blitz-tab:7"]);
     await mounted.view.unmount();
   });
 });
