@@ -45,31 +45,48 @@ FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c
 # a build-time pin therefore only decided how stale a fresh box was on its first
 # boot — it never held a version, because the first update moved it. Taking
 # `@latest` at build time costs the reproducibility of this layer and buys a box
-# that is current the moment it starts. `codex` stays pinned. Lody is the
-# reviewed, stamped tarball built above from vendor/lody.
+# that is current the moment it starts. `codex` stays pinned; Lody is installed
+# into its independently switchable prefix in the next stage.
 ENV NPM_CONFIG_PREFIX=/opt/blitz/npm
 # `ws` carries no binary: it is the only dependency of
 # /usr/local/libexec/blitz-lody-bridge, which reaches it through NODE_PATH.
-# `lody` is the session daemon (plans/LODY-SESSIONS.md §6). Installing its
-# tarball through npm preserves the established global prefix and binary path.
-COPY --from=lody-build /out/ /tmp/lody-build/
-RUN set -eux; \
-    set -- /tmp/lody-build/lody-*.tgz; \
-    test "$#" -eq 1; \
-    test -f "$1"; \
-    lody_tarball=$1; \
-    npm install --global --omit=dev \
+RUN npm install --global --omit=dev \
       @anthropic-ai/claude-code@latest \
       @openai/codex@0.147.0 \
       ws@8.21.0 \
-    && install -d /opt/blitz/npm/lib/node_modules /opt/blitz/npm/bin /tmp/lody-unpack \
-    && tar -xzf "$lody_tarball" -C /tmp/lody-unpack \
-    && mv /tmp/lody-unpack/package /opt/blitz/npm/lib/node_modules/lody \
-    && npm ci --prefix /opt/blitz/npm/lib/node_modules/lody --omit=dev \
-    && ln -s ../lib/node_modules/lody/dist/index.js /opt/blitz/npm/bin/lody \
-    && /opt/blitz/npm/bin/lody --help >/dev/null \
-    && npm cache clean --force \
-    && rm -rf /tmp/lody-build /tmp/lody-unpack
+    && npm cache clean --force
+
+FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS daemon
+
+# Lody moves independently from the member-owned agent CLI prefix. The
+# publisher exports this target's baked prefix as daemon.tar.gz.
+ENV NPM_CONFIG_PREFIX=/opt/blitz/lody/baked
+RUN npm install --global --omit=dev lody@0.88.1 \
+    && npm cache clean --force
+COPY packages/box/patches/lody-local-platform.mjs /tmp/lody-local-platform.mjs
+COPY packages/box/patches/lody-acp-auth-queue.mjs /tmp/lody-acp-auth-queue.mjs
+COPY packages/box/patches/lody-code-collab-worktree-root.mjs /tmp/lody-code-collab-worktree-root.mjs
+COPY packages/box/patches/lody-builtin-mcp-off.mjs /tmp/lody-builtin-mcp-off.mjs
+COPY packages/box/patches/lody-session-sandbox.mjs /tmp/lody-session-sandbox.mjs
+# Order matters only for the first: its guard is a sha256 of the bundle AS
+# PUBLISHED, so nothing may rewrite the file before it runs. The others guard on
+# the package version and their own anchor instead, for that reason.
+RUN node /tmp/lody-local-platform.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
+    && node /tmp/lody-acp-auth-queue.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
+    && node /tmp/lody-code-collab-worktree-root.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
+    && node /tmp/lody-builtin-mcp-off.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
+    && node /tmp/lody-session-sandbox.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
+    && rm /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs /tmp/lody-builtin-mcp-off.mjs /tmp/lody-session-sandbox.mjs
+
+FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS payload-build
+
+WORKDIR /src
+COPY packages/control-plane/scripts/lib/box-payload-files.mjs /tools/box-payload-files.mjs
+COPY env.defaults ./env.defaults
+COPY packages/box/rootfs ./packages/box/rootfs
+RUN node /tools/box-payload-files.mjs copy /src /out
+COPY --from=cred-build /out/blitz-cred /out/rootfs/usr/local/bin/blitz-cred
+COPY --from=gateway-build /out/blitz-box-gateway /out/rootfs/usr/local/bin/blitz-box-gateway
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime-base
 
@@ -145,16 +162,16 @@ FROM runtime-base
 
 COPY --from=artifacts /out/root/ /
 COPY --from=vendors /opt/blitz/npm/ /opt/blitz/npm/
-COPY --from=cred-build /out/blitz-cred /usr/local/bin/blitz-cred
-COPY --from=gateway-build /out/blitz-box-gateway /usr/local/bin/blitz-box-gateway
-COPY env.defaults /etc/blitz/env.defaults
+COPY --from=daemon /opt/blitz/lody/baked/ /opt/blitz/lody/baked/
+COPY --from=payload-build /out/ /opt/blitz/payload/baked/
 COPY packages/box/rootfs/ /
+COPY --from=payload-build /tools/box-payload-files.mjs /tmp/box-payload-files.mjs
 RUN set -eux; \
-    chmod 0755 /usr/local/bin/blitz /usr/local/bin/claude /usr/local/bin/codex \
-      /usr/local/bin/blitz-cred-claude /usr/local/bin/blitz-cred-codex \
-      /usr/local/bin/blitz-rules /usr/local/bin/blitz-cgroup \
-      /usr/local/bin/blitz-machine-stats; \
-    chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
+    ln -s baked /opt/blitz/payload/current; \
+    ln -s baked /opt/blitz/lody/current; \
+    node /tmp/box-payload-files.mjs install /; \
+    rm /tmp/box-payload-files.mjs; \
+    ln -s /opt/blitz/lody/current/bin/lody /usr/local/bin/lody; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \
     chown -R blitz:blitz /opt/blitz/npm
@@ -166,7 +183,7 @@ ARG BLITZ_LODY_SESSIONS=
 RUN set -eu; \
     if [ -n "$BLITZ_LODY_SESSIONS" ]; then \
       case "$BLITZ_LODY_SESSIONS" in 0|1) ;; *) echo "BLITZ_LODY_SESSIONS must be 0 or 1" >&2; exit 1 ;; esac; \
-      sed -i "s/^BLITZ_LODY_SESSIONS=.*/BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS/" /etc/blitz/env.defaults; \
+      sed -i "s/^BLITZ_LODY_SESSIONS=.*/BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS/" /opt/blitz/payload/baked/rootfs/etc/blitz/env.defaults; \
       grep -qx "BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS" /etc/blitz/env.defaults; \
     fi
 

@@ -184,10 +184,10 @@ done
 [ "$ready" = true ] || fail "enabled Lody services and loopback endpoints did not become ready within 180 seconds"
 
 services=$(docker exec "$container" /command/s6-rc -a list)
-for service in init-state register sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
+for service in init-state enroll register payload sshd ttyd dufs gateway watch dockerd; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
-for service in sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
+for service in payload sshd ttyd dufs gateway watch dockerd; do
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
 
@@ -225,6 +225,29 @@ dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
 docker exec "$container" test ! -e /srv/blitz-files/home \
   || fail "dufs publishes the agent HOME again: /srv/blitz-files/home exists"
 echo "PASS s6 graph and longruns"
+
+docker exec "$container" sh -c 'test "$(readlink /opt/blitz/payload/current)" = baked' \
+  || fail "the baked payload is not current"
+docker exec "$container" sh -c 'test "$(readlink /opt/blitz/lody/current)" = baked' \
+  || fail "the baked lody prefix is not current"
+for payload_path in \
+  /usr/local/bin/blitz \
+  /usr/local/bin/blitz-box-gateway \
+  /usr/local/bin/blitz-cred \
+  /usr/local/libexec/blitz-term \
+  /etc/blitz/env.defaults \
+  /opt/blitz/skel/agent-rules.md; do
+  docker exec "$container" test -L "$payload_path" \
+    || fail "$payload_path is not indirected through the current payload"
+done
+docker exec "$container" grep -qx \
+  'exec /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/gateway/run "$@"' \
+  /etc/s6-overlay/s6-rc.d/gateway/run \
+  || fail "the gateway service does not delegate to the current payload"
+docker exec "$container" sh -c \
+  'test "$(readlink /usr/local/bin/lody)" = /opt/blitz/lody/current/bin/lody' \
+  || fail "the lody PATH entry does not follow the current daemon"
+echo "PASS baked payload and daemon indirections"
 
 # ---- the memory boundary ----
 # This is the only gate that runs the real s6 graph, so it is the only place
@@ -277,9 +300,14 @@ for service in sshd ttyd dufs blitz-box-gatew; do
   [ "$where" = /blitz-system.slice ] \
     || fail "$service must sit in the reservation, but it is in [$where]"
 done
-where=$(docker exec "$container" sed -n 's|^0::||p' "/proc/$lody_pid/cgroup")
-[ "$where" = /blitz-user.slice/lody.scope ] \
-  || fail "the enabled Lody daemon must run in its user leaf, but it is in [$where]"
+# The actor that used to hold user/actor.scope is gone; the Lody daemon
+# inherited the placement. It is dark by default, so a smoke box idles it in
+# `sleep infinity` and there is no node to look at here. The placement is
+# asserted by reading its run script instead — see the boundary lab
+# (packages/box/test/memory-load.sh) for the live check on an enabled box.
+docker exec "$container" grep -q 'blitz-cgroup enter user/lody.scope' \
+  /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run \
+  || fail "the lody daemon does not enter the user ceiling"
 where=$(cgroup_of dockerd) || fail "dockerd is not running"
 [ "$where" = /blitz-user.slice/dockerd.scope ] \
   || fail "dockerd must sit beside its containers, not in them: [$where]"

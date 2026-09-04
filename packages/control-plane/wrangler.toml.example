@@ -127,6 +127,7 @@ run_worker_first = [
   "/auth/*",
   "/box-image",
   "/box-image/*",
+  "/box-payload/*",
   "/boxes/*",
   "/connect/*",
   "/connections",
