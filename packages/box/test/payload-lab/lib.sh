@@ -11,6 +11,7 @@
 
 PAYLOAD_LAB_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
 PAYLOAD_LAB_REPO=$(realpath "$PAYLOAD_LAB_DIR/../../../..")
+PAYLOAD_LAB_SESSION_DRIVER="$PAYLOAD_LAB_DIR/session-driver/drive.mjs"
 THINLAB_ORIGIN=${THINLAB_ORIGIN:-https://blitz-thinlab.minjunesv0.workers.dev}
 LAB_R2_BUCKET=${LAB_R2_BUCKET:-blitz-thinlab-images}
 LAB_HOST_SSH_PORT=${LAB_HOST_SSH_PORT:-2222}
@@ -215,8 +216,47 @@ box_ssh() {
   ssh "${options[@]}" -p "$port" "$user@$host" "$command"
 }
 
-# Host-only experiments require a separately provisioned root key. The
-# workspace key reaches the box and is not accepted by the host sshd on 2222.
+# Opens the box's bridge through SSH and dispatches one real Lody turn. The
+# driver prints only the session id on stdout, so callers may capture it while
+# transport/runtime progress continues to the experiment log on stderr.
+start_turn() {
+  local workspace_id=$1 prompt=$2 host port user target
+  if payload_lab_dry; then
+    dry_command "session-driver open <workspace:$workspace_id>; create ${LAB_TURN_AGENT:-claude} turn"
+    printf 'dry-session-%s\n' "${EXPERIMENT_ID:-payload-lab}"
+    return 0
+  fi
+  host=$(_ssh_target "$workspace_id" host)
+  port=$(_ssh_target "$workspace_id" port)
+  user=$(_ssh_target "$workspace_id" user)
+  if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+    target="$user@[$host]:$port"
+  else
+    target="$user@$host:$port"
+  fi
+  node "$PAYLOAD_LAB_SESSION_DRIVER" open --ssh "$target" --key "$LAB_SSH_KEY" >&2
+  local args=(session create --agent "${LAB_TURN_AGENT:-claude}" --prompt "$prompt")
+  if [ -n "${LAB_TURN_PROJECT:-}" ]; then
+    args+=(--project "$LAB_TURN_PROJECT")
+  fi
+  node "$PAYLOAD_LAB_SESSION_DRIVER" "${args[@]}"
+}
+
+# Waits for the exact turn started above. A completed turn returns zero; agent
+# failure and timeout return non-zero, with the driver's terminal JSON retained
+# on stdout for the experiment log or a caller-selected file.
+wait_turn() {
+  local workspace_id=$1 session_id=$2 timeout=$3
+  if payload_lab_dry; then
+    dry_command "session-driver wait $session_id on <workspace:$workspace_id> for ${timeout}s"
+    return 0
+  fi
+  node "$PAYLOAD_LAB_SESSION_DRIVER" session wait "$session_id" --timeout "$timeout"
+}
+
+# The VM host retains sshd on 2222 while the box owns port 22. The provisioned
+# lab key reaches both. Host access lets the harness run one updater tick and
+# read docker logs; no test hook is added to the box image.
 host_ssh() {
   local workspace_id=$1 command=$2
   if payload_lab_dry; then

@@ -4,7 +4,9 @@ source "$(dirname "$0")/lib.sh"
 payload_lab_init E1 "$@"
 
 if payload_lab_dry; then
-  dry_command "assert an agent turn is running; snapshot service pids and session catalog"
+  turn_id=$(start_turn "$WORKSPACE_ID" "run a long command")
+  wait_turn "$WORKSPACE_ID" "$turn_id" "${LAB_TURN_TIMEOUT:-900}"
+  dry_command "snapshot service pids and the started session"
   publish_variant e1-script
   pin_payload "$PUBLISHED_VERSION"
   dry_command "run updater; assert applied, no service pid changed, marker is used by a new tab, turn completes"
@@ -12,10 +14,12 @@ if payload_lab_dry; then
 fi
 
 require_workspace
-session_running "$WORKSPACE_ID" || experiment_fail "no turn is in flight"
+turn_prompt=${LAB_E1_PROMPT:-"Use the shell to run 'sleep ${LAB_E1_TURN_SECONDS:-300}' and wait for it to finish, then reply done."}
+turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt") \
+  || experiment_fail "could not start the E1 turn"
+wait_session_running "$WORKSPACE_ID" 60 || experiment_fail "the E1 turn did not become active"
 before_pids=$(service_pids "$WORKSPACE_ID")
-before_sessions=$(session_catalog "$WORKSPACE_ID")
-[ -n "$before_sessions" ] || experiment_fail "daemon catalog has no live session"
+before_sessions=$(printf '%s\n%s\n' "$turn_id" "$(session_catalog "$WORKSPACE_ID")" | sed '/^$/d' | sort -u)
 
 publish_variant e1-script
 pin_payload "$PUBLISHED_VERSION"
@@ -31,9 +35,9 @@ assert_equal "$after_pids" "$before_pids" "a service restarted for a restart-fre
 box_ssh "$WORKSPACE_ID" \
   "grep -F -- '$PUBLISHED_MARKER' /usr/local/libexec/blitz-term >/dev/null" \
   || experiment_fail "a newly resolved blitz-term does not use the new script"
-wait_session_idle "$WORKSPACE_ID" "${LAB_TURN_TIMEOUT:-900}" \
+wait_turn "$WORKSPACE_ID" "$turn_id" "${LAB_TURN_TIMEOUT:-900}" >"$LAB_TEMP_ROOT/turn.json" \
   || experiment_fail "the in-flight turn did not complete"
-after_sessions=$(session_catalog "$WORKSPACE_ID")
+after_sessions=$(printf '%s\n%s\n' "$turn_id" "$(session_catalog "$WORKSPACE_ID")" | sed '/^$/d' | sort -u)
 assert_equal "$after_sessions" "$before_sessions" "session catalog changed while the turn completed"
 assert_no_orphans "$WORKSPACE_ID"
 experiment_pass "turn completed; new tabs resolve the script; applied with zero service restarts"

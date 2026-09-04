@@ -32,9 +32,9 @@ Required for a real run:
 
 `LAB_WORKSPACES` is a whitespace-separated list consumed by `run-all.sh`.
 Each E script also accepts `<workspace-id> [machine-id]`. E14 requires two live
-member machines in its workspace. Tests that require an in-flight turn fail
-loudly unless the daemon `/state` probe reports one; the orchestrator owns
-starting a suitably long turn before E1, E2, E4, and E13.
+member machines in its workspace. E1, E3, and E4 start their own Claude turn
+through `session-driver/drive.mjs`; E2 and E13 still require the orchestrator to
+start a suitably long turn before the experiment.
 
 The production publisher has no test-only overlay flag. `publish_variant`
 therefore clones the current checkout into a temporary directory, copies one
@@ -45,11 +45,28 @@ versioned test object to make failures that a validating publisher correctly
 refuses to emit.
 
 Useful tuning variables are `LAB_OUTCOME_TIMEOUT`, `LAB_DAEMON_IDLE_CAP`,
-`LAB_TURN_TIMEOUT`, `LAB_E13_COMMAND`, and `LAB_HEALTH_PATH`. The E2 contract
+`LAB_TURN_TIMEOUT`, `LAB_TURN_AGENT`, `LAB_TURN_PROJECT`, `LAB_E1_PROMPT`,
+`LAB_E3_PROMPT`, `LAB_E4_PROMPT`, `LAB_E13_COMMAND`, and `LAB_HEALTH_PATH`. The E2 contract
 defaults `LAB_HEALTH_PATH` to `/healthz`; changing it to `/diag` is useful only
 while bringing up a deployment that has not exposed the specified health path.
 `LAB_DAEMON_IDLE_CAP` must equal the box's
 `BLITZ_PAYLOAD_DAEMON_IDLE_WAIT`; it defaults to the design's 600 seconds.
+
+The headless driver uses one persistent SSH stream-local forward to the box's
+existing Lody bridge. `open` prints the daemon's local user, workspace, and
+machine ids. The session commands boot the same web runtime and seed the same
+agent-config rows as the browser. Progress goes to stderr; `create` and
+`prompt` print only the session id, while `status` and `wait` print JSON. State
+is kept in a mode-0700 directory under `/tmp`, never in the operator's HOME.
+
+```sh
+driver=packages/box/test/payload-lab/session-driver/drive.mjs
+node "$driver" open --ssh blitz@box.example:22 --key /path/to/id_ed25519
+session=$(node "$driver" session create --agent claude --prompt 'say hi')
+node "$driver" session status "$session"
+node "$driver" session prompt "$session" 'now summarize the workspace'
+node "$driver" session wait "$session" --timeout 900
+```
 
 Dry-run every experiment without credentials or network access:
 

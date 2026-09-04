@@ -4,7 +4,8 @@ source "$(dirname "$0")/lib.sh"
 payload_lab_init E4 "$@"
 
 if payload_lab_dry; then
-  dry_command "assert long turn running; record daemon pid and daemon-log offset"
+  turn_id=$(start_turn "$WORKSPACE_ID" "run beyond the daemon idle cap")
+  dry_command "record the active turn, daemon pid, and daemon-log offset"
   publish_variant daemon-e4
   pin_payload "$PUBLISHED_VERSION"
   dry_command "run updater; assert pid stays through idle cap, restart, redispatch, and calculate gap from daemon log"
@@ -12,7 +13,12 @@ if payload_lab_dry; then
 fi
 
 require_workspace
-session_running "$WORKSPACE_ID" || experiment_fail "no long turn is in flight"
+idle_cap=${LAB_DAEMON_IDLE_CAP:-600}
+turn_seconds=$(( idle_cap + 180 ))
+turn_prompt=${LAB_E4_PROMPT:-"Use the shell to run 'sleep $turn_seconds' and wait for it to finish, then reply done."}
+turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt") \
+  || experiment_fail "could not start the E4 turn"
+wait_session_running "$WORKSPACE_ID" 60 || experiment_fail "the E4 turn did not become active"
 before_pid=$(daemon_pid "$WORKSPACE_ID")
 
 publish_variant daemon-e4
@@ -33,7 +39,6 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
 done
 [ "$switch_ms" -ne 0 ] || experiment_fail "daemon switch was not staged"
 
-idle_cap=${LAB_DAEMON_IDLE_CAP:-600}
 probe_delay=$(( idle_cap > 5 ? idle_cap - 5 : 1 ))
 sleep "$probe_delay"
 probe_pid=$(daemon_pid "$WORKSPACE_ID" 2>/dev/null || true)

@@ -4,7 +4,9 @@ source "$(dirname "$0")/lib.sh"
 payload_lab_init E3 "$@"
 
 if payload_lab_dry; then
-  dry_command "assert daemon sessions exist and all are idle; snapshot daemon pid and session catalog"
+  turn_id=$(start_turn "$WORKSPACE_ID" "reply ready")
+  wait_turn "$WORKSPACE_ID" "$turn_id" "${LAB_TURN_TIMEOUT:-900}"
+  dry_command "snapshot idle daemon pid and the started session"
   publish_variant daemon-e3
   pin_payload "$PUBLISHED_VERSION"
   dry_command "run updater; assert immediate daemon restart, applied, catalog resumes, no turn lost"
@@ -12,9 +14,13 @@ if payload_lab_dry; then
 fi
 
 require_workspace
-session_running "$WORKSPACE_ID" && experiment_fail "a turn is running; E3 requires idle sessions"
-before_sessions=$(session_catalog "$WORKSPACE_ID")
-[ -n "$before_sessions" ] || experiment_fail "daemon catalog has no sessions to resume"
+turn_prompt=${LAB_E3_PROMPT:-"Reply with the single word ready."}
+turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt") \
+  || experiment_fail "could not start the E3 turn"
+wait_turn "$WORKSPACE_ID" "$turn_id" "${LAB_TURN_TIMEOUT:-900}" >"$LAB_TEMP_ROOT/turn.json" \
+  || experiment_fail "the E3 turn did not complete"
+session_running "$WORKSPACE_ID" && experiment_fail "the completed E3 turn stayed active"
+before_sessions=$(printf '%s\n%s\n' "$turn_id" "$(session_catalog "$WORKSPACE_ID")" | sed '/^$/d' | sort -u)
 before_pid=$(daemon_pid "$WORKSPACE_ID")
 
 publish_variant daemon-e3
@@ -47,8 +53,12 @@ restart_gap=$(( restart_ms - switch_ms ))
   || experiment_fail "idle daemon restart took ${restart_gap}ms after the switch"
 wait_payload_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" applied "$LAB_OUTCOME_TIMEOUT" \
   || experiment_fail "control plane did not record applied"
-after_sessions=$(session_catalog "$WORKSPACE_ID")
+after_sessions=$(printf '%s\n%s\n' "$turn_id" "$(session_catalog "$WORKSPACE_ID")" | sed '/^$/d' | sort -u)
 assert_equal "$after_sessions" "$before_sessions" "idle sessions did not resume after daemon restart"
+resumed_status=$(node "$PAYLOAD_LAB_SESSION_DRIVER" session status "$turn_id") \
+  || experiment_fail "the restarted daemon did not serve the E3 session"
+printf '%s' "$resumed_status" | jq -e '.state == "completed"' >/dev/null \
+  || experiment_fail "the E3 session was not still completed after restart"
 session_running "$WORKSPACE_ID" && experiment_fail "restart created a running turn"
 assert_no_orphans "$WORKSPACE_ID"
 experiment_pass "idle daemon restarted in ${restart_gap}ms; sessions resumed; no turn lost"

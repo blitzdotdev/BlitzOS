@@ -28,4 +28,6 @@ done < <(
   find "$script_dir/payload-lab" -maxdepth 1 -type f -name '*.sh' -print
 )
 
+node --check "$script_dir/payload-lab/session-driver/drive.mjs"
+
 echo "PASS box shell syntax"

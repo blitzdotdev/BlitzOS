@@ -7,6 +7,20 @@ const labDirectory = fileURLToPath(
 );
 
 describe("thin-image payload lab dry runs", () => {
+  it("exposes the headless session-driver commands", () => {
+    const result = spawnSync(
+      "node",
+      [`${labDirectory}/session-driver/drive.mjs`, "--help"],
+      { encoding: "utf8" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("open --ssh <user@host[:port]> --key <private-key>");
+    expect(result.stdout).toContain("session create --agent <claude|codex>");
+    expect(result.stdout).toContain("session prompt <session-id> <text>");
+    expect(result.stdout).toContain("session status <session-id>");
+    expect(result.stdout).toContain("session wait <session-id> --timeout <seconds>");
+  });
+
   for (let experiment = 1; experiment <= 16; experiment += 1) {
     it(`dry-runs E${experiment}`, () => {
       const result = spawnSync("bash", [`${labDirectory}/e${experiment}.sh`], {

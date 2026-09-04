@@ -167,6 +167,10 @@ export interface LodyLoroRepo {
 /** The mirrored session document store `withSessionStore` hands to its callback. */
 export interface LodySessionStore {
   getState(): LodySessionDocState;
+  /** Holds the session room's sync lease until its first remote exchange.
+   * Browser views do this through their mounted hook; a headless caller has no
+   * view and must ask explicitly before it releases its short-lived store ref. */
+  waitUntilSynced(signal?: AbortSignal): Promise<void>;
 }
 
 export interface LodyWorkspaceRuntime {
