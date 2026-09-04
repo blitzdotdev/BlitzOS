@@ -50,8 +50,8 @@ import {
   BROWSER_SIDE_PANEL_ID,
   CONNECTIONS_SIDE_PANEL_ID,
   sidePanelQuickActionIcon,
+  useSidePanelHostState,
   type SessionHostSidePanelTab,
-  type SessionSidePanelHostState,
   type SessionSidePanelRequest,
   type SidePanelBinding,
   type SidePanelQuickAction,
@@ -248,7 +248,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // Lody's side panel as it last reported itself (seam patch 19), and `null`
   // while no session detail is on screen. The right icon strip draws from it
   // and drives it through `sidePanelRequest`, one `seq` per press.
-  const [sidePanelState, setSidePanelState] = useState<SessionSidePanelHostState | null>(null);
+  const [sidePanelState, setSidePanelState] = useSidePanelHostState();
   const [sidePanelRequest, setSidePanelRequest] = useState<SessionSidePanelRequest | null>(null);
   const handleSidePanelStateChange = useCallback((next: SessionSidePanelHostState | null) => {
     setSidePanelState((previous) => {
@@ -1341,6 +1341,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
     return true;
   };
+  
+  // Both feed the Connections host tab (`hostTabs` below), so both hold their
+  // identity across a render: a tab list rebuilt every render is a report of
+  // the side panel every render (`useSidePanelHostState`).
+
   const resolveWorkspaceRequest = useCallback(async (
     request: CredentialRequestView,
     action: 'approve' | 'deny',

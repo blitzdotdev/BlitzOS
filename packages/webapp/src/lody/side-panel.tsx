@@ -17,7 +17,7 @@
  * declares in `session-detail.tsx` are stated again on our side, the same way
  * `surface-tabs.ts` re-states seam patch 5's.
  */
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { FileDiff, Files, MessageSquare, MonitorPlay, Plug } from "lucide-react";
 
 /** Mirrors `SessionHostSidePanelTab` (seam patch 19). The `host:` prefix is
@@ -124,4 +124,55 @@ export const SidePanelContext = createContext<SidePanelBinding | null>(null);
  * unit test, and a surface mounted against another member's box. */
 export function useSidePanel(): SidePanelBinding | null {
   return useContext(SidePanelContext);
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+/** Field-wise equality of two reports, so the shell can tell a change of the
+ * panel from a report of the panel it already holds. */
+export function sidePanelStatesEqual(
+  a: SessionSidePanelHostState | null,
+  b: SessionSidePanelHostState | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.open === b.open &&
+    a.activeTabId === b.activeTabId &&
+    sameIds(a.openedTabIds, b.openedTabIds) &&
+    a.availableOptions.length === b.availableOptions.length &&
+    a.availableOptions.every(
+      (option, index) =>
+        option.id === b.availableOptions[index]?.id &&
+        option.disabled === b.availableOptions[index]?.disabled,
+    )
+  );
+}
+
+/**
+ * The shell's copy of the panel's state, and the `onStateChange` to hand the
+ * surface for it.
+ *
+ * WHY EQUAL REPORTS MUST NOT RE-RENDER. The surface reports whenever any INPUT
+ * of the panel changes, and the host tabs are one of those inputs: a new
+ * `hostTabs` array recomputes the panel's options and reports the panel again,
+ * with every field equal to the last report. Held naively, that report is a
+ * new object in state, the shell re-renders, its binding is a new object, the
+ * surface re-renders under it — and whether that ever ends depends on every
+ * input of `hostTabs` being referentially stable across a render. One that is
+ * not (a handler declared in the render body, a `filter` result) makes the
+ * page loop until React throws "Maximum update depth exceeded" (#185). So a
+ * report equal to what the shell holds is dropped HERE, and the loop cannot
+ * start whatever the tabs are built from.
+ */
+export function useSidePanelHostState(): [
+  SessionSidePanelHostState | null,
+  (state: SessionSidePanelHostState | null) => void,
+] {
+  const [state, setState] = useState<SessionSidePanelHostState | null>(null);
+  const onStateChange = useCallback((next: SessionSidePanelHostState | null) => {
+    setState((previous) => (sidePanelStatesEqual(previous, next) ? previous : next));
+  }, []);
+  return [state, onStateChange];
 }
