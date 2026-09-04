@@ -29,6 +29,7 @@ import { createDeterministicTarGzip, hashFile } from "./lib/deterministic-archiv
 import {
   copyPayloadSources,
   PAYLOAD_FILES,
+  PAYLOAD_SERVICES,
   payloadMode,
   readPayloadRestartMap,
 } from "./lib/box-payload-files.mjs";
@@ -38,11 +39,11 @@ const PACKAGE_DIRECTORY = path.resolve(SCRIPT_DIRECTORY, "..");
 const DEFAULT_REPO = path.resolve(PACKAGE_DIRECTORY, "../..");
 const WRANGLER_CONFIG_PATH = path.join(PACKAGE_DIRECTORY, "wrangler.toml");
 const DEFAULT_BUCKET = "blitz-box-images";
-const PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]*[A-Za-z0-9._-]$/u;
+const PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/u;
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { ...options, stdio: ["ignore", "inherit", "pipe"] });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (piece) => {
@@ -63,7 +64,15 @@ function run(command, args, options = {}) {
 }
 
 function validatePrefix(prefix) {
-  if (prefix.length > 180 || !PREFIX_PATTERN.test(prefix) || prefix.includes("//")) {
+  const segments = prefix.split("/");
+  if (
+    prefix.length > 180
+    || !PREFIX_PATTERN.test(prefix)
+    || prefix.endsWith("/")
+    || prefix.includes("//")
+    || segments.includes(".")
+    || segments.includes("..")
+  ) {
     throw new Error(`--prefix is invalid: ${prefix}`);
   }
 }
@@ -75,7 +84,14 @@ function validatedOrigin(value) {
   } catch {
     throw new Error(`--app-url must be an HTTP(S) origin: ${value}`);
   }
-  if ((parsed.protocol !== "https:" && parsed.protocol !== "http:") || parsed.pathname !== "/") {
+  if (
+    (parsed.protocol !== "https:" && parsed.protocol !== "http:")
+    || parsed.pathname !== "/"
+    || parsed.search !== ""
+    || parsed.hash !== ""
+    || parsed.username !== ""
+    || parsed.password !== ""
+  ) {
     throw new Error(`--app-url must be an HTTP(S) origin: ${value}`);
   }
   return parsed.href.replace(/\/$/u, "");
@@ -96,12 +112,12 @@ export async function buildGoPayloadBinaries(repoRoot, destination) {
     GOARCH: "amd64",
   };
   await run("go", [
-    "build", "-trimpath", "-ldflags=-s -w",
+    "build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w",
     "-o", path.join(destination, "blitz-box-gateway"),
     ".",
   ], { cwd: path.join(repoRoot, "packages/box/gateway"), env: buildEnvironment });
   await run("go", [
-    "build", "-trimpath", "-ldflags=-s -w",
+    "build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w",
     "-o", path.join(destination, "blitz-cred"),
     "./cmd/blitz-cred",
   ], { cwd: path.join(repoRoot, "packages/broker"), env: buildEnvironment });
@@ -225,7 +241,7 @@ export async function stageBoxPayloadRelease({
     };
   }
   manifest.restart = await readPayloadRestartMap(repoRoot);
-  validateBoxPayloadManifest(manifest, new Set(Object.keys(manifest.restart)));
+  validateBoxPayloadManifest(manifest, new Set(PAYLOAD_SERVICES));
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return { manifest, manifestPath, payloadArchivePath, daemonArchivePath };
 }
@@ -269,17 +285,26 @@ async function uploadObject(repoRoot, bucket, logicalPath, sourcePath, contentTy
   });
 }
 
-async function uploadRelease(repoRoot, bucket, prefix, staged) {
+export function payloadUploadObjects(prefix, staged) {
   // The manifest is deliberately last: an interrupted upload is not pinnable.
   const objects = [
     ["payload.tar.gz", staged.payloadArchivePath, "application/gzip"],
-    ...(staged.manifest.daemon === undefined
-      ? []
-      : [["daemon.tar.gz", staged.daemonArchivePath, "application/gzip"]]),
-    ["manifest.json", staged.manifestPath, "application/json; charset=utf-8"],
   ];
-  for (const [name, sourcePath, contentType] of objects) {
-    await uploadObject(repoRoot, bucket, `${prefix}/${name}`, sourcePath, contentType);
+  if (staged.manifest.daemon !== undefined) {
+    objects.push(["daemon.tar.gz", staged.daemonArchivePath, "application/gzip"]);
+  }
+  objects.push(["manifest.json", staged.manifestPath, "application/json; charset=utf-8"]);
+  return objects.map(([name, sourcePath, contentType]) => ({
+    logicalPath: `${prefix}/${name}`,
+    sourcePath,
+    contentType,
+  }));
+}
+
+async function uploadRelease(repoRoot, bucket, prefix, staged) {
+  const objects = payloadUploadObjects(prefix, staged);
+  for (const { logicalPath, sourcePath, contentType } of objects) {
+    await uploadObject(repoRoot, bucket, logicalPath, sourcePath, contentType);
   }
 }
 

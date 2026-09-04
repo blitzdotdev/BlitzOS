@@ -134,9 +134,9 @@ export async function main(argv = process.argv.slice(2)) {
     if (options.jsonPath !== undefined) await writeFile(options.jsonPath, json, "utf8");
     process.stdout.write(json);
   } finally {
-    if (container !== undefined) await run("docker", ["rm", "-f", container]).catch(() => {});
+    if (container !== undefined) await output("docker", ["rm", "-f", container]).catch(() => {});
     if (temporaryImage !== undefined) {
-      await run("docker", ["image", "rm", temporaryImage]).catch(() => {});
+      await output("docker", ["image", "rm", temporaryImage]).catch(() => {});
     }
     await rm(temporary, { recursive: true, force: true });
   }
@@ -151,4 +151,3 @@ if (
     process.exitCode = 1;
   });
 }
-

@@ -66,6 +66,11 @@ export const PAYLOAD_FILES = Object.freeze([
   ...PAYLOAD_GENERATED_PATHS,
 ].sort());
 
+export const PAYLOAD_SERVICES = Object.freeze([...new Set(PAYLOAD_ROOTFS_PATHS
+  .map((relativePath) =>
+    /^etc\/s6-overlay\/s6-rc\.d\/([^/]+)\/(?:run|up)$/u.exec(relativePath)?.[1])
+  .filter((service) => service !== undefined))].sort());
+
 // Most executable dependencies can be read directly from the service source.
 // These three are the exceptions worth spelling out. The gateway binary is
 // generated rather than present under rootfs; the bridge override documents
@@ -208,4 +213,3 @@ if (
     process.exitCode = 1;
   });
 }
-

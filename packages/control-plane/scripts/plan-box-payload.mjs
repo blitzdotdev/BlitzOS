@@ -9,6 +9,7 @@ import {
   readBoxPayloadInputIds,
 } from "./box-payload-key.mjs";
 import { validateBoxPayloadManifest } from "./lib/box-payload-manifest.mjs";
+import { PAYLOAD_SERVICES } from "./lib/box-payload-files.mjs";
 
 function manifestReference(origin, prefix) {
   const parsed = new URL(origin);
@@ -44,7 +45,7 @@ export async function planBoxPayload({
   }
   let manifest;
   try {
-    manifest = validateBoxPayloadManifest(await response.json());
+    manifest = validateBoxPayloadManifest(await response.json(), new Set(PAYLOAD_SERVICES));
   } catch (error) {
     throw new Error(`GET ${ref} returned an invalid box-payload manifest: ${errorMessage(error)}`);
   }

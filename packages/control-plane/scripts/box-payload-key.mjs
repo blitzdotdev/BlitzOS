@@ -26,6 +26,8 @@ export const BOX_PAYLOAD_INPUTS = Object.freeze([
   "packages/broker/internal",
   "packages/control-plane/scripts/lib/box-daemon.mjs",
   "packages/control-plane/scripts/lib/box-payload-files.mjs",
+  "packages/control-plane/scripts/lib/deterministic-archive.mjs",
+  "packages/control-plane/scripts/publish-box-payload.mjs",
   "vendor/lody/UPSTREAM.md",
   "vendor/lody/packages/shared/src/local-loro-data-plane.ts",
 ]);
@@ -133,4 +135,3 @@ if (
     process.exitCode = 1;
   });
 }
-

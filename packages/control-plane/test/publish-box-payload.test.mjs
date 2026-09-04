@@ -16,7 +16,10 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { stageDaemonArchive } from "../scripts/build-box-daemon.mjs";
-import { stageBoxPayloadRelease } from "../scripts/publish-box-payload.mjs";
+import {
+  payloadUploadObjects,
+  stageBoxPayloadRelease,
+} from "../scripts/publish-box-payload.mjs";
 import { validateBoxPayloadManifest } from "../scripts/lib/box-payload-manifest.mjs";
 import { PAYLOAD_FILES } from "../scripts/lib/box-payload-files.mjs";
 
@@ -130,5 +133,12 @@ test("an optional daemon archive fills all daemon contract fields", async () => 
     bytes: statSync(staged.daemonArchivePath).size,
   });
   assert.equal(validateBoxPayloadManifest(manifest), manifest);
+  assert.deepEqual(
+    payloadUploadObjects("box-payload/version", staged).map(({ logicalPath }) => logicalPath),
+    [
+      "box-payload/version/payload.tar.gz",
+      "box-payload/version/daemon.tar.gz",
+      "box-payload/version/manifest.json",
+    ],
+  );
 });
-

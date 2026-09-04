@@ -112,5 +112,12 @@ test("a malformed or mismatched manifest is never reused", async () => {
     repo: repository,
     fetchImpl: async () => new Response(JSON.stringify(manifest("another")), { status: 200 }),
   }), /returned version another, expected/u);
+  const release = await expected(repository);
+  const unknownService = manifest(release.version);
+  unknownService.restart["future-service"] = ["rootfs/usr/local/bin/blitz"];
+  await assert.rejects(() => planBoxPayload({
+    url: "https://cp.example",
+    repo: repository,
+    fetchImpl: async () => new Response(JSON.stringify(unknownService), { status: 200 }),
+  }), /restart names unknown service: future-service/u);
 });
-

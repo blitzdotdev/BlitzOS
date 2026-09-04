@@ -7,7 +7,7 @@ WORKDIR /src/packages/broker
 COPY packages/broker/go.mod ./
 COPY packages/broker/cmd ./cmd
 COPY packages/broker/internal ./internal
-RUN CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w" -o /out/blitz-cred ./cmd/blitz-cred
+RUN CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/blitz-cred ./cmd/blitz-cred
 
 FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm@sha256:53eeac89074db483fdf0ab3be1df32bf6e47562263d2d0d6baa7f26acb4957dd AS gateway-build
 
@@ -20,7 +20,7 @@ COPY packages/box/gateway/*.go ./
 # contract added one, and the tree is 424 KiB.
 COPY packages/schema/fixtures /src/packages/schema/fixtures
 RUN go test ./... \
-    && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w" -o /out/blitz-box-gateway .
+    && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/blitz-box-gateway .
 
 FROM --platform=$BUILDPLATFORM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS lody-build
 
