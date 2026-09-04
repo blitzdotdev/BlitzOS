@@ -1,1 +1,0 @@
-Run the nightly build and summarize failures.

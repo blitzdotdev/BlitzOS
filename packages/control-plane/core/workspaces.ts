@@ -1,4 +1,3 @@
-import type { RecipeBootstrap } from "./bootstrap.js";
 import {
   enablementManifestJson,
   manifestConnectionNames,
@@ -409,7 +408,6 @@ async function readPhoneHome(context: CoreContext): Promise<PhoneHomeRequest> {
 
 export interface RecipeLaunch {
   recipeId: string;
-  bootstrap: RecipeBootstrap;
 }
 
 /** The workspace whose config a create clones, or null. Members and
@@ -564,7 +562,6 @@ export async function performWorkspaceCreate(
   };
   if (input.userData !== undefined) creatorMachine.userData = input.userData;
   if (input.volumeId !== undefined) creatorMachine.volumeId = input.volumeId;
-  if (recipe !== undefined) creatorMachine.recipe = recipe.bootstrap;
   try {
     if (workspace.auto_provision === 1) {
       await provisionMachine(runtime, creatorMachine);

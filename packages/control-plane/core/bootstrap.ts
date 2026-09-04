@@ -1,24 +1,9 @@
-import type { AgentProvider } from "./wire.js";
-
-/** A recipe launch adds only the two invocation files; `blitz-term` consumes
- * them when the first TUI session starts. Built by core/recipes.ts from a
- * validated recipe row. */
-export interface RecipeBootstrap {
-  harness: AgentProvider;
-  model?: string;
-  effort?: string;
-  prompt: string;
-}
-
 export interface BootstrapOptions {
   boxImageSha256: string;
   boxImageRef: string;
   boxImageTag: string;
   phoneHomeUrl: string;
   sshPublicKey?: string;
-  /** Present only on recipe launches; absent leaves the emitted bytes
-   * untouched for every ordinary create. */
-  recipe?: RecipeBootstrap;
   /** Org-level agent-usage capture: pre-creates the two transcript HOME dirs
    * and bind-mounts them read-only under /workspace/shared/agent-usage/. */
   usageCapture?: boolean;
@@ -56,24 +41,9 @@ export function boxHostname(workspaceName: string, workspaceId: string): string 
   return label === "" ? workspaceId : label;
 }
 
-/** Shell-escapes a value into one single-quoted token. Exported because the
- * recipe-invocation fixture suite pins the emitted embeddings byte-for-byte. */
+/** Shell-escapes a value into one single-quoted token. */
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-/** The invocation file a recipe launch writes to
- * /var/lib/blitz/recipe/invocation.env: one shell-sourceable KEY='value' line
- * per set key, HARNESS then MODEL then EFFORT, unset keys omitted, values
- * single-quoted with shellQuote's escaping. Sole reader: the shared bash
- * parser `blitz-recipe-invocation` that `blitz-term` sources.
- * Pinned by `packages/schema/fixtures/recipe-invocation/` and its conformance
- * suite. */
-export function recipeInvocationEnvFile(recipe: RecipeBootstrap): string {
-  const lines = [`HARNESS=${shellQuote(recipe.harness)}`];
-  if (recipe.model !== undefined) lines.push(`MODEL=${shellQuote(recipe.model)}`);
-  if (recipe.effort !== undefined) lines.push(`EFFORT=${shellQuote(recipe.effort)}`);
-  return `${lines.join("\n")}\n`;
 }
 
 /** Emits the first-boot script a VM runs: bash, with Python inline for the
@@ -81,9 +51,8 @@ export function recipeInvocationEnvFile(recipe: RecipeBootstrap): string {
  * Worker has no filesystem to read at runtime, so the script has to be part
  * of the bundle. The emitted bytes are a contract pinned by
  * `test/bootstrap-python.test.mjs` and the phone-home fixtures — edit them
- * the way you would edit a wire format, not a script. Recipe launches add
- * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
- * without a recipe or usage capture emits byte-identical output. */
+ * the way you would edit a wire format, not a script. A create without
+ * usage capture or template repos emits byte-identical output. */
 /**
  * The shell helpers `boxImageSetupScript` calls. Emitting that setup without
  * these gives `retry: command not found`, and under `set -e` the script dies
@@ -298,17 +267,8 @@ export function buildBootstrapScript(options: BootstrapOptions): string {
   // its boxes never read another provider's setup.
   const providerAptSetup = options.providerAptSetup ?? "";
 
-  // Recipe and usage-capture segments; every one is "" on an ordinary create
-  // so the emitted bytes stay identical for the non-recipe path.
-  const recipe = options.recipe;
-  const invocationFiles = recipe === undefined
-    ? ""
-    : `install -d -o 1000 -g 1000 -m 0700 /var/lib/blitz/recipe
-printf '%s' ${shellQuote(recipe.prompt)} >/var/lib/blitz/recipe/prompt.txt
-printf '%s' ${shellQuote(recipeInvocationEnvFile(recipe))} >/var/lib/blitz/recipe/invocation.env
-chown 1000:1000 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env
-chmod 0600 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env
-`;
+  // Usage-capture segments; every one is "" on an ordinary create so the
+  // emitted bytes stay identical for the plain path.
   // This value lands in an emitted shell command. The emitter is the
   // shell-interpolation boundary. `boxHostname` is the real gate. This
   // re-check keeps the boundary local, the way the template repos do.
@@ -647,7 +607,7 @@ blitz_phase sshd-ready
 ${ZRAM_SETUP}${imageSetup}
 blitz_phase box-image-ready
 install -d -m 0755 /etc/blitz
-${invocationFiles}${usageDirectories}# The one docker run for the box container, extracted to a host script so
+${usageDirectories}# The one docker run for the box container, extracted to a host script so
 # the initial start here and the host-side updater (blitz-box-update below)
 # share one code path. Per-workspace values (hostname, env, mounts) are
 # rendered in at create time; only the image ref varies between calls.
