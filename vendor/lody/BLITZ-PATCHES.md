@@ -1784,16 +1784,19 @@ before their transition scripts disappear.
 Plan PR C moves the queue behavior to
 `apps/cli/src/lib/message-processor.ts`, beside `extractQueueKey`. Only
 `machine/acp-authenticate` with `action: 'start'` returns
-`acp-auth:${message.agentType}`. Submit and cancel return `null`, so they
-remain able to run while the interactive login waits. Starts for one agent type
-serialize; starts for different agent types may proceed independently.
+`acp-auth:${message.configId}`. Submit and cancel return `null`, so they remain
+able to run while the interactive login waits. The current source protocol
+accepts a daemon-authoritative persisted config ID for start rather than the
+caller-supplied agent type used by the transitional npm artifact. Starts for one
+config serialize; the authentication manager retains its per-agent-type
+exclusion after resolving that config.
 
 **Merge conflict drill.** If upstream adds an equivalent non-blocking lane,
 classify this as A and do not add the seam. If the switch merely moves, classify
 it as B and keep the exact start-only rule. If upstream replaces queueing or
 authentication concurrency, classify it as C and stop for a human. The focused
 source test must hold one start open, prove submit and cancel run before release,
-prove same-agent starts serialize, and prove different-agent starts may overlap.
+prove same-config starts serialize, and prove different-config starts may overlap.
 
 ## Planned seams (not yet applied)
 

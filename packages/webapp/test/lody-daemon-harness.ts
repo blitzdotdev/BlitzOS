@@ -1,13 +1,13 @@
 /**
  * A real Lody daemon, the real box bridge, and a gateway-shaped front door.
  *
- * The phase-2 exit test drives the browser runtime against an actual
- * `lody@0.88.1` daemon rather than a mock, because every failure phase 1 found
- * lived in the difference between the two (`plans/evidence/lody-phase1.md` §0).
+ * The phase-2 exit test drives the browser runtime against an actual Lody
+ * daemon package rather than a mock, because every failure phase 1 found lived
+ * in the difference between the two (`plans/evidence/lody-phase1.md` §0).
  * This module stands up the same three processes a box runs, in the same order:
  *
- * 1. the patched daemon — every script in `packages/box/patches/` applied to a
- *    COPY of the installed npm bundle, in the image build's own order;
+ * 1. the daemon — a tree-built package is copied unchanged; a legacy npm
+ *    package gets every `packages/box/patches/` script in image-build order;
  * 2. `packages/box/rootfs/usr/local/libexec/blitz-lody-bridge`, unmodified;
  * 3. a TCP front door that maps `/lody/*` onto the bridge's unix socket, which
  *    is what `packages/box/gateway/main.go` does. The Go gateway itself cannot
@@ -62,12 +62,12 @@ export function repoRoot(): string {
   }
 }
 
-/** Where the box image installs the daemon, and where this box has it too. */
-export const LODY_BUNDLE = "/opt/blitz/npm/lib/node_modules/lody";
-/** Every patch the image build applies to the published bundle, IN THE ORDER the
- * Dockerfile applies them. `lody-local-platform` guards on a sha256 of the file
- * as published, so it has to run before anything else rewrites it. */
-const PATCH_SCRIPTS = [
+/** A package directory. CI overrides the box image's installed daemon path. */
+export const LODY_BUNDLE = process.env.LODY_BUNDLE ?? "/opt/blitz/npm/lib/node_modules/lody";
+/** Every patch the image build applies to a legacy published bundle, IN THE
+ * ORDER the Dockerfile applies them. A tree-built package carries BUILD.json
+ * and already contains its reviewed source behavior, so it is used as-is. */
+const LEGACY_NPM_PATCH_SCRIPTS = [
   join(repoRoot(), "packages/box/patches/lody-local-platform.mjs"),
   join(repoRoot(), "packages/box/patches/lody-acp-auth-queue.mjs"),
   join(repoRoot(), "packages/box/patches/lody-code-collab-worktree-root.mjs"),
@@ -80,7 +80,11 @@ const REPO_NODE_MODULES = join(repoRoot(), "node_modules");
 /** `true` when this machine can run the exit test at all. CI has no `lody`
  * installed, so the test skips there rather than failing. */
 export function lodyDaemonAvailable(): boolean {
-  return existsSync(join(LODY_BUNDLE, "dist", "index.js"));
+  const available = existsSync(join(LODY_BUNDLE, "dist", "index.js"));
+  if (!available && process.env.LODY_REQUIRE_BUNDLE === "1") {
+    process.stderr.write(`LODY PAIR GATE: skipped for lack of a bundle at ${LODY_BUNDLE}\n`);
+  }
+  return available;
 }
 
 export interface LodyHarness {
@@ -453,11 +457,14 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   const dataDir = join(root, "d");
   mkdirSync(dataDir, { recursive: true });
 
-  // A COPY, patched. Never the installed bundle: the image build patches its own
-  // copy too, and mutating the box's `lody` from a test would leave it patched.
+  // Always a copy: mutating the installed package from a test would leave it
+  // changed for every later suite on this machine.
   const bundle = join(root, "lody");
   cpSync(LODY_BUNDLE, bundle, { recursive: true });
-  for (const script of PATCH_SCRIPTS) {
+  const patchScripts = existsSync(join(bundle, "dist", "BUILD.json"))
+    ? []
+    : LEGACY_NPM_PATCH_SCRIPTS;
+  for (const script of patchScripts) {
     const patch = spawn(process.execPath, [script, join(bundle, "dist", "index.js")], {
       stdio: ["ignore", "pipe", "pipe"],
     });

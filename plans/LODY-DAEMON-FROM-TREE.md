@@ -327,10 +327,11 @@ Write `/opt/blitz/lody/BUILD.json` with this shape:
 ```
 
 `distSha256` is the hash of sorted `path\0sha256\n` records for every packed
-`package/dist` file, not only `index.js` and not the gzip tarball. That makes it
-stable across tar metadata and covers code-split output. `builtAt` is provenance
-only and is excluded from `distSha256` and the image-input release ID; the plan
-does not claim byte-for-byte reproducibility, which the spike did not test
+`package/dist` file except the self-referential `BUILD.json`, not only `index.js`
+and not the gzip tarball. That makes it stable across tar metadata and covers
+code-split output. `builtAt` is provenance only and is excluded from
+`distSha256` and the image-input release ID; the plan does not claim
+byte-for-byte reproducibility, which the spike did not test
 (`/var/lib/blitz/home/codex/daemonbuild-result.md:114-123`). Make the file
 root-owned, mode 0444, and copy it independently of the npm prefix so CLI
 self-updates cannot rewrite provenance.
@@ -340,9 +341,12 @@ self-updates cannot rewrite provenance.
 Add one declared daemon seam to
 `vendor/lody/apps/cli/src/lib/message-processor.ts`: route only
 `machine/acp-authenticate` `action: "start"` onto
-`acp-auth:<agentType>`; submit/cancel remain on the default chain. The defect is
-still present because the switch names session messages and otherwise returns
-`null` (`vendor/lody/apps/cli/src/lib/message-processor.ts:196-220`), while
+`acp-auth:<configId>`; submit/cancel remain on the default chain. At this pin the
+source protocol replaced caller-supplied agent identity with a
+daemon-authoritative persisted config ID; the authentication manager still
+enforces its per-agent-type exclusion after resolving that config. The defect
+is still present because the switch names session messages and otherwise
+returns `null` (`vendor/lody/apps/cli/src/lib/message-processor.ts:196-220`), while
 `ConcurrentQueue` turns every `null` into one serial `__default__` chain
 (`vendor/lody/apps/cli/src/lib/concurrent-queue.ts:23-35`). Record the source
 hunk, rationale, conflict drill, and upstream-PR sketch in
@@ -350,8 +354,8 @@ hunk, rationale, conflict drill, and upstream-PR sketch in
 
 Add `vendor/lody/apps/cli/src/lib/message-processor.test.ts`. Hold a start
 handler open, enqueue submit-code and cancel, and prove both execute before the
-start is released; prove two starts for one agent serialize and starts for two
-agents may proceed independently. Extend
+start is released; prove two starts for one config serialize and starts for two
+configs may proceed independently. Extend
 `packages/webapp/test/lody-seam-pin.test.ts` and its pristine baseline mechanism
 to anchor the CLI source hunk as well as renderer seams. The current helper is
 hard-coded to the components tree (`packages/webapp/test/upstream-seam-pin.ts:32-55`),
@@ -543,11 +547,10 @@ corpora retain qualified historical capture sentences naming the old npm daemon
 `packages/schema/fixtures/lody-project-registration/README.md:34-48`,
 `packages/schema/fixtures/lody-session-control-stream/README.md:48-60`).
 
-Land the CI job as `continue-on-error: true` first, require one green week and a
-green source-built box smoke, then make it a required check before the
-source-built daemon becomes the required shipping path. The former
-verified-pair rule was removed from current documentation on 2026-09-04; the
-runbook's explicit transition status remains until PR C lands.
+The `lody-daemon` CI job is a required check even while the shipping image stays
+on the transitional npm daemon. The former verified-pair rule was removed from
+current documentation on 2026-09-04; the runbook's explicit image transition
+status remains until PR C lands.
 
 ## Merge automation and canary bake
 
@@ -665,7 +668,7 @@ Every item below is a named failing gate, not a review reminder.
 | `lody-pin-provenance.test.mjs` | `UPSTREAM.md`, reachable squash trailer, baselines, adapter stamps, or generated stamp inputs disagree |
 | **Lody frozen install** | `corepack pnpm install --filter 'lody...' --frozen-lockfile` wants to rewrite the lock or cannot resolve the reviewed graph |
 | **Lody published-bundle imports** | upstream's build drops or fails `check:published-bundle-imports`; that script already checks workspace imports and runtime dependency smoke (`vendor/lody/apps/cli/scripts/check-published-bundle-imports.js:55-103`) |
-| `lody-dist-manifest.test.mjs` | packed output differs from the reviewed normalized set: fixed entry/ACP/worker JS names, exactly the expected normalized hashed chunks, DSH preset paths, `zstd.wasm`, license/readme/manifest, or notice; unlisted files also fail |
+| `lody-dist-manifest.test.mjs` | packed output is missing anything from the reviewed normalized set: fixed entry/ACP/worker JS names, expected normalized hashed chunks, DSH preset paths, `zstd.wasm`, license/readme/manifest, or notice; unlisted files warn so upstream additions are visible without making a complete package unsafe |
 | `lody-notices.test.mjs` | `package/dist/THIRD_PARTY_NOTICES.md` is absent, empty, or differs byte-for-byte from the root notice; the current research tar omitted it (`/var/lib/blitz/home/codex/daemonbuild-result.md:119-123`) |
 | extended `lody-seam-pin.test.ts` + `message-processor.test.ts` | the ACP source anchor moves, undeclared source is removed, or submit/cancel again serialize behind an interactive start |
 | **Lody built-image smoke** | inside the just-built image, `lody --help` fails; the stamp disagrees with `UPSTREAM.md`; s6 cannot start the enabled daemon; its health socket fails; `/lody/platform` or `/lody/build` fails; or the served stamp differs from disk |
@@ -721,21 +724,21 @@ legitimate code-splitting change updates this reviewed manifest in the vendor PR
 
 ## Migration sequence
 
-Each PR can ship on its own; the first check is deliberately advisory until the
-image and migration pieces are ready.
+Each PR can ship on its own. The pair check is required now that PR A builds the
+reviewed artifact; the shipping image and migration pieces remain separate.
 
-### PR A — prove the pair in CI (small, about 150-250 lines)
+### PR A — prove the pair in CI (landed)
 
-- Touch `packages/webapp/test/lody-daemon-harness.ts`,
+- Landed: `packages/webapp/test/lody-daemon-harness.ts`,
   `packages/webapp/test/lody-post-signin-turn.test.ts`,
   `.github/workflows/ci.yml`, and add the initial shared
   `scripts/lody-build-package.mjs`.
-- Add `LODY_BUNDLE`/`LODY_CLAUDE_BINARY` overrides and an artifact-producing
-  daemon build plus test matrix as `continue-on-error: true`.
-- Temporarily materialize the five exact gitlink SHAs in CI scratch space; do
-  not change the shipping image or delete any npm patch yet.
-- Evidence: all non-paid real-daemon suites run instead of skip, and the built
-  tarball/stamp are retained for inspection.
+- `LODY_BUNDLE`/`LODY_CLAUDE_BINARY` overrides and an artifact-producing daemon
+  build run in the required `lody-daemon` job.
+- The builder overlays the five reviewed trees landed in PR B. It does not
+  change the shipping image or delete any npm patch yet.
+- Evidence: all non-paid real-daemon suites run instead of skipping for lack of
+  a bundle, and the built tarball/stamp are retained for inspection.
 
 ### PR B — make adapter inputs reviewed (landed)
 
@@ -759,8 +762,8 @@ image and migration pieces are ready.
   loop. Platform and Code Collab retain regression coverage, not patches;
   builtin-MCP and session-sandbox behavior must first be ported to reviewed
   source/configuration seams or explicitly retired.
-- Make the advisory CI pair job required after the source-built image smoke is
-  green.
+- Keep the required CI pair job green while moving the same builder into the
+  source-built image smoke.
 
 ### PR D — expose and compare the pair (medium, about 300-450 lines)
 

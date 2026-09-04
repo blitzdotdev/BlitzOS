@@ -39,6 +39,7 @@
     "lint:gate": "node scripts/lint-gate.mjs",
     "lody:adapters:sync": "node scripts/lody-sync-adapters.mjs",
     "lody:adapters:check": "node scripts/lody-sync-adapters.mjs --check",
+    "lody:build": "node scripts/lody-build-package.mjs --seam-acp-auth",
     "provider:check": "npm run provider:check --workspace @blitzos/control-plane --",
     "openapi:generate": "npm run openapi:generate --workspace @blitzos/control-plane",
     "typecheck": "npm run typecheck --workspaces --if-present",

@@ -26,8 +26,8 @@ this runbook for every row marked manual.
 |---|---|---|
 | Resolve the ref, pull the subtree, update pins and baselines, run gates, push, and open the PR | **Manual until plan PR E** | `scripts/lody-merge.mjs` through `npm run lody:merge` |
 | Materialize the five CLI adapters at their gitlink SHAs | **Automated by `npm run lody:adapters:sync`** | `scripts/lody-sync-adapters.mjs` and reviewed `vendor/lody-adapters/` trees |
-| Build, check, pack, and stamp the daemon from the merged tree | **Manual until plan PR A; not used by the image until plan PR C** | shared `scripts/lody-build-package.mjs`, then the `lody-build` Docker stage |
-| Run the real-daemon pair matrix against the PR artifact | **Manual until plan PR A; advisory in PR A, required after plan PR C** | `lody-daemon` CI job with `LODY_BUNDLE` and `LODY_CLAUDE_BINARY` overrides |
+| Build, check, pack, and stamp the daemon from the merged tree | **Automated by `npm run lody:build`; not used by the image until plan PR C** | shared `scripts/lody-build-package.mjs`, then the `lody-build` Docker stage |
+| Run the real-daemon pair matrix against the PR artifact | **Required in the `lody-daemon` CI job** | `LODY_BUNDLE` and `LODY_CLAUDE_BINARY` select the job's installed artifact |
 | Serve and compare daemon provenance | **Inspect `BUILD.json` locally until plan PR D** | `/lody/build` plus browser comparison; legacy boxes have no route |
 | Publish and deploy a canary box image after merge | **Automated now by `.github/workflows/canary.yml`** | Plan PR E expands the existing image inputs to include the full Lody tree, adapters, lockfile, and build/seam scripts |
 
@@ -199,9 +199,10 @@ For every retained seam, refresh the upstream anchor and line number in
 replacement has landed. The target daemon adds one source seam at
 `apps/cli/src/lib/message-processor.ts`: only
 `machine/acp-authenticate` with `action: "start"` moves to
-`acp-auth:<agentType>`; submit and cancel remain on the default chain. Until
-plan PR C lands, that rule is applied only to the disposable build copy in the
-build section below.
+`acp-auth:<configId>`; submit and cancel remain on the default chain. The
+current source protocol makes `configId`—not caller-supplied agent identity—the
+daemon-authoritative start target. Until plan PR C lands, that rule is applied
+only to the disposable build copy in the build section below.
 
 The ambient-IPC audit is not a formatting gate. Any newly reachable unbound IPC
 site reported by `lody-ipc-client-isolation.test.ts` is a class-C decision.
@@ -276,101 +277,31 @@ the PR body.
 
 ## Build and stamp the daemon
 
-Until plan PR C, apply the declared ACP-auth queue hunk to the disposable source
-copy only. This guarded command refuses an unexpected source shape:
+Build the same package the image will install. Until plan PR C moves the
+ACP-auth queue behavior into the subtree, the root command opts into its
+guarded, disposable-copy seam.
 
 ```sh
-node --input-type=module - "$LODY_BUILD_ROOT/lody/apps/cli/src/lib/message-processor.ts" <<'NODE'
-import { readFileSync, writeFileSync } from "node:fs";
-const file = process.argv[2];
-const source = readFileSync(file, "utf8");
-const before = `      case 'session/preview-revoke':\n        return \`session:\${message.sessionId}:preview\`;\n      case 'session/cancel':\n        return null;\n      default:\n        return null;`;
-const after = `      case 'session/preview-revoke':\n        return \`session:\${message.sessionId}:preview\`;\n      case 'session/cancel':\n        return null;\n      case 'machine/acp-authenticate':\n        return message.action === 'start' ? \`acp-auth:\${message.agentType}\` : null;\n      default:\n        return null;`;
-if (source.split(before).length !== 2) throw new Error("ACP-auth queue seam moved");
-writeFileSync(file, source.replace(before, after));
-NODE
-```
-
-Build the same package the image will install. `corepack enable` is required
-because upstream build scripts invoke bare `pnpm`.
-
-```sh
-mkdir -p "$LODY_BUILD_ROOT/corepack-bin"
-corepack enable --install-directory "$LODY_BUILD_ROOT/corepack-bin"
-export PATH="$LODY_BUILD_ROOT/corepack-bin:$PATH"
-(
-  cd "$LODY_BUILD_ROOT/lody"
-  corepack pnpm install --filter 'lody...' --frozen-lockfile
-  time corepack pnpm --filter lody build
-  cp THIRD_PARTY_NOTICES.md apps/cli/dist/THIRD_PARTY_NOTICES.md
-  corepack pnpm --filter lody pack --pack-destination "$LODY_BUILD_ROOT/out"
-)
-TARBALL=$(find "$LODY_BUILD_ROOT/out" -maxdepth 1 -name 'lody-*.tgz' -print -quit)
+LODY_OUT=$(mktemp -d)
+npm run lody:build -- --out "$LODY_OUT"
+TARBALL=$(find "$LODY_OUT" -maxdepth 1 -name 'lody-*.tgz' -print -quit)
 test -n "$TARBALL"
-tar -tzf "$TARBALL" | sort > "$LODY_BUILD_ROOT/out/package-files.txt"
-grep -F 'package/dist/index.js' "$LODY_BUILD_ROOT/out/package-files.txt"
-grep -F 'package/dist/THIRD_PARTY_NOTICES.md' "$LODY_BUILD_ROOT/out/package-files.txt"
-grep -F 'package/dist/zstd.wasm' "$LODY_BUILD_ROOT/out/package-files.txt"
+jq . "$LODY_OUT/BUILD.json"
 ```
 
-`build` already runs `check:published-bundle-imports` through
-`vendor/lody/apps/cli/package.json`. Review the complete tar listing: all
-chunks, workers, presets, WASM, README, license, notices, and runtime dependency
-metadata ship together. A measured warm build took about 91 seconds; that is an
-example, not a timeout or performance promise.
+The script exports `HEAD:vendor/lody`, overlays the five reviewed adapters,
+creates a Corepack shim for upstream's bare `pnpm` calls, performs the frozen
+install and build, copies the notice, checks the reviewed normalized package
+manifest, and writes the identical stamp beside the tarball and inside
+`dist/BUILD.json`. `build` already runs `check:published-bundle-imports`; do not
+run a second copy. Extra packed paths warn, while any missing reviewed entry
+fails. `distSha256` covers sorted path/content-digest records for the installed
+`dist` tree except the self-referential stamp. A measured warm build took about
+91 seconds; that is evidence, not a timeout.
 
-Until `scripts/lody-build-stamp.mjs` lands, write the equivalent stamp beside
-the tarball:
-
-```sh
-mkdir -p "$LODY_BUILD_ROOT/packed"
-tar -xzf "$TARBALL" -C "$LODY_BUILD_ROOT/packed"
-ADAPTER_JSON=$(
-  for name in core claude codex dsh grok; do
-    sha=$(git ls-tree HEAD:vendor/lody/packages "acp-extension-$name" | awk '{print $3}')
-    printf '%s\t%s\n' "$name" "$sha"
-  done | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries'
-)
-DIST_SHA=$(node --input-type=module - "$LODY_BUILD_ROOT/packed/package/dist" <<'NODE'
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
-const root = process.argv[2];
-const files = [];
-const walk = (dir) => {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) walk(path);
-    else files.push(path);
-  }
-};
-walk(root);
-const aggregate = createHash("sha256");
-for (const file of files.sort()) {
-  const digest = createHash("sha256").update(readFileSync(file)).digest("hex");
-  aggregate.update(`${relative(root, file)}\0${digest}\n`);
-}
-process.stdout.write(aggregate.digest("hex"));
-NODE
-)
-LOCK_SHA=$(sha256sum "$LODY_BUILD_ROOT/lody/pnpm-lock.yaml" | awk '{print $1}')
-PNPM_VERSION=$(corepack pnpm --version)
-jq -n \
-  --arg upstreamSha "$NEW_SHA" \
-  --arg subtreeCommit "$SUBTREE_COMMIT" \
-  --argjson adapterShas "$ADAPTER_JSON" \
-  --arg lockfileSha256 "$LOCK_SHA" \
-  --arg distSha256 "$DIST_SHA" \
-  --arg builtAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg node "$(node --version | sed 's/^v//')" \
-  --arg pnpm "$PNPM_VERSION" \
-  '{upstreamSha,subtreeCommit,adapterShas,lockfileSha256,distSha256,builtAt,node,pnpm}' \
-  > "$LODY_BUILD_ROOT/out/BUILD.json"
-jq . "$LODY_BUILD_ROOT/out/BUILD.json"
-```
-
-When the target scripts exist, replace the manual manifest/stamp work with
-their checked commands; do not run a second copy of the published-import scan.
+For a Docker builder without Git, pass `--source /path/to/lody`. The script
+reads source identity from that tree's `UPSTREAM.md` and adapter identity from
+the reviewed `vendor/lody-adapters` stamps beside the script's repository root.
 
 ## Run the pair gate
 
@@ -378,57 +309,22 @@ Install the tarball into a temporary prefix and point the harness at the package
 directory, not `dist/index.js`:
 
 ```sh
-npm install --global --prefix "$LODY_BUILD_ROOT/install" --omit=dev "$TARBALL"
-export LODY_BUNDLE="$LODY_BUILD_ROOT/install/lib/node_modules/lody"
+npm install --global --prefix "$LODY_OUT/install" --omit=dev "$TARBALL"
+export LODY_BUNDLE="$LODY_OUT/install/lib/node_modules/lody"
 test -f "$LODY_BUNDLE/dist/index.js"
 ```
 
-Plan PR A adds the environment override. Before it lands, use a disposable
-worktree and make only the equivalent test-harness substitutions:
-
-```sh
-PAIR_TREE="$LODY_BUILD_ROOT/pair-tree"
-git worktree add --detach "$PAIR_TREE" HEAD
-ln -s "$REPO_ROOT/node_modules" "$PAIR_TREE/node_modules"
-node --input-type=module - \
-  "$PAIR_TREE/packages/webapp/test/lody-daemon-harness.ts" \
-  "$PAIR_TREE/packages/webapp/test/lody-post-signin-turn.test.ts" <<'NODE'
-import { readFileSync, writeFileSync } from "node:fs";
-const [harness, signin] = process.argv.slice(2);
-let text = readFileSync(harness, "utf8");
-text = text.replace(
-  'export const LODY_BUNDLE = "/opt/blitz/npm/lib/node_modules/lody";',
-  'export const LODY_BUNDLE = process.env.LODY_BUNDLE ?? "/opt/blitz/npm/lib/node_modules/lody";',
-);
-text = text.replace("const PATCH_SCRIPTS = [", "const PATCH_SCRIPTS = process.env.LODY_BUNDLE === undefined ? [");
-text = text.replace(
-  '  join(repoRoot(), "packages/box/patches/lody-session-sandbox.mjs"),\n];',
-  '  join(repoRoot(), "packages/box/patches/lody-session-sandbox.mjs"),\n] : [];',
-);
-if (!text.includes("process.env.LODY_BUNDLE ??") || !text.includes("] : [];")) {
-  throw new Error("temporary LODY_BUNDLE override did not apply");
-}
-writeFileSync(harness, text);
-let postSignin = readFileSync(signin, "utf8");
-postSignin = postSignin.replace(
-  'const CLAUDE_BINARY = "/opt/blitz/npm/bin/claude";',
-  'const CLAUDE_BINARY = process.env.LODY_CLAUDE_BINARY ?? "/opt/blitz/npm/bin/claude";',
-);
-writeFileSync(signin, postSignin);
-NODE
-```
-
 Set `LODY_CLAUDE_BINARY` to the same Claude CLI used by the image when the
-default `/opt/blitz/npm/bin/claude` does not exist. Then run every non-probe
-harness consumer, serially:
+default `/opt/blitz/npm/bin/claude` does not exist. The post-sign-in suite names
+that missing prerequisite when it skips. Run every non-probe harness consumer
+serially:
 
 ```sh
-cd "$PAIR_TREE/packages/webapp"
+cd packages/webapp
 PAIR_TESTS=$(rg -l 'lody-daemon-harness' test \
   --glob '*.test.ts' --glob '*.test.tsx' | grep -v '\.probe\.' | sort)
 npx vitest run --maxWorkers=1 $PAIR_TESTS
-cd "$REPO_ROOT"
-git worktree remove --force "$PAIR_TREE"
+cd ../..
 ```
 
 At HEAD that discovery selects these 15 suites:
@@ -466,11 +362,11 @@ npx vitest run --maxWorkers=1 \
   test/lody-bridge-control-stream.test.ts \
   test/lody-bridge-share.test.ts \
   test/lody-projects-registration.test.ts
-cd "$REPO_ROOT"
+cd ../../..
 ```
 
-After plan PR A, run the same matrix in the PR's required `lody-daemon` job and
-require that no non-paid suite skips for lack of a bundle.
+The required `lody-daemon` job runs this discovery against the artifact it just
+built and fails explicitly if a non-paid suite reports a bundle-absence skip.
 
 ## Recapture fixture corpora only for semantic changes
 
@@ -513,7 +409,7 @@ npx vitest run --maxWorkers=1 \
   test/lody-seam-pin.test.ts \
   test/lody-v1-scope-sources.test.ts \
   test/lody-ipc-client-isolation.test.ts
-cd "$REPO_ROOT"
+cd ../..
 
 npm run typecheck
 npm run lint:gate

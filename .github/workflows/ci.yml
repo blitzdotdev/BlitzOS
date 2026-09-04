@@ -27,6 +27,72 @@ jobs:
         env:
           BLITZDEV_MANAGED: "1"
 
+  lody-daemon:
+    name: Lody daemon pair gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.20.0
+          cache: npm
+      - name: Enable Corepack
+        run: |
+          mkdir -p "$RUNNER_TEMP/corepack-bin"
+          corepack enable --install-directory "$RUNNER_TEMP/corepack-bin"
+          echo "$RUNNER_TEMP/corepack-bin" >> "$GITHUB_PATH"
+      - name: Locate the pnpm store
+        id: pnpm-store
+        working-directory: vendor/lody
+        run: echo "path=$(corepack pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      - name: Cache the Lody pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: lody-pnpm-${{ runner.os }}-${{ hashFiles('vendor/lody/pnpm-lock.yaml') }}
+          restore-keys: lody-pnpm-${{ runner.os }}-
+      - run: npm ci
+      - name: Build and stamp the tree daemon
+        run: node scripts/lody-build-package.mjs --seam-acp-auth --out "$RUNNER_TEMP/lody-artifact"
+      - name: Install the daemon artifact and Claude CLI
+        run: |
+          tarball=$(find "$RUNNER_TEMP/lody-artifact" -maxdepth 1 -name 'lody-*.tgz' -print -quit)
+          test -n "$tarball"
+          npm install --global --prefix "$RUNNER_TEMP/lody-install" --omit=dev "$tarball"
+          npm install --global --prefix "$RUNNER_TEMP/lody-install" --omit=dev @anthropic-ai/claude-code@latest
+          echo "LODY_BUNDLE=$RUNNER_TEMP/lody-install/lib/node_modules/lody" >> "$GITHUB_ENV"
+          echo "LODY_CLAUDE_BINARY=$RUNNER_TEMP/lody-install/bin/claude" >> "$GITHUB_ENV"
+      - name: Run every non-probe daemon harness consumer
+        env:
+          LODY_REQUIRE_BUNDLE: "1"
+        run: |
+          test -f "$LODY_BUNDLE/dist/index.js"
+          mapfile -t pair_tests < <(rg -l 'lody-daemon-harness' test \
+            --glob '*.test.ts' --glob '*.test.tsx' | grep -v '\.probe\.' | sort)
+          test "${#pair_tests[@]}" -gt 0
+          npx vitest run --maxWorkers=1 "${pair_tests[@]}" 2>&1 | tee "$RUNNER_TEMP/lody-pair.log"
+        working-directory: packages/webapp
+      - name: Reject bundle-absence skips
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/lody-pair.log" && \
+             grep -F 'LODY PAIR GATE: skipped for lack of a bundle' "$RUNNER_TEMP/lody-pair.log"; then
+            echo "A non-paid daemon suite skipped because the built package was unavailable." >&2
+            exit 1
+          fi
+      - name: Upload the daemon package and provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lody-daemon-package
+          path: |
+            ${{ runner.temp }}/lody-artifact/BUILD.json
+            ${{ runner.temp }}/lody-artifact/lody-*.tgz
+          if-no-files-found: error
+
   # Target B is the blitz.dev managed deployment: the control plane emitted as
   # plain source files instead of a bundled Worker. Nothing else in CI builds
   # it, so it broke silently — core/compute/aws.ts joined the module graph at
