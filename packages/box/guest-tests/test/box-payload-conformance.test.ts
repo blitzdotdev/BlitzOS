@@ -64,7 +64,7 @@ describe("blitz-payload fixture conformance", () => {
 
   it("accepts every valid updater result body", () => {
     const names = fixtureNames("payload-result/valid");
-    expect(names).toHaveLength(7);
+    expect(names).toHaveLength(8);
     for (const fixture of names) {
       const result = validate(fixture);
       expect(result.status, `${fixture}: ${result.stderr}`).toBe(0);

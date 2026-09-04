@@ -22,6 +22,7 @@ import {
 } from "../scripts/publish-box-payload.mjs";
 import { validateBoxPayloadManifest } from "../scripts/lib/box-payload-manifest.mjs";
 import { PAYLOAD_FILES } from "../scripts/lib/box-payload-files.mjs";
+import { readLodyDaemonMetadata } from "../scripts/lib/box-daemon.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const temporaryDirectories = [];
@@ -94,6 +95,8 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
     encoding: "utf8",
   });
   assert.equal(extract.status, 0, extract.stderr);
+  assert.equal(readFileSync(path.join(extracted, "payload-version"), "utf8"), `${manifest.version}\n`);
+  assert.equal(manifest.files.some((entry) => entry.path === "payload-version"), false);
   for (const entry of manifest.files) {
     const extractedPath = path.join(extracted, entry.path);
     assert.equal(sha256(readFileSync(extractedPath)), entry.sha256, entry.path);
@@ -117,7 +120,7 @@ test("an optional daemon archive fills all daemon contract fields", async () => 
   writeFileSync(path.join(prefix, "lib/node_modules/lody/dist/index.js"), "daemon\n");
   symlinkSync("../lib/node_modules/lody/dist/index.js", path.join(prefix, "bin/lody"));
   const daemonPath = path.join(temporaryDirectory("blitz-payload-daemon-archive-"), "daemon.tar.gz");
-  await stageDaemonArchive(prefix, daemonPath);
+  await stageDaemonArchive(prefix, daemonPath, await readLodyDaemonMetadata(repoRoot));
 
   const staged = await stage(
     temporaryDirectory("blitz-payload-with-daemon-"),
@@ -133,6 +136,13 @@ test("an optional daemon archive fills all daemon contract fields", async () => 
     bytes: statSync(staged.daemonArchivePath).size,
   });
   assert.equal(validateBoxPayloadManifest(manifest), manifest);
+  const extracted = temporaryDirectory("blitz-payload-daemon-extracted-");
+  const extract = spawnSync("tar", ["-xzf", staged.daemonArchivePath, "-C", extracted], {
+    encoding: "utf8",
+  });
+  assert.equal(extract.status, 0, extract.stderr);
+  assert.equal(readFileSync(path.join(extracted, "daemon-version"), "utf8"), "0.88.1+blitz.3\n");
+  assert.equal(readFileSync(path.join(extracted, "daemon-protocol-version"), "utf8"), "7\n");
   assert.deepEqual(
     payloadUploadObjects("box-payload/version", staged).map(({ logicalPath }) => logicalPath),
     [

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -39,11 +39,19 @@ test("daemon staging emits only the installed lody prefix deterministically", as
   symlinkSync("../lib/node_modules/lody/dist/index.js", path.join(prefix, "bin/lody"));
   const first = path.join(temporaryDirectory("blitz-daemon-one-"), "daemon.tar.gz");
   const second = path.join(temporaryDirectory("blitz-daemon-two-"), "daemon.tar.gz");
-  const firstResult = await stageDaemonArchive(prefix, first);
-  const secondResult = await stageDaemonArchive(prefix, second);
+  const metadata = await readLodyDaemonMetadata(repoRoot);
+  const firstResult = await stageDaemonArchive(prefix, first, metadata);
+  const secondResult = await stageDaemonArchive(prefix, second, metadata);
   assert.deepEqual(firstResult, secondResult);
   const listing = spawnSync("tar", ["-tzf", first], { encoding: "utf8" });
   assert.equal(listing.status, 0, listing.stderr);
   assert.match(listing.stdout, /^bin\/lody$/mu);
+  assert.match(listing.stdout, /^daemon-protocol-version$/mu);
+  assert.match(listing.stdout, /^daemon-version$/mu);
   assert.match(listing.stdout, /^lib\/node_modules\/lody\/dist\/index\.js$/mu);
+  assert.equal(readFileSync(path.join(prefix, "daemon-version"), "utf8"), `${metadata.version}\n`);
+  assert.equal(
+    readFileSync(path.join(prefix, "daemon-protocol-version"), "utf8"),
+    `${metadata.protocolVersion}\n`,
+  );
 });

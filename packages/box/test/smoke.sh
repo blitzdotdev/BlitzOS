@@ -91,7 +91,10 @@ trap 'signal_failure TERM 143' TERM
 trap 'fail "unexpected command failure at line $LINENO"' ERR
 
 if [ -z "${IMAGE:-}" ]; then
+  payload_version=$(node "$repo_root/packages/control-plane/scripts/plan-box-payload.mjs" \
+    --repo "$repo_root" --print-version)
   docker build --progress=plain \
+    --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
     --file "$repo_root/packages/box/Dockerfile" \
     --tag "$image" \
     "$repo_root"
@@ -99,6 +102,7 @@ if [ -z "${IMAGE:-}" ]; then
     -x 'BLITZ_LODY_SESSIONS=0' /etc/blitz/env.defaults
   docker build --progress=plain \
     --build-arg BLITZ_LODY_SESSIONS=1 \
+    --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
     --file "$repo_root/packages/box/Dockerfile" \
     --tag "$lody_sessions_image" \
     "$repo_root"
@@ -252,6 +256,15 @@ docker exec "$container" grep -qx 'exec /usr/local/libexec/blitz-payload' \
 docker exec "$container" sh -c \
   'test "$(readlink /usr/local/bin/lody)" = /opt/blitz/lody/current/bin/lody' \
   || fail "the lody PATH entry does not follow the current daemon"
+payload_stamp=$(docker exec "$container" cat /opt/blitz/payload/baked/payload-version)
+[[ "$payload_stamp" =~ ^[a-f0-9]{64}$ ]] || fail "the baked payload has no derived version"
+daemon_stamp=$(docker exec "$container" cat /opt/blitz/lody/baked/daemon-version)
+[[ "$daemon_stamp" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
+  || fail "the baked daemon has no version"
+docker exec "$container" grep -qx '7' /opt/blitz/lody/baked/daemon-protocol-version \
+  || fail "the baked daemon has no protocol version"
+docker exec --user blitz "$container" test -r /var/lib/blitz/payload/log \
+  || fail "the payload updater log is not readable by uid 1000"
 echo "PASS baked payload and daemon indirections"
 
 # ---- the memory boundary ----

@@ -1,17 +1,8 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+  realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -20,13 +11,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-/** These tests drive the base image's real updater against a stand-in control
- * plane. The stand-in owns only transport and observation; archives are made
- * by real tar, and all verification/apply decisions stay in blitz-payload. */
-
-const updater = fileURLToPath(
-  new URL("../../rootfs/usr/local/libexec/blitz-payload", import.meta.url),
-);
+/** Drives the real updater against a stand-in plane and real tar archives. */
+const updater = fileURLToPath(new URL("../../rootfs/usr/local/libexec/blitz-payload", import.meta.url));
+const BAKED_PAYLOAD_VERSION = "baked-payload-v1", BAKED_DAEMON_VERSION = "0.88.1+blitz.3";
 
 interface PayloadFile {
   path: string;
@@ -107,8 +94,9 @@ function makePayloadArchive(
       mode: (file.mode ?? 0o755).toString(8).padStart(4, "0"),
     });
   }
+  writeFileSync(path.join(build, "payload-version"), `${version}\n`);
   const archivePath = path.join(build, "payload.tar.gz");
-  execFileSync("tar", ["-C", build, "-czf", archivePath, "rootfs"]);
+  execFileSync("tar", ["-C", build, "-czf", archivePath, "payload-version", "rootfs"]);
   const body = readFileSync(archivePath);
   return {
     version,
@@ -125,8 +113,13 @@ function addDaemon(release: TestRelease, daemonVersion = "daemon-v2"): TestRelea
   mkdirSync(path.join(build, "lib/node_modules/lody"), { recursive: true });
   writeFileSync(path.join(build, "bin/lody"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   writeFileSync(path.join(build, "lib/node_modules/lody/package.json"), "{}\n");
+  writeFileSync(path.join(build, "daemon-version"), `${daemonVersion}\n`);
+  writeFileSync(path.join(build, "daemon-protocol-version"), "7\n");
   const archivePath = path.join(build, "daemon.tar.gz");
-  execFileSync("tar", ["-C", build, "-czf", archivePath, "bin", "lib"]);
+  execFileSync("tar", [
+    "-C", build, "-czf", archivePath,
+    "bin", "daemon-protocol-version", "daemon-version", "lib",
+  ]);
   const body = readFileSync(archivePath);
   return {
     ...release,
@@ -179,10 +172,13 @@ class Harness {
     const bakedDaemon = path.join(this.lodyRoot, "baked");
     mkdirSync(path.join(bakedPayload, "rootfs/usr/local/bin"), { recursive: true });
     writeFileSync(path.join(bakedPayload, "rootfs/usr/local/bin/tool"), "old\n", { mode: 0o755 });
+    writeFileSync(path.join(bakedPayload, "payload-version"), `${BAKED_PAYLOAD_VERSION}\n`);
     mkdirSync(path.join(bakedDaemon, "bin"), { recursive: true });
     mkdirSync(path.join(bakedDaemon, "lib/node_modules/lody"), { recursive: true });
     writeFileSync(path.join(bakedDaemon, "bin/lody"), "baked\n", { mode: 0o755 });
     writeFileSync(path.join(bakedDaemon, "lib/node_modules/lody/package.json"), "{}\n");
+    writeFileSync(path.join(bakedDaemon, "daemon-version"), `${BAKED_DAEMON_VERSION}\n`);
+    writeFileSync(path.join(bakedDaemon, "daemon-protocol-version"), "7\n");
     symlinkSync("baked", path.join(this.payloadRoot, "current"));
     symlinkSync("baked", path.join(this.lodyRoot, "current"));
     mkdirSync(this.payloadState, { recursive: true });
@@ -397,7 +393,7 @@ async function expectOneOutcome(
   expect(typeof result.detail).toBe("string");
   if (harness.results.length > 1) {
     expect(harness.results[0]).toMatchObject({
-      outcome: "up-to-date",
+      outcome: "booted",
     });
     expect(harness.results[0]?.detail).toMatch(/^boot report;/u);
   }
@@ -507,7 +503,7 @@ describe("blitz-payload", () => {
       daemonTarget: path.join(harness.lodyRoot, "baked"),
     })}\n`);
 
-    await expectOneOutcome(harness, "up-to-date");
+    await expectOneOutcome(harness, "booted");
 
     expect(harness.currentTarget()).toBe(path.join(harness.payloadRoot, "baked"));
     expect(existsSync(staging)).toBe(false);
@@ -572,10 +568,10 @@ describe("blitz-payload", () => {
   });
 
   it("does no download or restart when the pin is up to date", async () => {
-    const harness = new Harness({ pinVersion: "baked" });
+    const harness = new Harness({ pinVersion: BAKED_PAYLOAD_VERSION });
     await harness.start();
 
-    const result = await expectOneOutcome(harness, "up-to-date");
+    const result = await expectOneOutcome(harness, "booted");
 
     expect(result.detail).toContain("boot report");
     expect(harness.requests).not.toContain("GET /manifest.json");
@@ -595,6 +591,7 @@ describe("blitz-payload", () => {
     for (const [directory, content] of seededVersions) {
       mkdirSync(path.join(directory, "rootfs/usr/local/bin"), { recursive: true });
       writeFileSync(path.join(directory, "rootfs/usr/local/bin/tool"), content, { mode: 0o755 });
+      writeFileSync(path.join(directory, "payload-version"), `${path.basename(directory)}\n`);
       chmodSync(path.join(directory, "rootfs/usr/local/bin/tool"), 0o755);
     }
     unlinkSync(path.join(harness.payloadRoot, "current"));
@@ -618,13 +615,17 @@ describe("blitz-payload", () => {
     const harness = new Harness({ pinVersion: null });
     await harness.start();
 
-    const result = await expectOneOutcome(harness, "up-to-date");
+    const result = await expectOneOutcome(harness, "booted");
 
     expect(result).toMatchObject({
-      version: "baked",
-      daemonVersion: "baked",
+      version: BAKED_PAYLOAD_VERSION,
+      daemonVersion: BAKED_DAEMON_VERSION,
+      outcome: "booted",
       detail: "boot report; no payload pin",
     });
+    const state = readFileSync(path.join(harness.payloadState, "state.json"), "utf8");
+    expect(state).not.toContain('"current":"baked"');
+    expect(state).not.toContain('"daemonVersion":"baked"');
     expect(harness.currentTarget()).toBe(path.join(harness.payloadRoot, "baked"));
   });
 

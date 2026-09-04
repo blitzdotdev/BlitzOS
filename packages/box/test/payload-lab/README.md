@@ -7,14 +7,18 @@ They never create or delete a workspace.
 
 Required for a real run:
 
-- `THINLAB_TOKEN`: either a box/machine-plane bearer (`blitz-cred api-token`)
-  or a session bearer. Both can read workspaces and drive the allowed machine
-  lifecycle routes. Payload-hold writes need the session form.
-- `THINLAB_PROXY_TOKEN`: a session or read-only operator bearer for E2's
-  `/webapp/7445/healthz` probe when `THINLAB_TOKEN` is box-plane scoped.
+- `THINLAB_TOKEN`: a box/machine-plane bearer (`blitz-cred api-token`).
+- `THINLAB_COOKIE`: a workspace-admin `blitz_session` cookie value. Session
+  credentials are accepted only in this cookie, never as bearer tokens;
+  payload-hold writes need this form. When set, it takes precedence over
+  `THINLAB_TOKEN` for control-plane calls.
+- `THINLAB_PROXY_TOKEN`: a read-only operator bearer for E2's
+  `/webapp/7445/healthz` probe when neither `THINLAB_COOKIE` nor the
+  box-plane-scoped `THINLAB_TOKEN` can proxy it.
 - `LAB_SSH_KEY`: the private key installed when the lab machines were
-  provisioned. `box_ssh` uses the workspace view's host/port/user. The same key
-  reaches the VM host as root on port 2222; `LAB_HOST_SSH_KEY` overrides it.
+  provisioned. `box_ssh` uses the workspace view's host/port/user. It does not
+  grant VM-host SSH on port 2222. Experiments that explicitly need host access
+  require a separately provisioned `LAB_HOST_SSH_KEY`.
 - A deployable `packages/control-plane/wrangler.toml` for
   `blitz-thinlab`, plus the Cloudflare credentials used by the existing
   publisher and deploy scripts.

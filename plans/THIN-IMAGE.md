@@ -74,9 +74,12 @@ wire copy pinned by `wire-drift.test.ts`.
 
 ### 2.2 `payload.tar.gz`
 
-Layout mirrors the image: `rootfs/usr/local/bin/*`, `rootfs/usr/local/libexec/*`,
+Layout has a reserved `payload-version` root entry containing the derived
+version and otherwise mirrors the image: `rootfs/usr/local/bin/*`, `rootfs/usr/local/libexec/*`,
 `rootfs/etc/s6-overlay/s6-rc.d/<service>/{run,up}` (only for services that
 exist in the base), `rootfs/opt/blitz/skel/*`, `rootfs/etc/blitz/env.defaults`.
+`payload-version` is outside `rootfs/` and therefore is not listed in
+`manifest.files`; the updater verifies it separately against `manifest.version`.
 Built by `control-plane/scripts/publish-box-payload.mjs` from the repo tree plus
 the two Go binaries (built by the same script via `go build`, or taken from a
 `--binaries <dir>` produced in CI). `packages/box/Dockerfile` must build the
@@ -86,7 +89,8 @@ produces the file list; both the Dockerfile stage and the publisher call it.
 
 ### 2.3 `daemon.tar.gz`
 
-The installed, patched Lody prefix: `lib/node_modules/lody/**` and `bin/lody`,
+The installed, patched Lody prefix: `lib/node_modules/lody/**`, `bin/lody`, and
+the reserved root entries `daemon-version` and `daemon-protocol-version`,
 as produced by the `vendors` stage of the Dockerfile today (npm install of the
 pinned version + the five patch scripts + their guards). Extracted to
 `/opt/blitz/lody/<daemon version>/`; `/opt/blitz/lody/current` is the symlink
@@ -132,8 +136,9 @@ Loop every `BLITZ_PAYLOAD_INTERVAL` (default 300 s; first tick 60 s after boot):
       the daemon was restarted) the probe socket answers. Otherwise **rollback**:
       re-point `current` to `previous`, restart the same services, health again.
    g. `POST /workspaces/self/payload-result` `{version, daemonVersion, outcome, detail}`
-      with outcome ∈ `applied | rolled-back | unsupported | fetch-failed | verify-failed | start-failed | up-to-date`.
-      Also report on every boot (so the control plane learns the baked version).
+      with outcome ∈ `booted | applied | rolled-back | unsupported | fetch-failed | verify-failed | start-failed | up-to-date`.
+      Report `booted` on every boot (so the control plane learns the baked
+      version); reserve `up-to-date` for a later tick whose pin already runs.
 3. Keep `current` and `previous`; delete older `versions/*` and `.staging` leftovers.
 
 Invariants (each one a guest test): never a half-applied `current` (the symlink

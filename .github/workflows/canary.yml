@@ -120,7 +120,12 @@ jobs:
         if: steps.plan.outputs.published == 'false'
         env:
           IMAGE_TAG: ${{ steps.plan.outputs.tag }}
-        run: docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 -f packages/box/Dockerfile -t "$IMAGE_TAG" .
+        run: |
+          payload_version="$(node packages/control-plane/scripts/plan-box-payload.mjs --print-version)"
+          docker build --platform linux/amd64 \
+            --build-arg BLITZ_LODY_SESSIONS=1 \
+            --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
+            -f packages/box/Dockerfile -t "$IMAGE_TAG" .
 
       - name: Boot-smoke the Lody-enabled image
         if: steps.plan.outputs.published == 'false'

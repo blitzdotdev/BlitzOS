@@ -5,7 +5,10 @@ import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { readLodyDaemonMetadata } from "./lib/box-daemon.mjs";
+import {
+  readLodyDaemonMetadata,
+  writeLodyDaemonVersionStamps,
+} from "./lib/box-daemon.mjs";
 import { createDeterministicTarGzip, hashFile } from "./lib/deterministic-archive.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
@@ -38,7 +41,7 @@ function output(command, args, options = {}) {
   });
 }
 
-export async function stageDaemonArchive(sourceDirectory, outputPath) {
+export async function stageDaemonArchive(sourceDirectory, outputPath, metadata) {
   const required = [
     path.join(sourceDirectory, "bin/lody"),
     path.join(sourceDirectory, "lib/node_modules/lody"),
@@ -51,8 +54,13 @@ export async function stageDaemonArchive(sourceDirectory, outputPath) {
   if (await stat(outputPath).catch(() => null) !== null) {
     throw new Error(`refusing to overwrite daemon archive: ${outputPath}`);
   }
+  await writeLodyDaemonVersionStamps(sourceDirectory, metadata);
   await mkdir(path.dirname(outputPath), { recursive: true });
-  await createDeterministicTarGzip(sourceDirectory, outputPath, ["bin", "lib"]);
+  await createDeterministicTarGzip(
+    sourceDirectory,
+    outputPath,
+    ["bin", "daemon-protocol-version", "daemon-version", "lib"],
+  );
   return hashFile(outputPath);
 }
 
@@ -127,8 +135,8 @@ export async function main(argv = process.argv.slice(2)) {
     const prefix = path.join(temporary, "prefix");
     await mkdir(prefix);
     await run("docker", ["cp", `${container}:/opt/blitz/lody/baked/.`, prefix]);
-    const archive = await stageDaemonArchive(prefix, options.outPath);
     const metadata = await readLodyDaemonMetadata(options.repo);
+    const archive = await stageDaemonArchive(prefix, options.outPath, metadata);
     const result = { ...metadata, ...archive, path: options.outPath };
     const json = `${JSON.stringify(result)}\n`;
     if (options.jsonPath !== undefined) await writeFile(options.jsonPath, json, "utf8");

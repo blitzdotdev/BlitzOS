@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 # Shared driver for plans/THIN-IMAGE.md section 6.
 #
-# THINLAB_TOKEN may be either:
-#   * a machine-plane bearer from `blitz-cred api-token`; it can read
-#     workspaces and drive machine lifecycle; or
-#   * a session bearer for a workspace admin; it additionally permits the
-#     payload-hold write and the webApp proxy.
+# THINLAB_TOKEN is a machine-plane bearer from `blitz-cred api-token`.
+# THINLAB_COOKIE is a workspace-admin `blitz_session` cookie value; session
+# credentials are not bearer tokens and must use this separate path.
 #
-# E2's control-plane proxy probe needs session/operator scope. When
-# THINLAB_TOKEN is machine-plane scoped, set THINLAB_PROXY_TOKEN separately.
+# E2's control-plane proxy probe needs session/operator scope. THINLAB_COOKIE
+# supplies the session form; THINLAB_PROXY_TOKEN may supply an operator bearer.
 # Neither token is ever printed by this harness.
 
 PAYLOAD_LAB_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
@@ -108,7 +106,9 @@ require_env() {
 
 require_workspace() {
   [ -n "$WORKSPACE_ID" ] || experiment_fail "workspace id is required"
-  require_env THINLAB_TOKEN
+  if [ -z "${THINLAB_COOKIE:-}" ] && [ -z "${THINLAB_TOKEN:-}" ]; then
+    experiment_fail "THINLAB_COOKIE or THINLAB_TOKEN is required"
+  fi
   require_env LAB_SSH_KEY
   [ -r "$LAB_SSH_KEY" ] || experiment_fail "LAB_SSH_KEY is not readable"
   if [ -z "$MACHINE_ID" ]; then
@@ -136,9 +136,31 @@ cp_api_with_token() {
   curl "${args[@]}" "$THINLAB_ORIGIN$path"
 }
 
+cp_api_with_cookie() {
+  local cookie=$1 method=$2 path=$3 body=${4-}
+  if payload_lab_dry; then
+    dry_command "curl -X $method $THINLAB_ORIGIN$path (blitz_session cookie redacted)"
+    return 0
+  fi
+  local args=(
+    --silent --show-error --fail-with-body
+    --max-time "$LAB_CP_TIMEOUT"
+    --request "$method"
+    --header "Cookie: blitz_session=$cookie"
+  )
+  if [ -n "$body" ]; then
+    args+=(--header 'Content-Type: application/json' --data "$body")
+  fi
+  curl "${args[@]}" "$THINLAB_ORIGIN$path"
+}
+
 cp_api() {
-  require_env THINLAB_TOKEN
-  cp_api_with_token "$THINLAB_TOKEN" "$@"
+  if [ -n "${THINLAB_COOKIE:-}" ]; then
+    cp_api_with_cookie "$THINLAB_COOKIE" "$@"
+  else
+    require_env THINLAB_TOKEN
+    cp_api_with_token "$THINLAB_TOKEN" "$@"
+  fi
 }
 
 workspace_json() {
@@ -193,18 +215,18 @@ box_ssh() {
   ssh "${options[@]}" -p "$port" "$user@$host" "$command"
 }
 
-# The VM host retains sshd on 2222 while the box owns port 22. The provisioned
-# lab key reaches both. Host access lets the harness run one updater tick and
-# read docker logs; no test hook is added to the box image.
+# Host-only experiments require a separately provisioned root key. The
+# workspace key reaches the box and is not accepted by the host sshd on 2222.
 host_ssh() {
   local workspace_id=$1 command=$2
   if payload_lab_dry; then
     dry_command "ssh root@<workspace-host:$workspace_id>:$LAB_HOST_SSH_PORT $command"
     return 0
   fi
+  require_env LAB_HOST_SSH_KEY
   local host key
   host=$(_ssh_target "$workspace_id" host)
-  key=${LAB_HOST_SSH_KEY:-$LAB_SSH_KEY}
+  key=$LAB_HOST_SSH_KEY
   local options=()
   mapfile -t options < <(_ssh_options "$key")
   ssh "${options[@]}" -p "$LAB_HOST_SSH_PORT" "root@$host" "$command"
@@ -544,11 +566,18 @@ pin_payload() {
 
 gateway_health_code() {
   local workspace_id=$1 token=${THINLAB_PROXY_TOKEN:-${THINLAB_TOKEN:-}}
-  local code
-  [ -n "$token" ] || return 1
+  local auth=() code
+  if [ -n "${THINLAB_PROXY_TOKEN:-}" ]; then
+    auth=(--header "Authorization: Bearer $THINLAB_PROXY_TOKEN")
+  elif [ -n "${THINLAB_COOKIE:-}" ]; then
+    auth=(--header "Cookie: blitz_session=$THINLAB_COOKIE")
+  elif [ -n "$token" ]; then
+    auth=(--header "Authorization: Bearer $token")
+  else
+    return 1
+  fi
   code=$(curl --silent --output /dev/null --max-time 3 --write-out '%{http_code}' \
-    --header "Authorization: Bearer $token" \
-    "$THINLAB_ORIGIN/workspaces/$workspace_id/webapp/7445$LAB_HEALTH_PATH" \
+    "${auth[@]}" "$THINLAB_ORIGIN/workspaces/$workspace_id/webapp/7445$LAB_HEALTH_PATH" \
     2>/dev/null || true)
   printf '%s\n' "${code:-000}"
 }

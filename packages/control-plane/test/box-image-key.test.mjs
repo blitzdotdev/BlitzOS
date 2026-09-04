@@ -65,12 +65,11 @@ function createInputRepository() {
     ["packages/box/Dockerfile", "FROM scratch\n"],
     ["packages/broker/main.go", "package main\n"],
     ["packages/schema/fixtures/example.json", "{}\n"],
-    ["vendor/lody/package.json", "{}\n"],
-    ["vendor/lody-adapters/core/package.json", "{}\n"],
-    ["scripts/lody-build-package.mjs", "export {};\n"],
-    ["scripts/lody-npm-shrinkwrap.mjs", "export {};\n"],
-    ["scripts/lody-sync-adapters.mjs", "export {};\n"],
-    ["scripts/lody-package-manifest.json", "[]\n"],
+    ["packages/control-plane/scripts/box-payload-key.mjs", "export {};\n"],
+    ["packages/control-plane/scripts/lib/box-daemon.mjs", "export {};\n"],
+    ["packages/control-plane/scripts/lib/box-payload-files.mjs", "export {};\n"],
+    ["vendor/lody/UPSTREAM.md", "fixture\n"],
+    ["vendor/lody/packages/shared/src/local-loro-data-plane.ts", "export {};\n"],
     ["env.defaults", "BLITZ_LODY_SESSIONS=0\n"],
   ]);
   for (const [relativePath, contents] of files) {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   BOX_PAYLOAD_INPUTS,
   boxPayloadPrefix,
@@ -120,4 +121,15 @@ test("a malformed or mismatched manifest is never reused", async () => {
     repo: repository,
     fetchImpl: async () => new Response(JSON.stringify(unknownService), { status: 200 }),
   }), /restart names unknown service: future-service/u);
+});
+
+test("--print-version derives the Docker build stamp without probing an origin", () => {
+  const repository = createInputRepository();
+  const run = spawnSync(process.execPath, [
+    fileURLToPath(new URL("../scripts/plan-box-payload.mjs", import.meta.url)),
+    "--repo", repository,
+    "--print-version",
+  ], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^[a-f0-9]{64}\n$/u);
 });

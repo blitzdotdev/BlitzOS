@@ -442,12 +442,11 @@ test("IMAGE_PATHS names every Dockerfile repository input in build order", () =>
     "packages/box",
     "packages/broker",
     "packages/schema/fixtures",
-    "vendor/lody",
-    "vendor/lody-adapters",
-    "scripts/lody-build-package.mjs",
-    "scripts/lody-npm-shrinkwrap.mjs",
-    "scripts/lody-sync-adapters.mjs",
-    "scripts/lody-package-manifest.json",
+    "packages/control-plane/scripts/box-payload-key.mjs",
+    "packages/control-plane/scripts/lib/box-daemon.mjs",
+    "packages/control-plane/scripts/lib/box-payload-files.mjs",
+    "vendor/lody/UPSTREAM.md",
+    "vendor/lody/packages/shared/src/local-loro-data-plane.ts",
     "env.defaults",
   ]);
 });

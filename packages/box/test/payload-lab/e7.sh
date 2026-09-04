@@ -45,7 +45,7 @@ case "$boot_current" in
 esac
 assert_payload_state_consistent "$WORKSPACE_ID" \
   || experiment_fail "state.json is inconsistent after reset"
-wait_payload_any_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" "$LAB_OUTCOME_TIMEOUT" applied up-to-date \
+wait_payload_any_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" "$LAB_OUTCOME_TIMEOUT" applied booted up-to-date \
   || experiment_fail "the booted updater did not report the pin"
 after_report=$(payload_reported_at "$MACHINE_ID" "$WORKSPACE_ID")
 [ "$after_report" -gt "$before_report" ] && [ "$after_report" -ge "$reset_ms" ] \

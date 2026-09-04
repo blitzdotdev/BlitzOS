@@ -26,6 +26,8 @@ import { afterEach, describe, expect, it } from "vitest";
 const updater = fileURLToPath(
   new URL("../../rootfs/usr/local/libexec/blitz-payload", import.meta.url),
 );
+const BAKED_PAYLOAD_VERSION = "baked-payload-v1";
+const BAKED_DAEMON_VERSION = "0.88.1+blitz.3";
 
 interface Archive {
   body: Buffer;
@@ -131,11 +133,14 @@ class DaemonHarness {
     const bakedPayload = path.join(this.payloadRoot, "baked/rootfs/usr/local/bin");
     mkdirSync(bakedPayload, { recursive: true });
     writeFileSync(path.join(bakedPayload, "tool"), "old\n", { mode: 0o755 });
+    writeFileSync(path.join(this.payloadRoot, "baked/payload-version"), `${BAKED_PAYLOAD_VERSION}\n`);
     const bakedDaemon = path.join(this.lodyRoot, "baked");
     mkdirSync(path.join(bakedDaemon, "bin"), { recursive: true });
     mkdirSync(path.join(bakedDaemon, "lib/node_modules/lody"), { recursive: true });
     writeFileSync(path.join(bakedDaemon, "bin/lody"), "baked\n", { mode: 0o755 });
     writeFileSync(path.join(bakedDaemon, "lib/node_modules/lody/package.json"), "{}\n");
+    writeFileSync(path.join(bakedDaemon, "daemon-version"), `${BAKED_DAEMON_VERSION}\n`);
+    writeFileSync(path.join(bakedDaemon, "daemon-protocol-version"), "7\n");
     symlinkSync("baked", path.join(this.payloadRoot, "current"));
     symlinkSync("baked", path.join(this.lodyRoot, "current"));
     mkdirSync(this.payloadState, { recursive: true });
@@ -146,14 +151,19 @@ class DaemonHarness {
     const payloadFile = path.join(payloadBuild, "rootfs/usr/local/bin/tool");
     mkdirSync(path.dirname(payloadFile), { recursive: true });
     writeFileSync(payloadFile, "new\n", { mode: 0o755 });
-    this.payloadArchive = archive(payloadBuild, "payload.tar.gz", ["rootfs"]);
+    writeFileSync(path.join(payloadBuild, "payload-version"), "v2\n");
+    this.payloadArchive = archive(payloadBuild, "payload.tar.gz", ["payload-version", "rootfs"]);
 
     const daemonBuild = temporaryDirectory("blitz-payload-daemon-archive-");
     mkdirSync(path.join(daemonBuild, "bin"), { recursive: true });
     mkdirSync(path.join(daemonBuild, "lib/node_modules/lody"), { recursive: true });
     writeFileSync(path.join(daemonBuild, "bin/lody"), "new daemon\n", { mode: 0o755 });
     writeFileSync(path.join(daemonBuild, "lib/node_modules/lody/package.json"), "{}\n");
-    this.daemonArchive = archive(daemonBuild, "daemon.tar.gz", ["bin", "lib"]);
+    writeFileSync(path.join(daemonBuild, "daemon-version"), "daemon-v2\n");
+    writeFileSync(path.join(daemonBuild, "daemon-protocol-version"), "7\n");
+    this.daemonArchive = archive(daemonBuild, "daemon.tar.gz", [
+      "bin", "daemon-protocol-version", "daemon-version", "lib",
+    ]);
 
     writeExecutable(path.join(this.bin, "blitz-cred"), "#!/bin/sh\nprintf 'machine-bearer\\n'\n");
     writeExecutable(
@@ -416,8 +426,8 @@ describe("blitz-payload daemon activation", () => {
     expect(harness.currentDaemon()).toBe("baked");
     expect(harness.state()).toMatchObject({
       current: "v2",
-      daemonVersion: "baked",
-      daemonProtocolVersion: null,
+      daemonVersion: BAKED_DAEMON_VERSION,
+      daemonProtocolVersion: 7,
       previousDaemonProtocolVersion: 7,
     });
   });

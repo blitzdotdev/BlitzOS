@@ -33,12 +33,13 @@ wait_box_ssh "$WORKSPACE_ID" true 360 || experiment_fail "machine did not return
 
 boot_current=$(box_ssh "$WORKSPACE_ID" 'basename "$(readlink -f /opt/blitz/payload/current)"')
 assert_equal "$boot_current" baked "box did not start on its baked payload"
+baked_version=$(box_ssh "$WORKSPACE_ID" 'cat /opt/blitz/payload/baked/payload-version')
 before_pid=$(box_ssh "$WORKSPACE_ID" 'cat /run/service/payload/supervise/pid')
 payload_tick "$WORKSPACE_ID" >"$LAB_TEMP_ROOT/tick.log" 2>&1 \
   || experiment_fail "new updater failed against old control plane"
 after=$(payload_current "$WORKSPACE_ID")
 after_pid=$(box_ssh "$WORKSPACE_ID" 'cat /run/service/payload/supervise/pid')
-assert_equal "$after" baked "missing payload field changed current"
+assert_equal "$after" "$baked_version" "missing payload field changed current"
 assert_equal "$after_pid" "$before_pid" "payload service exited against old control plane"
 if grep -Ei '(^|[^a-z])(error|failed|failure)([^a-z]|$)' "$LAB_TEMP_ROOT/tick.log" >/dev/null; then
   experiment_fail "missing payload field was logged as an error"

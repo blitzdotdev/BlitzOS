@@ -36,7 +36,7 @@ wait_box_ssh "$WORKSPACE_ID" true 360 || experiment_fail "machine did not return
 boot_current=$(box_ssh "$WORKSPACE_ID" 'basename "$(readlink -f /opt/blitz/payload/current)"')
 assert_equal "$boot_current" baked "started container did not begin on baked payload"
 payload_tick "$WORKSPACE_ID" >/dev/null 2>&1 || experiment_fail "first post-start tick failed"
-wait_payload_any_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" "$LAB_OUTCOME_TIMEOUT" applied up-to-date \
+wait_payload_any_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" "$LAB_OUTCOME_TIMEOUT" applied booted up-to-date \
   || experiment_fail "pin was not re-applied after start"
 wait_payload_current "$WORKSPACE_ID" "$PUBLISHED_VERSION" 30 \
   || experiment_fail "pin is not current after start"

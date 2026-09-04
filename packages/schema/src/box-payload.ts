@@ -76,6 +76,7 @@ export interface BoxPayloadConfig {
 }
 
 export const BOX_PAYLOAD_OUTCOMES = [
+  "booted",
   "applied",
   "rolled-back",
   "unsupported",

@@ -61,6 +61,9 @@ FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c
 # Lody moves independently from the member-owned agent CLI prefix. The
 # publisher exports this target's baked prefix as daemon.tar.gz.
 ENV NPM_CONFIG_PREFIX=/opt/blitz/lody/baked
+COPY packages/control-plane/scripts/lib/box-daemon.mjs /tmp/box-daemon.mjs
+COPY vendor/lody/UPSTREAM.md /src/vendor/lody/UPSTREAM.md
+COPY vendor/lody/packages/shared/src/local-loro-data-plane.ts /src/vendor/lody/packages/shared/src/local-loro-data-plane.ts
 RUN npm install --global --omit=dev lody@0.88.1 \
     && npm cache clean --force
 COPY packages/box/patches/lody-local-platform.mjs /tmp/lody-local-platform.mjs
@@ -76,15 +79,19 @@ RUN node /tmp/lody-local-platform.mjs /opt/blitz/lody/baked/lib/node_modules/lod
     && node /tmp/lody-code-collab-worktree-root.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
     && node /tmp/lody-builtin-mcp-off.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
     && node /tmp/lody-session-sandbox.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
-    && rm /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs /tmp/lody-builtin-mcp-off.mjs /tmp/lody-session-sandbox.mjs
+    && node --input-type=module --eval 'import { readLodyDaemonMetadata, writeLodyDaemonVersionStamps } from "/tmp/box-daemon.mjs"; const metadata = await readLodyDaemonMetadata("/src"); await writeLodyDaemonVersionStamps("/opt/blitz/lody/baked", metadata);' \
+    && rm /tmp/box-daemon.mjs /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs /tmp/lody-builtin-mcp-off.mjs /tmp/lody-session-sandbox.mjs
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS payload-build
 
+ARG BLITZ_PAYLOAD_VERSION
 WORKDIR /src
 COPY packages/control-plane/scripts/lib/box-payload-files.mjs /tools/box-payload-files.mjs
+COPY packages/control-plane/scripts/box-payload-key.mjs /tools/box-payload-key.mjs
 COPY env.defaults ./env.defaults
 COPY packages/box/rootfs ./packages/box/rootfs
-RUN node /tools/box-payload-files.mjs copy /src /out
+RUN node /tools/box-payload-files.mjs copy /src /out \
+    && node --input-type=module --eval 'import { resolveBoxPayloadVersion, writeBoxPayloadVersionStamp } from "/tools/box-payload-key.mjs"; const version = await resolveBoxPayloadVersion({ repo: "/src", providedVersion: process.env.BLITZ_PAYLOAD_VERSION }); await writeBoxPayloadVersionStamp("/out", version);'
 COPY --from=cred-build /out/blitz-cred /out/rootfs/usr/local/bin/blitz-cred
 COPY --from=gateway-build /out/blitz-box-gateway /out/rootfs/usr/local/bin/blitz-box-gateway
 

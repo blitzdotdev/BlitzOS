@@ -29,6 +29,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MODE_PATTERN = /^[0-7]{4}$/u;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 const HTTP_URL_PATTERN = /^https?:\/\/[^/\s?#]+(?:[/?][^\s#]*)?$/u;
+const LOG_MAX_BYTES = 1024 * 1024;
 const RESTART_SERVICES = new Set([
   'cgroups',
   'cloudflared',
@@ -52,6 +53,7 @@ const RESTART_SERVICES = new Set([
   'watch',
 ]);
 const RESULT_OUTCOMES = new Set([
+  'booted',
   'applied',
   'rolled-back',
   'unsupported',
@@ -64,8 +66,37 @@ const RESULT_OUTCOMES = new Set([
 class FetchFailure extends Error {}
 class VerifyFailure extends Error {}
 
+let payloadLogPath = null;
+
+function configureLog(stateRoot) {
+  try {
+    fs.mkdirSync(stateRoot, { recursive: true, mode: 0o755 });
+    fs.chmodSync(stateRoot, 0o755);
+    payloadLogPath = path.join(stateRoot, 'log');
+    fs.appendFileSync(payloadLogPath, '', { mode: 0o644 });
+    fs.chmodSync(payloadLogPath, 0o644);
+  } catch {
+    payloadLogPath = null;
+  }
+}
+
 function log(message) {
-  process.stderr.write(`blitz-payload: ${message}\n`);
+  const line = `blitz-payload: ${message}\n`;
+  process.stderr.write(line);
+  if (payloadLogPath === null) return;
+  try {
+    const currentBytes = fs.statSync(payloadLogPath).size;
+    if (currentBytes + Buffer.byteLength(line) > LOG_MAX_BYTES) {
+      const previous = `${payloadLogPath}.1`;
+      fs.rmSync(previous, { force: true });
+      fs.renameSync(payloadLogPath, previous);
+      fs.chmodSync(previous, 0o644);
+    }
+    fs.appendFileSync(payloadLogPath, line, { mode: 0o644 });
+    fs.chmodSync(payloadLogPath, 0o644);
+  } catch {
+    // Logging must never take the supervised updater down.
+  }
 }
 
 function errorMessage(error) {
@@ -400,8 +431,38 @@ async function linkInfo(linkPath) {
   }
 }
 
-function inferredVersion(target) {
-  return target === null ? 'baked' : path.basename(target);
+async function readVersionStamp(root, name, label) {
+  let source;
+  try {
+    source = await fsp.readFile(path.join(root, name), 'utf8');
+  } catch (error) {
+    throw new Error(`${label} version stamp is unreadable: ${errorMessage(error)}`);
+  }
+  if (!source.endsWith('\n') || source.indexOf('\n') !== source.length - 1) {
+    throw new Error(`${label} version stamp must contain exactly one line`);
+  }
+  const stamped = source.slice(0, -1);
+  if (!VERSION_PATTERN.test(stamped)) {
+    throw new Error(`${label} version stamp is not a version token`);
+  }
+  return stamped;
+}
+
+async function readDaemonIdentity(root) {
+  const [daemonVersion, protocolSource] = await Promise.all([
+    readVersionStamp(root, 'daemon-version', 'daemon'),
+    fsp.readFile(path.join(root, 'daemon-protocol-version'), 'utf8').catch((error) => {
+      throw new Error(`daemon protocol stamp is unreadable: ${errorMessage(error)}`);
+    }),
+  ]);
+  if (!/^[1-9][0-9]*\n$/u.test(protocolSource)) {
+    throw new Error('daemon protocol stamp must contain one positive integer line');
+  }
+  const protocolVersion = Number(protocolSource.slice(0, -1));
+  if (!Number.isSafeInteger(protocolVersion)) {
+    throw new Error('daemon protocol stamp is out of range');
+  }
+  return { version: daemonVersion, protocolVersion };
 }
 
 async function atomicLink(linkPath, target) {
@@ -546,6 +607,7 @@ async function initialiseState(config) {
   const payloadLink = path.join(config.payloadRoot, 'current');
   const daemonLink = path.join(config.lodyRoot, 'current');
   let payload = await linkInfo(payloadLink);
+  let restoredPayload = false;
   if (!payload.exists) {
     const previous = typeof state.previousTarget === 'string'
       ? state.previousTarget
@@ -556,15 +618,10 @@ async function initialiseState(config) {
     }
     await atomicLink(payloadLink, previous);
     payload = await linkInfo(payloadLink);
-    state = {
-      ...state,
-      current: typeof state.previous === 'string' ? state.previous : inferredVersion(previous),
-      currentTarget: previous,
-      previous: null,
-      previousTarget: null,
-    };
+    restoredPayload = true;
   }
   let daemon = await linkInfo(daemonLink);
+  let restoredDaemon = false;
   if (!daemon.exists) {
     const previous = typeof state.previousDaemonTarget === 'string'
       ? state.previousDaemonTarget
@@ -575,30 +632,40 @@ async function initialiseState(config) {
     }
     await atomicLink(daemonLink, previous);
     daemon = await linkInfo(daemonLink);
+    restoredDaemon = true;
+  }
+  const payloadVersion = await readVersionStamp(payload.target, 'payload-version', 'payload');
+  const daemonIdentity = await readDaemonIdentity(daemon.target);
+  if (restoredPayload) {
     state = {
       ...state,
-      daemonVersion: typeof state.previousDaemonVersion === 'string'
-        ? state.previousDaemonVersion
-        : inferredVersion(previous),
-      daemonTarget: previous,
-      daemonProtocolVersion: Number.isSafeInteger(state.previousDaemonProtocolVersion)
-        ? state.previousDaemonProtocolVersion
-        : null,
-      previousDaemonVersion: null,
-      previousDaemonTarget: null,
-      previousDaemonProtocolVersion: null,
+      current: payloadVersion,
+      currentTarget: payload.target,
+      previous: null,
+      previousTarget: null,
     };
-  }
-  if (state.currentTarget !== payload.target) {
+  } else if (state.currentTarget !== payload.target) {
     state = {
       ...state,
       previous: typeof state.current === 'string' ? state.current : null,
       previousTarget: typeof state.currentTarget === 'string' ? state.currentTarget : null,
-      current: inferredVersion(payload.target),
+      current: payloadVersion,
       currentTarget: payload.target,
     };
+  } else if (state.current !== payloadVersion) {
+    state = { ...state, current: payloadVersion };
   }
-  if (state.daemonTarget !== daemon.target) {
+  if (restoredDaemon) {
+    state = {
+      ...state,
+      daemonVersion: daemonIdentity.version,
+      daemonTarget: daemon.target,
+      daemonProtocolVersion: daemonIdentity.protocolVersion,
+      previousDaemonVersion: null,
+      previousDaemonTarget: null,
+      previousDaemonProtocolVersion: null,
+    };
+  } else if (state.daemonTarget !== daemon.target) {
     state = {
       ...state,
       previousDaemonVersion:
@@ -607,10 +674,35 @@ async function initialiseState(config) {
       previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
         ? state.daemonProtocolVersion
         : null,
-      daemonVersion: inferredVersion(daemon.target),
+      daemonVersion: daemonIdentity.version,
       daemonTarget: daemon.target,
-      daemonProtocolVersion: null,
+      daemonProtocolVersion: daemonIdentity.protocolVersion,
     };
+  } else if (
+    state.daemonVersion !== daemonIdentity.version
+    || state.daemonProtocolVersion !== daemonIdentity.protocolVersion
+  ) {
+    state = {
+      ...state,
+      daemonVersion: daemonIdentity.version,
+      daemonProtocolVersion: daemonIdentity.protocolVersion,
+    };
+  }
+  if (state.previous === 'baked') {
+    if (typeof state.previousTarget === 'string') {
+      state.previous = await readVersionStamp(
+        state.previousTarget,
+        'payload-version',
+        'previous payload',
+      );
+    } else state.previous = null;
+  }
+  if (state.previousDaemonVersion === 'baked') {
+    if (typeof state.previousDaemonTarget === 'string') {
+      const previousDaemon = await readDaemonIdentity(state.previousDaemonTarget);
+      state.previousDaemonVersion = previousDaemon.version;
+      state.previousDaemonProtocolVersion = previousDaemon.protocolVersion;
+    } else state.previousDaemonVersion = null;
   }
   await writeState(config, state);
   return state;
@@ -676,6 +768,7 @@ async function inspectPayloadArchive(archivePath, manifest, config) {
   for (const rawEntry of listing.split('\n').filter((entry) => entry !== '')) {
     const isDirectory = rawEntry.endsWith('/');
     const entry = isDirectory ? rawEntry.slice(0, -1) : rawEntry;
+    if (!isDirectory && entry === 'payload-version') continue;
     if ((isDirectory && directories.has(entry)) || (!isDirectory && files.has(entry))) continue;
     throw new VerifyFailure(`payload archive contains unexpected path ${rawEntry}`);
   }
@@ -701,6 +794,15 @@ async function hashFile(filePath) {
 }
 
 async function verifyPayloadTree(root, manifest) {
+  let stampedVersion;
+  try {
+    stampedVersion = await readVersionStamp(root, 'payload-version', 'payload');
+  } catch (error) {
+    throw new VerifyFailure(errorMessage(error));
+  }
+  if (stampedVersion !== manifest.version) {
+    throw new VerifyFailure('payload version stamp does not match manifest.version');
+  }
   const rootfs = path.join(root, 'rootfs');
   const entries = await walkTree(rootfs).catch((error) => {
     throw new VerifyFailure(`payload rootfs is unreadable: ${errorMessage(error)}`);
@@ -781,10 +883,27 @@ function safeArchiveEntry(entry) {
   return normalized !== ''
     && !path.isAbsolute(normalized)
     && !segments.some((segment) => segment === '' || segment === '.' || segment === '..')
-    && (segments[0] === 'bin' || segments[0] === 'lib');
+    && (
+      segments[0] === 'bin'
+      || segments[0] === 'lib'
+      || normalized === 'daemon-version'
+      || normalized === 'daemon-protocol-version'
+    );
 }
 
-async function verifyDaemonTree(root) {
+async function verifyDaemonTree(root, daemon) {
+  let identity;
+  try {
+    identity = await readDaemonIdentity(root);
+  } catch (error) {
+    throw new VerifyFailure(errorMessage(error));
+  }
+  if (identity.version !== daemon.version) {
+    throw new VerifyFailure('daemon version stamp does not match manifest.daemon.version');
+  }
+  if (identity.protocolVersion !== daemon.protocolVersion) {
+    throw new VerifyFailure('daemon protocol stamp does not match manifest.daemon.protocolVersion');
+  }
   const entries = await walkTree(root);
   let hasBinary = false;
   let hasPackage = false;
@@ -813,7 +932,7 @@ async function extractDaemon(daemon, config) {
   const existing = await fsp.stat(final).catch(() => null);
   if (existing !== null) {
     try {
-      await verifyDaemonTree(final);
+      await verifyDaemonTree(final, daemon);
       return final;
     } catch {
       await fsp.rm(final, { recursive: true, force: true });
@@ -842,7 +961,7 @@ async function extractDaemon(daemon, config) {
       throw new VerifyFailure(`daemon archive extraction failed: ${errorMessage(error)}`);
     });
     await fsp.rm(archivePath, { force: true });
-    await verifyDaemonTree(staging);
+    await verifyDaemonTree(staging, daemon);
     await fsp.rename(staging, final);
     return final;
   } catch (error) {
@@ -1382,6 +1501,7 @@ let bootReportPending = true;
 
 async function tick(config) {
   let state = await initialiseState(config);
+  let reportedBoot = false;
   let origin;
   try {
     origin = await readOrigin(config);
@@ -1432,18 +1552,29 @@ async function tick(config) {
     const boot = await recordOutcome(
       config,
       { ...state, reportVersion: state.current },
-      'up-to-date',
+      'booted',
       bootDetail,
     );
     state = boot.state;
     await postResult(origin, token, boot.result, config);
     bootReportPending = false;
+    reportedBoot = true;
   }
   if (pin === null) {
     await garbageCollect(config, state);
     return;
   }
   if (pin.version === state.current) {
+    if (!reportedBoot) {
+      const current = await recordOutcome(
+        config,
+        { ...state, reportVersion: state.current },
+        'up-to-date',
+        'payload pin is already current',
+      );
+      state = current.state;
+      await postResult(origin, token, current.result, config);
+    }
     await garbageCollect(config, state);
     return;
   }
@@ -1473,6 +1604,7 @@ async function tick(config) {
 
 async function runLoop() {
   const config = settings();
+  configureLog(config.payloadState);
   if (process.env.BLITZ_PAYLOAD_ONCE === '1') {
     try {
       await tick(config);
@@ -1509,23 +1641,25 @@ async function validatorMain(kind, fixturePath) {
   else parseResult(parsed);
 }
 
-const [command, fixturePath] = process.argv.slice(2);
-if (
-  (command === 'validate-manifest' || command === 'validate-result')
-  && fixturePath !== undefined
-  && process.argv.length === 4
-) {
-  validatorMain(command, fixturePath).catch((error) => {
-    process.stderr.write(`${errorMessage(error)}\n`);
-    process.exitCode = 1;
-  });
-} else if (command === undefined) {
-  void runLoop();
-} else {
-  process.stderr.write(
-    'usage: blitz-payload [validate-manifest|validate-result <file|->]\n',
-  );
-  process.exitCode = 2;
+if (require.main === module) {
+  const [command, fixturePath] = process.argv.slice(2);
+  if (
+    (command === 'validate-manifest' || command === 'validate-result')
+    && fixturePath !== undefined
+    && process.argv.length === 4
+  ) {
+    validatorMain(command, fixturePath).catch((error) => {
+      process.stderr.write(`${errorMessage(error)}\n`);
+      process.exitCode = 1;
+    });
+  } else if (command === undefined) {
+    void runLoop();
+  } else {
+    process.stderr.write(
+      'usage: blitz-payload [validate-manifest|validate-result <file|->]\n',
+    );
+    process.exitCode = 2;
+  }
 }
 
-module.exports = { parseManifest, parseResult };
+module.exports = { parseManifest, parseResult, probeGateway };

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 // This is a release serial, not a count of patch scripts. Bump it whenever the
@@ -36,4 +36,15 @@ export async function readLodyDaemonMetadata(repoRoot) {
     version: `${npmVersion}+blitz.${LODY_PATCHSET_SERIAL}`,
     protocolVersion,
   };
+}
+
+export async function writeLodyDaemonVersionStamps(destination, metadata) {
+  await Promise.all([
+    writeFile(path.join(destination, "daemon-version"), `${metadata.version}\n`, "utf8"),
+    writeFile(
+      path.join(destination, "daemon-protocol-version"),
+      `${metadata.protocolVersion}\n`,
+      "utf8",
+    ),
+  ]);
 }

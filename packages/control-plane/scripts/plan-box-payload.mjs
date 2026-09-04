@@ -5,8 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   boxPayloadPrefix,
-  boxPayloadVersion,
-  readBoxPayloadInputIds,
+  resolveBoxPayloadVersion,
 } from "./box-payload-key.mjs";
 import { validateBoxPayloadManifest } from "./lib/box-payload-manifest.mjs";
 import { PAYLOAD_SERVICES } from "./lib/box-payload-files.mjs";
@@ -29,8 +28,7 @@ export async function planBoxPayload({
   repo,
   fetchImpl = fetch,
 }) {
-  const entries = await readBoxPayloadInputIds({ repo, rev });
-  const version = boxPayloadVersion(entries);
+  const version = await resolveBoxPayloadVersion({ repo, rev });
   const prefix = boxPayloadPrefix(version);
   const ref = manifestReference(url, prefix);
   let response;
@@ -74,6 +72,7 @@ Options:
   --rev <revision>  Git revision whose payload inputs should be read (default: HEAD).
   --repo <dir>      Repository containing the revision (default: repository root).
   --json <file>     Also write the JSON result to this file.
+  --print-version   Print only the derived version; does not require --url or fetch.
   --help, -h        Print this text.`;
 }
 
@@ -83,6 +82,7 @@ function parseCli(argv) {
     rev: "HEAD",
     repo: undefined,
     jsonPath: undefined,
+    printVersion: false,
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -90,6 +90,10 @@ function parseCli(argv) {
     if (flag === "--help" || flag === "-h") {
       options.help = true;
       return options;
+    }
+    if (flag === "--print-version") {
+      options.printVersion = true;
+      continue;
     }
     if (!["--url", "--rev", "--repo", "--json"].includes(flag)) {
       throw new Error(`unknown argument: ${flag}`);
@@ -102,7 +106,7 @@ function parseCli(argv) {
     else if (flag === "--repo") options.repo = path.resolve(value);
     else options.jsonPath = path.resolve(value);
   }
-  if (options.url === undefined) throw new Error("--url is required");
+  if (options.url === undefined && !options.printVersion) throw new Error("--url is required");
   return options;
 }
 
@@ -110,6 +114,14 @@ export async function main(argv = process.argv.slice(2), fetchImpl = fetch) {
   const options = parseCli(argv);
   if (options.help) {
     process.stdout.write(`${usage()}\n`);
+    return;
+  }
+  if (options.printVersion) {
+    const version = await resolveBoxPayloadVersion({
+      repo: options.repo,
+      rev: options.rev,
+    });
+    process.stdout.write(`${version}\n`);
     return;
   }
   const result = await planBoxPayload({ ...options, fetchImpl });

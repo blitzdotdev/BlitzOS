@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = path.resolve(SCRIPT_DIRECTORY, "../../..");
 const GIT_OBJECT_ID_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
+const PAYLOAD_VERSION_PATTERN = /^[a-f0-9]{64}$/u;
 
 // Directory object IDs keep this list compact while still hashing every file
 // that can affect the payload, its two Go binaries, or the optional daemon.
@@ -24,6 +25,7 @@ export const BOX_PAYLOAD_INPUTS = Object.freeze([
   "packages/broker/cmd/blitz-cred",
   "packages/broker/go.mod",
   "packages/broker/internal",
+  "packages/control-plane/scripts/box-payload-key.mjs",
   "packages/control-plane/scripts/lib/box-daemon.mjs",
   "packages/control-plane/scripts/lib/box-payload-files.mjs",
   "packages/control-plane/scripts/lib/deterministic-archive.mjs",
@@ -39,6 +41,13 @@ export function boxPayloadVersion(entries) {
 
 export function boxPayloadPrefix(version) {
   return `box-payload/${version}`;
+}
+
+function checkedPayloadVersion(value, label) {
+  if (!PAYLOAD_VERSION_PATTERN.test(value)) {
+    throw new Error(`${label} must be a 64-character lowercase hexadecimal payload version`);
+  }
+  return value;
 }
 
 function gitOutput(repo, args, failureMessage) {
@@ -66,6 +75,36 @@ export async function readBoxPayloadInputIds({ repo = DEFAULT_REPO, rev = "HEAD"
     return id;
   }));
   return BOX_PAYLOAD_INPUTS.map((inputPath, index) => ({ path: inputPath, id: ids[index] }));
+}
+
+/** Uses the canonical Git-object derivation when repository metadata is
+ * available. Docker excludes `.git` from its context, so image builds pass
+ * the version planned from the checkout; a missing or mismatched value fails
+ * rather than producing an unversioned or incorrectly stamped image. */
+export async function resolveBoxPayloadVersion({
+  repo = DEFAULT_REPO,
+  rev = "HEAD",
+  providedVersion,
+} = {}) {
+  let derived;
+  try {
+    derived = boxPayloadVersion(await readBoxPayloadInputIds({ repo, rev }));
+  } catch (error) {
+    if (providedVersion === undefined) throw error;
+    return checkedPayloadVersion(providedVersion, "BLITZ_PAYLOAD_VERSION");
+  }
+  if (providedVersion !== undefined && checkedPayloadVersion(
+    providedVersion,
+    "BLITZ_PAYLOAD_VERSION",
+  ) !== derived) {
+    throw new Error("BLITZ_PAYLOAD_VERSION does not match the repository payload inputs");
+  }
+  return derived;
+}
+
+export async function writeBoxPayloadVersionStamp(destination, version) {
+  const checked = checkedPayloadVersion(version, "payload version");
+  await writeFile(path.join(destination, "payload-version"), `${checked}\n`, "utf8");
 }
 
 export async function readBoxPayloadCreatedAt({ repo = DEFAULT_REPO, rev = "HEAD" } = {}) {
@@ -118,8 +157,7 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${usage()}\n`);
     return;
   }
-  const entries = await readBoxPayloadInputIds(options);
-  const version = boxPayloadVersion(entries);
+  const version = await resolveBoxPayloadVersion(options);
   const result = { version, prefix: boxPayloadPrefix(version) };
   const json = `${JSON.stringify(result)}\n`;
   if (options.jsonPath !== undefined) await writeFile(options.jsonPath, json, "utf8");

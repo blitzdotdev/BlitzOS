@@ -101,6 +101,7 @@ describe("box-payload result control-plane conformance", () => {
   it("pins every payload-result fixture by name", () => {
     expect(fixtureEntries("valid").map(([name]) => name)).toEqual([
       "applied.json",
+      "booted.json",
       "fetch-failed.json",
       "rolled-back.json",
       "start-failed.json",

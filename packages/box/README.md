@@ -211,7 +211,10 @@ The build context is the repository root because the image compiles
 `packages/broker` into `blitz-cred`:
 
 ```sh
-docker build --platform linux/amd64 -f packages/box/Dockerfile -t blitz-box:local .
+payload_version=$(node packages/control-plane/scripts/plan-box-payload.mjs --print-version)
+docker build --platform linux/amd64 \
+  --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
+  -f packages/box/Dockerfile -t blitz-box:local .
 packages/box/test/smoke.sh
 ```
 

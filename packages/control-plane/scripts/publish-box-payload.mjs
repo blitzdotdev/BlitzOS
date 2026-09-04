@@ -19,9 +19,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse as parseToml } from "smol-toml";
 import {
   boxPayloadPrefix,
-  boxPayloadVersion,
   readBoxPayloadCreatedAt,
-  readBoxPayloadInputIds,
+  resolveBoxPayloadVersion,
+  writeBoxPayloadVersionStamp,
 } from "./box-payload-key.mjs";
 import { readLodyDaemonMetadata } from "./lib/box-daemon.mjs";
 import { validateBoxPayloadManifest } from "./lib/box-payload-manifest.mjs";
@@ -50,7 +50,7 @@ function run(command, args, options = {}) {
       stderr += piece;
     });
     child.once("error", reject);
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       if (code === 0) resolve();
       else {
         const detail = stderr.trim().split("\n").at(-1) ?? "";
@@ -150,7 +150,7 @@ async function commandOutput(command, args) {
       stderr += piece;
     });
     child.once("error", reject);
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       if (code === 0) resolve(stdout);
       else reject(new Error(
         `${command} ${args.join(" ")} failed (${signal ?? `exit ${code}`})`
@@ -160,10 +160,16 @@ async function commandOutput(command, args) {
   });
 }
 
-async function verifyDaemonArchive(daemonPath) {
+async function verifyDaemonArchive(daemonPath, expected) {
   const listing = await commandOutput("tar", ["-tzf", daemonPath]);
   const entries = listing.split("\n").filter((entry) => entry !== "");
   if (!entries.includes("bin/lody")) throw new Error("daemon archive is missing bin/lody");
+  if (!entries.includes("daemon-version")) {
+    throw new Error("daemon archive is missing daemon-version");
+  }
+  if (!entries.includes("daemon-protocol-version")) {
+    throw new Error("daemon archive is missing daemon-protocol-version");
+  }
   if (!entries.some((entry) => entry.startsWith("lib/node_modules/lody/"))) {
     throw new Error("daemon archive is missing lib/node_modules/lody");
   }
@@ -172,12 +178,27 @@ async function verifyDaemonArchive(daemonPath) {
     if (
       normalized === "bin"
       || normalized === "bin/lody"
+      || normalized === "daemon-version"
+      || normalized === "daemon-protocol-version"
       || normalized === "lib"
       || normalized === "lib/node_modules"
       || normalized === "lib/node_modules/lody"
       || normalized.startsWith("lib/node_modules/lody/")
     ) continue;
     throw new Error(`daemon archive contains a path outside the lody prefix: ${entry}`);
+  }
+  const [versionStamp, protocolStamp] = await Promise.all([
+    commandOutput("tar", ["-xOzf", daemonPath, "daemon-version"]),
+    commandOutput("tar", ["-xOzf", daemonPath, "daemon-protocol-version"]),
+  ]);
+  if (versionStamp !== `${expected.version}\n`) {
+    throw new Error("daemon archive version stamp does not match daemon metadata");
+  }
+  if (protocolStamp !== `${expected.protocolVersion}\n`) {
+    throw new Error(
+      `daemon archive protocol stamp ${JSON.stringify(protocolStamp)}`
+      + ` does not match ${JSON.stringify(`${expected.protocolVersion}\n`)}`,
+    );
   }
 }
 
@@ -206,6 +227,7 @@ export async function stageBoxPayloadRelease({
   await mkdir(outputDirectory, { recursive: true });
   await copyPayloadSources(repoRoot, stagingDirectory);
   await copyPayloadBinaries(binariesDirectory, stagingDirectory);
+  await writeBoxPayloadVersionStamp(stagingDirectory, version);
 
   const files = [];
   for (const archivePath of PAYLOAD_FILES) {
@@ -216,7 +238,11 @@ export async function stageBoxPayloadRelease({
       mode: payloadMode(archivePath).toString(8).padStart(4, "0"),
     });
   }
-  await createDeterministicTarGzip(stagingDirectory, payloadArchivePath, ["rootfs"]);
+  await createDeterministicTarGzip(
+    stagingDirectory,
+    payloadArchivePath,
+    ["payload-version", "rootfs"],
+  );
   const payloadArchive = await hashFile(payloadArchivePath);
   const manifest = {
     version,
@@ -229,10 +255,10 @@ export async function stageBoxPayloadRelease({
     },
   };
   if (daemonPath !== undefined) {
-    await verifyDaemonArchive(daemonPath);
+    const daemon = await readLodyDaemonMetadata(repoRoot);
+    await verifyDaemonArchive(daemonPath, daemon);
     await copyFile(daemonPath, daemonArchivePath);
     const daemonArchive = await hashFile(daemonArchivePath);
-    const daemon = await readLodyDaemonMetadata(repoRoot);
     manifest.daemon = {
       version: daemon.version,
       protocolVersion: daemon.protocolVersion,
@@ -380,8 +406,10 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
   const defaults = await wranglerDefaults();
-  const inputIds = await readBoxPayloadInputIds({ repo: options.repoRoot, rev: options.rev });
-  const version = boxPayloadVersion(inputIds);
+  const version = await resolveBoxPayloadVersion({
+    repo: options.repoRoot,
+    rev: options.rev,
+  });
   const prefix = options.prefix ?? boxPayloadPrefix(version);
   validatePrefix(prefix);
   const configAppUrl = defaults.appUrl !== undefined && /^https?:\/\//u.test(defaults.appUrl)

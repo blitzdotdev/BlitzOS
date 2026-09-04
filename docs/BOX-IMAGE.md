@@ -52,8 +52,8 @@ configuration gate and under the `canary` environment:
 1. It checks out the merged tree, sets up Node, runs `npm ci`, writes the
    canary `wrangler.toml` from
    `CANARY_WRANGLER_TOML`, and reads `APP_URL` from that config.
-2. It computes a release id from every repository input copied by the
-   Dockerfile. `BOX_IMAGE_INPUTS` is the shared source list. The full
+2. It computes a release id from the Git object ids of every Dockerfile input
+   named by `scripts/lib/box-image-inputs.mjs`. The full
    64-character SHA-256 becomes `<releaseId>`, the image tag is
    `blitz-box:<releaseId>`, and the R2 prefix is `box-image/<releaseId>`.
 3. It requests
@@ -63,7 +63,7 @@ configuration gate and under the `canary` environment:
    manifest, a mismatched tag, any other HTTP status, or a network error fails
    the job instead of pretending the release is absent.
 4. For an absent release, it runs
-   `docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 -f packages/box/Dockerfile -t <imageTag> .`.
+   `docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 --build-arg BLITZ_PAYLOAD_VERSION=<planned-payload-version> -f packages/box/Dockerfile -t <imageTag> .`.
    The build argument turns Lody on for canary while the committed
    `env.defaults` stays off for self-hosters; the Dockerfile rejects any
    non-empty value other than `0` or `1`.
@@ -233,7 +233,10 @@ The build context is the repository root (the image compiles
 `packages/broker` into `blitz-cred`):
 
 ```sh
-docker build --platform linux/amd64 -f packages/box/Dockerfile -t blitz-box:local .
+payload_version=$(node packages/control-plane/scripts/plan-box-payload.mjs --print-version)
+docker build --platform linux/amd64 \
+  --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
+  -f packages/box/Dockerfile -t blitz-box:local .
 ```
 
 On macOS, install and start Colima first — and size it up. The defaults

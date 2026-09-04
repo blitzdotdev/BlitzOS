@@ -34,7 +34,7 @@ wait "$update_pid" || experiment_fail "host image update failed"
 boot_current=$(box_ssh "$WORKSPACE_ID" 'basename "$(readlink -f /opt/blitz/payload/current)"')
 assert_equal "$boot_current" baked "replacement image did not boot its baked payload"
 payload_tick "$WORKSPACE_ID" >/dev/null 2>&1 || experiment_fail "first payload tick failed"
-wait_payload_any_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" "$LAB_OUTCOME_TIMEOUT" applied up-to-date \
+wait_payload_any_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" "$LAB_OUTCOME_TIMEOUT" applied booted up-to-date \
   || experiment_fail "pin was not re-applied after image replacement"
 wait_payload_current "$WORKSPACE_ID" "$PUBLISHED_VERSION" 30 \
   || experiment_fail "pin is not current after first tick"
