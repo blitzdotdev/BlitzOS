@@ -19,7 +19,7 @@
  *    seam hunks this wave adds are pinned by reading the vendored file, the
  *    precedent `lody-surface-tabs.test.tsx` set for hunks 13-18.
  */
-import { act, useState, type ReactNode } from "react";
+import { act, useEffect, useState, type ReactNode } from "react";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,8 +42,7 @@ const vendoredSessionDetail = join(
   "vendor/lody/packages/components/src/components/sessions/session-detail.tsx",
 );
 
-// `FilesSidebar` and the vendored sidebar both measure themselves, and jsdom
-// has no `ResizeObserver`.
+// The vendored sidebar measures itself, and jsdom has no `ResizeObserver`.
 installLodyDomStubs();
 
 // A shell case is a real `CloudApp` mount behind a workspace poll, a
@@ -144,6 +143,10 @@ function shellClient(state: Map<string, unknown>): ControlPlaneClient {
 }
 
 interface ShellOptions {
+  /** Whether the stand-in surface reports a session detail's side panel, as the
+   * real page does once one is on screen. Off, the shell falls back to the
+   * native panel tab, which is what the Connections cases pin. */
+  sidePanelOnScreen?: boolean;
   path: string;
   tabs: WorkspaceTab[];
   activeId: number | null;
@@ -157,8 +160,8 @@ interface ShellOptions {
 /** What the mocked surface was handed on its last render. */
 interface SurfaceRecord {
   hidden: boolean;
-  activeTerminalId: string;
   surfaceTabs: import("../src/lody/surface-tabs.js").SurfaceTabsBinding | undefined;
+  sidePanel: import("../src/lody/side-panel.js").SidePanelBinding | undefined;
 }
 
 async function mountShell(options: ShellOptions) {
@@ -171,14 +174,19 @@ async function mountShell(options: ShellOptions) {
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
   }));
-  // The box's `/connections-focus` marker, mutable per case; every other box
-  // door answers the platform catalog, which is the only one the shell parses.
+  // The box's `/connections-focus` and `/preview-focus` markers, mutable per
+  // case; every other box door answers the platform catalog, which is the only
+  // one the shell parses.
   const focusMarker: { body: unknown } = { body: { focus: null } };
+  const previewFocusMarker: { body: unknown } = { body: { focus: null } };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/connections-focus")) {
         return new Response(JSON.stringify(focusMarker.body), { status: 200 });
+      }
+      if (String(input).includes("/preview-focus")) {
+        return new Response(JSON.stringify(previewFocusMarker.body), { status: 200 });
       }
       // A door that never answers holds the capability at `probing`, which is
       // where every cold load starts and where the native strip used to show.
@@ -194,27 +202,37 @@ async function mountShell(options: ShellOptions) {
   }));
   const surface: SurfaceRecord = {
     hidden: true,
-    activeTerminalId: "",
     surfaceTabs: undefined,
+    sidePanel: undefined,
   };
   // The real surface is 3.5 MB of vendored renderer and needs a daemon. This
   // records what the shell hands it and draws the ONE control it portals into
-  // the rail — the Terminals `+`, which is the only spawn affordance a
-  // flag-on workspace has (§4.1, the native strip being gone).
+  // the rail — the footer's New tab control, which is the only spawn
+  // affordance a flag-on workspace has (§4.1, the native strip being gone).
   vi.doMock("../src/lody/SessionSurface.js", () => ({
     default: (host: {
       surfaces: Array<{
         active?: boolean;
         hidden?: boolean;
-        rail?: { activeTerminalId: string; terminalsAction?: ReactNode };
+        rail?: { newTabControl?: ReactNode };
         surfaceTabs?: SurfaceRecord["surfaceTabs"];
+        sidePanel?: SurfaceRecord["sidePanel"];
       }>;
     }) => {
       const current = host.surfaces.find((item) => item.active === true);
       surface.hidden = current?.hidden === true;
-      surface.activeTerminalId = current?.rail?.activeTerminalId ?? "";
       surface.surfaceTabs = current?.surfaceTabs;
-      return <div data-testid="lody-surface">{current?.rail?.terminalsAction}</div>;
+      surface.sidePanel = current?.sidePanel;
+      // The real page reports its side panel back once it mounts; the shell's
+      // browser routing reads that report, so the stand-in answers with an
+      // open, empty panel — from an effect, as the page does, never mid-render.
+      const report = options.sidePanelOnScreen === true
+        ? current?.sidePanel?.onStateChange
+        : undefined;
+      useEffect(() => {
+        report?.({ open: true, activeTabId: null, openedTabIds: [], availableOptions: [] });
+      }, [report]);
+      return <div data-testid="lody-surface">{current?.rail?.newTabControl}</div>;
     },
   }));
 
@@ -244,7 +262,7 @@ async function mountShell(options: ShellOptions) {
   await settle();
   await settle();
   await settle();
-  return { view, surface, state, focusMarker };
+  return { view, surface, state, focusMarker, previewFocusMarker };
 }
 
 /** The persistence write is debounced 150 ms; a case that reads the stored
@@ -374,7 +392,7 @@ describe("S3 — a spawn selects the tab the spawn created", () => {
     const plus = mounted.view.container.querySelector<HTMLButtonElement>(
       'button[aria-label="New tab"]',
     );
-    expect(plus, "the rail's Terminals + is mounted").not.toBeNull();
+    expect(plus, "the rail footer's New tab control is mounted").not.toBeNull();
     await act(async () => plus?.click());
     const terminal = mounted.view.container.querySelector<HTMLButtonElement>(
       '[role="menu"][aria-label="New tab"] [role="menuitem"]',
@@ -404,50 +422,12 @@ describe("S3 — a spawn selects the tab the spawn created", () => {
 });
 
 describe("S4 — opening a utility panel shows it", () => {
-  const chord = async () => {
-    await act(async () => {
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }),
-      );
-    });
-    await settle();
-  };
-
-  it("selects the Files tab it just created", async () => {
-    const mounted = await mountShell({
-      path: "/workspaces/ws-1/chat/terminal/7",
-      tabs: [{ id: 7, type: "terminal" }],
-      activeId: 7,
-    });
-    await chord();
-    // The tab exists AND the strip is on it. Before the fix `togglePanelTab`
-    // wrote a pane selection the strip does not read, so the chord added a tab
-    // nobody could see and read as dead.
-    expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toContain(
-      "blitz-tab:8",
-    );
-    expect(mounted.surface.surfaceTabs?.activeTabId).toBe("blitz-tab:8");
-    await mounted.view.unmount();
-  });
-
-  it("closes it again when it is the tab on screen", async () => {
-    const mounted = await mountShell({
-      path: "/workspaces/ws-1/chat/terminal/7",
-      tabs: [{ id: 7, type: "terminal" }],
-      activeId: 7,
-    });
-    await chord();
-    await chord();
-    expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toEqual([
-      "blitz-tab:7",
-    ]);
-    await mounted.view.unmount();
-  });
-
-  // THE SAME DEFECT, THREE MORE DOORS. Cmd/Ctrl+B was the one the audit named
-  // first; the right icon strip and the box's own `blitz connections open`
-  // marker took the identical pane-only route and were identically dead.
-  it.each(["Files", "teenyapps", "Connections"] as const)(
+  // THE SAME DEFECT, TWO DOORS. Cmd/Ctrl+B was the one the audit named first
+  // (it opened the Files panel, retired with it); the right icon strip and the
+  // box's own `blitz connections open` marker took the identical pane-only
+  // route and were identically dead. `togglePanelTab` wrote a pane selection
+  // the strip does not read, so each added a tab nobody could see.
+  it.each(["Connections"] as const)(
     "selects the panel the right icon strip's %s button opens",
     async (label) => {
       const mounted = await mountShell({
@@ -461,6 +441,10 @@ describe("S4 — opening a utility panel shows it", () => {
       expect(button, "the right icon strip is mounted").not.toBeNull();
       await act(async () => button?.click());
       await settle();
+      // The tab exists AND the strip is on it.
+      expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toContain(
+        "blitz-tab:8",
+      );
       expect(mounted.surface.surfaceTabs?.activeTabId).toBe("blitz-tab:8");
       // And a second press still closes it, which is what makes it a toggle.
       await act(async () => button?.click());
@@ -494,40 +478,35 @@ describe("S4 — opening a utility panel shows it", () => {
     expect(mounted.surface.surfaceTabs?.activeTabId).toBe("blitz-tab:8");
     await mounted.view.unmount();
   });
-});
 
-describe("ADJ1 — the rail's terminal highlight follows the address", () => {
-  it("names the addressed tab while the surface is up, and nothing on a chat", async () => {
-    const onTerminal = await mountShell({
-      path: "/workspaces/ws-1/chat/terminal/9",
-      tabs: TERMINAL_TABS,
+  it("opens the browser panel on the box's `blitz browser open` marker", async () => {
+    const mounted = await mountShell({
+      path: "/workspaces/ws-1/chat/terminal/7",
+      tabs: [{ id: 7, type: "terminal" }],
       activeId: 7,
+      sidePanelOnScreen: true,
     });
-    expect(onTerminal.surface.activeTerminalId).toBe("9");
-    await onTerminal.view.unmount();
-
-    const onLanding = await mountShell({
-      path: "/workspaces/ws-1/chat",
-      tabs: TERMINAL_TABS,
-      activeId: 7,
+    // Our two host tabs ride into Lody's side panel through seam patch 23.
+    expect(mounted.surface.sidePanel?.hostTabs.map(({ id }) => id))
+      .toEqual(["host:browser", "host:connections"]);
+    mounted.previewFocusMarker.body = {
+      focus: {
+        version: 2,
+        kind: "url",
+        url: "https://demo.app.teenyapp.com/",
+        title: "demo",
+        requestedAt: 1_700_000_000_000,
+      },
+    };
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, PORTS_POLL_INTERVAL_MS + 500));
     });
-    // A conversation owns the pane, so no terminal row is current. The old
-    // value here was the PANE's focused tab, which is a different question.
-    expect(onLanding.surface.activeTerminalId).toBe("");
-    await onLanding.view.unmount();
-
-    // THE "WITH THE PANES UP" ARM IS GONE. It read the pane's own focused tab,
-    // and on a surface-capable desktop there is no pane address left to read it
-    // from: `/workspaces/ws-1` resolves into the chat plane, where a
-    // conversation owns the view and no terminal row is current.
-    const onRoot = await mountShell({
-      path: "/workspaces/ws-1",
-      tabs: TERMINAL_TABS,
-      activeId: 9,
-    });
-    expect(window.location.pathname).toBe("/workspaces/ws-1/chat");
-    expect(onRoot.surface.activeTerminalId).toBe("");
-    await onRoot.view.unmount();
+    await settle();
+    // With a session detail on screen the marker is a request to open OUR
+    // browser tab, not a preview tab in the strip.
+    expect(mounted.surface.sidePanel?.request).toMatchObject({ tabId: "host:browser", action: "open" });
+    expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toEqual(["blitz-tab:7"]);
+    await mounted.view.unmount();
   });
 });
 
@@ -786,87 +765,6 @@ describe("ADJ2 — the agent-config bootstrap runs once per box", () => {
     }
     expect(bootstraps, "and none for a re-render of the same box").toBe(1);
     await view.unmount();
-  });
-});
-
-describe("ADJ1 — the rail rows themselves", () => {
-  /** `SessionRailSidebar` reads nine vendored modules and the real ones need a
-   * runtime, a Loro document and a daemon. Every mock below is a pass-through:
-   * what is under test is the one rule this file owns, which rows are current. */
-  async function mountSidebar(props: { surfaceVisible: boolean; activeTerminalId: string }) {
-    vi.resetModules();
-    const { atom } = await import("jotai");
-    vi.doMock("@lody/components/components/loro-sidebar", () => ({
-      LoroSidebar: (sidebar: { afterSessionListContent?: ReactNode }) => (
-        <div>{sidebar.afterSessionListContent}</div>
-      ),
-    }));
-    vi.doMock("@lody/components/components/session-list", () => ({
-      SessionList: () => null,
-    }));
-    vi.doMock("@lody/components/components/sidebar-row-shared", () => ({
-      SidebarSectionHeader: (header: { label: string }) => <h2>{header.label}</h2>,
-    }));
-    vi.doMock("@lody/components/atoms/runtime", () => ({
-      activeWorkspaceRuntimeAtom: atom({ workspaceId: "lw_1" }),
-    }));
-    vi.doMock("@lody/components/atoms", () => ({ userAtom: atom({ id: "u-1" }) }));
-    vi.doMock("@lody/components/hooks/use-visible-session-metas", () => ({
-      useVisibleSessionMetas: () => ({ sessions: [], allActiveSessions: [], isLoading: false }),
-    }));
-    vi.doMock("@lody/components/hooks/use-machine-online-status", () => ({
-      useOnlineMachineIds: () => new Set<string>(),
-    }));
-    vi.doMock("@lody/components/hooks/use-session-actions", () => ({
-      useSessionActions: () => ({
-        updateSessionTitle: async () => undefined,
-        archiveSession: async () => undefined,
-        setSessionPinned: async () => undefined,
-      }),
-    }));
-    vi.doMock("@lody/components/components/sessions/session-list-rows", () => ({
-      buildSessionListRows: () => [],
-    }));
-    const { SessionRailSidebar } = await import("../src/lody/SessionRailSidebar.js");
-    const view = await render(
-      <SessionRailSidebar
-        terminals={[
-          { id: "7", label: "bash", agent: "terminal" },
-          { id: "9", label: "claude", agent: "claude" },
-        ]}
-        activeTerminalId={props.activeTerminalId}
-        activeSessionId={null}
-        surfaceVisible={props.surfaceVisible}
-        onSelectTerminal={() => undefined}
-        onSelectSession={() => undefined}
-        onOpenLanding={() => undefined}
-      />,
-    );
-    await settle();
-    const current = [...view.container.querySelectorAll<HTMLElement>(".shell-s--on")].map(
-      (row) => row.textContent ?? "",
-    );
-    return { view, current };
-  }
-
-  it("highlights the terminal a terminal TAB is showing", async () => {
-    // The old rule was `active={!surfaceVisible}`: a terminal row lost its
-    // highlight exactly when its terminal came on screen.
-    const mounted = await mountSidebar({ surfaceVisible: true, activeTerminalId: "9" });
-    expect(mounted.current).toEqual(["claude"]);
-    await mounted.view.unmount();
-  });
-
-  it("highlights nothing while a conversation owns the pane", async () => {
-    const mounted = await mountSidebar({ surfaceVisible: true, activeTerminalId: "" });
-    expect(mounted.current).toEqual([]);
-    await mounted.view.unmount();
-  });
-
-  it("keeps the panes' own answer, first row included, while the panes are up", async () => {
-    const mounted = await mountSidebar({ surfaceVisible: false, activeTerminalId: "" });
-    expect(mounted.current).toEqual(["bash"]);
-    await mounted.view.unmount();
   });
 });
 

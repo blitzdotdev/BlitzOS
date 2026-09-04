@@ -38,6 +38,7 @@ import "../../src/webapp-icons.css";
 import "../../src/webapp-base.css";
 import "../../src/webapp-shell.css";
 import "../../src/webapp-workspace.css";
+import "../../src/browser/browser-panel.css";
 import "../../src/webapp-select.css";
 import "../../src/files-drive.css";
 import "../../src/drive-shell.css";

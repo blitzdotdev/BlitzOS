@@ -64,13 +64,13 @@ import {
 import type { LodyAtomStore, LodyRuntimeEndpoints } from "./runtime.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
+import type { SidePanelBinding } from "./side-panel.js";
 import { useDefaultSessionProjectBackfill } from "./use-session-project-backfill.js";
 import {
   LodySurfaceIpcOwner,
   useLodySurfaceIpc,
 } from "./surface-ipc.js";
 import { SurfaceUnavailableNotice } from "./SurfaceLoadBoundary.js";
-import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { LodySurfaceProviders, LodySurfaceThemeRoot } from "./surface-providers.js";
 import {
   lodySurfaceIdentityKey,
@@ -103,14 +103,8 @@ function nextDraftKey(): string {
   return `${Date.now()}-${draftKeySequence}`;
 }
 
-/** Everything the rail's Terminals section needs, and nothing else. */
+/** Everything the rail's native parts need from the shell, and nothing else. */
 export interface LodyRailBinding {
-  terminals: DriveRailSession[];
-  activeTerminalId: string;
-  onSelectTerminal: (tabId: string) => void;
-  /** Close one terminal tab from its rail row — the deleted native strip's
-   * close, moved (`SessionRailSidebar`'s `TerminalRows`). */
-  onCloseTerminal?: (tabId: string) => void;
   /**
    * THE SHELL'S OWN NAVIGATORS, and the reason they exist rather than the
    * surface routing itself.
@@ -129,8 +123,9 @@ export interface LodyRailBinding {
    */
   onOpenSession?: (sessionId: string) => void;
   onOpenLanding?: () => void;
-  /** The `+ New tab` control, rendered in the Terminals section header. */
-  terminalsAction?: ReactNode;
+  /** The `New tab` control, drawn in the rail footer to the left of Archive
+   * (seam patch 22). */
+  newTabControl?: ReactNode;
   /** The rail footer's Archive entry (seam patch 13). Absent, the portal falls
    * back to the surface's own router, exactly as `onOpenSession` does. */
   onOpenArchive?: () => void;
@@ -202,9 +197,9 @@ export interface LodySessionSurfaceProps {
    * `useResolvedWorkspaceScope` take its `currentWorkspaceIdAtom` branch there.
    */
   railHost?: HTMLElement | null;
-  /** What the rail's Terminals section draws, and what a click on one does.
-   * Terminal tabs are `webapp_state`, never sessions — the daemon never sees
-   * them — so they arrive as props and leave through this callback. */
+  /** The shell's half of the rail: its navigators, the footer's New tab
+   * control, and the "Shared with you" rows. None of it is in the daemon's
+   * session mirror, so it arrives as props and leaves through callbacks. */
   rail?: LodyRailBinding;
   /**
    * The workspace's own tabs, drawn as tabs of Lody's session tab strip
@@ -217,6 +212,9 @@ export interface LodySessionSurfaceProps {
    * shell on the owner's box and no share level grants that (§5.1).
    */
   surfaceTabs?: SurfaceTabsBinding;
+  /** The right icon strip's binding onto the side panel (`side-panel.tsx`).
+   * Absent leaves `SessionDetail` with none of seam patch 23's props. */
+  sidePanel?: SidePanelBinding;
   /** Handed the imperative API once the daemon's identity settles, and `null`
    * on teardown. */
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
@@ -331,6 +329,7 @@ type LodySessionSurfaceStableProps = Omit<
   | "railHost"
   | "rail"
   | "surfaceTabs"
+  | "sidePanel"
   | "identityValidationGeneration"
 >;
 
@@ -609,6 +608,7 @@ function LodySessionSurfaceEntry(props: LodySessionSurfaceProps) {
     railHost,
     rail,
     surfaceTabs,
+    sidePanel,
     identityValidationGeneration,
     ...stableProps
   } = props;
@@ -619,6 +619,7 @@ function LodySessionSurfaceEntry(props: LodySessionSurfaceProps) {
       railHost={railHost}
       rail={rail}
       surfaceTabs={surfaceTabs}
+      sidePanel={sidePanel}
       identityValidationGeneration={identityValidationGeneration}
     >
       <RetainedSessionSurfaceContent {...stableProps} />

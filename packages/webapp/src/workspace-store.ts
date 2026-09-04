@@ -66,6 +66,33 @@ type LocalWorkspaceState = Pick<
 >;
 
 /**
+ * The lifecycle the shell acts on, which is the VIEWER'S OWN MACHINE's.
+ *
+ * `record.status` is the wire's legacy `phase`, and the control plane projects
+ * a STOPPED machine onto it as `ready` (`core/workspace-records.ts`,
+ * `phaseForState`) so the workspace stays on the rail and its machine still
+ * starts. Read as `running`, that made the shell dial a box with no VM behind
+ * it: the terminal, the capability probe and every poller answered 409 "your
+ * machine in this workspace is not running", and a member whose machine had
+ * been stopped opened the workspace to a wall of them (Brandon, 2026-09-03).
+ *
+ * The view already says what the phase cannot: `members[].machine.state` for
+ * the viewer's own membership. `stopped` there IS the lifecycle, whatever the
+ * phase projects — so the shell stops dialling and offers Start instead. Any
+ * other state keeps the phase's word: `provisioning` already arrives as
+ * `creating`, and a member with no machine row is the capability probe's case
+ * (`lody/box-capability.ts`, `noMachine`), not this one.
+ */
+export function lifecycleStatusFor(
+  record: WorkspaceRecord,
+  viewerMembershipId: string | null,
+): RestWorkspaceStatus {
+  if (record.status !== 'running' || viewerMembershipId === null) return record.status;
+  const mine = record.members.find((member) => member.membershipId === viewerMembershipId);
+  return mine?.machine?.state === 'stopped' ? 'stopped' : record.status;
+}
+
+/**
  * Projects one record over the state that preceded it.
  *
  * Create, load and refresh all go through here, so a field added to
@@ -75,6 +102,7 @@ type LocalWorkspaceState = Pick<
 function applyRecord(
   existing: LocalWorkspaceState,
   record: WorkspaceRecord,
+  viewerMembershipId: string | null,
 ): CloudWorkspaceModel {
   return {
     id: record.id,
@@ -87,7 +115,7 @@ function applyRecord(
     title: record.canControl ? existing.title || record.name : record.name,
     machineType: record.machineType ?? null,
     volumeId: record.volumeId ?? null,
-    lifecycleStatus: record.status,
+    lifecycleStatus: lifecycleStatusFor(record, viewerMembershipId),
     errorDetail: record.errorDetail ?? null,
     retryAction: record.retryAction,
     createdAt: record.createdAt,
@@ -105,6 +133,7 @@ function applyRecord(
 function createWorkspaceModel(
   record: WorkspaceRecord,
   preferences: UiPreferences,
+  viewerMembershipId: string | null,
 ): CloudWorkspaceModel {
   const preference = preferences.workspaces[record.id];
   return applyRecord({
@@ -113,7 +142,7 @@ function createWorkspaceModel(
     owner: null,
     connections: [],
     updatedAt: 0,
-  }, record);
+  }, record, viewerMembershipId);
 }
 
 function mapWorkspace(
@@ -137,12 +166,13 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
       // projection of the member's MACHINE, so filtering `destroying` here
       // hid the workspace for the length of a stop, a recreate or a
       // machine-type change; deletion arrives as `workspace_deleted`.
+      const viewerMembershipId = action.viewer.membership.id;
       const models = action.records.map((record) => {
         const existing = oldById.get(record.id);
         if (!existing || existing.canControl !== record.canControl) {
-          return createWorkspaceModel(record, action.preferences);
+          return createWorkspaceModel(record, action.preferences, viewerMembershipId);
         }
-        return applyRecord(existing, record);
+        return applyRecord(existing, record, viewerMembershipId);
       });
       const order = new Map(action.preferences.order.map((id, index) => [id, index]));
       models.sort((left, right) => (
@@ -159,7 +189,11 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         order: [],
         workspaces: { [action.record.id]: { agentDefault: action.agentDefault } },
       };
-      const workspace = createWorkspaceModel(action.record, preferences);
+      const workspace = createWorkspaceModel(
+        action.record,
+        preferences,
+        state.viewer?.membership.id ?? null,
+      );
       return { ...state, workspaces: [workspace, ...state.workspaces] };
     }
     case 'workspace_records_refreshed': {
@@ -171,7 +205,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
           // Same rule as `workspaces_loaded`: a poll that catches the member's
           // machine mid-replacement must not evict the workspace from the rail.
           if (!record) return [];
-          return [applyRecord(workspace, record)];
+          return [applyRecord(workspace, record, state.viewer?.membership.id ?? null)];
         }),
       };
     }
@@ -180,7 +214,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         ...workspace,
         machineType: action.record.machineType ?? workspace.machineType,
         volumeId: action.record.volumeId ?? null,
-        lifecycleStatus: action.record.status,
+        lifecycleStatus: lifecycleStatusFor(action.record, state.viewer?.membership.id ?? null),
         errorDetail: action.record.errorDetail ?? null,
         retryAction: action.record.retryAction,
         updatedAt: action.record.updatedAt,

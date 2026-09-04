@@ -49,3 +49,20 @@ export function isPreviewPath(path: string): boolean {
     && path.length <= MAX_PREVIEW_PATH_LENGTH
     && !path.split("/").includes("..");
 }
+
+/** A file `blitz browser open` may point the browser panel at: an absolute
+ * path under `/workspace`, which the gateway serves at its `/workspace/`
+ * surface. The same `..` rule as a preview path, for the same reason. */
+export function isPreviewFile(file: string): boolean {
+  return file.startsWith("/workspace/")
+    && file.length <= MAX_PREVIEW_PATH_LENGTH
+    && !/[\r\n]/u.test(file)
+    && !file.split("/").includes("..");
+}
+
+/** An app URL `blitz browser open` may point the browser panel at: https with
+ * a host. Whether the host is one the panel embeds is the browser's call. A
+ * pattern rather than `URL`, because this package runs where there is no DOM. */
+export function isPreviewAppUrl(url: string): boolean {
+  return url.length <= MAX_PREVIEW_PATH_LENGTH && /^https:\/\/[^\s/?#]+/u.test(url);
+}

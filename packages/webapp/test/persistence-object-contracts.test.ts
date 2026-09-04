@@ -283,12 +283,12 @@ describe("pre-split workspace document migration", () => {
     // 'connections' panel rather than invalidating the stored document.
     const restored = decode(legacy(
       { version: 1, open: true, width: 340, expanded: ["src"], segment: "integrations" },
-      [{ id: 1, type: "claude" }, { id: 2, type: "terminal" }, { id: 3, type: "file", filePath: "a.txt" }],
+      [{ id: 1, type: "claude" }, { id: 2, type: "terminal" }, { id: 3, type: "preview", port: 3000 }],
     ));
     expect(restored?.tabs.tabs).toEqual([
       { id: 1, type: "claude" },
       { id: 2, type: "terminal" },
-      { id: 3, type: "file", filePath: "a.txt" },
+      { id: 3, type: "preview", port: 3000 },
       { id: 4, type: "panel", panel: "connections", region: "side" },
     ]);
     expect(restored?.tabs.activeId).toBe(1);
@@ -299,11 +299,96 @@ describe("pre-split workspace document migration", () => {
 
   it("leaves the split collapsed when the drawer was closed", () => {
     const restored = decode(legacy(
-      { version: 1, open: false, width: 340, expanded: [], segment: "files" },
+      { version: 1, open: false, width: 340, expanded: [], segment: "connections" },
     ));
     expect(restored?.tabs.tabs).toEqual([{ id: 1, type: "claude" }]);
     expect(restored?.tabs.nextId).toBe(2);
     expect("sideActiveId" in (restored?.tabs ?? {})).toBe(false);
+  });
+
+  /** The Files and teenyapps panels retired 2026-09. Documents in the field
+   * still name them, as the pre-split drawer segment and as panel tabs, and
+   * the control plane still accepts both; the browser reads them as nothing
+   * rather than rejecting the document they sit in. */
+  it.each(["files", "previews"])(
+    "restores a pre-split drawer open on the retired %s segment with the split collapsed",
+    (segment) => {
+      const restored = decode(legacy(
+        { version: 1, open: true, width: 340, expanded: [], segment },
+      ));
+      expect(restored?.tabs.tabs).toEqual([{ id: 1, type: "claude" }]);
+      expect(restored?.tabs.nextId).toBe(2);
+      expect("sideActiveId" in (restored?.tabs ?? {})).toBe(false);
+      expect(restored?.drawer).toEqual({ version: 1, width: 340, expanded: [] });
+    },
+  );
+
+  it("drops persisted Files and teenyapps panel tabs and keeps the rest", () => {
+    const restored = decode({
+      version: 1,
+      agentDefault: "claude",
+      tabs: {
+        version: 1,
+        tabs: [
+          { id: 1, type: "claude" },
+          { id: 2, type: "panel", panel: "files", region: "side" },
+          { id: 3, type: "panel", panel: "previews", region: "side" },
+          { id: 4, type: "panel", panel: "connections", region: "side" },
+        ],
+        activeId: 1,
+        nextId: 5,
+        sideActiveId: 2,
+      },
+      drawer: { version: 1, width: 340, expanded: [] },
+    });
+    expect(restored?.tabs.tabs).toEqual([
+      { id: 1, type: "claude" },
+      { id: 4, type: "panel", panel: "connections", region: "side" },
+    ]);
+    expect(restored?.tabs.activeId).toBe(1);
+    // The side selection pointed at the dropped tab; the pane picks its own.
+    expect(restored?.tabs.sideActiveId).toBe(4);
+    expect(restored?.tabs.nextId).toBe(5);
+  });
+
+  it("parses a persisted Files panel tab that was the whole side pane to nothing", () => {
+    const restored = decode({
+      version: 1,
+      agentDefault: "claude",
+      tabs: {
+        version: 1,
+        tabs: [
+          { id: 1, type: "claude" },
+          { id: 2, type: "panel", panel: "files", region: "side" },
+        ],
+        activeId: 1,
+        nextId: 3,
+        sideActiveId: 2,
+      },
+      drawer: { version: 1, width: 340, expanded: [] },
+    });
+    expect(restored?.tabs.tabs).toEqual([{ id: 1, type: "claude" }]);
+    expect("sideActiveId" in (restored?.tabs ?? {})).toBe(false);
+    expect(restored?.tabs.nextId).toBe(3);
+  });
+
+  it("drops a persisted file editor tab and lets the selection fall back", () => {
+    const restored = decode({
+      version: 1,
+      agentDefault: "claude",
+      tabs: {
+        version: 1,
+        tabs: [
+          { id: 1, type: "claude" },
+          { id: 2, type: "file", filePath: "README.md" },
+        ],
+        activeId: 2,
+        nextId: 3,
+      },
+      drawer: { version: 1, width: 340, expanded: [] },
+    });
+    expect(restored?.tabs.tabs).toEqual([{ id: 1, type: "claude" }]);
+    expect(restored?.tabs.activeId).toBe(1);
   });
 
   it("carries the legacy segment fold through into the panel tab", () => {
@@ -350,13 +435,13 @@ describe("pre-split workspace document migration", () => {
         version: 1,
         tabs: [
           { id: 1, type: "claude" },
-          { id: 2, type: "panel", panel: "files", region: "side" },
+          { id: 2, type: "panel", panel: "connections", region: "side" },
         ],
         activeId: 1,
         nextId: 3,
         sideActiveId: 2,
       },
-      drawer: { version: 1, open: true, width: 340, expanded: [], segment: "previews" },
+      drawer: { version: 1, open: true, width: 340, expanded: [], segment: "connections" },
     });
     expect(restored?.tabs.tabs).toHaveLength(2);
     expect(restored?.tabs.sideActiveId).toBe(2);

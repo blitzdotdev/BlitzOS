@@ -2,7 +2,8 @@
 set -eu
 
 usage() {
-  echo 'usage: blitz teenyapp <add <url> [--title <name>]|list|rm <url>|open <port> [--path <path>] [--title <name>]>' >&2
+  echo 'usage: blitz browser open <port|file|https-url> [--path <path>] [--title <name>]' >&2
+  echo '       blitz teenyapp <add <url> [--title <name>]|list|rm <url>|open <port> [--path <path>] [--title <name>]>' >&2
   echo '       blitz connections open <provider>' >&2
   echo '       blitz box update' >&2
   exit 2
@@ -14,6 +15,7 @@ case "$group" in
   # verbs, same marker files, same gateway wire. Only the documented name
   # changed.
   teenyapp|preview) group=teenyapp ;;
+  browser) ;;
   connections) ;;
   box) ;;
   *) usage ;;
@@ -106,9 +108,32 @@ const MAX_PATH_LENGTH = 4096;
 // grant validator cap, PROVIDER_NAME in core/connections/user-grants.ts).
 const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 
-function openPreview() {
-  if (args.length === 0) fail('expected open <port> [--path <path>] [--title <name>]', 2);
-  const portText = args[0];
+// `--path` and `--title` after the target, in any order.
+function openOptions(startIndex) {
+  const options = {};
+  for (let index = startIndex; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (value === undefined) fail(`missing value for ${flag}`, 2);
+    if (flag === '--path') options.path = value;
+    else if (flag === '--title') options.title = value;
+    else fail(`unsupported option: ${flag}`, 2);
+  }
+  if (options.title !== undefined && /[\r\n]/.test(options.title)) {
+    fail('--title must not contain a carriage return or line feed', 2);
+  }
+  return options;
+}
+
+// The focus marker is one file with one shape per kind (version 2). The Go
+// gateway and the browser each re-check every rule below; the corpus in
+// packages/schema/fixtures/preview-focus/ pins the three together.
+function writeFocus(focus) {
+  atomicWrite(focusPath, `${JSON.stringify({ version: 2, ...focus, requestedAt: Date.now() })}\n`);
+  process.exit(0);
+}
+
+function openPort(portText, options) {
   if (!/^[0-9]+$/.test(portText)) {
     fail('port must be an integer between 1024 and 65535', 2);
   }
@@ -116,23 +141,49 @@ function openPreview() {
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535 || RESERVED_PORTS.has(port)) {
     fail('port must be an integer between 1024 and 65535 and not reserved by the box', 2);
   }
-  let path = '/';
-  let title = `port ${port}`;
-  for (let index = 1; index < args.length; index += 2) {
-    const flag = args[index];
-    const value = args[index + 1];
-    if (value === undefined) fail(`missing value for ${flag}`, 2);
-    if (flag === '--path') path = value;
-    else if (flag === '--title') title = value;
-    else fail(`unsupported option: ${flag}`, 2);
-  }
+  const path = options.path ?? '/';
   if (!path.startsWith('/')) fail('--path must start with /', 2);
   if (path.split('/').includes('..')) fail('--path must not contain a .. segment', 2);
   if (path.length > MAX_PATH_LENGTH) fail(`--path must be at most ${MAX_PATH_LENGTH} characters`, 2);
   if (/[\r\n]/.test(path)) fail('--path must not contain a carriage return or line feed', 2);
-  if (/[\r\n]/.test(title)) fail('--title must not contain a carriage return or line feed', 2);
-  atomicWrite(focusPath, `${JSON.stringify({ version: 1, port, path, title, requestedAt: Date.now() })}\n`);
-  process.exit(0);
+  writeFocus({ kind: 'port', port, path, title: options.title ?? `port ${port}` });
+}
+
+// `blitz teenyapp open <port>`: a port, and nothing else.
+function openPreview() {
+  if (args.length === 0) fail('expected open <port> [--path <path>] [--title <name>]', 2);
+  openPort(args[0], openOptions(1));
+}
+
+// `blitz browser open <target>`: a port, an https URL, or a file under
+// /workspace (absolute, or relative to the current directory). The browser
+// panel embeds a port through the gateway's preview proxy, a file through its
+// /workspace/ surface, and an app URL directly when its host is one we embed.
+function openBrowser() {
+  if (action !== 'open') fail(`unsupported command: ${action}`, 2);
+  if (args.length === 0) fail('expected open <port|file|https-url> [--path <path>] [--title <name>]', 2);
+  const target = args[0];
+  const options = openOptions(1);
+  if (/^[0-9]+$/.test(target)) {
+    openPort(target, options);
+  }
+  if (options.path !== undefined) fail('--path applies to a port target only', 2);
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target)) {
+    let parsed;
+    try {
+      parsed = new URL(target);
+    } catch {
+      fail('URL must be a well-formed https URL', 2);
+    }
+    if (parsed.protocol !== 'https:' || parsed.host === '') fail('URL must be a well-formed https URL', 2);
+    if (target.length > MAX_PATH_LENGTH) fail(`URL must be at most ${MAX_PATH_LENGTH} characters`, 2);
+    writeFocus({ kind: 'url', url: target, title: options.title ?? parsed.host });
+  }
+  const file = path.resolve(process.cwd(), target);
+  if (!file.startsWith('/workspace/')) fail('file must be under /workspace', 2);
+  if (file.length > MAX_PATH_LENGTH) fail(`file path must be at most ${MAX_PATH_LENGTH} characters`, 2);
+  if (/[\r\n]/.test(file)) fail('file path must not contain a carriage return or line feed', 2);
+  writeFocus({ kind: 'file', file, title: options.title ?? path.basename(file) });
 }
 
 function openConnections() {
@@ -193,6 +244,8 @@ try {
     requestBoxUpdate();
   } else if (group === 'connections') {
     openConnections();
+  } else if (group === 'browser') {
+    openBrowser();
   } else if (action === 'add') {
     if (args.length !== 1 && !(args.length === 3 && args[1] === '--title')) {
       fail('expected add <url> [--title <name>]', 2);

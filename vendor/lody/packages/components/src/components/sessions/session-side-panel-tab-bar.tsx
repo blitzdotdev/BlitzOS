@@ -23,7 +23,10 @@ import { WINDOW_DRAG_EXEMPT_CLASS, useWindowDragRegionClass } from '@/ui/window-
 export type SessionSidePanelTabItem = {
   id: string;
   label: string;
-  kind: 'files' | 'changes' | 'pr' | 'browser' | 'session' | 'file' | 'diff';
+  kind: 'files' | 'changes' | 'pr' | 'browser' | 'session' | 'file' | 'diff' | 'custom';
+  /** Drawn in place of the kind's glyph when the host supplied one; only a
+   *  `custom` tab (a host-contributed panel) has a host to supply it. */
+  icon?: ReactNode;
   filePath?: string;
   closeable?: boolean;
   dirty?: boolean;
@@ -34,8 +37,8 @@ export type SessionSidePanelTabItem = {
 };
 
 export type SessionSidePanelOption = Omit<SessionSidePanelTabItem, 'id' | 'kind'> & {
-  id: 'files' | 'changes' | 'pr' | 'browser' | 'side-session';
-  kind: 'files' | 'changes' | 'pr' | 'browser' | 'session';
+  id: 'files' | 'changes' | 'pr' | 'browser' | 'side-session' | `host:${string}`;
+  kind: 'files' | 'changes' | 'pr' | 'browser' | 'session' | 'custom';
 };
 
 const SIDE_SESSION_PANEL_PREFIX = 'side-session:';
@@ -162,6 +165,9 @@ function SidePanelTabIcon({ tab }: { tab: SessionSidePanelTabItem }) {
       ) : (
         <Files className="h-3.5 w-3.5 opacity-70" />
       );
+    case 'custom':
+      // A host-contributed panel: its own glyph, or the Files one when it gave none.
+      return tab.icon ?? <Files className="h-3.5 w-3.5 opacity-70" />;
   }
 
   return null;

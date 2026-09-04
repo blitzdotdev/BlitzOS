@@ -118,11 +118,12 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     ]);
   });
 
-  it("removes nothing from session-detail.tsx but seam patches 4, 5, 6, 7, 15 and 16's anchors", () => {
+  it("removes nothing from session-detail.tsx but seam patches 4, 5, 6, 7, 15, 16 and 23's anchors", () => {
     expectSeam("session-detail.tsx", [
       // Seam patch 4's hunks are additive and remove nothing, which is why they
       // are absent from this list and still covered by the subsequence check.
-      // So are three of seam patch 6's four; its fourth is the last anchor here.
+      // So are three of seam patch 6's five; hunks 24 and 25 replace the
+      // disabled expression and the four ref sites named below.
       // hunk 7 only adds `type ReactNode` to upstream's multiline `react`
       // import now, so the subsequence check covers it without a removed line.
       // hunk 11: the strip's variant follows the host's list
@@ -137,6 +138,12 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // disabled. Its other three hunks add lines and remove none, so they are
       // covered by the subsequence check rather than named here.
       [3495, "      disabled: launcherState === 'disabled' || isCreatingSideSession,"],
+      // Seam patch 6 hunk 25: all four chat surfaces reuse one callback per tab
+      // id instead of making a new ref arrow on every parent render.
+      [5090, "                  ref={(el) => setChatTabRef(tabSession.id, el)}"],
+      [5152, "                  ref={(el) => setChatTabRef(draft.id, el)}"],
+      [5719, "      ref: (element: SessionChatInterfaceHandle | null) => setChatTabRef(chatSession.id, element),"],
+      [5800, "              ref={(el) => setChatTabRef(draft.id, el)}"],
       // Seam patch 7 hunk 12: the page's GitHub state answers the
       // `githubIntegration` capability, so the two lines of the memo it was
       // built by are rewritten. Its other three hunks in this file add lines
@@ -185,6 +192,27 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // which is seam patch 5 hunk 13's desktop rule on the mobile branch
       [5077, "            const isActive = !hasActiveViewerTab && tabSession.id === activeTabSessionId;"],
       [5144, "            const isActive = !hasActiveViewerTab && draft.id === activeTabSessionId;"],
+      // Seam patch 23 hunk 4: the side-panel tab id widens to carry a host id.
+      [313, "type SidebarTab = PersistedSidePanelTab;"],
+      // Seam patch 23 hunk 8: `sidePanelFixedOptions` appends the host tabs,
+      // so its dependency list gains them. The options it pushes are added
+      // lines and remove none.
+      [3481, "  }, [activeBrowserSession, latestPr, latestPrNumber, repoFullName, t]);"],
+      // Seam patch 23 hunk 10: the persisted side-panel state drops host ids,
+      // whose schema is an enum of the fixed panels.
+      [3993, "        tab: activeSidebarTab,"],
+      [3994, "        tabs: openedSidebarTabs,"],
+    ]);
+  });
+
+  it("removes nothing from session-side-panel-tab-bar.tsx but seam patch 23's anchors", () => {
+    expectSeam("session-side-panel-tab-bar.tsx", [
+      // hunk 1: `SessionSidePanelTabItem.kind` gains `'custom'`; `icon` is an added line
+      [26, "  kind: 'files' | 'changes' | 'pr' | 'browser' | 'session' | 'file' | 'diff';"],
+      // hunk 2: `SessionSidePanelOption` may name a host tab
+      [37, "  id: 'files' | 'changes' | 'pr' | 'browser' | 'side-session';"],
+      [38, "  kind: 'files' | 'changes' | 'pr' | 'browser' | 'session';"],
+      // hunk 3, the `custom` arm of `SidePanelTabIcon`, adds lines and removes none.
     ]);
   });
 

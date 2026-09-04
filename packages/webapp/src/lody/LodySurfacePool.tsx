@@ -34,6 +34,7 @@ import type { BlitzViewer } from "./platform.js";
 import type { LodyRuntimeEndpoints } from "./runtime.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
 import type { LodySurfaceIdentityClaims } from "./surface-identity-claims.js";
+import type { SidePanelBinding } from "./side-panel.js";
 
 export interface LodySurfacePoolTarget {
   kind: LodySurfaceKind;
@@ -75,6 +76,7 @@ export interface LodySurfacePoolProps {
   railHost: HTMLElement | null;
   rail: LodyRailBinding;
   surfaceTabs?: SurfaceTabsBinding;
+  sidePanel?: SidePanelBinding;
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
   onActiveSessionChange?: (sessionId: string | null) => void;
   identityClaims: LodySurfaceIdentityClaims;
@@ -412,6 +414,7 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
       ...callbacks,
     };
     if (current && props.surfaceTabs !== undefined) surface.surfaceTabs = props.surfaceTabs;
+    if (current && props.sidePanel !== undefined) surface.sidePanel = props.sidePanel;
     if (target.initialSessionId !== undefined) surface.initialSessionId = target.initialSessionId;
     if (target.shared !== undefined) surface.shared = target.shared;
     return surface;

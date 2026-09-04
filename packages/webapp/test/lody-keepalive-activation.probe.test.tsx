@@ -276,7 +276,7 @@ describe.skipIf(!lodyDaemonAvailable() || process.env["BLITZ_LODY_SWITCH_PROBE"]
       const targetB = targetFor(harnessB, "workspace B", trackerB);
       const identityClaims = createLodySurfaceIdentityClaims();
       const viewer = { name: "probe", avatarUrl: null };
-      const rail = { terminals: [], activeTerminalId: "", onSelectTerminal: () => {} };
+      const rail = {};
       const tree = (target: LodySurfacePoolTarget) => (
         <LodySurfacePool
           Surface={SessionSurfacePoolHost}

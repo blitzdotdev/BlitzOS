@@ -24,21 +24,15 @@ export function LodySurfaceRailPortal(props: {
       aria-hidden={shown ? undefined : "true"}
     >
       <RetainedSessionRailSidebar
-        terminals={rail.terminals}
-        activeTerminalId={rail.activeTerminalId}
         activeSessionId={props.activeSessionId}
         archiveActive={props.archiveOpen}
         surfaceVisible={!hidden}
-        onSelectTerminal={rail.onSelectTerminal}
-        {...(rail.onCloseTerminal === undefined
-          ? {}
-          : { onCloseTerminal: rail.onCloseTerminal })}
         onSelectSession={rail.onOpenSession ?? props.openSession}
         onOpenLanding={rail.onOpenLanding ?? props.openLanding}
         onOpenArchive={rail.onOpenArchive ?? props.openArchive}
-        {...(rail.terminalsAction === undefined
+        {...(rail.newTabControl === undefined
           ? {}
-          : { terminalsAction: rail.terminalsAction })}
+          : { newTabControl: rail.newTabControl })}
         {...(rail.onShareSession === undefined
           ? {}
           : { onShareSession: rail.onShareSession })}

@@ -132,7 +132,7 @@ describe("the React surface pool adapter", () => {
         viewer={{ name: "Me", avatarUrl: null }}
         visible
         railHost={railHost}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
         identityClaims={identityClaims}
         claimantId="ownership-test"
         onApiReady={(api) => apis.push(api)}
@@ -189,7 +189,7 @@ describe("the React surface pool adapter", () => {
         viewer={{ name: "Me", avatarUrl: null }}
         visible
         railHost={null}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
         identityClaims={identityClaims}
         claimantId="active-address-test"
       />
@@ -221,7 +221,7 @@ describe("the React surface pool adapter", () => {
         viewer={{ name: "Me", avatarUrl: null }}
         visible
         railHost={null}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
         identityClaims={identityClaims}
         claimantId="active-archive-test"
       />
@@ -251,7 +251,7 @@ describe("the React surface pool adapter", () => {
         viewer={{ name: "Me", avatarUrl: null }}
         visible
         railHost={null}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
         identityClaims={identityClaims}
         claimantId="storage-test"
       />
@@ -295,7 +295,7 @@ describe("the React surface pool adapter", () => {
         viewer={{ name: "Me", avatarUrl: null }}
         visible
         railHost={null}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
         identityClaims={identityClaims}
         claimantId="constructor-test"
       />
@@ -324,7 +324,7 @@ describe("the React surface pool adapter", () => {
         viewer={{ name: "Me", avatarUrl: null }}
         visible
         railHost={null}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
         identityClaims={identityClaims}
         claimantId="duplicate-test"
       />

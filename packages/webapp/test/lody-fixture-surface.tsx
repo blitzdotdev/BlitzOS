@@ -30,7 +30,7 @@ import { OptionSelector } from "@lody/components/components/shared/option-select
 import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { Button } from "@lody/components/ui/button";
 import { initLodyI18n } from "../src/lody/i18n";
-import { SessionTypeIcon } from "../src/SessionTypeIcon";
+import { NewTabControl } from "../src/shell/NewTabControl";
 import { LODY_SURFACE_CLASS } from "../src/lody/surface-class";
 import type {
   AuthenticatedConvexValue,
@@ -160,42 +160,24 @@ export function FixtureComposer() {
 const FIXTURE_RAIL_WIDTH = 252;
 
 /**
- * The Terminals section: their section header, our rows.
+ * The footer's New tab control: the product's own `NewTabControl`, in the
+ * footer variant `SessionRailSidebar` hands `LoroSidebar` as
+ * `footerLeadingContent` (seam patch 22), to the left of their Archive entry.
  *
- * The REAL rows, not a placeholder. `SessionRailSidebar` injects exactly this
- * through `LoroSidebar`'s own `afterSessionListContent` slot (§0.3, and
- * `SessionRailSidebar.tsx:410`): terminal tabs are `webapp_state`, never
- * sessions, so they are drawn by us with `.shell-s` under one of their section
- * headers. It is the whole point of the convergence — these rows and the
- * vendored session rows above them sit in one list and must read as one
- * component — so a harness that stubs them out cannot show the thing it exists
- * to show.
+ * The REAL control, not a placeholder: the trigger and the Archive button beside
+ * it must read as one row, so a harness that stubs it out cannot show the thing
+ * it exists to show. Its menu spawns nothing here.
  */
-function FixtureTerminalsSection() {
-  const [collapsed, setCollapsed] = useState(false);
-  const rows = [
-    { id: "term-1", label: "claude", type: "claude" as const },
-    { id: "term-2", label: "blitz — zsh", type: "terminal" as const },
-  ];
+function FixtureNewTabControl() {
   return (
-    <div className="session-rail-terminals">
-      <SidebarSectionHeader
-        label="Terminals"
-        collapsed={collapsed}
-        toggleLabel="Terminals"
-        onToggleCollapsed={() => setCollapsed((previous) => !previous)}
-      />
-      {!collapsed &&
-        rows.map((row) => (
-          <button className="shell-s" type="button" key={row.id}>
-            <span className="shell-g">
-              <SessionTypeIcon type={row.type} className="shell-g__glyph" />
-            </span>
-            <span className="shell-s__t">{row.label}</span>
-            <span className="shell-s__a" />
-          </button>
-        ))}
-    </div>
+    <NewTabControl
+      variant="footer"
+      livePorts={[]}
+      previewLinks={[]}
+      onSpawnSession={() => {}}
+      onOpenPreview={() => {}}
+      onOpenPreviewLink={() => {}}
+    />
   );
 }
 
@@ -209,7 +191,8 @@ function FixtureTerminalsSection() {
  *   it hides is the workspace switcher `div.shell-rhead` already serves.
  *   `footerItems` is declared seam #13: Settings and Help are BlitzOS's own
  *   chrome, and Archive is upstream's only way into the archive page, so it is
- *   the one footer entry the rail keeps.
+ *   the one footer entry the rail keeps. `footerLeadingContent` is seam #22:
+ *   the New tab control, at the start of that same row.
  * - `className` drops their floating-window card chrome: inside the rail the
  *   shell already draws the column's border. `cn()` is tailwind-merge, so these
  *   override rather than stack.
@@ -243,6 +226,7 @@ export function FixtureSidebar() {
       className="rounded-none border-x-0 shadow-none"
       hideHeader
       footerItems={["archive"]}
+      footerLeadingContent={<FixtureNewTabControl />}
       workspaceName=""
       userEmail=""
       workspaces={[]}
@@ -287,7 +271,6 @@ export function FixtureSidebar() {
             chatsCollapsed={chatsCollapsed}
             onToggleChatsCollapsed={() => setChatsCollapsed((collapsed) => !collapsed)}
           />
-          <FixtureTerminalsSection />
         </>
       }
       onHomeClicked={() => {}}

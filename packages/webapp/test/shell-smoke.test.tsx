@@ -778,9 +778,10 @@ describe("webapp shell smoke", () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
     });
 
-    // The default tab set is Claude alone in the main pane; Files rides in
-    // the side pane. Remote control runs detached with no tab of its own, so
-    // there is no default terminal tab any more.
+    // The default tab set is Claude alone in the main pane (the Files panel
+    // that used to ride in the side pane is retired). Remote control runs
+    // detached with no tab of its own, so there is no default terminal tab
+    // any more.
     const sessionTabs = railSessionLabels(view.container);
     expect(sessionTabs).toHaveLength(1);
     expect(sessionTabs[0] ?? "").toMatch(/claude/i);
@@ -846,12 +847,11 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  /** The mobile sheet is the only way to reach Files, teenyapps and
-   * Connections on a phone: there is no icon rail below the breakpoint. Its
-   * segment cannot come from the tab model, because a panel tab that would be
-   * the only tab collapses out of the side region, so reading that region
-   * pinned the sheet to Files and the other two tabs did nothing. */
-  it("switches the mobile drawer between all three sections", async () => {
+  /** The mobile sheet is the only way to reach Connections on a phone: there
+   * is no icon rail below the breakpoint. Connections is the one section left
+   * since the Files and teenyapps panels retired, so the sheet has no segment
+   * strip; the statusline button opens and closes it. */
+  it("opens the mobile sheet on Connections from the statusline button", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -877,25 +877,23 @@ describe("webapp shell smoke", () => {
       ".webapp-statusline__files",
     );
     if (drawerButton === null) throw new Error("mobile has no drawer button");
-    await act(async () => drawerButton.click());
+    expect(drawerButton.textContent).toContain("Connections");
+    expect(drawerButton.getAttribute("aria-expanded")).toBe("false");
 
     const drawer = view.container.querySelector<HTMLElement>("#webapp-workspace-drawer");
     if (drawer === null) throw new Error("mobile drawer did not render");
-    const segment = (label: string) => [
-      ...drawer.querySelectorAll<HTMLButtonElement>(".workspace-drawer-segments button"),
-    ].find((button) => (button.textContent ?? "").includes(label));
-    const selected = () => drawer
-      .querySelector<HTMLElement>(".webapp-tab-cell--active")
-      ?.textContent ?? "";
+    expect(drawer.className).not.toContain("workspace-drawer--open");
 
-    expect(selected()).toContain("Files");
+    await act(async () => drawerButton.click());
+    expect(drawer.className).toContain("workspace-drawer--open");
+    expect(drawerButton.getAttribute("aria-expanded")).toBe("true");
+    // One section, so nothing to switch between: no segment strip at all.
+    expect(drawer.querySelector(".workspace-drawer-segments")).toBeNull();
+    expect(drawer.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(drawer.querySelector(".workspace-connections")).not.toBeNull();
 
-    for (const label of ["Connections", "teenyapps", "Files"]) {
-      const tab = segment(label);
-      if (tab === undefined) throw new Error(`no ${label} segment on mobile`);
-      await act(async () => tab.click());
-      expect(selected()).toContain(label);
-    }
+    await act(async () => drawerButton.click());
+    expect(drawer.className).not.toContain("workspace-drawer--open");
 
     await view.unmount();
   });
@@ -971,12 +969,12 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("keeps file tabs out of the workspace session rail", async () => {
+  it("keeps preview tabs out of the workspace session rail", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "claude" },
       { id: 2, type: "terminal" },
-      { id: 3, type: "file", filePath: "getting-started.md" },
+      { id: 3, type: "preview", port: 3000 },
     ], 3);
     const view = await render(
       <CloudApp
@@ -997,11 +995,11 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("keeps the visible agent session highlighted when a side-pane file has focus", async () => {
+  it("keeps the visible agent session highlighted when a side-pane preview has focus", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "claude" },
-      { id: 2, type: "file", filePath: "test1.md", region: "side" },
+      { id: 2, type: "preview", port: 3000, region: "side" },
     ], 1, 2);
     const view = await render(
       <CloudApp
@@ -1104,7 +1102,7 @@ describe("webapp shell smoke", () => {
       "workspace-running",
       [
         { id: 1, type: "terminal" },
-        { id: 2, type: "panel", panel: "previews", region: "side" },
+        { id: 2, type: "panel", panel: "connections", region: "side" },
       ],
       1,
       2,
@@ -1127,11 +1125,9 @@ describe("webapp shell smoke", () => {
     expect(view.container.querySelector(".webapp-pane-strip")).toBeNull();
     expect(railSessionLabels(view.container)).toHaveLength(1);
     const drawer = view.container.querySelector('[aria-label="Workspace drawer"]')!;
-    const segments = [...drawer.querySelectorAll('[role="tab"]')]
-      .map((tab) => tab.textContent);
-    expect(segments).toEqual(["Files", "teenyapps", "Connections"]);
-    expect(drawer.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
-      .toBe("teenyapps");
+    // Connections is the sheet's one section, so it draws no segment strip.
+    expect(drawer.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(drawer.querySelector(".workspace-connections")).not.toBeNull();
 
     await view.unmount();
   });
@@ -1175,7 +1171,7 @@ describe("webapp shell smoke", () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "terminal" },
-      { id: 2, type: "panel", panel: "files", region: "side" },
+      { id: 2, type: "panel", panel: "connections", region: "side" },
     ], 1, 2);
     const view = await render(
       <CloudApp
@@ -1226,18 +1222,18 @@ describe("webapp shell smoke", () => {
       '.webapp-workspace-session[data-region="side"]',
     );
     expect(sidePane()).toBeNull();
-    const filesIcon = view.container.querySelector<HTMLButtonElement>(
-      '[aria-label="Workspace panels"] button[aria-label="Files"]',
+    const connectionsIcon = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Workspace panels"] button[aria-label="Connections"]',
     )!;
-    await act(async () => filesIcon.click());
+    await act(async () => connectionsIcon.click());
 
     expect(sidePane()).not.toBeNull();
     expect(view.container.querySelector(".webapp-panes--split")).not.toBeNull();
-    expect(filesIcon.getAttribute("aria-pressed")).toBe("true");
+    expect(connectionsIcon.getAttribute("aria-pressed")).toBe("true");
 
     // Clicking the same icon while its tab is in front closes the panel, and
     // the side pane goes with it.
-    await act(async () => filesIcon.click());
+    await act(async () => connectionsIcon.click());
     expect(sidePane()).toBeNull();
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
       .toEqual([{ id: 1, type: "terminal" }]);
@@ -1274,6 +1270,91 @@ describe("webapp shell smoke", () => {
     expect(webAppHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
     expect(webAppHarness.mounts).toHaveBeenCalledTimes(2);
 
+    await view.unmount();
+  });
+});
+
+/**
+ * THE 409 ON OPEN (Brandon, 2026-09-03).
+ *
+ * The control plane projects a member's STOPPED machine as workspace phase
+ * `ready`, and the shell read `ready` as running: it dialled the box for the
+ * terminal, the capability probe and every poller, and each call answered 409
+ * "your machine in this workspace is not running". The workspace opened to a
+ * spinner over a wall of refusals, and the only way out was the "My machine"
+ * dialog. Now the viewer's own row in `members` decides, the shell dials
+ * nothing, and the main pane offers Start.
+ */
+describe("a workspace whose own machine is stopped", () => {
+  const stoppedMine: WorkspaceView = workspaceViewFixture({
+    id: "workspace-stopped",
+    name: "workspace-stopped-name",
+    phase: "ready",
+    members: [{
+      membershipId: "membership-one",
+      name: "Person",
+      avatarUrl: null,
+      role: "member",
+      machine: {
+        id: "machine-one",
+        state: "stopped",
+        machineTypeId: "cx23@fsn1",
+        volumeId: "volume-one",
+        volumeUsedPercent: null,
+        membershipId: "membership-one",
+        error: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }],
+  });
+  const startedMine: WorkspaceView = {
+    ...stoppedMine,
+    phase: "creating",
+    retryAction: "poll",
+    members: [{
+      ...stoppedMine.members[0]!,
+      machine: { ...stoppedMine.members[0]!.machine!, state: "provisioning" },
+    }],
+  };
+
+  it("dials no box, offers Start, and starts the viewer's own machine", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-stopped");
+    const wire = {
+      ...client(),
+      me: vi.fn(async () => tenantMe),
+      poll: vi.fn(async () => ({ workspaces: [stoppedMine] })),
+      startMachine: vi.fn(async () => ({ machine: startedMine.members[0]!.machine! })),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+
+    const start = view.container.querySelector<HTMLButtonElement>(
+      ".workspace-stopped-state button",
+    );
+    expect(start?.textContent).toBe("Start machine");
+    expect(view.container.textContent).toContain("is stopped");
+    // Nothing reached for the box: no terminal, no probe, no port poll.
+    const boxCalls = vi.mocked(fetch).mock.calls.filter(([input]) =>
+      String(input).includes("/webapp/"),
+    );
+    expect(boxCalls).toEqual([]);
+
+    // Start is the member's own verb, and the refresh is what moves the pane
+    // on: the record comes back `creating` and the loading pane takes over.
+    wire.poll.mockResolvedValue({ workspaces: [startedMine] });
+    await click(start);
+    await settle();
+    await settle();
+    expect(wire.startMachine).toHaveBeenCalledWith("machine-one");
+    expect(view.container.querySelector(".workspace-stopped-state")).toBeNull();
+    // The loading pane names the phase in its label and the stage in its text.
+    // The loading pane prints its stage; "Creating workspace" is only its label.
+    expect(view.container.textContent).toContain("allocating · cx23@fsn1");
+    expect(view.container.textContent).toContain("allocating ·");
     await view.unmount();
   });
 });

@@ -1,4 +1,9 @@
-import { isPreviewPath, isPreviewPort } from '@blitzos/schema';
+import {
+  isPreviewAppUrl,
+  isPreviewFile,
+  isPreviewPath,
+  isPreviewPort,
+} from '@blitzos/schema';
 import { boxGatewayFetch } from './box-gateway-health';
 import type { WorkspaceTabs } from './storage';
 import {
@@ -16,7 +21,7 @@ import {
 export { isPreviewPath, isPreviewPort };
 
 export const PORTS_POLL_INTERVAL_MS = 5_000;
-export const DEFAULT_EMBEDDABLE_PREVIEW_HOST_SUFFIXES: readonly string[] = ['blitz.dev'];
+export const DEFAULT_EMBEDDABLE_PREVIEW_HOST_SUFFIXES: readonly string[] = ['blitz.dev', 'app.teenyapp.com'];
 
 /**
  * Parses the VITE_EMBEDDABLE_PREVIEW_SUFFIXES build var (comma-separated
@@ -54,11 +59,17 @@ export type LivePort = {
 
 /** The marker `blitz preview open` writes and the Go gateway serves at
  * `GET /preview-focus` as `{ focus: PreviewFocus | null }`. `requestedAt` is a
- * millisecond epoch the webApp uses to auto-open each focus at most once. */
-export type PreviewFocus = {
-  version: 1;
-  port: number;
-  path: string;
+ * millisecond epoch the webApp uses to auto-open each focus at most once.
+ *
+ * Three kinds, one per thing `blitz browser open` accepts: a port on the box,
+ * a file under /workspace, an https app URL. A version-1 marker (an older
+ * box's `blitz teenyapp open`) is a port. */
+export type PreviewFocusTarget =
+  | { kind: 'port'; port: number; path: string }
+  | { kind: 'file'; file: string }
+  | { kind: 'url'; url: string };
+
+export type PreviewFocus = PreviewFocusTarget & {
   title: string;
   requestedAt: number;
 };
@@ -140,35 +151,39 @@ export function parsedPreviews(value: JsonValue): PreviewLink[] {
 }
 
 /** Parses the `GET /preview-focus` response body. Anything that is not a
- * version-1 object with a usable, non-reserved port and a rooted,
- * traversal-free path — an old box's 404 body, `{ focus: null }`, or a
- * malformed marker — collapses to null. Mirrors the Go gateway's
- * parsePreviewFocus so the browser never trusts a focus the reader would have
- * rejected, and never builds a `/preview/<port><path>` URL that normalizes out
- * of the preview prefix. */
+ * version-1 port marker or a version-2 port, file or url marker with every
+ * field usable — an old box's 404 body, `{ focus: null }`, or a malformed
+ * marker — collapses to null. Mirrors the Go gateway's parsePreviewFocus so
+ * the browser never trusts a focus the reader would have rejected, and never
+ * builds a `/preview/<port><path>` URL that normalizes out of the preview
+ * prefix. */
 export function parsePreviewFocus(value: JsonValue): PreviewFocus | null {
   const object = asJsonObject(value);
   if (object === null) return null;
   const focus = asJsonObject(object.focus);
   if (
     focus === null
-    || focus.version !== 1
-    || !isNumber(focus.port)
-    || !isPreviewPort(focus.port)
-    || !isString(focus.path)
-    || !isPreviewPath(focus.path)
     || !isString(focus.title)
     || !isNumber(focus.requestedAt)
     || !Number.isSafeInteger(focus.requestedAt)
     || focus.requestedAt < 0
   ) return null;
-  return {
-    version: 1,
-    port: focus.port,
-    path: focus.path,
-    title: focus.title,
-    requestedAt: focus.requestedAt,
-  };
+  const kind = focus.version === 1 ? 'port' : focus.version === 2 ? focus.kind : null;
+  const common = { title: focus.title, requestedAt: focus.requestedAt };
+  if (kind === 'port') {
+    if (!isNumber(focus.port) || !isPreviewPort(focus.port)) return null;
+    if (!isString(focus.path) || !isPreviewPath(focus.path)) return null;
+    return { kind, port: focus.port, path: focus.path, ...common };
+  }
+  if (kind === 'file') {
+    if (!isString(focus.file) || !isPreviewFile(focus.file)) return null;
+    return { kind, file: focus.file, ...common };
+  }
+  if (kind === 'url') {
+    if (!isString(focus.url) || !isPreviewAppUrl(focus.url)) return null;
+    return { kind, url: focus.url, ...common };
+  }
+  return null;
 }
 
 function httpUrl(value: string): URL {
@@ -265,12 +280,16 @@ export async function fetchWorkspacePreviewFocus(
   }
 }
 
+/** Whether a link may be drawn in an iframe rather than opened in a new tab:
+ * an https host on the embed allowlist, or a URL on this page's own origin —
+ * which is where the box gateway's preview and file surfaces live. */
 export function isEmbeddablePreviewUrl(
   url: string,
   suffixes: readonly string[] = EMBEDDABLE_PREVIEW_HOST_SUFFIXES,
 ): boolean {
   try {
     const target = new URL(url);
+    if (isDefined(globalThis.window) && target.origin === window.location.origin) return true;
     return target.protocol === 'https:' && suffixes.some(
       (suffix) => target.hostname === suffix || target.hostname.endsWith(`.${suffix}`),
     );

@@ -223,10 +223,6 @@ export async function refreshLodyAcpCapabilities(
           machineId,
           workspaceId: runtime.workspaceId,
           configId: config.id,
-          cliType: config.cliType,
-          agentType: config.agentType,
-          runtimeOverrides: config.runtimeOverrides,
-          env: config.env,
         },
         signal === undefined ? {} : { signal },
       );

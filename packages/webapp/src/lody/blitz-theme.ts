@@ -132,7 +132,7 @@ export interface BlitzTokenColorRule {
  * tooltips, dialogs and the command palette all mount as direct children of
  * `document.body`, where they would otherwise inherit BlitzOS's own tokens.
  */
-const PORTAL_SELECTOR = "body > :where(:not(#root, .files-context-backdrop, .files-context-menu))";
+const PORTAL_SELECTOR = "body > :where(:not(#root))";
 
 /** The names Lody's compiled variables share with `tokens.css`.
  *

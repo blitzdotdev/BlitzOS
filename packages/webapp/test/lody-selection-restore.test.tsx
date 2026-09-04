@@ -88,9 +88,6 @@ async function mountRegion() {
     workspaceTitle: "Workspace",
     visible: true,
     railHost: null,
-    terminals: [],
-    activeTerminalId: "",
-    onSelectTerminal: () => undefined,
   };
   const view = await render(
     <LodySessionsRegion endpoints={BOX_A} {...base} initialSessionId="sess-1" />,

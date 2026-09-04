@@ -12,6 +12,7 @@ import { LodyRouteActivity, LodySurfaceVisibilityRoot } from "./surface-activity
 import { useLodySurfaceActiveState } from "./surface-active-context.js";
 import { LodySurfaceToaster } from "./surface-providers.js";
 import { SurfaceTabsContext } from "./surface-tabs.js";
+import { SidePanelContext } from "./side-panel.js";
 import type { LodyAtomStore } from "./runtime.js";
 
 export function LodySurfaceShellOwnership(props: {
@@ -61,11 +62,13 @@ export function LodySurfaceShellOwnership(props: {
 }
 
 export function LodySurfaceRouteActivity(props: { children: ReactNode }) {
-  const { active, hidden, surfaceTabs } = useLodySurfaceActiveState();
+  const { active, hidden, sidePanel, surfaceTabs } = useLodySurfaceActiveState();
   return (
     <LodyRouteActivity active={active && !hidden}>
       <SurfaceTabsContext.Provider value={surfaceTabs ?? null}>
-        {props.children}
+        <SidePanelContext.Provider value={sidePanel ?? null}>
+          {props.children}
+        </SidePanelContext.Provider>
       </SurfaceTabsContext.Provider>
     </LodyRouteActivity>
   );

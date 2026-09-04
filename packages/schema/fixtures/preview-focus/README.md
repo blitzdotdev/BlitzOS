@@ -1,16 +1,27 @@
 # Preview-focus fixtures
 
-The `blitz teenyapp open` CLI (documented verb; `blitz preview open` remains a
-silent alias) writes a single "focus" marker to
-`/var/lib/blitz/preview-focus.json`; the Go gateway reads it at
+The `blitz browser open <port|file|https-url>` CLI (`blitz teenyapp open` and
+`blitz preview open` remain aliases for the port form) writes a single "focus"
+marker to `/var/lib/blitz/preview-focus.json`; the Go gateway reads it at
 `GET /preview-focus` and returns `{ "focus": <marker> }` or `{ "focus": null }`.
 
+A version-2 marker names its `kind`:
+
+- `port`: `port` in 1024-65535 and not reserved by the box (see
+  `../preview-ports/reserved.json`), `path` rooted, at most `maxPathLength`
+  characters and free of `..` segments.
+- `file`: `file` an absolute path under `/workspace`, the same length and
+  traversal rules, no line break. The browser serves it from the gateway's
+  `/workspace/` surface.
+- `url`: `url` an `https` URL with a host, at most `maxPathLength` characters.
+  Whether the host is embedded is the browser's decision, not the marker's.
+
+A version-1 marker (`port`, `path`, no `kind`) is what boxes in the field
+still carry; every reader keeps accepting it as a port.
+
 Each fixture pairs the marker file content (`input`) with the canonical gateway
-response (`expected`). `input: null` represents an absent marker file. The
-gateway rejects a marker that is not version 1, whose port is out of the
-1024-65535 range or reserved by the box (see `../preview-ports/reserved.json`),
-or whose path is not rooted, is longer than `maxPathLength`, or contains a `..`
-segment; a rejected marker yields `{ "focus": null }`.
+response (`expected`). `input: null` represents an absent marker file. A
+rejected marker yields `{ "focus": null }`.
 
 The marker is written by the in-box agent's own uid, so the CLI's validation is
 convenience rather than a boundary and every reader repeats it. The traversal

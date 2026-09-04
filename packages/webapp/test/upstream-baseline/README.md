@@ -10,6 +10,7 @@ nothing else.
 |---|---|
 | `session-tab-bar.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx` |
 | `session-detail.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-detail.tsx` |
+| `session-side-panel-tab-bar.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-side-panel-tab-bar.tsx` (seam patch 23) |
 | `mobile-session-tab-sheet.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-session-tab-sheet.tsx` |
 | `mobile-home-screen.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-home-screen.tsx` |
 | `message-processor.ts.txt` | `vendor/lody/apps/cli/src/lib/message-processor.ts` |
@@ -17,11 +18,11 @@ nothing else.
 | `lody-mcp-http-server.ts.txt` | `vendor/lody/apps/cli/src/mcp/lody-mcp-http-server.ts` |
 
 The two mobile files arrived with seam patch 16, which is the first patch to edit
-a mobile-only file. The daemon message processor arrived with source seam 19.
-The agent and MCP server baselines cover seam 20's conditional fallback logs.
-`components/chat/chat-landing.tsx` is patched by seam patches
-7, 15 and 16 and has NO baseline here: adding one means declaring seam patch 7's
-removals in that file as well, which is a job for whoever needs it.
+a mobile-only file. The side-panel tab bar arrived with seam patch 23. The
+daemon message processor arrived with source seam 19. The agent and MCP server
+baselines cover seam 20's conditional fallback logs.
+`components/chat/chat-landing.tsx` is patched by seam patches 7, 15 and 16. It
+has no baseline here. Adding one requires declaring seam patch 7's removals too.
 
 **Taken from `f4b1ba259eb754cd954da776d8e7384a8c30f1c9`**, the commit
 `vendor/lody/UPSTREAM.md` pins. The test reads that pin out of `UPSTREAM.md` and

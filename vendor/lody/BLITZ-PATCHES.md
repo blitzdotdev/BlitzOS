@@ -17,6 +17,10 @@ product meaning changed, so a human must decide.
 
 ## Seam patches
 
+On 2026-09-04, the merge of `origin/main` kept this branch's seams 18-21.
+Main's former seams 18 and 19 became seams 22 and 23. The withdrawn
+browser-panel seam was numbered 20 on main before this merge.
+
 ### 1. The local-bridge predicate (phase 2, 2026-08-30)
 
 **One idea, six hunks in three files, all the same shape.** BlitzOS reaches the
@@ -111,6 +115,7 @@ FIFTEEN. Seam patch 10 raises it to TWENTY. The fourteen files are:
   `components/sessions/session-conversation-diff-panel.tsx`; and
 - `hooks/use-chat-landing-file-draft.ts` from seam patch 8, with more hunks in
   `session-chat-input-area.tsx`.
+- `components/sessions/session-side-panel-tab-bar.tsx` from seam patch 23.
 
 ### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
 
@@ -413,7 +418,7 @@ this patch when it merges.**
 
 ### 6. The Side Chat launcher needs an assistant turn (wave 4, 2026-08-31)
 
-**One idea, four hunks in one file, and inert without one prop.** Before the agent
+**One idea, five hunks in one file, and inert without one prop.** Before the agent
 answers, the side panel's Side Chat entry accepts a click without visible effect.
 The launcher forks the active conversation through `handleCreateSideSession`
 and `forkActiveConversation`. A fork needs a completed assistant turn. Without
@@ -434,10 +439,11 @@ Side Chat entirely. The option may return a second later.
 | 22 | 1149 | immediately above `const activeSessionTabId = useMemo<SessionId \| null>` | holds the active tab id in a ref and adds `activeTabAssistantTurnId` state |
 | 23 | 1760 | `chatRefsMap.current.set(tabId, ref);` inside `setChatTabRef` | mirrors `getLastAssistantTurnId()` into that state on ATTACH |
 | 24 | 3495 | `disabled: launcherState === 'disabled' \|\| isCreatingSideSession,` in `sideChatOption` | adds the third term, gated on the prop |
+| 25 | 5090, 5152, 5719, 5800 | the four inline `setChatTabRef` ref arrows | caches one ref callback per tab id in a ref-held map, then passes it at all four sites |
 
-Hunk 24 alone replaces an upstream line. It is therefore the only hunk named in
-`lody-surface-tabs.test.tsx`'s anchor table. The other three add lines and are
-covered by that file's subsequence check.
+Hunks 24 and 25 replace upstream lines. The disabled expression and all four
+ref sites are named in `lody-seam-pin.test.ts`. The other three hunks add lines
+and are covered by that file's subsequence check.
 
 **Why a mirror and not a read.** `chatRefsMap` is a ref.
 `getLastAssistantTurnId()` answers only when called. That works for a click, not
@@ -448,12 +454,12 @@ The handle depends on `lastCompletedAssistantMessageId`
 first commit containing a turn. This needs no new subscription or second
 document read.
 
-**Hunk 23 IGNORES THE DETACH. This provides the loop safety.** Every page render
-gives each chat surface a fresh `ref={(el) => setChatTabRef(…)}` arrow. React
-calls it with `null`, then the handle, within one commit. Accepting `null` would
-queue two state changes per commit. React cannot bail out of that pair, so the
-page would render forever. Accepting only the attachment settles on one value.
-`Object.is` then stops unchanged updates.
+**Hunk 25 keeps the ref callback stable, and hunk 23 ignores a real detach.**
+The first version made a fresh ref arrow at every chat surface. A parent render
+therefore detached and re-attached every imperative handle. The ref-held map
+creates one callback per tab id. `useImperativeHandle` still calls it with an
+updated handle when `lastCompletedAssistantMessageId` changes. Hunk 23 ignores
+the preceding `null`, so the launcher does not briefly disable.
 
 **What it costs, measured against what it fixes.** The mirror remains empty until
 the active surface attaches its handle and reports a completed turn. A session
@@ -462,8 +468,8 @@ control is not visible during page load. The alternative let a member click a
 control that answered with an error.
 
 **The active tab arrives through a ref, not a dependency**, so `setChatTabRef`
-keeps an empty dependency list. A dependency would change the callback identity
-on every tab switch. Every chat surface attaches through that callback.
+keeps an empty dependency list. The cached callbacks close over that stable
+function and retain identity across parent renders.
 
 **Fork semantics are untouched.** `forkActiveConversation`, `handleForkAssistant`
 and the `sessions.forkNoAssistant` toast are exactly upstream's; what changes is
@@ -482,9 +488,10 @@ upstream. **Drop the prop when it merges.**
 
 - If `sideChatOption` stops being built from `getSideChatLauncherState`, hunk 24
   follows the `disabled` field to wherever the launcher's state is decided.
-- If chat surfaces stop attaching through `setChatTabRef`, hunk 23 follows its
-  replacement. The detach rule follows too, or the page loops.
-- If upstream disables the launcher itself, DROP all four hunks and the
+- If chat surfaces stop attaching through `setChatTabRef`, hunks 23 and 25
+  follow the replacement. Keep the callbacks stable and mirror only an
+  attached handle.
+- If upstream disables the launcher itself, DROP all five hunks and the
   `sideChatRequiresAssistantTurn` line in `packages/webapp/src/lody/router.tsx`.
 
 ### 7. Host suppression of surfaces BlitzOS does not serve (v1 scope cuts, 2026-09-01)
@@ -1832,6 +1839,97 @@ as A and rename the service variables. If cgroup initialization or rebalance
 moves, classify as B and keep the two opt-ins together. If upstream changes the
 sandbox lifecycle or removes per-session cgroups, classify as C and stop. The
 reviewer must re-prove descendant containment and termination before adapting.
+
+### 22. `LoroSidebar`'s footer takes one host control
+
+**One optional prop, three hunks, one file.** Seam patch 13 lets a host keep
+Archive while dropping the other footer utilities. BlitzOS also puts its New
+tab menu in that row. Existing slots render above or inside the scrolling list,
+so the footer gains one leading-content slot.
+
+| # | File | Line after seams 2 and 13 | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/components/src/components/loro-sidebar.tsx` | 218 | after `footerItems?: readonly LoroSidebarFooterItem[];` | declares `footerLeadingContent?: ReactNode` |
+| 2 | same | 687 | after `footerItems = LORO_SIDEBAR_FOOTER_ITEMS,` | destructures the optional prop |
+| 3 | same | 1281 | the footer's `<div className="flex items-center gap-1">` | renders `{footerLeadingContent}` before retained footer items |
+
+The prop is strictly additive. Its absence renders the footer exactly as seam
+patch 13 does. No upstream call site passes it.
+
+`SessionRailSidebar.tsx` passes `newTabControl`. The shell supplies
+`NewTabControl variant="footer"`, which still uses `spawnTtydSession`.
+`strip-rail.css` sizes the trigger like the adjacent footer button.
+
+**Candidate upstream PR:** “let a host add a control to the sidebar footer.”
+Add one optional prop beside the existing header, footer, and item controls.
+
+**Merge conflict drill.** If the footer row changes, render the prop as its
+first child. If upstream adds an equivalent slot, drop these hunks and use it
+from `SessionRailSidebar.tsx`.
+
+### 23. Host-contributed side-panel tabs
+
+**One idea, twelve hunks in two files.** The right side panel already merges
+fixed panels, side chats, and file or diff viewers. BlitzOS contributes Browser
+and Connections panels. Its external quick-action strip must also open those
+tabs and follow the panel's selection.
+
+A host tab acts like a fixed option, except it is not persisted. Its id starts
+with `host:` and cannot collide with the persisted enum. A request uses the
+same open handler as the panel's `+` menu. A state report lets the shell draw
+the selected quick action.
+
+`packages/components/src/components/sessions/session-side-panel-tab-bar.tsx`
+
+| # | Line at `f4b1ba25` | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 26 | `SessionSidePanelTabItem.kind` | adds `custom` and an optional icon |
+| 2 | 37-38 | `SessionSidePanelOption`'s id and kind | accepts `host:${string}` and `custom` |
+| 3 | 159 | the `file` arm in `SidePanelTabIcon` | draws the host icon, or the Files glyph |
+
+`packages/components/src/components/sessions/session-detail.tsx`
+
+| # | Line at `f4b1ba25` | Upstream anchor | What it does |
+|---|---|---|---|
+| 4 | 313 | `type SidebarTab = PersistedSidePanelTab;` | adds the host id and persistence guards |
+| 5 | 681 | after `TerminalDockToggleButton` | declares the three host types and stable empty list |
+| 6 | 692, 698 | the `SessionDetail` props | adds and defaults the host tabs, request, and report |
+| 7 | 2584 | after the missing-Browser effect | clears a host tab withdrawn by the host |
+| 8 | 3480-3481 | the end of `sidePanelFixedOptions` | appends host options and tracks the list |
+| 9 | 3617 | after `handleCloseSidebarTab` | handles each request sequence once |
+| 10 | 3993-3994 | the persisted side-panel state | filters host ids from stored state |
+| 11 | 4127 | after `activeSidePanelTabId` | reports panel state through a callback ref |
+| 12 | 5498-5532 | `nonBrowserSidebarContent` | renders the active host tab's content |
+
+Hunks 4, 8, and 10 replace upstream lines. Their five removed lines are pinned
+by `lody-seam-pin.test.ts`. The remaining hunks add lines and are covered by
+its baseline subsequence check. The side-panel tab-bar test pins that file too.
+
+The request effect follows the panel's own option handler. It opens the panel
+for external requests, ignores unavailable or disabled options, and handles
+each `seq` once. Close requests ignore tabs that are not open.
+
+Reports describe `open`, the active id, opened ids, and available options.
+They run only when derived state changes. The callback is read through a ref,
+so a fresh host closure cannot replay an unchanged report.
+
+Host content mounts only while active, matching the existing side-panel bodies.
+The mobile branch stays unchanged because it owns a separate drawer and enum.
+All new props are inert when absent.
+
+`lody-side-panel-host-tabs.test.tsx` drives the tab bar and empty state with a
+custom option. `plans/evidence/lody-side-panel-host-tabs-pr.md` sketches the
+upstream contribution.
+
+**Merge conflict drill.** Keep the `host:` rule until the persistence schema
+accepts an upstream namespace. Append host tabs wherever fixed options move.
+Send requests through whatever the `+` menu calls. Report the new reducer or
+atom if panel state moves. Drop all hunks if upstream adds an equivalent host
+panel concept.
+
+The browser-panel seam that main had numbered 20 was withdrawn before this
+merge. BlitzOS renders its browser as the `host:browser` tab, so Lody's built-in
+Browser panel carries no additional hunk.
 
 ## Retired compiled-bundle patches
 

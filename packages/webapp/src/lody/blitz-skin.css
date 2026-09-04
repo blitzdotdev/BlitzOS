@@ -37,7 +37,7 @@
  */
 .lody-surface,
 .session-list--vendor,
-body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
+body > :where(:not(#root)) {
   --radius: var(--r-item);
   --radius-sm: 6px;
   --radius-md: var(--r-item);
@@ -208,4 +208,28 @@ body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
 
 .session-list--vendor .bg-primary {
   background-color: var(--live);
+}
+
+/* ---------------------------------------------------- the rail's footer */
+
+/*
+ * The footer's icon buttons — their Archive entry (seam patch 13) and our New
+ * tab trigger before it (seam patch 22, `.shell-newbar--footer`) — are one row,
+ * so they wear one rest colour: the rail's own icon-button token, `--faint`
+ * (`.shell-ib`, `strip-rail.css`). Upstream paints the rest state
+ * `text-sidebar-foreground` in the light theme and
+ * `dark:text-sidebar-foreground-muted` in the dark one
+ * (`getLoroSidebarFooterIconButtonClassName`, `loro-sidebar.tsx:644`); the theme
+ * maps the second to `--faint` already, and the first to `--ink`, so in the
+ * light theme Archive read brighter than every other glyph in the rail.
+ *
+ * `:not(:hover)` rather than a restated hover pair: an unlayered rule outranks
+ * their layered `hover:` utilities whatever the specificity, so a plain rest
+ * rule would have painted the hovered button too. Scoped to rest, the button
+ * under the pointer is theirs — and the theme already maps that pair to
+ * `--ink` on `--hover`. The active state wears different classes and is
+ * untouched.
+ */
+.session-list--vendor .border-sidebar-border button.text-sidebar-foreground:not(:hover) {
+  color: var(--faint);
 }

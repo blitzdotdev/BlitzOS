@@ -207,6 +207,15 @@ export interface LoroSidebarProps {
    * for "none of them".
    */
   footerItems?: readonly LoroSidebarFooterItem[];
+  /**
+   * Host-supplied controls drawn at the START of the footer's utility row,
+   * before the entries {@link footerItems} keeps. A host that serves its own
+   * settings and help but wants one control of its own beside the entries
+   * it does keep — a "new terminal" trigger, say — has nowhere else to put
+   * it: `bottomFloatingContent` floats above the list, and the footer's
+   * row is otherwise closed. Ignored while {@link hideFooter} is set.
+   */
+  footerLeadingContent?: ReactNode;
 
   repoSections?: LoroSidebarRepoSection[];
   chats?: LoroSidebarChatItem[];
@@ -675,6 +684,7 @@ export const LoroSidebar = memo(function LoroSidebar({
   hideHeader = false,
   hideFooter = false,
   footerItems = LORO_SIDEBAR_FOOTER_ITEMS,
+  footerLeadingContent,
   repoSections = defaultRepoSections,
   chats = defaultChats,
   sessionListProps,
@@ -1268,6 +1278,7 @@ export const LoroSidebar = memo(function LoroSidebar({
         {hideFooter ? null : (
           <div className={getLoroSidebarFooterClassName(isMobile)}>
             <div className="flex items-center gap-1">
+              {footerLeadingContent}
               {footerItems.includes('settings') ? (
                 <IconButton label="Settings" onClick={onSettingsClicked}>
                   <Settings className="h-4 w-4" />

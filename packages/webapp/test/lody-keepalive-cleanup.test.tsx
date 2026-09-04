@@ -284,7 +284,7 @@ describe("surface eviction cleanup", () => {
         viewer={{ name: "Me", avatarUrl: null }}
         visible
         railHost={null}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
         identityClaims={identityClaims}
         claimantId="construction-test"
       />
@@ -369,7 +369,7 @@ describe("surface eviction cleanup", () => {
         viewer={{ name: "Me", avatarUrl: null }}
         visible
         railHost={null}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
         identityClaims={identityClaims}
         claimantId="resource-test"
       />
@@ -420,7 +420,7 @@ describe("surface eviction cleanup", () => {
         viewer={{ name: "Me", avatarUrl: null }}
         visible
         railHost={null}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
         identityClaims={identityClaims}
         claimantId="barrier-test"
       />
@@ -535,9 +535,6 @@ describe("surface eviction cleanup", () => {
         workspaceTitle="A"
         visible
         railHost={null}
-        terminals={[]}
-        activeTerminalId=""
-        onSelectTerminal={() => undefined}
       />
     );
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);

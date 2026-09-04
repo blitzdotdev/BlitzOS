@@ -1,0 +1,69 @@
+/* The browser panel (`browser/BrowserPanel.tsx`): a toolbar row over one frame,
+   filling the side-panel host it is mounted in. Tokens only. */
+.blitz-browser {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--paper);
+}
+
+.blitz-browser__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.blitz-browser__bar button,
+.blitz-browser__bar a {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--faint);
+  background: transparent;
+  font: 15px/1 var(--font-ui);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.blitz-browser__bar button:hover,
+.blitz-browser__bar a:hover { color: var(--ink); background: var(--hover); }
+.blitz-browser__bar button:disabled { color: var(--rule); cursor: default; background: transparent; }
+
+.blitz-browser__address {
+  min-width: 0;
+  height: 26px;
+  flex: 1;
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--sunken);
+  font: 12.5px/1 var(--font-mono, monospace);
+}
+
+.blitz-browser__address:focus { outline: 0; border-color: var(--accent); }
+
+.blitz-browser__frame {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  background: #fff;
+}
+
+.blitz-browser__empty {
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--soft-ink);
+  font: 13px/1.5 var(--font-ui);
+}
+
+.blitz-browser__empty code { font-family: var(--font-mono, monospace); }

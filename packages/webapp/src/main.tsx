@@ -7,6 +7,7 @@ import './webapp-icons.css';
 import './webapp-base.css';
 import './webapp-shell.css';
 import './webapp-workspace.css';
+import './browser/browser-panel.css';
 import './webapp-select.css';
 import './files-drive.css';
 import './drive-shell.css';

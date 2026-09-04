@@ -425,6 +425,18 @@ Two affordances, and neither is new code on the box.
   (`CloudApp.tsx:1119-1126`). It stops calling `closeChat()`: the surface no
   longer yields the view to the panes, it selects a tab inside itself.
 
+> **Amendment (dogfood, 2026-09-03).** The rail's Terminals section is DELETED.
+> A terminal is a tab of the surface's own strip, which already lists, selects
+> and closes it, so the rail listed every tab twice. The `+` menu moved to the
+> vendored rail's FOOTER, to the left of Archive, as a terminal glyph
+> (`NewTabControl variant="footer"`, handed down as `newTabControl` and drawn
+> through seam patch 22's `footerLeadingContent`); what it offers and what it
+> spawns are unchanged. The rail-row close that "PR 2" moved here went with the
+> rows, so a phone — where the strip is off (§3.4) and the mobile tab sheet has
+> no close verb by upstream's design (seam patch 16) — has no way to close a
+> terminal tab until one is added there. The flag-off rail is untouched: its
+> native rows still select and close.
+
 The strip's own `+` keeps its Lody meaning — `handleNewTab`
 (`session-detail.tsx:1844`) creates a draft chat tab. Merging the two `+`s into
 one menu needs a fifth seam prop and is deferred (§5.5).

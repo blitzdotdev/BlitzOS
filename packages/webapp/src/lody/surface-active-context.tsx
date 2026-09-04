@@ -2,6 +2,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { LodyRailBinding } from "./SessionSurface.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
+import type { SidePanelBinding } from "./side-panel.js";
 
 export interface LodySurfaceActiveState {
   active: boolean;
@@ -9,6 +10,7 @@ export interface LodySurfaceActiveState {
   railHost: HTMLElement | null | undefined;
   rail: LodyRailBinding | undefined;
   surfaceTabs: SurfaceTabsBinding | undefined;
+  sidePanel: SidePanelBinding | undefined;
   identityValidationGeneration: number;
 }
 
@@ -18,6 +20,7 @@ const DEFAULT_ACTIVE_STATE: LodySurfaceActiveState = {
   railHost: undefined,
   rail: undefined,
   surfaceTabs: undefined,
+  sidePanel: undefined,
   identityValidationGeneration: 0,
 };
 
@@ -29,6 +32,7 @@ export function LodySurfaceActiveProvider(props: {
   railHost: HTMLElement | null | undefined;
   rail: LodyRailBinding | undefined;
   surfaceTabs: SurfaceTabsBinding | undefined;
+  sidePanel: SidePanelBinding | undefined;
   identityValidationGeneration: number | undefined;
   children: ReactNode;
 }) {
@@ -42,6 +46,7 @@ export function LodySurfaceActiveProvider(props: {
       railHost: props.railHost,
       rail: props.rail,
       surfaceTabs: props.surfaceTabs,
+      sidePanel: props.sidePanel,
       identityValidationGeneration,
     }),
     [
@@ -51,6 +56,7 @@ export function LodySurfaceActiveProvider(props: {
       props.rail,
       props.railHost,
       props.surfaceTabs,
+      props.sidePanel,
     ],
   );
   return (

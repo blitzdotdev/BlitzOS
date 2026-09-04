@@ -199,24 +199,31 @@ the optional built-in MCP server, and host-selected cgroup parent/capacity
 policy. Their environment options retain upstream defaults when absent; the box
 service selects the host behavior. The ACP rule moves only an authentication
 `start` to `acp-auth:<configId>`; submit and cancel remain on the default chain.
+Renderer seams 22 and 23 add the sidebar footer slot and host side-panel tabs.
+The browser-panel seam numbered 20 on main was withdrawn before the merge.
 
 The ambient-IPC audit is not a formatting gate. Any newly reachable unbound IPC
 site reported by `lody-ipc-client-isolation.test.ts` is a class-C decision.
 
 ## Refresh pristine baselines
 
-The seam tests read checked-in pristine upstream sources because a shallow CI
-clone may not contain the upstream commit object. Refresh all five from a clone
-that does contain `NEW_SHA`:
+The seam tests read checked-in pristine upstream sources because shallow CI
+clones may not contain the upstream commit object. Refresh all eight from a
+clone that contains `NEW_SHA`:
 
 ```sh
 for file in sessions/session-tab-bar sessions/session-detail \
+            sessions/session-side-panel-tab-bar \
             mobile/mobile-session-tab-sheet mobile/mobile-home-screen; do
   git show "$NEW_SHA:packages/components/src/components/$file.tsx" \
     > "packages/webapp/test/upstream-baseline/$(basename "$file").tsx.txt"
 done
 git show "$NEW_SHA:apps/cli/src/lib/message-processor.ts" \
   > packages/webapp/test/upstream-baseline/message-processor.ts.txt
+git show "$NEW_SHA:apps/cli/src/agent/agent-client.ts" \
+  > packages/webapp/test/upstream-baseline/agent-client.ts.txt
+git show "$NEW_SHA:apps/cli/src/mcp/lody-mcp-http-server.ts" \
+  > packages/webapp/test/upstream-baseline/lody-mcp-http-server.ts.txt
 ```
 
 Update the provenance SHA in

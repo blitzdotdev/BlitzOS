@@ -98,13 +98,13 @@ describe("vendored Lody leaves", () => {
     expect((composer as HTMLTextAreaElement).value).toContain("Move the rail over to Lody");
     expect(text).toContain("blitzdotdev/BlitzOS");
 
-    // LoroSidebar body: both session sections, and the Terminals section our
-    // own `.shell-s` rows are injected into through `afterSessionListContent`.
+    // LoroSidebar body: both session sections, and no Terminals section — a
+    // terminal is a tab of the surface's own strip, and the rail stopped
+    // listing every tab twice (2026-09-03).
     expect(text).toContain("fix the login redirect");
     expect(text).toContain("rail swap");
     expect(text).toContain("GitHub Worktrees");
-    expect(text).toContain("Terminals");
-    expect(mounted.container.querySelector(".session-rail-terminals .shell-s")).not.toBeNull();
+    expect(text).not.toContain("Terminals");
 
     // Everything Lody renders stays inside the surface boundary the
     // containment test probes.
@@ -133,10 +133,37 @@ describe("vendored Lody leaves", () => {
       (button) => button.textContent === "Archive",
     );
     expect(archive, "the footer's Archive entry").toBeDefined();
+    // And before it, in the same row, the New tab control: seam patch 22's
+    // `footerLeadingContent` is the start of the footer's utility row, and the
+    // trigger is a terminal glyph rather than a second "+" beside their own.
+    const newTab = mounted.container.querySelector<HTMLButtonElement>(
+      '.shell-newbar--footer button[aria-label="New tab"]',
+    );
+    expect(newTab, "the footer's New tab control").not.toBeNull();
+    expect(newTab?.parentElement?.parentElement).toBe(archive?.parentElement);
+    expect(
+      (newTab as HTMLElement).compareDocumentPosition(archive as HTMLElement)
+        & Node.DOCUMENT_POSITION_FOLLOWING,
+      "New tab precedes Archive",
+    ).not.toBe(0);
     // The composer sits in the same 46rem column as the stream rows, because
     // `SessionChatInputArea` wraps it in one upstream.
     const columns = mounted.container.querySelectorAll(".max-w-\\[46rem\\]");
     expect(columns.length).toBeGreaterThan(1);
+  });
+});
+
+describe("seam patch 22 is declared where an upstream-merge agent reads", () => {
+  it("names the footer slot in BLITZ-PATCHES.md and in the vendored source", () => {
+    const repoRootDir = join(here, "..", "..", "..");
+    const patches = readFileSync(join(repoRootDir, "vendor/lody/BLITZ-PATCHES.md"), "utf8");
+    expect(patches).toContain("### 22. `LoroSidebar`'s footer takes one host control");
+    const sidebar = readFileSync(
+      join(repoRootDir, "vendor/lody/packages/components/src/components/loro-sidebar.tsx"),
+      "utf8",
+    );
+    expect(sidebar).toContain("footerLeadingContent?: ReactNode;");
+    expect(sidebar).toContain("{footerLeadingContent}");
   });
 });
 

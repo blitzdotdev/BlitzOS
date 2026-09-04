@@ -1,0 +1,12 @@
+{
+  "input": {
+    "version": 2,
+    "kind": "file",
+    "file": "/workspace/a/../../etc/passwd",
+    "title": "x",
+    "requestedAt": 1787000011000
+  },
+  "expected": {
+    "focus": null
+  }
+}

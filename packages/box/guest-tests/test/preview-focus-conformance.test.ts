@@ -7,16 +7,20 @@ import { describe, expect, it } from "vitest";
 
 /** Producer side of the `preview-focus` cross-runtime contract. The Go gateway
  * reader is pinned against the same fixtures in
- * packages/box/gateway/main_test.go; here the real `blitz preview open` CLI is
- * driven and its marker file is checked against the fixture shape. */
+ * packages/box/gateway/main_test.go; here the real `blitz browser open` CLI
+ * (and its `teenyapp open` alias) is driven and its marker file is checked
+ * against the fixture shape. */
 
-interface FocusMarker {
+type FocusMarker = {
   version: number;
-  port: number;
-  path: string;
+  kind?: "port" | "file" | "url";
+  port?: number;
+  path?: string;
+  file?: string;
+  url?: string;
   title: string;
   requestedAt: number;
-}
+};
 
 interface Fixture {
   input: FocusMarker | null;
@@ -62,7 +66,7 @@ interface OpenResult {
   focusPath: string;
 }
 
-function runOpen(args: string[], verb = "teenyapp"): OpenResult {
+function runOpen(args: string[], verb = "browser"): OpenResult {
   const directory = mkdtempSync(join(tmpdir(), "preview-focus-"));
   const focusPath = join(directory, "preview-focus.json");
   const result = spawnSync("sh", [blitzPath, verb, "open", ...args], {
@@ -79,19 +83,35 @@ function readMarker(focusPath: string): FocusMarker {
 }
 
 function withoutRequestedAt(marker: FocusMarker): Omit<FocusMarker, "requestedAt"> {
-  return { version: marker.version, port: marker.port, path: marker.path, title: marker.title };
+  const { requestedAt: _requestedAt, ...rest } = marker;
+  return rest;
 }
 
-describe("blitz preview open producer contract", () => {
+/** The CLI arguments that produce a fixture's marker: the target, then the
+ * options a port marker carries. */
+function argumentsFor(marker: FocusMarker): string[] {
+  if (marker.kind === "file") return [marker.file ?? "", "--title", marker.title];
+  if (marker.kind === "url") return [marker.url ?? "", "--title", marker.title];
+  return [String(marker.port), "--path", marker.path ?? "/", "--title", marker.title];
+}
+
+describe("blitz browser open producer contract", () => {
   it("pins the shared preview-focus fixture corpus", () => {
     expect(fixtureNames()).toEqual([
       "absent.json",
+      "bad-kind.json",
       "bad-path.json",
+      "file-outside-workspace.json",
+      "file-traversal.json",
       "reserved-port-17445.json",
       "reserved-port-7446.json",
       "reserved-port.json",
       "traversal-path.json",
+      "url-not-https.json",
       "valid-defaults.json",
+      "valid-file.json",
+      "valid-url.json",
+      "valid-v1-legacy.json",
       "valid-with-path.json",
     ]);
   });
@@ -127,23 +147,19 @@ describe("blitz preview open producer contract", () => {
     expect(existsSync(refused.focusPath)).toBe(false);
   });
 
-  it("emits the fixture marker shape for every valid fixture", () => {
+  it("emits the fixture marker shape for every valid version-2 fixture", () => {
     // Valid fixtures are the ones the gateway accepts (non-null focus); the
-    // rejection fixtures carry a bad marker the CLI would never write.
+    // rejection fixtures carry a bad marker the CLI would never write, and the
+    // version-1 fixture is what an older box's CLI wrote — readers still take
+    // it, this CLI no longer produces it.
     const valid = fixtureNames()
       .map((name) => readFixture(name))
       .filter((fixture): fixture is { input: FocusMarker; expected: { focus: FocusMarker } } =>
-        fixture.input !== null && fixture.expected.focus !== null);
-    expect(valid.length).toBeGreaterThan(0);
+        fixture.input !== null && fixture.expected.focus !== null && fixture.input.version === 2);
+    expect(valid.map((fixture) => fixture.input.kind).sort()).toEqual(["file", "port", "port", "url"]);
     for (const fixture of valid) {
       const marker = fixture.input;
-      const { status, stderr, focusPath } = runOpen([
-        String(marker.port),
-        "--path",
-        marker.path,
-        "--title",
-        marker.title,
-      ]);
+      const { status, stderr, focusPath } = runOpen(argumentsFor(marker));
       expect(status, stderr).toBe(0);
       const emitted = readMarker(focusPath);
       expect(withoutRequestedAt(emitted)).toEqual(withoutRequestedAt(marker));
@@ -156,22 +172,43 @@ describe("blitz preview open producer contract", () => {
     const { status, stderr, focusPath } = runOpen(["4321"]);
     expect(status, stderr).toBe(0);
     const marker = readMarker(focusPath);
-    expect(marker.version).toBe(1);
+    expect(marker.version).toBe(2);
+    expect(marker.kind).toBe("port");
     expect(marker.port).toBe(4321);
     expect(marker.path).toBe("/");
     expect(marker.title).toBe("port 4321");
   });
 
-  /** `blitz teenyapp` is the documented verb; `blitz preview` stays a silent
-   * alias for existing agent muscle memory. Same code, same marker file, same
-   * gateway wire — the rename is CLI surface only. */
-  it("writes the identical marker under the documented verb and the alias", () => {
-    for (const verb of ["teenyapp", "preview"]) {
+  it("titles a file by its name and an app by its host", () => {
+    const file = runOpen(["/workspace/site/index.html"]);
+    expect(file.status, file.stderr).toBe(0);
+    expect(withoutRequestedAt(readMarker(file.focusPath))).toEqual({
+      version: 2,
+      kind: "file",
+      file: "/workspace/site/index.html",
+      title: "index.html",
+    });
+    const app = runOpen(["https://demo.app.teenyapp.com/x"]);
+    expect(app.status, app.stderr).toBe(0);
+    expect(withoutRequestedAt(readMarker(app.focusPath))).toEqual({
+      version: 2,
+      kind: "url",
+      url: "https://demo.app.teenyapp.com/x",
+      title: "demo.app.teenyapp.com",
+    });
+  });
+
+  /** `blitz browser open <port>` is the documented verb; `blitz teenyapp open`
+   * and `blitz preview open` stay aliases for existing agent muscle memory.
+   * Same code, same marker file, same gateway wire. */
+  it("writes the identical port marker under the verb and both aliases", () => {
+    for (const verb of ["browser", "teenyapp", "preview"]) {
       const { status, stderr, focusPath } = runOpen(["4444", "--title", "Docs"], verb);
       expect(status, `${verb}: ${stderr}`).toBe(0);
       const marker = readMarker(focusPath);
       expect(withoutRequestedAt(marker)).toEqual({
-        version: 1,
+        version: 2,
+        kind: "port",
         port: 4444,
         path: "/",
         title: "Docs",
@@ -191,6 +228,11 @@ describe("blitz preview open producer contract", () => {
       { name: "path with traversal", args: ["3000", "--path", "/a/../b"] },
       { name: "unknown option", args: ["3000", "--frag", "x"] },
       { name: "flag without value", args: ["3000", "--path"] },
+      { name: "file outside /workspace", args: ["/etc/passwd"] },
+      { name: "relative file outside /workspace", args: ["index.html"] },
+      { name: "file with traversal", args: ["/workspace/a/../../etc/passwd"] },
+      { name: "http app URL", args: ["http://demo.app.teenyapp.com/"] },
+      { name: "--path on a file", args: ["/workspace/x.html", "--path", "/y"] },
     ];
     for (const { name, args } of cases) {
       const { status, focusPath } = runOpen(args);
