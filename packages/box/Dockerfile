@@ -24,7 +24,6 @@ RUN go test ./... \
 
 FROM --platform=$BUILDPLATFORM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS lody-build
 
-ARG TARGETPLATFORM
 WORKDIR /src
 RUN corepack enable
 # Keep this input boundary independent of the webapp: renderer-only changes do
@@ -32,8 +31,8 @@ RUN corepack enable
 # store cache; the build script verifies and overlays the reviewed adapters.
 COPY vendor/lody /src/vendor/lody
 COPY vendor/lody-adapters /src/vendor/lody-adapters
-COPY scripts/lody-build-package.mjs scripts/lody-sync-adapters.mjs scripts/lody-package-manifest.json /src/scripts/
-RUN --mount=type=cache,id=lody-pnpm-node22-pnpm10.20-${TARGETPLATFORM},target=/root/.local/share/pnpm/store/v10 \
+COPY scripts/lody-build-package.mjs scripts/lody-npm-shrinkwrap.mjs scripts/lody-sync-adapters.mjs scripts/lody-package-manifest.json /src/scripts/
+RUN --mount=type=cache,id=lody-pnpm-node22-pnpm10.20,target=/root/.local/share/pnpm/store/v10 \
     node /src/scripts/lody-build-package.mjs --source /src/vendor/lody --out /out
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS vendors
@@ -62,12 +61,15 @@ RUN set -eux; \
     npm install --global --omit=dev \
       @anthropic-ai/claude-code@latest \
       @openai/codex@0.147.0 \
-      "$lody_tarball" \
       ws@8.21.0 \
-    && cmp /tmp/lody-build/BUILD.json /opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json \
+    && install -d /opt/blitz/npm/lib/node_modules /opt/blitz/npm/bin /tmp/lody-unpack \
+    && tar -xzf "$lody_tarball" -C /tmp/lody-unpack \
+    && mv /tmp/lody-unpack/package /opt/blitz/npm/lib/node_modules/lody \
+    && npm ci --prefix /opt/blitz/npm/lib/node_modules/lody --omit=dev \
+    && ln -s ../lib/node_modules/lody/dist/index.js /opt/blitz/npm/bin/lody \
     && /opt/blitz/npm/bin/lody --help >/dev/null \
     && npm cache clean --force \
-    && rm -rf /tmp/lody-build
+    && rm -rf /tmp/lody-build /tmp/lody-unpack
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime-base
 
@@ -143,7 +145,6 @@ FROM runtime-base
 
 COPY --from=artifacts /out/root/ /
 COPY --from=vendors /opt/blitz/npm/ /opt/blitz/npm/
-COPY --from=lody-build --chown=root:root --chmod=0444 /out/BUILD.json /opt/blitz/lody/BUILD.json
 COPY --from=cred-build /out/blitz-cred /usr/local/bin/blitz-cred
 COPY --from=gateway-build /out/blitz-box-gateway /usr/local/bin/blitz-box-gateway
 COPY env.defaults /etc/blitz/env.defaults

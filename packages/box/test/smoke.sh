@@ -191,10 +191,8 @@ for service in sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
 
-docker exec "$container" cmp \
-  /opt/blitz/lody/BUILD.json \
-  /opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json \
-  || fail "the image-level and packaged Lody BUILD.json files differ"
+docker exec "$container" test -f /opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json \
+  || fail "the packaged Lody BUILD.json is missing"
 docker exec "$container" /opt/blitz/npm/bin/lody --help >/dev/null \
   || fail "the tree-built Lody CLI does not answer --help"
 docker exec "$container" grep -Eq '^[[:space:]]*/opt/blitz/npm/bin/lody start$' \

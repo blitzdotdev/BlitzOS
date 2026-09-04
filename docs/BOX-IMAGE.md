@@ -79,13 +79,12 @@ configuration gate and under the `canary` environment:
    anything to the deploy job. The deploy pins those values and verifies that
    `/version` reports both the merged commit and the expected box-image tag.
 
-**Lody release identity.** The Dockerfile now consumes more than the four paths
-in today's canary release id: it builds `vendor/lody` with the reviewed adapter
-snapshots and shared package script. Until plan PR E in
-`plans/LODY-DAEMON-FROM-TREE.md`, a pure Lody-input change does not change that
-release id and can therefore reuse an older image. PR E adds the tree, adapters,
-lockfile, and build/seam scripts to this existing mechanism. Follow
-`docs/LODY-MERGE.md` for the upstream procedure; do not duplicate it here.
+**Lody release identity.** The release key covers every repository source in a
+Dockerfile `COPY`. That includes `vendor/lody`, reviewed adapter snapshots, and
+all shared Lody build scripts. A pure Lody-input change therefore selects a new
+release ID. The key uses Git object IDs instead of walking the large trees.
+`box-image-key.test.mjs` parses the Dockerfile and rejects any uncovered source.
+Follow `docs/LODY-MERGE.md` for the upstream procedure.
 
 ### Lody daemon package and provenance
 
@@ -93,18 +92,23 @@ The `lody-build` Docker stage runs the same
 `scripts/lody-build-package.mjs --source vendor/lody` path used by the pair
 gate. It overlays the five reviewed adapter snapshots, performs the frozen pnpm
 install and CLI build, verifies the package manifest, and emits a tarball plus
-`BUILD.json`. A BuildKit cache mount retains the pnpm 10.20 store by Node line
-and target platform; the lockfile and build inputs still invalidate the build
-layer. Files outside the Lody inputs, including `packages/webapp`, do not.
+`BUILD.json`. It also derives `npm-shrinkwrap.json` from the CLI production
+graph in `pnpm-lock.yaml`. Exact registry URLs and integrities pin every runtime
+package. A BuildKit cache mount retains the pnpm 10.20 store by Node line.
+The architecture-neutral build stage does not key that cache by target platform.
+The lockfile and build inputs still invalidate the build layer. Files outside
+the Lody inputs, including `packages/webapp`, do not.
 Adapter snapshots exclude generated `dist/` and `node_modules/` trees. The
 `lody-adapters-drift.test.mjs` gate checks that every tracked Lody builder input
 survives the ordered Dockerfile ignore rules.
 
-The vendors stage installs that tarball at the established global prefix, so
-the package remains `/opt/blitz/npm/lib/node_modules/lody` and s6 still executes
-`/opt/blitz/npm/bin/lody start`. The identical stamp is carried inside the
-package at `dist/BUILD.json` and outside it at `/opt/blitz/lody/BUILD.json`.
-Serving it over `/lody/build` is deliberately deferred to plan PR D.
+The target-platform vendors stage extracts that tarball at the established
+global prefix. It runs `npm ci` at the package root, where npm enforces the
+shrinkwrap and checks every integrity. Lifecycle scripts stay enabled for
+native dependencies. The package remains
+`/opt/blitz/npm/lib/node_modules/lody`, and s6 still executes
+`/opt/blitz/npm/bin/lody start`. Its only stamp is `dist/BUILD.json` inside that
+package. Plan PR D will serve that file over `/lody/build`.
 
 The `canary` environment's `CLOUDFLARE_API_TOKEN` must be able to write the
 `blitz-box-images` bucket. A token that can deploy the Worker but cannot write
@@ -255,8 +259,8 @@ unprivileged degradation path. It builds both the default-disabled image and
 the same `BLITZ_LODY_SESSIONS=1` variant canary ships, then boots the enabled
 variant. The Lody checks use a 180-second wall-clock deadline with bounded host
 commands while waiting for the supervised daemon and bridge, probe bridge
-health and `/lody/platform`, compare the installed and outer `BUILD.json`
-bytes, inspect the live daemon environment and cgroup, and require its
+health and `/lody/platform`, require the packaged `dist/BUILD.json`, inspect
+the live daemon environment and cgroup, and require its
 built-in-MCP-disable log. In CI the smoke also requires memory, pids, and CPU
 delegation and proves that the `blitz` user can create and remove a child under
 `lody-sessions` with `memory.max`, `pids.max`, and `cpu.max`. The shipping CLI

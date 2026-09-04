@@ -72,8 +72,11 @@ jobs:
           mapfile -t tarballs < <(find "$RUNNER_TEMP/lody-artifact" -maxdepth 1 -type f -name 'lody-*.tgz' -print)
           test "${#tarballs[@]}" -eq 1
           tarball=${tarballs[0]}
-          npm install --global --prefix "$RUNNER_TEMP/lody-install" --omit=dev "$tarball"
           npm install --global --prefix "$RUNNER_TEMP/lody-install" --omit=dev @anthropic-ai/claude-code@latest
+          mkdir -p "$RUNNER_TEMP/lody-install/lib/node_modules" "$RUNNER_TEMP/lody-unpack"
+          tar -xzf "$tarball" -C "$RUNNER_TEMP/lody-unpack"
+          mv "$RUNNER_TEMP/lody-unpack/package" "$RUNNER_TEMP/lody-install/lib/node_modules/lody"
+          npm ci --prefix "$RUNNER_TEMP/lody-install/lib/node_modules/lody" --omit=dev
           echo "LODY_BUNDLE=$RUNNER_TEMP/lody-install/lib/node_modules/lody" >> "$GITHUB_ENV"
           echo "LODY_CLAUDE_BINARY=$RUNNER_TEMP/lody-install/bin/claude" >> "$GITHUB_ENV"
       - name: Run every non-probe daemon harness consumer

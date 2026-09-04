@@ -400,6 +400,19 @@ test("schema fixtures and env.defaults changes require a rebuild", () => {
   assert.equal(boxImageDecision("abc", ["env.defaults"]).rebuild, true);
 });
 
+test("Lody source, adapters, and build scripts require a rebuild", () => {
+  for (const file of [
+    "vendor/lody/apps/cli/package.json",
+    "vendor/lody-adapters/core/package.json",
+    "scripts/lody-build-package.mjs",
+    "scripts/lody-npm-shrinkwrap.mjs",
+    "scripts/lody-sync-adapters.mjs",
+    "scripts/lody-package-manifest.json",
+  ]) {
+    assert.equal(boxImageDecision("abc", [file]).rebuild, true, file);
+  }
+});
+
 test("a path that merely starts with an image path prefix does not count", () => {
   // "packages/boxes/..." is not "packages/box/...".
   assert.equal(boxImageDecision("abc", ["packages/boxes/thing.ts"]).rebuild, false);
@@ -410,6 +423,12 @@ test("IMAGE_PATHS names every Dockerfile repository input in build order", () =>
     "packages/box",
     "packages/broker",
     "packages/schema/fixtures",
+    "vendor/lody",
+    "vendor/lody-adapters",
+    "scripts/lody-build-package.mjs",
+    "scripts/lody-npm-shrinkwrap.mjs",
+    "scripts/lody-sync-adapters.mjs",
+    "scripts/lody-package-manifest.json",
     "env.defaults",
   ]);
 });

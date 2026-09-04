@@ -29,7 +29,7 @@ this runbook for every row marked manual.
 | Build, check, pack, and stamp the daemon from the merged tree | **Automated by `npm run lody:build` and the image's `lody-build` stage** | shared `scripts/lody-build-package.mjs` |
 | Run the real-daemon pair matrix against the PR artifact | **Required in the `lody-daemon` CI job** | `LODY_BUNDLE` and `LODY_CLAUDE_BINARY` select the job's installed artifact |
 | Serve and compare daemon provenance | **Inspect `BUILD.json` locally until plan PR D** | `/lody/build` plus browser comparison; legacy boxes have no route |
-| Publish and deploy a canary box image after merge | **Automated now by `.github/workflows/canary.yml`** | Plan PR E expands the existing image inputs to include the full Lody tree, adapters, lockfile, and build/seam scripts |
+| Publish and deploy a canary box image after merge | **Automated now by `.github/workflows/canary.yml`** | The release key covers every repository path copied by the Dockerfile, including all Lody build inputs |
 
 The shipping image builds and installs the daemon package from this same
 vendored tree. There is no npm daemon release to select or bump during an
@@ -297,13 +297,15 @@ jq . "$LODY_OUT/BUILD.json"
 
 The script exports `HEAD:vendor/lody`, overlays the five reviewed adapters,
 creates a Corepack shim for upstream's bare `pnpm` calls, performs the frozen
-install and build, copies the notice, checks the reviewed normalized package
-manifest, and writes the identical stamp beside the tarball and inside
-`dist/BUILD.json`. `build` already runs `check:published-bundle-imports`; do not
-run a second copy. Extra packed paths warn, while any missing reviewed entry
-fails. `distSha256` covers sorted path/content-digest records for the installed
-`dist` tree except the self-referential stamp. A measured warm build took about
-91 seconds; that is evidence, not a timeout.
+install and build, and copies the notice. It derives an npm lockfile v3
+shrinkwrap from `apps/cli` production dependencies in `pnpm-lock.yaml`.
+Every runtime package has the reviewed version, tarball URL, and integrity.
+The script also checks the short required-asset manifest. Missing workers,
+presets, WASM, the notice, the shrinkwrap, or the stamp fail the build.
+Unrelated chunks are allowed. The identical stamp sits beside the tarball and
+inside `dist/BUILD.json`. `distSha256` covers sorted path and content-digest
+records for `dist`, except the self-referential stamp. A measured warm build
+took about 91 seconds. That is evidence, not a timeout.
 
 For a Docker builder without Git, pass `--source /path/to/lody`. The script
 reads source identity from that tree's `UPSTREAM.md` and adapter identity from
@@ -311,11 +313,14 @@ the reviewed `vendor/lody-adapters` stamps beside the script's repository root.
 
 ## Run the pair gate
 
-Install the tarball into a temporary prefix and point the harness at the package
-directory, not `dist/index.js`:
+Extract the tarball into a temporary prefix. Run npm at the package root so it
+enforces the included shrinkwrap. Then point the harness at that directory:
 
 ```sh
-npm install --global --prefix "$LODY_OUT/install" --omit=dev "$TARBALL"
+mkdir -p "$LODY_OUT/install/lib/node_modules" "$LODY_OUT/unpack"
+tar -xzf "$TARBALL" -C "$LODY_OUT/unpack"
+mv "$LODY_OUT/unpack/package" "$LODY_OUT/install/lib/node_modules/lody"
+npm ci --prefix "$LODY_OUT/install/lib/node_modules/lody" --omit=dev
 export LODY_BUNDLE="$LODY_OUT/install/lib/node_modules/lody"
 test -f "$LODY_BUNDLE/dist/index.js"
 ```
@@ -376,6 +381,13 @@ built and fails explicitly if a non-paid suite reports a bundle-absence skip.
 Before installing that artifact, it also runs the focused authentication-queue,
 built-in-MCP request/reminder, and session-sandbox tests in the preserved
 scratch tree that produced it.
+
+The install fetches only the shrinkwrap's exact registry tarball URLs. npm
+checks every integrity before extraction. Lifecycle scripts remain enabled for
+native dependencies in the target runtime. The reviewed Lody workspace marks
+`better-sqlite3` 13 as build-ignored because its package already carries
+platform prebuilds. The pair gate proves those locked dependencies install and
+the resulting daemon starts.
 
 ## Recapture fixture corpora only for semantic changes
 
@@ -470,10 +482,12 @@ Do not merge it. A person reviews the upstream behavior and clicks merge.
 
 ## What happens after the human merge
 
-Today, every push to `main` runs the `image` job in
+Every push to `main` runs the `image` job in
 `.github/workflows/canary.yml`. It derives a SHA-256 release ID from the Git
-object IDs for `packages/box`, `packages/broker`,
-`packages/schema/fixtures`, and `env.defaults` through
+object IDs for every repository path copied by the Dockerfile. These inputs
+include `packages/box`, `packages/broker`, `packages/schema/fixtures`,
+`env.defaults`, `vendor/lody`, `vendor/lody-adapters`, and all Lody build scripts.
+The canonical list lives in
 `packages/control-plane/scripts/lib/box-image-inputs.mjs` and
 `packages/control-plane/scripts/box-image-key.mjs`. It validates and reuses an
 existing matching manifest or builds an amd64 image with Lody sessions enabled,
@@ -483,19 +497,15 @@ immutable `box-image/<releaseId>/` keys through
 ref/tag/archive digest to `deploy`, and verifies both commit and image tag through
 `/version`.
 
-That automation exists now, and `packages/box/Dockerfile` installs the
-source-built daemon. A pure `vendor/lody` change does not yet change the
-four-path release ID, however. Until plan PR E adds the Lody inputs, the locally
-built package proves the PR pair but a later vendor-only merge may reuse the
-previous canary image. A human must not treat today's release key as proof that
-the newly merged Lody pin shipped.
+`box-image-key.test.mjs` parses build-context `COPY` instructions and rejects
+an uncovered source. It also proves each Lody input changes the release ID.
+The key reads Git tree and blob IDs, so large adapter trees remain fast.
+Gitlinks inside `vendor/lody` contribute to its tree ID without a file walk.
 
-After plan PR E, the existing canary release key includes `vendor/lody`,
-reviewed adapters, the lockfile, and build/seam scripts. The same human merge
-click then causes a
-matching immutable image to be reused or baked, published, pinned, and deployed
-without a follow-up source commit. Plan PR D adds `/lody/build` so the browser
-can compare the running box stamp with its renderer commit.
+A vendor-only merge therefore selects a matching immutable image. The image is
+reused or baked, published, pinned, and deployed without a follow-up source
+commit. Plan PR D adds `/lody/build` so the browser can compare the package's
+own stamp with its renderer commit.
 
 New boxes use the newly deployed pin. Existing cloud boxes replace their
 container only after `updateRequested` is set through

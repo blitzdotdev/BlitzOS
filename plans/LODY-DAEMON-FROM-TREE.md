@@ -120,15 +120,13 @@ The direction holds, with these code-grounded corrections.
    The image job plans a content-derived release, reuses a valid published
    manifest or builds and publishes it, and passes its exact pin to deploy
    (`.github/workflows/canary.yml:22-185`, `.github/workflows/canary.yml:187-306`).
-   PR E extends this job; it does not add one.
-10. **The current image identity still misses every pure Lody subtree merge.**
-    `BOX_IMAGE_INPUTS` is now the shared input list for the planner and the old
-    advisory, but it contains only `packages/box`, `packages/broker`,
-    `packages/schema/fixtures`, and `env.defaults`
-    (`packages/control-plane/scripts/lib/box-image-inputs.mjs:1-8`,
-    `packages/control-plane/scripts/check-box-image.mjs:14-20`). Extend that
-    canonical list with the full Lody subtree, adapter vendor area, lockfile,
-    and build/seam scripts when the Dockerfile consumes them.
+   PR E adds the merge command and workflow caching. It does not add the job.
+10. **The image identity now covers pure Lody subtree merges.**
+    `BOX_IMAGE_INPUTS` is the shared input list for the planner and advisory.
+    It includes every repository source copied by the Dockerfile. The Lody
+    tree, adapter vendor area, and all build scripts are included. A contract
+    test parses `COPY` instructions and rejects an uncovered source. The key
+    uses Git object IDs, so adapter trees and Lody gitlinks stay fast.
 11. **Correction after #204 (2026-09-04): canary R2 releases are already
     immutable by namespace.** `box-image-key.mjs` hashes the four input object
     IDs into a 64-character release ID and derives both
@@ -274,25 +272,33 @@ corepack enable
 corepack pnpm install --filter 'lody...' --frozen-lockfile
 corepack pnpm --filter lody build
 copy THIRD_PARTY_NOTICES.md to apps/cli/dist/THIRD_PARTY_NOTICES.md
-node /src/scripts/lody-dist-manifest.mjs --check apps/cli/dist
+derive apps/cli/npm-shrinkwrap.json from the locked production graph
+check the short required-runtime-asset manifest
 corepack pnpm --filter lody pack --pack-destination /out
-node /src/scripts/lody-build-stamp.mjs --tarball /out/lody-*.tgz --out /out/BUILD.json
+verify the tarball's stamp, shrinkwrap, production manifest, and dist digest
 ```
 
 Use a BuildKit cache mount for the pnpm store, keyed by Node major, pnpm
-version, lockfile digest, and build platform. Do not cache `node_modules` or
-`dist`; both must be reconstructed from the frozen graph and current source.
+version, and store format. The architecture-neutral tarball does not use the
+target platform in its cache key. Do not cache `node_modules` or `dist`; both
+must be reconstructed from the frozen graph and current source.
 The cold cost budget is the measured 2m11s plus Docker layer overhead, with
 roughly 3.2 GB peak scratch. A warm adapter/source-only merge should reuse the
 pnpm store and pay mainly the 91-second build
 (`/var/lib/blitz/home/codex/daemonbuild-result.md:51-76`).
 
 The tarball remains architecture-neutral JavaScript/WASM plus dependency
-metadata. Install it in the target-platform `vendors` stage with
-`npm install --global --omit=dev /out/lody-*.tgz`, beside the existing Claude,
-Codex, and `ws` installs. npm then resolves external/native runtime packages for
-the target architecture. Run a target-platform import/`--help` smoke after the
-install. The final image still copies `/opt/blitz/npm` wholesale
+metadata. Its npm lockfile v3 shrinkwrap comes from `apps/cli` production
+dependencies in `pnpm-lock.yaml`. Every node records an exact version, registry
+tarball URL, and integrity. Version conflicts use nested `node_modules` paths.
+
+Extract the tarball in the target-platform `vendors` stage. Run `npm ci` at the
+package root so npm enforces that shrinkwrap. This keeps platform selection and
+native lifecycle handling on the target. Do not use `--ignore-scripts`.
+`better-sqlite3` 13 carries platform prebuilds and has no install script. The
+reviewed pnpm workspace marks its synthetic `binding.gyp` build as ignored.
+Run a target-platform import and `--help` smoke after installation. The final
+image still copies `/opt/blitz/npm` wholesale
 (`packages/box/Dockerfile:131-147`), so the bridge, service graph, harness, and
 shell PATH keep their paths.
 
@@ -305,7 +311,7 @@ rewriting it would create another version claim. Remove stale comments that say
 the service needs a compiled npm-bundle patch
 (`packages/box/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run:11-15`).
 
-Write `/opt/blitz/lody/BUILD.json` with this shape:
+Write `apps/cli/dist/BUILD.json` with this shape before packing:
 
 ```json
 {
@@ -320,7 +326,6 @@ Write `/opt/blitz/lody/BUILD.json` with this shape:
   },
   "lockfileSha256": "<64 hex>",
   "distSha256": "<64 hex>",
-  "builtAt": "<ISO-8601 UTC>",
   "node": "22.20.0",
   "pnpm": "10.20.0"
 }
@@ -329,12 +334,9 @@ Write `/opt/blitz/lody/BUILD.json` with this shape:
 `distSha256` is the hash of sorted `path\0sha256\n` records for every packed
 `package/dist` file except the self-referential `BUILD.json`, not only `index.js`
 and not the gzip tarball. That makes it stable across tar metadata and covers
-code-split output. `builtAt` is provenance only and is excluded from
-`distSha256` and the image-input release ID; the plan does not claim
-byte-for-byte reproducibility, which the spike did not test
-(`/var/lib/blitz/home/codex/daemonbuild-result.md:114-123`). Make the file
-root-owned, mode 0444, and copy it independently of the npm prefix so CLI
-self-updates cannot rewrite provenance.
+code-split output. Identical inputs produce identical stamp bytes because the
+stamp has no build timestamp. Make the file mode 0444. The installed package's
+`dist/BUILD.json` is the only image copy. Plan PR D serves that file directly.
 
 ### Source seam and deletions
 
@@ -384,7 +386,8 @@ duplicate patch path.
 ### Box route
 
 Add `GET /build` to `blitz-lody-bridge`. It reads the immutable stamp path from
-`BLITZ_LODY_BUILD_STAMP` (default `/opt/blitz/lody/BUILD.json`), validates the
+`BLITZ_LODY_BUILD_STAMP` (default
+`/opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json`), validates the
 fixture-pinned shape, and serves the exact canonical JSON with `cache-control:
 no-store`. A missing stamp answers 404 with
 `{"ok":false,"error":"lody_build_unavailable"}`; malformed or unreadable
@@ -464,27 +467,20 @@ Conformance is:
 
 ## CI pair gate
 
-The daemon suites currently skip whenever the one hard-coded box path lacks
-`dist/index.js` (`packages/webapp/test/lody-daemon-harness.ts:65-82`). The
-current runbook works around that limitation in a disposable test worktree and
-requires every non-paid suite to run (`docs/LODY-MERGE.md`); PR A replaces the
-workaround by changing the declaration to:
-
-```ts
-export const LODY_BUNDLE = process.env.LODY_BUNDLE
-  ?? "/opt/blitz/npm/lib/node_modules/lody";
-```
-
-Add the equivalent `LODY_CLAUDE_BINARY` override to
-`lody-post-signin-turn.test.ts`; keep the box paths as defaults. Do not add a
-second harness.
+The daemon harness first uses an explicit `LODY_BUNDLE`. Otherwise it accepts
+the installed package only when `dist/BUILD.json` is present. An unstamped
+legacy install and a missing install are unavailable. The suite prints one
+line with the runbook build and export commands, then skips. CI sets
+`LODY_REQUIRE_BUNDLE=1`, which turns unavailability into a test failure. The
+workflow also rejects the diagnostic line. The harness never builds or caches
+a daemon on demand.
 
 The `lody-daemon` CI job on `ubuntu-latest` performs the same overlay, frozen
 install, build, output check, notice copy, pack, and stamp steps as the
-Dockerfile through one shared `scripts/lody-build-package.mjs`. It installs the
-tarball with `npm install --global --prefix "$RUNNER_TEMP/lody"`, exports
-`LODY_BUNDLE=$RUNNER_TEMP/lody/lib/node_modules/lody`, and installs the image's
-Claude CLI for the post-sign-in signed-out cases. Node comes from the repository
+Dockerfile through one shared `scripts/lody-build-package.mjs`. It extracts the
+tarball into a temporary prefix and runs `npm ci` at the package root. It then
+exports `LODY_BUNDLE` for that exact package and installs the image's Claude
+CLI for the post-sign-in signed-out cases. Node comes from the repository
 engine constraint (`package.json:16-18`); Corepack selects the vendored pnpm
 version. Upload the tarball and stamp as workflow artifacts so matrix jobs test
 the exact bytes the build job produced.
@@ -597,33 +593,31 @@ PR E can delete the manual mechanics that the command finally emits.
 
 ### Extend the existing canary workflow
 
-PR #204 already introduced the shared `BOX_IMAGE_INPUTS` list,
+PR #204 introduced the shared `BOX_IMAGE_INPUTS` list,
 `box-image-key.mjs`, `plan-box-image.mjs`, the canary `image` job, versioned R2
 routes, JSON publisher output, part-before-manifest upload ordering, and exact
-pin handoff to `deploy`. Its release ID is a SHA-256 over the Git object IDs of
-the four current Docker inputs, the full 64 characters become both the image
-tag suffix and R2 namespace, and a valid manifest is reused without rebuilding
-(`packages/control-plane/scripts/lib/box-image-inputs.mjs:1-8`,
+pin handoff to `deploy`. The source-daemon follow-up expanded that list to every
+Dockerfile repository input, including every Lody build input. Its release ID
+is a SHA-256 over those Git object IDs. All 64 characters become the image tag
+suffix and R2 namespace. A valid manifest is reused without rebuilding
+(`packages/control-plane/scripts/lib/box-image-inputs.mjs`,
 `packages/control-plane/scripts/box-image-key.mjs:20-38`,
 `.github/workflows/canary.yml:48-185`).
 
-Extend that mechanism rather than adding a parallel one:
+PR E extends that mechanism rather than adding a parallel one. Input coverage
+already landed and is no longer part of PR E:
 
-1. add `vendor/lody`, `vendor/lody-adapters`, and every root Lody build,
-   pin, sync, and seam-input script consumed by the Dockerfile to
-   `BOX_IMAGE_INPUTS`; keep `packages/box`, `packages/broker`,
-   `packages/schema/fixtures`, and `env.defaults`;
-2. extend the key's JSON evidence with `upstreamSha`, `subtreeCommit`, all five
+1. extend the key's JSON evidence with `upstreamSha`, `subtreeCommit`, all five
    adapter SHAs, the `pnpm-lock.yaml` object/digest, and daemon source-seam
    blobs while retaining the existing full input-object hash;
-3. keep the current exact `box-image/<releaseId>/manifest.json` probe and reuse
+2. keep the current exact `box-image/<releaseId>/manifest.json` probe and reuse
    behavior; when absent, build `linux/amd64` with the existing
    `BLITZ_LODY_SESSIONS=1` argument, add BuildKit/GitHub Actions layer caching,
    and run the Lody image smoke before the existing publisher runs;
-4. keep `publish-box-image.mjs --prefix ... --json ...`, its part-first upload,
+3. keep `publish-box-image.mjs --prefix ... --json ...`, its part-first upload,
    the validated release-key route in `core/box-images.ts`, and the legacy
    fixed route unchanged; and
-5. keep `deploy` dependent on `image`, passing the job's immutable `ref`, `tag`,
+4. keep `deploy` dependent on `image`, passing the job's immutable `ref`, `tag`,
    and archive SHA, and keep the `/version` check for both `GITHUB_SHA` and the
    computed image tag.
 
@@ -635,7 +629,7 @@ amd64 because canary currently offers only x86 machine types
 identity, not a byte-reproducibility claim: the manifest's archive SHA remains
 the authoritative byte pin.
 
-After the Lody inputs are added, the result of a vendor PR merge is: new input
+The result of a vendor PR merge is: new input
 hash -> valid-release reuse or cold/warm image bake -> immutable R2 release ->
 canary Worker deploy pinned to that exact archive. #204 already removed the
 follow-up pin commit for current image inputs. Existing cloud boxes are updated
@@ -660,32 +654,29 @@ Every item below is a named failing gate, not a review reminder.
 | `lody-pin-provenance.test.mjs` | `UPSTREAM.md`, reachable squash trailer, baselines, adapter stamps, or generated stamp inputs disagree |
 | **Lody frozen install** | `corepack pnpm install --filter 'lody...' --frozen-lockfile` wants to rewrite the lock or cannot resolve the reviewed graph |
 | **Lody published-bundle imports** | upstream's build drops or fails `check:published-bundle-imports`; that script already checks workspace imports and runtime dependency smoke (`vendor/lody/apps/cli/scripts/check-published-bundle-imports.js:55-103`) |
-| `lody-dist-manifest.test.mjs` | packed output is missing anything from the reviewed normalized set: fixed entry/ACP/worker JS names, expected normalized hashed chunks, DSH preset paths, `zstd.wasm`, license/readme/manifest, or notice; unlisted files warn so upstream additions are visible without making a complete package unsafe |
+| `lody-build-package.test.mjs` | the shrinkwrap differs from the pnpm production graph, or packed output misses the CLI, a worker, WASM glue, presets, notice, stamp, or shrinkwrap |
 | `lody-notices.test.mjs` | `package/dist/THIRD_PARTY_NOTICES.md` is absent, empty, or differs byte-for-byte from the root notice; the current research tar omitted it (`/var/lib/blitz/home/codex/daemonbuild-result.md:119-123`) |
 | extended `lody-seam-pin.test.ts` + `message-processor.test.ts` | the ACP source anchor moves, undeclared source is removed, or submit/cancel again serialize behind an interactive start |
 | **Lody daemon seam behavior** | the built scratch tree fails the focused ACP authentication queue, built-in-MCP request/reminder, or session-sandbox suites; this includes preserving external MCP servers and the upstream defaults when the host options are absent |
-| **Lody built-image smoke** | inside the just-built enabled image, `lody --help` fails; the installed and outer stamps differ byte-for-byte; s6 cannot keep the daemon and bridge up; bridge health or `/lody/platform` fails; the daemon misses its selected MCP environment/log; or its live cgroup and prepared session parent violate the box boundary |
+| **Lody built-image smoke** | inside the just-built enabled image, `lody --help` fails; the package stamp is missing; s6 cannot keep the daemon and bridge up; bridge health or `/lody/platform` fails; the daemon misses its selected MCP environment/log; or its live cgroup and prepared session parent violate the box boundary |
 | `lody-build-contract.test.ts` on guest/gateway/webapp | any Docker/Node/Go/browser side accepts, rejects, forwards, compares, logs, or renders a fixture differently |
 | **Lody daemon pair matrix** | a non-paid daemon-backed suite skips for lack of a bundle or fails against the tarball built from the PR's own tree |
 | **Canary image inputs** | an upstream SHA, adapter SHA, lockfile, source seam, or Docker input changes without changing the derived image release ID |
 
-The expected-dist manifest normalizes only Vite's content hash suffix. It still
-requires every logical chunk prefix and count, all nine fixed JS entry/worker
-files, all current preset files, and the WASM/notice. This is intentionally
-sensitive: upstream uses multiple explicit worker inputs and hashed chunk output
-(`vendor/lody/apps/cli/vite.config.ts:68-99`), and shipping only `index.js` is
-known broken (`/var/lib/blitz/home/codex/daemonbuild-result.md:121-124`). A
-legitimate code-splitting change updates this reviewed manifest in the vendor PR.
+The package manifest is a short required-runtime list. It requires the CLI,
+every worker entry, WASM and its hashed glue, current preset roots, the notice,
+the stamp, `package.json`, and the shrinkwrap. It does not enumerate ordinary
+hashed chunks or warn about additions. Shipping only `index.js` remains known
+broken (`/var/lib/blitz/home/codex/daemonbuild-result.md:121-124`).
 
 ### Deliberately not guarded
 
 - **`lody --version` matching a release.** Upstream source says `0.76.0`
   (`vendor/lody/apps/cli/package.json:1-9`); the immutable build stamp is the
   identity, and no s6/bridge/watchdog path parses CLI version output.
-- **Byte-identical rebuilds.** Only input identity, packed file set/content hash,
-  and the published archive SHA are promised. `builtAt` and the intentionally
-  floating Claude CLI already prevent a useful whole-image byte-reproducibility
-  claim; Claude is explicitly unpinned today (`packages/box/Dockerfile:27-37`).
+- **Byte-identical whole images.** Identical Lody inputs now produce identical
+  stamp and runtime-lock bytes. Tar metadata and the intentionally floating
+  Claude CLI still prevent a whole-image byte-reproducibility claim.
 - **Paid model turns in PR CI.** They spend a member subscription and already
   require an explicit opt-in. Free protocol, sign-out, lifecycle, and daemon
   behavior remain required.
@@ -708,7 +699,7 @@ legitimate code-splitting change updates this reviewed manifest in the vendor PR
 |---|---|
 | Unreleased upstream `main` | A same-commit pair can still contain unreleased regressions. Prefer public release tags; label a main snapshot; require the pair matrix; bake to canary before any `v*` client-prod tag. The existing release split is R2 canary versus tagged GHCR prod (`CLAUDE.md:218-227`). |
 | Build time and disk | Cold bake adds about 2m11s and peaked near 3.2 GB. Cache only the pnpm store, preserve a warm BuildKit/GHA cache, and keep the build in its own stage so unrelated runtime layers do not invalidate it. |
-| Native dependencies / architectures | `cpu-features` and `ssh2` optional accelerators warned in the spike, and another Node ABI/architecture may lack a prebuild (`/var/lib/blitz/home/codex/daemonbuild-result.md:59-66`, `/var/lib/blitz/home/codex/daemonbuild-result.md:119-123`). Install external runtime dependencies in each target stage and run the import/help smoke under both release platforms; add a compiler only if a required dependency proves it needs one. |
+| Native dependencies / architectures | The locked graph includes platform builds for `@lydell/node-pty`, while `better-sqlite3` 13 carries its prebuilds. Run target-stage `npm ci` and the import/help smoke under both release platforms. Add a compiler only if a future locked dependency requires one. |
 | Adapter repository size | Budget about 1-2 MiB and 1.3k files at this pin. Sync only tracked source, never histories or build output. Review the exact size and any accidental growth in the staged diff. |
 | Stale CLI version | Operators may see `0.76.0` from a much newer source build. Always log/display upstream SHA plus `distSha256`; do not infer compatibility from semver. |
 | Licenses | Bundled workspace and adapter code makes the root notice set part of the distributed package. Copy it into `dist`, pin it byte-for-byte, and review adapter license/stamp changes in every sync. |
@@ -764,6 +755,9 @@ reviewed artifact; the shipping image and migration pieces remain separate.
 - Kept the required CI pair job while moving the same builder into the
   source-built image smoke; the pair job now executes seams 19-21 directly from
   its preserved build scratch tree.
+- The review follow-up added the lockfile-derived production shrinkwrap, target
+  `npm ci`, the short runtime manifest, and deterministic single-copy stamp.
+- It also removed the harness's automatic builder and the dead install test.
 
 ### PR D — expose and compare the pair (medium, about 300-450 lines)
 
@@ -778,11 +772,10 @@ reviewed artifact; the shipping image and migration pieces remain separate.
 
 - Add `scripts/lody-merge.mjs`, `scripts/lody-pin.mjs`, the machine-readable
   seam/input manifests and tests, and root `lody:merge` scripts.
-- Extend `.github/workflows/canary.yml`,
-  `scripts/lib/box-image-inputs.mjs`, `box-image-key.mjs`, and their tests with
-  the Lody tree, adapter, lockfile, build, and seam inputs; #204 already added
-  the immutable R2 image job, versioned routes, publisher JSON mode, and exact
-  pin handoff to deploy. Add release BuildKit caching.
+- Extend `.github/workflows/canary.yml` and the key's evidence with explicit
+  Lody provenance. Input coverage already landed in the source-daemon review.
+  #204 already added the immutable R2 image job, versioned routes, publisher
+  JSON mode, and exact pin handoff to deploy. Add release BuildKit caching.
 - Touch `.github/workflows/release.yml`, `docs/LODY-MERGE.md`,
   `docs/BOX-IMAGE.md`, `CLAUDE.md`, and `vendor/lody/UPSTREAM.md` for the final
   automated shape.
@@ -808,8 +801,8 @@ reviewed artifact; the shipping image and migration pieces remain separate.
   procedures.
 - **Manual canary image operations after a current image-input change: already
   5 -> 0 in #204.** The separate build, untracked feature-flag edit, R2 publish,
-  three-value source pin edit, and follow-up pin merge are gone. PR E adds Lody
-  to the existing release identity so the vendor PR's reviewed merge click also
-  starts or reuses the matching bake and deploy.
+  three-value source pin edit, and follow-up pin merge are gone. Lody inputs are
+  already part of the release identity, so a reviewed vendor merge starts or
+  reuses the matching bake and deploy.
 - **Runtime daemon paths changed: 0.** s6, watchdog, bridge, guest tests, shell
   PATH, and the webapp harness keep the installed path they already use.
