@@ -406,7 +406,7 @@ line that is not one of the anchors above, and it renders the real
 
 ### 6. The Side Chat launcher needs an assistant turn (wave 4, 2026-08-31)
 
-**One idea, four hunks in one file, and it is inert without one prop.** In a
+**One idea, five hunks in one file, and it is inert without one prop.** In a
 session the agent has not answered yet, the side panel's Side Chat entry accepts
 a click and nothing visible happens. The launcher forks the active conversation
 (`handleCreateSideSession` → `forkActiveConversation`), a fork needs a completed
@@ -428,10 +428,11 @@ exist, and the option comes back a second later.
 | 22 | 1080 | immediately above `const activeSessionTabId = useMemo<SessionId \| null>` | holds the active tab id in a ref and adds `activeTabAssistantTurnId` state |
 | 23 | 1691 | `chatRefsMap.current.set(tabId, ref);` inside `setChatTabRef` | mirrors `getLastAssistantTurnId()` into that state on ATTACH |
 | 24 | 3358 | `disabled: launcherState === 'disabled' \|\| isCreatingSideSession,` in `sideChatOption` | adds the third term, gated on the prop |
+| 25 | 4921, 4983, 5548, 5629 | the four inline `setChatTabRef` ref arrows | caches one ref callback per tab id in a ref-held map, then passes it at all four sites |
 
-Hunk 24 is the only one that replaces an upstream line, so it is the only one
-named in `lody-surface-tabs.test.tsx`'s anchor table; the other three add lines
-and are covered by that file's subsequence check.
+Hunks 24 and 25 replace upstream lines. The disabled expression and all four
+ref sites are named in `lody-seam-pin.test.ts`'s anchor table; the other three
+hunks add lines and are covered by that file's subsequence check.
 
 **Why a mirror and not a read.** `chatRefsMap` is a ref: `getLastAssistantTurnId()`
 answers when somebody asks, which is right for a click and useless for a rendered
@@ -441,13 +442,15 @@ dependency list carries `lastCompletedAssistantMessageId`
 (`session-chat-interface.tsx:4661`), so React re-attaches the ref on the commit
 that first has a turn. No new subscription, no second document read.
 
-**Hunk 23 IGNORES THE DETACH, and that is the whole of the loop safety.** Every
-render of the page hands each chat surface a fresh `ref={(el) => setChatTabRef(…)}`
-arrow, so React calls it with `null` and then with the handle inside one commit.
-Taking the `null` would queue a state change on every commit — `null`, then the
-value — and React cannot bail out of the pair, so the page would re-render for
-ever. Taking only the attach settles on one value, which `Object.is` bails out on
-when it has not changed.
+**Hunk 25 keeps the ref callback stable, and hunk 23 ignores a real detach.**
+The first version of this patch left a fresh `ref` arrow at every chat surface.
+A parent render therefore detached and re-attached every imperative handle.
+Ignoring `null` stopped the mirrored state from flashing, but it did not stop
+the ref churn. The ref-held map now creates one callback per tab id. A parent
+render reuses it, while `useImperativeHandle` still calls it with an updated
+handle when `lastCompletedAssistantMessageId` changes. Hunk 23 ignores the
+`null` that can precede that updated handle, so the launcher does not briefly
+disable during the valid re-attach.
 
 **What it costs, measured against what it fixes.** The mirror is empty until the
 active surface has attached its handle AND its message list has reported a
@@ -457,9 +460,8 @@ during a page load; the alternative it replaces is a control a member clicks and
 which answers with an error.
 
 **The active tab arrives through a ref, not a dependency**, so `setChatTabRef`
-keeps its empty dependency list. A dependency would change the callback's
-identity on every tab switch, and that callback is what every chat surface is
-attached by.
+keeps its empty dependency list. The cached per-tab callbacks close over that
+stable function and keep their identity across every parent render.
 
 **Fork semantics are untouched.** `forkActiveConversation`, `handleForkAssistant`
 and the `sessions.forkNoAssistant` toast are exactly upstream's; what changes is
@@ -475,13 +477,20 @@ because the inertness rule above is what makes this tree's vendor edits safe to
 carry. Open it upstream as the unconditional version and **drop the prop when it
 merges.**
 
+**Upstream PR sketch:** "Keep SessionDetail chat refs stable by tab id." Add a
+ref-held callback map, use it at all four chat surfaces, and retain the existing
+assistant-turn mirror. The regression test re-renders the parent and checks ref
+identity, then changes `lastCompletedAssistantMessageId` and checks that the
+updated imperative handle still attaches.
+
 **Merge conflict drill.**
 
 - If `sideChatOption` stops being built from `getSideChatLauncherState`, hunk 24
   follows the `disabled` field to wherever the launcher's state is decided.
-- If the chat surfaces stop being attached through `setChatTabRef`, hunk 23 goes
-  to whatever replaces it — and the detach rule goes with it, or the page loops.
-- If upstream disables the launcher itself, DROP all four hunks and the
+- If the chat surfaces stop being attached through `setChatTabRef`, hunks 23 and
+  25 go to whatever replaces it. Keep the callbacks stable and mirror only an
+  attached handle.
+- If upstream disables the launcher itself, DROP all five hunks and the
   `sideChatRequiresAssistantTurn` line in `packages/webapp/src/lody/router.tsx`.
 
 ### 7. Host suppression of surfaces BlitzOS does not serve (v1 scope cuts, 2026-09-01)
