@@ -43,17 +43,17 @@ explicitly excludes Kimi in `pnpm-workspace.yaml`.
 
 | Adapter | Gitlink commit | Build disposition |
 |---|---|---|
-| `acp-extension-core` | `23c792b910a903b74601e346473827106f991715` | review, vendor outside the subtree, and overlay |
-| `acp-extension-claude` | `d395b3dc69832c6566eb0da84a08486d16ba1e69` | review, vendor outside the subtree, and overlay |
-| `acp-extension-codex` | `0887c5620b7b1773fa401e65a1009f10f80715a7` | review, vendor outside the subtree, and overlay |
-| `acp-extension-dsh` | `c584a16e4f4ce982c762b2c11f0c344f1643fd6d` | review, vendor outside the subtree, and overlay |
-| `acp-extension-grok` | `77a994f4e0a5acec8c52020c0a8e01b0e90aaef9` | review, vendor outside the subtree, and overlay |
+| `acp-extension-core` | `23c792b910a903b74601e346473827106f991715` | `vendor/lody-adapters/core/`; overlay for builds |
+| `acp-extension-claude` | `d395b3dc69832c6566eb0da84a08486d16ba1e69` | `vendor/lody-adapters/claude/`; overlay for builds |
+| `acp-extension-codex` | `0887c5620b7b1773fa401e65a1009f10f80715a7` | `vendor/lody-adapters/codex/`; overlay for builds |
+| `acp-extension-dsh` | `c584a16e4f4ce982c762b2c11f0c344f1643fd6d` | `vendor/lody-adapters/dsh/`; overlay for builds |
+| `acp-extension-grok` | `77a994f4e0a5acec8c52020c0a8e01b0e90aaef9` | `vendor/lody-adapters/grok/`; overlay for builds |
 | `acp-extension-kimi` | `aab809cca845e4b1d0a0db243d336ab5f128b177` | preserve as a gitlink; do not materialize for the CLI build |
 
-Until plan PR B, the reviewed `vendor/lody-adapters/` trees do not exist and
-the runbook fetches these public commits into disposable scratch space for the
-manual pair gate. Plan PR B makes all five build inputs checked-in and
-network-free at build time.
+`npm run lody:adapters:sync` replaces those five reviewed trees from the exact
+public commits. `npm run lody:adapters:check` is network-free and rejects a
+gitlink, URL, stamp, tree-content, Kimi-materialization, or workspace-exclusion
+drift.
 
 ## Updating these pins
 

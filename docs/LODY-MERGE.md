@@ -25,7 +25,7 @@ this runbook for every row marked manual.
 | Step | Status at HEAD | Target owner |
 |---|---|---|
 | Resolve the ref, pull the subtree, update pins and baselines, run gates, push, and open the PR | **Manual until plan PR E** | `scripts/lody-merge.mjs` through `npm run lody:merge` |
-| Materialize the five CLI adapters at their gitlink SHAs | **Manual exact-SHA scratch fetch until plan PR B** | `scripts/lody-sync-adapters.mjs` and reviewed `vendor/lody-adapters/` trees |
+| Materialize the five CLI adapters at their gitlink SHAs | **Automated by `npm run lody:adapters:sync`** | `scripts/lody-sync-adapters.mjs` and reviewed `vendor/lody-adapters/` trees |
 | Build, check, pack, and stamp the daemon from the merged tree | **Manual until plan PR A; not used by the image until plan PR C** | shared `scripts/lody-build-package.mjs`, then the `lody-build` Docker stage |
 | Run the real-daemon pair matrix against the PR artifact | **Manual until plan PR A; advisory in PR A, required after plan PR C** | `lody-daemon` CI job with `LODY_BUNDLE` and `LODY_CLAUDE_BINARY` overrides |
 | Serve and compare daemon provenance | **Inspect `BUILD.json` locally until plan PR D** | `/lody/build` plus browser comparison; legacy boxes have no route |
@@ -260,49 +260,19 @@ The CLI workspace uses five adapter gitlinks: core, Claude, Codex, DSH, and
 Grok. Kimi remains a gitlink but is excluded by
 `vendor/lody/pnpm-workspace.yaml`; do not materialize it for this build.
 
-When plan PR B exists, sync and check the reviewed trees:
+Sync and check the reviewed trees:
 
 ```sh
-node scripts/lody-sync-adapters.mjs
-node scripts/lody-sync-adapters.mjs --check
+npm run lody:adapters:sync
+npm run lody:adapters:check
 ```
 
-Until then, fetch only the five exact public gitlink commits into disposable
-scratch space. The following also overlays reviewed `vendor/lody-adapters/`
-archives automatically once they exist.
-
-```sh
-REPO_ROOT=$(git rev-parse --show-toplevel)
-LODY_BUILD_ROOT=$(mktemp -d)
-mkdir -p "$LODY_BUILD_ROOT/lody" "$LODY_BUILD_ROOT/adapters" "$LODY_BUILD_ROOT/out"
-git archive HEAD:vendor/lody | tar -x -C "$LODY_BUILD_ROOT/lody"
-
-for name in core claude codex dsh grok; do
-  target="$LODY_BUILD_ROOT/lody/packages/acp-extension-$name"
-  mkdir -p "$target"
-  sha=$(git ls-tree HEAD:vendor/lody/packages "acp-extension-$name" | awk '{print $3}')
-  test "${#sha}" -eq 40
-  if git cat-file -e "HEAD:vendor/lody-adapters/$name" 2>/dev/null; then
-    git archive "HEAD:vendor/lody-adapters/$name" | \
-      tar -x --exclude=UPSTREAM.md -C "$target"
-  else
-    url=$(git config -f vendor/lody/.gitmodules \
-      --get "submodule.packages/acp-extension-$name.url")
-    checkout="$LODY_BUILD_ROOT/adapters/$name"
-    git init -q "$checkout"
-    git -C "$checkout" remote add origin "$url"
-    git -C "$checkout" fetch -q --depth=1 origin "$sha"
-    test "$(git -C "$checkout" rev-parse FETCH_HEAD)" = "$sha"
-    git -C "$checkout" archive "$sha" | tar -x -C "$target"
-  fi
-done
-
-git ls-tree HEAD:vendor/lody/packages acp-extension-kimi
-grep -F "'!packages/acp-extension-kimi'" vendor/lody/pnpm-workspace.yaml
-```
-
-Record all six gitlink SHAs and any changes in the PR body. The five build
-inputs must match their gitlinks exactly; Kimi must stay excluded.
+The sync fetches each exact public gitlink commit, archives only its tracked
+tree, and replaces the corresponding `vendor/lody-adapters/<name>/` snapshot.
+The check uses no network. It proves all five content hashes and stamps still
+match their gitlinks and `.gitmodules`, and that Kimi remains an unmaterialized,
+excluded gitlink. Record all six gitlink SHAs and any adapter-tree changes in
+the PR body.
 
 ## Build and stamp the daemon
 

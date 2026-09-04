@@ -1,0 +1,236 @@
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": {
+          "lody": {
+            "goal": null
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "title": "List the files",
+        "_meta": {
+          "lody": {
+            "titleSource": "fallback"
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "user_message_chunk",
+        "messageId": "item-user-1",
+        "content": {
+          "type": "text",
+          "text": "List the files"
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "agent_thought_chunk",
+        "messageId": "item-reasoning-1",
+        "content": {
+          "type": "text",
+          "text": "Need to inspect the directory."
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "item-plan-1",
+        "content": {
+          "type": "text",
+          "text": "Inspect project files"
+        },
+        "_meta": {
+          "lody": {
+            "messagePhase": "final_answer"
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-rg",
+        "status": "in_progress",
+        "kind": "search",
+        "title": "Search for 'Service' in src"
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-rg",
+        "status": "completed",
+        "rawOutput": {
+          "output": "Chunk ID: search123\nWall time: 0.0000 seconds\nProcess exited with code 0\nOutput:\nsrc/service.ts:export class Service {}\n"
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-rg-failed",
+        "status": "in_progress",
+        "kind": "search",
+        "title": "Search for 'Missing' in src"
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-rg-failed",
+        "status": "failed",
+        "rawOutput": {
+          "output": "Chunk ID: search456\nWall time: 0.0000 seconds\nProcess exited with code 1\nOutput:\n"
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-read",
+        "status": "in_progress",
+        "kind": "read",
+        "title": "Read file '/test/project/src/index.ts'",
+        "locations": [
+          {
+            "path": "/test/project/src/index.ts"
+          }
+        ]
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-read",
+        "status": "completed",
+        "rawOutput": {
+          "output": "Chunk ID: read123\nWall time: 0.0000 seconds\nProcess exited with code 0\nOutput:\n     1\tconsole.log('hi');\n"
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-ls",
+        "status": "in_progress",
+        "kind": "read",
+        "title": "List files"
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-ls",
+        "status": "completed",
+        "rawOutput": {
+          "output": "Chunk ID: abc123\nWall time: 0.0000 seconds\nProcess exited with code 0\nOutput:\nREADME.md\nsrc\n"
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "session-legacy",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "item-agent-1",
+        "content": {
+          "type": "text",
+          "text": "The directory contains README.md and src."
+        },
+        "_meta": {
+          "lody": {
+            "turnId": "turn-1"
+          }
+        }
+      }
+    }
+  ]
+}

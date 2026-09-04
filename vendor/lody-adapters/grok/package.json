@@ -1,0 +1,33 @@
+{
+  "name": "acp-extension-grok",
+  "version": "0.1.0",
+  "description": "ACP compatibility adapter for the official Grok runtime",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "acp-extension-grok": "src/index.js"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "runtime-manifest.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node --check src/index.js && node --check src/proxy.js && node --check src/runtime-process.js",
+    "test": "node scripts/test.mjs",
+    "typecheck": "node --check src/index.js && node --check src/proxy.js && node --check src/runtime-process.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LodyAI/acp-extension-grok.git"
+  },
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "dependencies": {
+    "acp-extension-core": "0.1.0"
+  }
+}

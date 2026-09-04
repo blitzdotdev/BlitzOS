@@ -1,0 +1,493 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SessionState } from '../../CodexAcpServer';
+import type { ServerNotification } from '../../app-server';
+import { createCodexMockTestFixture, createTestSessionState, setupPromptAndSendNotifications, type CodexMockTestFixture } from '../acp-test-utils';
+import {AgentMode} from "../../AgentMode";
+
+describe('CodexEventHandler - command action events', () => {
+    let mockFixture: CodexMockTestFixture;
+    const sessionId = 'test-session-id';
+
+    beforeEach(() => {
+        mockFixture = createCodexMockTestFixture();
+        vi.clearAllMocks();
+    });
+
+    const sessionState: SessionState = createTestSessionState({
+        sessionId,
+        currentModelId: 'model-id[effort]',
+        agentMode: AgentMode.DEFAULT_AGENT_MODE
+    });
+
+    it('should handle list files command with explicit path', async () => {
+        const listFilesNotification: ServerNotification = {
+            method: 'item/started',
+            params: {
+                threadId: sessionId,
+                turnId: 'turn-1',
+                startedAtMs: 0,
+                item: {
+                    type: 'commandExecution',
+                    id: 'command-list-path',
+                    pluginId: null,
+                    scriptPath: null,
+                    command: 'ls /test/project',
+                    cwd: '/test/project',
+                    processId: null,
+                    source: 'agent',
+                    status: 'inProgress',
+                    commandActions: [
+                        {
+                            type: 'listFiles',
+                            command: 'ls /test/project',
+                            path: '/test/project',
+                        },
+                    ],
+                    aggregatedOutput: null,
+                    exitCode: null,
+                    durationMs: null,
+                },
+            },
+        };
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, [listFilesNotification]);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/command-list-files-with-path.json'
+        );
+    });
+
+    it('should handle list files command without a path', async () => {
+        const listFilesNotification: ServerNotification = {
+            method: 'item/started',
+            params: {
+                threadId: sessionId,
+                turnId: 'turn-1',
+                startedAtMs: 0,
+                item: {
+                    type: 'commandExecution',
+                    id: 'command-list-no-path',
+                    pluginId: null,
+                    scriptPath: null,
+                    command: 'ls',
+                    cwd: '/test/project',
+                    processId: null,
+                    source: 'agent',
+                    status: 'completed',
+                    commandActions: [
+                        {
+                            type: 'listFiles',
+                            command: 'ls',
+                            path: null,
+                        },
+                    ],
+                    aggregatedOutput: null,
+                    exitCode: 0,
+                    durationMs: 10,
+                },
+            },
+        };
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, [listFilesNotification]);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/command-list-files-without-path.json'
+        );
+    });
+
+    it('should include the path in read file command titles', async () => {
+        const readFileNotification: ServerNotification = {
+            method: 'item/started',
+            params: {
+                threadId: sessionId,
+                turnId: 'turn-1',
+                startedAtMs: 0,
+                item: {
+                    type: 'commandExecution',
+                    id: 'command-read-file',
+                    pluginId: null,
+                    scriptPath: null,
+                    command: 'sed -n "1,80p" /test/project/src/index.ts',
+                    cwd: '/test/project',
+                    processId: null,
+                    source: 'agent',
+                    status: 'inProgress',
+                    commandActions: [
+                        {
+                            type: 'read',
+                            command: 'sed -n "1,80p" /test/project/src/index.ts',
+                            name: 'sed',
+                            path: '/test/project/src/index.ts',
+                        },
+                    ],
+                    aggregatedOutput: null,
+                    exitCode: null,
+                    durationMs: null,
+                },
+            },
+        };
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, [readFileNotification]);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/command-read-file-with-path.json'
+        );
+    });
+
+    it('should handle search command with query and path', async () => {
+        const searchNotification: ServerNotification = {
+            method: 'item/started',
+            params: {
+                threadId: sessionId,
+                turnId: 'turn-1',
+                startedAtMs: 0,
+                item: {
+                    type: 'commandExecution',
+                    id: 'command-search-query-path',
+                    pluginId: null,
+                    scriptPath: null,
+                    command: 'rg "Service" src',
+                    cwd: '/test/project',
+                    processId: null,
+                    source: 'agent',
+                    status: 'inProgress',
+                    commandActions: [
+                        {
+                            type: 'search',
+                            command: 'rg Service src',
+                            query: 'Service',
+                            path: 'src',
+                        },
+                    ],
+                    aggregatedOutput: null,
+                    exitCode: null,
+                    durationMs: null,
+                },
+            },
+        };
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, [searchNotification]);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/command-search-with-query-and-path.json'
+        );
+    });
+
+    it('should handle search command with only query', async () => {
+        const searchNotification: ServerNotification = {
+            method: 'item/started',
+            params: {
+                threadId: sessionId,
+                turnId: 'turn-1',
+                startedAtMs: 0,
+                item: {
+                    type: 'commandExecution',
+                    id: 'command-search-query-only',
+                    pluginId: null,
+                    scriptPath: null,
+                    command: 'rg "Service"',
+                    cwd: '/test/project',
+                    processId: null,
+                    source: 'agent',
+                    status: 'inProgress',
+                    commandActions: [
+                        {
+                            type: 'search',
+                            command: 'rg Service',
+                            query: 'Service',
+                            path: null,
+                        },
+                    ],
+                    aggregatedOutput: null,
+                    exitCode: null,
+                    durationMs: null,
+                },
+            },
+        };
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, [searchNotification]);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/command-search-with-query-only.json'
+        );
+    });
+
+    it('should handle search command with only path (file glob search)', async () => {
+        const searchNotification: ServerNotification = {
+            method: 'item/started',
+            params: {
+                threadId: sessionId,
+                turnId: 'turn-1',
+                startedAtMs: 0,
+                item: {
+                    type: 'commandExecution',
+                    id: 'command-search-path-only',
+                    pluginId: null,
+                    scriptPath: null,
+                    command: 'rg --files -g "*service*"',
+                    cwd: '/test/project',
+                    processId: null,
+                    source: 'agent',
+                    status: 'inProgress',
+                    commandActions: [
+                        {
+                            type: 'search',
+                            command: "rg --files -g '*service*'",
+                            query: null,
+                            path: '*service*',
+                        },
+                    ],
+                    aggregatedOutput: null,
+                    exitCode: null,
+                    durationMs: null,
+                },
+            },
+        };
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, [searchNotification]);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/command-search-with-path-only.json'
+        );
+    });
+
+    it('should handle search command with neither query nor path', async () => {
+        const searchNotification: ServerNotification = {
+            method: 'item/started',
+            params: {
+                threadId: sessionId,
+                turnId: 'turn-1',
+                startedAtMs: 0,
+                item: {
+                    type: 'commandExecution',
+                    id: 'command-search-no-query-no-path',
+                    pluginId: null,
+                    scriptPath: null,
+                    command: 'rg',
+                    cwd: '/test/project',
+                    processId: null,
+                    source: 'agent',
+                    status: 'inProgress',
+                    commandActions: [
+                        {
+                            type: 'search',
+                            command: 'rg',
+                            query: null,
+                            path: null,
+                        },
+                    ],
+                    aggregatedOutput: null,
+                    exitCode: null,
+                    durationMs: null,
+                },
+            },
+        };
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, [searchNotification]);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/command-search-no-query-no-path.json'
+        );
+    });
+
+    it('should handle mcp tools', async () => {
+        const searchNotification: ServerNotification = {
+            method: 'item/started',
+            params: {
+                threadId: sessionId,
+                turnId: 'turn-1',
+                startedAtMs: 0,
+                item: {
+                    type: "mcpToolCall",
+                    id: "call-id",
+                    server: "server-name",
+                    tool: "tool-name",
+                    status: "inProgress",
+                    arguments: { argument: "example"},
+                    appContext: null,
+                    readOnlyHint: null,
+                    pluginId: null,
+                    result: null,
+                    error: null,
+                    durationMs: null,
+                },
+            },
+        };
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, [searchNotification]);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/mcp-tool-in-progress.json'
+        );
+    });
+
+    it('should include mcp progress and final logs', async () => {
+        const notifications: ServerNotification[] = [
+            {
+                method: 'item/started',
+                params: {
+                    threadId: sessionId,
+                    turnId: 'turn-1',
+                    startedAtMs: 0,
+                    item: {
+                        type: "mcpToolCall",
+                        id: "call-id",
+                        server: "ijproxy",
+                        tool: "read_file",
+                        status: "inProgress",
+                        arguments: { file_path: ".ai/local.md", mode: "slice", start_line: 1, max_lines: 200 },
+                        appContext: null,
+                        readOnlyHint: true,
+                        pluginId: null,
+                        result: null,
+                        error: null,
+                        durationMs: null,
+                    },
+                },
+            },
+            {
+                method: 'item/mcpToolCall/progress',
+                params: {
+                    threadId: sessionId,
+                    turnId: 'turn-1',
+                    itemId: 'call-id',
+                    message: "File /Users/aleksandr.slapoguzov/Projects/ultimate/.ai/local.md doesn't exist or can't be opened",
+                },
+            },
+            {
+                method: 'item/completed',
+                params: {
+                    threadId: sessionId,
+                    turnId: 'turn-1',
+                    completedAtMs: 0,
+                    item: {
+                        type: "mcpToolCall",
+                        id: "call-id",
+                        server: "ijproxy",
+                        tool: "read_file",
+                        status: "failed",
+                        arguments: { file_path: ".ai/local.md", mode: "slice", start_line: 1, max_lines: 200 },
+                        appContext: null,
+                        readOnlyHint: true,
+                        pluginId: null,
+                        result: null,
+                        error: {
+                            message: "File /Users/aleksandr.slapoguzov/Projects/ultimate/.ai/local.md doesn't exist or can't be opened",
+                        },
+                        durationMs: 15,
+                    },
+                },
+            },
+        ];
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, notifications);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/mcp-tool-completed-with-logs.json'
+        );
+    });
+
+    it('should preserve repeated mcp progress messages in final output', async () => {
+        const repeatedMessage = 'Polling for status';
+        const notifications: ServerNotification[] = [
+            {
+                method: 'item/started',
+                params: {
+                    threadId: sessionId,
+                    turnId: 'turn-1',
+                    startedAtMs: 0,
+                    item: {
+                        type: "mcpToolCall",
+                        id: "call-id",
+                        server: "server-name",
+                        tool: "tool-name",
+                        status: "inProgress",
+                        arguments: { argument: "example" },
+                        appContext: null,
+                        readOnlyHint: null,
+                        pluginId: null,
+                        result: null,
+                        error: null,
+                        durationMs: null,
+                    },
+                },
+            },
+            {
+                method: 'item/mcpToolCall/progress',
+                params: {
+                    threadId: sessionId,
+                    turnId: 'turn-1',
+                    itemId: 'call-id',
+                    message: repeatedMessage,
+                },
+            },
+            {
+                method: 'item/mcpToolCall/progress',
+                params: {
+                    threadId: sessionId,
+                    turnId: 'turn-1',
+                    itemId: 'call-id',
+                    message: repeatedMessage,
+                },
+            },
+            {
+                method: 'item/completed',
+                params: {
+                    threadId: sessionId,
+                    turnId: 'turn-1',
+                    completedAtMs: 0,
+                    item: {
+                        type: "mcpToolCall",
+                        id: "call-id",
+                        server: "server-name",
+                        tool: "tool-name",
+                        status: "failed",
+                        arguments: { argument: "example" },
+                        appContext: null,
+                        readOnlyHint: null,
+                        pluginId: null,
+                        result: null,
+                        error: {
+                            message: repeatedMessage,
+                        },
+                        durationMs: 15,
+                    },
+                },
+            },
+        ];
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, notifications);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/mcp-tool-repeated-progress.json'
+        );
+    });
+
+    it('should handle dynamic tools', async () => {
+        const dynamicToolNotification: ServerNotification = {
+            method: 'item/started',
+            params: {
+                threadId: sessionId,
+                turnId: 'turn-1',
+                startedAtMs: 0,
+                item: {
+                    type: "dynamicToolCall",
+                    id: "dyn-call-id",
+                    namespace: null,
+                    tool: "list_apps",
+                    arguments: { includeDisabled: false },
+                    status: "inProgress",
+                    contentItems: null,
+                    success: null,
+                    durationMs: null,
+                },
+            },
+        };
+
+        await setupPromptAndSendNotifications(mockFixture, sessionId, sessionState, [dynamicToolNotification]);
+
+        await expect(mockFixture.getAcpConnectionDump([])).toMatchFileSnapshot(
+            'data/dynamic-tool-in-progress.json'
+        );
+    });
+});

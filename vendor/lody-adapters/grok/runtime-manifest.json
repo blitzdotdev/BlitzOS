@@ -1,0 +1,20 @@
+{
+  "officialRuntime": {
+    "package": "@xai-official/grok",
+    "version": "1.0.13",
+    "minimumSupportedVersion": "1.0.13"
+  },
+  "privateWireContract": {
+    "permissionNotification": "x.ai/yolo_mode_changed",
+    "sessionConfigMeta": "x.ai/sessionConfig",
+    "sessionNotification": "x.ai/session_notification",
+    "sessionUpdateNotification": "x.ai/session/update",
+    "modelsUpdateNotification": "x.ai/models/update",
+    "turnCompletedUpdate": "turn_completed",
+    "sessionInfoRequest": "x.ai/session/info",
+    "billingRequest": "x.ai/billing",
+    "weeklyUsagePeriodType": "USAGE_PERIOD_TYPE_WEEKLY",
+    "reasoningEffortMeta": "reasoningEffort",
+    "autoPermissionMode": true
+  }
+}

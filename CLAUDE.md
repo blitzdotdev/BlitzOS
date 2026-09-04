@@ -123,6 +123,8 @@ PR C; an upstream merge never selects or bumps that package.
 
 - Integration code never goes inside `vendor/lody`; it lives in
   `packages/webapp/src/lody/`.
+- `vendor/lody-adapters` is generated supply-chain input. Change it only with
+  `npm run lody:adapters:sync`; never edit an adapter or its stamp by hand.
 - The only allowed in-vendor edits are source seams declared in
   `vendor/lody/BLITZ-PATCHES.md`, each with an upstream-PR sketch. Declare a new
   vendor edit there first, or do not make it.

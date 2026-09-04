@@ -737,15 +737,15 @@ image and migration pieces are ready.
 - Evidence: all non-paid real-daemon suites run instead of skip, and the built
   tarball/stamp are retained for inspection.
 
-### PR B — make adapter inputs reviewed (medium data, small code)
+### PR B — make adapter inputs reviewed (landed)
 
-- Add `vendor/lody-adapters/<five trees>` plus five stamps,
+- Landed: `vendor/lody-adapters/<five trees>` plus five stamps,
   `scripts/lody-sync-adapters.mjs`, `test/lody-adapter-drift.test.mjs`, and root
   package scripts.
-- Switch the shared builder from network materialization to the overlay. Assert
+- The shared builder uses this reviewed overlay. Assert
   Kimi remains an excluded gitlink.
-- Expected footprint: about 1.3 MiB / 1,285 upstream files plus 150-250 lines of
-  sync/drift code. Delete the temporary CI fetch path.
+- Landed footprint: 1,285 upstream entries plus five stamps. The sync/drift
+  code replaced the temporary scratch-fetch procedure.
 
 ### PR C — ship the source-built daemon (medium, about 300-450 net lines)
 

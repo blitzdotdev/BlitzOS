@@ -1,0 +1,54 @@
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "command-accumulate",
+        "_meta": {
+          "terminal_output_delta": {
+            "data": "line1\n",
+            "terminal_id": "command-accumulate"
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "command-accumulate",
+        "_meta": {
+          "terminal_output_delta": {
+            "data": "line2\n",
+            "terminal_id": "command-accumulate"
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "command-accumulate",
+        "_meta": {
+          "terminal_output_delta": {
+            "data": "line3\n",
+            "terminal_id": "command-accumulate"
+          }
+        }
+      }
+    }
+  ]
+}
