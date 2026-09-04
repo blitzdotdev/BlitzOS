@@ -1,5 +1,10 @@
 # Lody sessions — phase 2/3 browser runtime design
 
+> **Historical design record.** As of 2026-09-04, current upstream-merge,
+> npm-daemon-pin, and compiled-patch procedure is superseded by
+> `docs/LODY-MERGE.md` and `plans/LODY-DAEMON-FROM-TREE.md`. Measurements below
+> remain evidence for the runtime decisions they originally supported.
+
 How the vendored Lody renderer is wired to the box daemon in the browser: the
 platform provider, the two transport planes, the session-surface mount, and the
 style compensation. Plan of record: `plans/LODY-SESSIONS.md`. Evidence:

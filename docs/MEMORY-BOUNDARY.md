@@ -62,7 +62,7 @@ band below the ceiling so a runaway throttles visibly before it dies.
 |---|---|---|
 | Terminal tab | the tmux **pane command** in `blitz-term` | tmux forks panes from its server, not from the launcher |
 | SSH / sftp | `ForceCommand /usr/local/libexec/blitz-ssh-session` | sessions fork from sshd, which lives in the protected slice |
-| Session agents | the daemon's own sandbox (`session-sandbox.ts`), into `lody-sessions/lody-session-<id>` | the daemon spawns each ACP agent beyond any wrapper, so only it can place them. It never writes subtree_control, and its own cgroup cannot delegate while holding it, so `blitz-cgroup init` builds the parent beside `lody.scope` and `packages/box/patches/lody-session-sandbox.mjs` points the daemon at it |
+| Session agents | the daemon's own sandbox (`session-sandbox.ts`), into `lody-sessions/lody-session-<id>` | the daemon spawns each ACP agent beyond any wrapper, so only it can place them. It never writes subtree_control, and its own cgroup cannot delegate while holding it, so `blitz-cgroup init` builds the parent beside `lody.scope`. At HEAD, `packages/box/patches/lody-session-sandbox.mjs` supplies the transition behavior until plan PR C gives it an explicit source/configuration disposition; Lody upstream procedure is only in `docs/LODY-MERGE.md`. |
 | Remote Control | its s6 `run` | it drives a full agent |
 | Inner containers | `dockerd --cgroup-parent` | dockerd otherwise creates cgroups outside every limit |
 

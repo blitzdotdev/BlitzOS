@@ -7,13 +7,14 @@ daemon, with no independently selected npm daemon release.
 ## Decision and evidence
 
 The box currently installs `lody@0.88.1` globally, copies that npm tree into the
-runtime image, and rewrites its compiled `dist/index.js` with three scripts
-(`packages/box/Dockerfile:38-59`, `packages/box/Dockerfile:131-138`). The renderer
-comes from the squashed public subtree, and the current policy calls the npm
-version plus subtree revision one verified pair (`CLAUDE.md:115-131`,
-`vendor/lody/UPSTREAM.md:27-31`). That policy has failed at the current pin: the
-new renderer sends a capabilities-refresh shape that the old daemon rejects
-(`vendor/lody/UPSTREAM.md:17-25`).
+runtime image, and rewrites its compiled `dist/index.js` with five scripts
+(`packages/box/Dockerfile:38-63`, `packages/box/Dockerfile:135-142`). The renderer
+comes from the squashed public subtree. Before the 2026-09-04 documentation
+migration, policy called that npm version plus the subtree revision one
+verified pair. That former policy failed at the current pin: the new renderer
+sends a capabilities-refresh shape that the old daemon rejects. The transition
+and target rules now live in `docs/LODY-MERGE.md` and
+`vendor/lody/UPSTREAM.md`.
 
 Build the daemon from `vendor/lody/apps/cli` at the same upstream revision as
 the renderer. The completed spike is sufficient evidence for the decision:
@@ -58,9 +59,9 @@ the renderer. The completed spike is sufficient evidence for the decision:
 8. A successful upstream-merge PR changes the canary image input identity. A
    merge to `main` builds, publishes, pins, and deploys that image without a
    second source commit.
-9. No automation merges an upstream PR. The runbook already makes explicit
-   approval mandatory (`docs/LODY-MERGE.md:11-14`,
-   `docs/LODY-MERGE.md:439-457`).
+9. No automation merges an upstream PR. The runbook's opening rule and “Open
+   the pull request and stop” section make explicit approval mandatory
+   (`docs/LODY-MERGE.md`).
 
 ## Corrections to the proposed shape
 
@@ -70,8 +71,10 @@ The direction holds, with these code-grounded corrections.
    is singular, but five adapter commit IDs and `pnpm-lock.yaml` remain required
    inputs. `UPSTREAM.md` is the human-readable pin; the reachable squash
    commit's `git-subtree-split` trailer is its integrity mirror. They must agree,
-   not act as two independently editable pins. The current file still carries
-   the independent npm row and skew policy (`vendor/lody/UPSTREAM.md:8-31`).
+   not act as two independently editable pins. Before the 2026-09-04
+   documentation migration, `vendor/lody/UPSTREAM.md` still carried an
+   independent npm row and skew policy; it now records only source and adapter
+   pins plus the qualified transition state.
 2. **There are six gitlinks, but only five CLI build inputs.** The checked tree
    has core, Claude, Codex, DSH, Grok, and Kimi gitlinks. The CLI declares and
    builds only the first five (`vendor/lody/apps/cli/package.json:13-20`,
@@ -112,24 +115,32 @@ The direction holds, with these code-grounded corrections.
    older. “Restart to update” is also inaccurate: cloud-VM replacement happens
    only after `updateRequested` is set (`packages/control-plane/core/box-config.ts:21-29`,
    `packages/control-plane/core/box-config.ts:142-180`).
-9. **Canary has no image job or release hash today.** It has one `deploy` job,
-   an advisory that images are built by hand, and three hard-coded R2 values
-   (`.github/workflows/canary.yml:22-31`, `.github/workflows/canary.yml:81-98`,
-   `.github/workflows/canary.yml:134-155`). Add an image job; there is no
-   existing one to extend.
-10. **The current image-change detector would miss every Lody subtree merge.**
-    It watches only `packages/box` and `packages/broker`
-    (`packages/control-plane/scripts/check-box-image.mjs:15-41`). Its canonical
-    input set must include the full Lody subtree, adapter vendor area, lockfile,
-    and build/seam scripts.
-11. **The R2 release must be immutable, not only hash-checked.** The publisher
-    currently uploads `part-*` and `manifest.json` to one shared logical prefix
-    and prints one fixed manifest URL
-    (`packages/control-plane/scripts/publish-box-image.mjs:306-317`,
-    `packages/control-plane/scripts/publish-box-image.mjs:373-380`); the Worker
-    serves only one path level (`packages/control-plane/core/box-images.ts:19-32`).
-    Automated bakes need a release-keyed prefix so a publish cannot overwrite
-    parts an in-flight bootstrap or rollback still names.
+9. **Correction after #204 (2026-09-04): canary already has the image job and
+   release hash.** Every push to `main` runs `gate`, then `image`, then `deploy`.
+   The image job plans a content-derived release, reuses a valid published
+   manifest or builds and publishes it, and passes its exact pin to deploy
+   (`.github/workflows/canary.yml:22-185`, `.github/workflows/canary.yml:187-306`).
+   PR E extends this job; it does not add one.
+10. **The current image identity still misses every pure Lody subtree merge.**
+    `BOX_IMAGE_INPUTS` is now the shared input list for the planner and the old
+    advisory, but it contains only `packages/box`, `packages/broker`,
+    `packages/schema/fixtures`, and `env.defaults`
+    (`packages/control-plane/scripts/lib/box-image-inputs.mjs:1-8`,
+    `packages/control-plane/scripts/check-box-image.mjs:14-20`). Extend that
+    canonical list with the full Lody subtree, adapter vendor area, lockfile,
+    and build/seam scripts when the Dockerfile consumes them.
+11. **Correction after #204 (2026-09-04): canary R2 releases are already
+    immutable by namespace.** `box-image-key.mjs` hashes the four input object
+    IDs into a 64-character release ID and derives both
+    `blitz-box:<releaseId>` and `box-image/<releaseId>`
+    (`packages/control-plane/scripts/box-image-key.mjs:20-38`). The planner
+    accepts only a valid manifest with that exact tag, the publisher writes all
+    parts before `manifest.json`, and the Worker retains exact validated
+    release-keyed routes beside legacy routes
+    (`packages/control-plane/scripts/plan-box-image.mjs:39-83`,
+    `packages/control-plane/scripts/publish-box-image.mjs:315-420`,
+    `packages/control-plane/core/box-images.ts:24-56`). The remaining work is
+    Lody input coverage, not a new namespace or publisher mode.
 12. **The CI prerequisite is slightly larger than “Node plus tarball.”** The
     harness supplies its own TCP gateway and files stand-in and spawns the Node
     daemon and bridge itself (`packages/webapp/test/lody-daemon-harness.ts:447-543`),
@@ -168,10 +179,10 @@ Change `vendor/lody/UPSTREAM.md` to record:
 Add `scripts/lody-pin.mjs`. It scans reachable history for the newest matching
 subtree trailer rather than assuming the newest commit touching `vendor/lody`
 is the squash commit. That assumption is already false because later declared
-seam commits also touch the subtree, while the current runbook uses a
-single-latest-commit lookup (`docs/LODY-MERGE.md:70-92`). The script exports the
-pin parser to the build, Vite, drift tests, and merge automation; there is one
-implementation of the rule.
+seam commits also touch the subtree. The current manual runbook searches all
+reachable messages for the matching split trailer (`docs/LODY-MERGE.md`); the
+script exports one shared parser to the build, Vite, drift tests, and merge
+automation.
 
 `test/lody-pin-provenance.test.mjs` fails unless:
 
@@ -208,7 +219,7 @@ Add `scripts/lody-sync-adapters.mjs` and
 These are the object IDs returned by
 `git ls-tree HEAD:vendor/lody/packages | grep acp-extension` in this worktree;
 `UPSTREAM.md` independently inventories the six gitlink paths
-(`vendor/lody/UPSTREAM.md:46-54`). The sync script always re-reads the object
+(`vendor/lody/UPSTREAM.md:43-50`). The sync script always re-reads the object
 IDs; this table records the migration input, not a second editable manifest.
 
 The script:
@@ -346,7 +357,8 @@ to anchor the CLI source hunk as well as renderer seams. The current helper is
 hard-coded to the components tree (`packages/webapp/test/upstream-seam-pin.ts:32-55`),
 so first parameterize its upstream root.
 
-Delete all three compiled-bundle scripts and their Docker/harness invocation:
+The spike evaluated three compiled-bundle scripts that become source or
+upstream behavior:
 
 - `packages/box/patches/lody-local-platform.mjs`: source already hardcodes the
   public bundle to local mode (`vendor/lody/apps/cli/vite.config.ts:11-18`);
@@ -360,10 +372,14 @@ Delete all three compiled-bundle scripts and their Docker/harness invocation:
   (`packages/box/patches/lody-acp-auth-queue.mjs:23-39`,
   `packages/box/patches/lody-acp-auth-queue.mjs:54-78`).
 
-Remove the npm pin from the global install, the three Docker `COPY`/patch
-commands, `PATCH_SCRIPTS` and the patch loop from the harness. Today those are
-duplicated in both places (`packages/box/Dockerfile:44-59`,
-`packages/webapp/test/lody-daemon-harness.ts:65-74`,
+Two more compiled-bundle scripts landed after the spike:
+`lody-builtin-mcp-off.mjs` and `lody-session-sandbox.mjs`. Before removing the
+npm daemon, preserve their required behavior as reviewed source/configuration
+seams or explicitly retire it with human approval. Then remove the npm pin from
+the global install, all five patch files and Docker `COPY`/patch commands,
+`PATCH_SCRIPTS`, and the patch loop from the harness. Today those are duplicated
+in both places (`packages/box/Dockerfile:44-63`,
+`packages/webapp/test/lody-daemon-harness.ts:65-76`,
 `packages/webapp/test/lody-daemon-harness.ts:454-468`).
 
 ## Pair identity at connect
@@ -452,9 +468,10 @@ Conformance is:
 ## CI pair gate
 
 The daemon suites currently skip whenever the one hard-coded box path lacks
-`dist/index.js` (`packages/webapp/test/lody-daemon-harness.ts:65-82`), and the
-runbook explicitly accepts that CI state (`docs/LODY-MERGE.md:428-437`). Change
-the declaration to:
+`dist/index.js` (`packages/webapp/test/lody-daemon-harness.ts:65-82`). The
+current runbook works around that limitation in a disposable test worktree and
+requires every non-paid suite to run (`docs/LODY-MERGE.md`); PR A replaces the
+workaround by changing the declaration to:
 
 ```ts
 export const LODY_BUNDLE = process.env.LODY_BUNDLE
@@ -503,31 +520,34 @@ build at `f4b1ba25`, then validate them on every later merge:
 
 - `lody-data-plane/server/*`, except its two documented synthesized cases, and
   retain the documented derived chunked frame
-  (`packages/schema/fixtures/lody-data-plane/README.md:29-46`);
+  (`packages/schema/fixtures/lody-data-plane/README.md:34-49`);
 - `lody-project-registration/request/*` and `response/*`
-  (`packages/schema/fixtures/lody-project-registration/README.md:29-38`);
+  (`packages/schema/fixtures/lody-project-registration/README.md:34-47`);
 - the non-synthesized stream/envelope cases in
   `lody-session-control-stream`
-  (`packages/schema/fixtures/lody-session-control-stream/README.md:43-65`); and
+  (`packages/schema/fixtures/lody-session-control-stream/README.md:48-70`); and
 - `lody-share-claim/catalog-full.json`, then regenerate
   `catalog-shared.json` through the bridge projection
-  (`packages/schema/fixtures/lody-share-claim/README.md:26-42`).
+  (`packages/schema/fixtures/lody-share-claim/README.md:31-50`).
 
-Replace each side-table entry “`lody@0.88.1`, not in this tree” and each capture
-sentence with “captured from the daemon built from `vendor/lody` at
+The side-table entries now distinguish the current transition from the target.
+On the first source-built recapture, replace each historical capture sentence
+with “captured from the daemon built from `vendor/lody` at
 `<upstreamSha>` (`distSha256` `<sha>`)”. Do not churn genuine IDs on every merge.
 `scripts/lody-validate-fixtures.mjs` starts the just-built daemon, drives the
 capture scenarios, normalizes only documented nondeterministic IDs/timestamps,
 and fails on a semantic difference. Re-capture and change the provenance SHA
 only when the reviewed protocol behavior actually changes. Today the three
-corpora explicitly name the old npm daemon
-(`packages/schema/fixtures/lody-data-plane/README.md:18-36`,
-`packages/schema/fixtures/lody-project-registration/README.md:12-38`,
-`packages/schema/fixtures/lody-session-control-stream/README.md:27-51`).
+corpora retain qualified historical capture sentences naming the old npm daemon
+(`packages/schema/fixtures/lody-data-plane/README.md:34-46`,
+`packages/schema/fixtures/lody-project-registration/README.md:34-48`,
+`packages/schema/fixtures/lody-session-control-stream/README.md:48-60`).
 
 Land the CI job as `continue-on-error: true` first, require one green week and a
-green source-built box smoke, then make it a required check before deleting the
-verified-pair rule.
+green source-built box smoke, then make it a required check before the
+source-built daemon becomes the required shipping path. The former
+verified-pair rule was removed from current documentation on 2026-09-04; the
+runbook's explicit transition status remains until PR C lands.
 
 ## Merge automation and canary bake
 
@@ -535,9 +555,8 @@ verified-pair rule.
 
 Add `"lody:merge": "node scripts/lody-merge.mjs"` at the root. The command
 requires a clean worktree, refuses `main`, accepts `--ref <release-tag|main>`,
-and performs current runbook sections 1 and 2 mechanically. Those sections are
-currently manual fetch/diff/subtree instructions
-(`docs/LODY-MERGE.md:33-98`).
+and performs the runbook's branch preparation, seam inventory, and subtree pull
+mechanically. Those steps are currently manual (`docs/LODY-MERGE.md`).
 
 The script:
 
@@ -573,56 +592,60 @@ action is reviewing and clicking merge. A genuine class-C decision can still
 stop that automation—“one click” must not mean silently resolving a semantic
 conflict.
 
-Rewrite `docs/LODY-MERGE.md` around this command and recovery path. Delete its
-§3 npm verified-pair procedure (`docs/LODY-MERGE.md:100-125`) and §5 compiled
-npm-artifact patch audit (`docs/LODY-MERGE.md:237-327`). Keep the source-seam
+The 2026-09-04 documentation migration rewrote `docs/LODY-MERGE.md` around this
+command and recovery path. It removed the former §3 npm verified-pair procedure
+and §5 compiled npm-artifact patch audit while retaining source-seam
 reconciliation, dependency audit, workaround mirrors, gates, and explicit merge
-approval, but make the command output their checklist and PR table. Remove
-CLAUDE.md's “one verified pair” paragraph and compiled-patch bullet
-(`CLAUDE.md:117-131`); replace them with the numbered invariants and new
-`lody-build` contract.
+approval. `CLAUDE.md` likewise replaced its former “one verified pair” and
+compiled-patch rules with current transition rules and the documentation map.
+PR E can delete the manual mechanics that the command finally emits.
 
-### Exact canary workflow change
+### Extend the existing canary workflow
 
-Add `scripts/box-image-inputs.mjs`. It hashes sorted Git mode/blob/path records
-for every tracked input copied or compiled by `packages/box/Dockerfile`, including
-`packages/box/**`, `packages/broker/**`, `packages/schema/fixtures/**`,
-`env.defaults`, `vendor/lody/**`, `vendor/lody-adapters/**`, and the Lody
-build/seam scripts. Its JSON report explicitly includes `upstreamSha`,
-`subtreeCommit`, all five adapter SHAs, the `pnpm-lock.yaml` blob/digest, and the
-daemon seam source blobs. Hashing the full Lody tree is deliberate: an upstream
-renderer-only change still denotes a new renderer/daemon pair.
+PR #204 already introduced the shared `BOX_IMAGE_INPUTS` list,
+`box-image-key.mjs`, `plan-box-image.mjs`, the canary `image` job, versioned R2
+routes, JSON publisher output, part-before-manifest upload ordering, and exact
+pin handoff to `deploy`. Its release ID is a SHA-256 over the Git object IDs of
+the four current Docker inputs, the full 64 characters become both the image
+tag suffix and R2 namespace, and a valid manifest is reused without rebuilding
+(`packages/control-plane/scripts/lib/box-image-inputs.mjs:1-8`,
+`packages/control-plane/scripts/box-image-key.mjs:20-38`,
+`.github/workflows/canary.yml:48-185`).
 
-In `.github/workflows/canary.yml`:
+Extend that mechanism rather than adding a parallel one:
 
-1. add an `image` job, on the existing `canary` environment and under the
-   existing non-cancelling concurrency group;
-2. check out `main`, set up Buildx, derive
-   `blitz-box:lody-<first16(inputSha256)>`, and check the immutable release URL;
-3. if that release exists, return its ref/tag/archive SHA without rebuilding;
-   otherwise build `linux/amd64` with GitHub Actions layer caching and
-   `BLITZ_LODY_SESSIONS_DEFAULT=1`, run the Lody image smoke, and publish it to
-   R2 under `box-image/releases/<inputSha256>/`;
-4. extend `publish-box-image.mjs` with `--release` and `--json`/GitHub-output
-   modes, reject overwriting an existing release, upload parts before its
-   manifest, and extend `core/box-images.ts` with an exact validated release-key
-   route while retaining the legacy fixed route; and
-5. make `deploy` need `image`, remove the stale-image advisory and hard-coded
-   `BLITZ_DEPLOY_VAR_BOX_IMAGE_*` lines, and pass the image job's immutable
-   `ref`, `tag`, and archive SHA as those three deploy variables.
+1. add `vendor/lody`, `vendor/lody-adapters`, and every root Lody build,
+   pin, sync, and seam-input script consumed by the Dockerfile to
+   `BOX_IMAGE_INPUTS`; keep `packages/box`, `packages/broker`,
+   `packages/schema/fixtures`, and `env.defaults`;
+2. extend the key's JSON evidence with `upstreamSha`, `subtreeCommit`, all five
+   adapter SHAs, the `pnpm-lock.yaml` object/digest, and daemon source-seam
+   blobs while retaining the existing full input-object hash;
+3. keep the current exact `box-image/<releaseId>/manifest.json` probe and reuse
+   behavior; when absent, build `linux/amd64` with the existing
+   `BLITZ_LODY_SESSIONS=1` argument, add BuildKit/GitHub Actions layer caching,
+   and run the Lody image smoke before the existing publisher runs;
+4. keep `publish-box-image.mjs --prefix ... --json ...`, its part-first upload,
+   the validated release-key route in `core/box-images.ts`, and the legacy
+   fixed route unchanged; and
+5. keep `deploy` dependent on `image`, passing the job's immutable `ref`, `tag`,
+   and archive SHA, and keep the `/version` check for both `GITHUB_SHA` and the
+   computed image tag.
 
-The build argument replaces the current untracked `sed` required to enable the
-daemon in a canary image (`docs/BOX-IMAGE.md:63-82`). Default it to `0` so forks
-and client prod retain current policy unless their release explicitly changes
-it. The archive stays amd64 because canary currently offers only x86 machine
-types (`docs/BOX-IMAGE.md:111-116`). The content-derived tag is a cache/release
-identity, not a byte-reproducibility claim: the R2 archive SHA remains the
-authoritative byte pin.
+The build argument already replaced the old untracked `sed`
+(`.github/workflows/canary.yml:109-116`). `env.defaults` remains off for forks
+and self-hosters while canary explicitly enables the daemon. The archive stays
+amd64 because canary currently offers only x86 machine types
+(`docs/BOX-IMAGE.md:106-108`). The content-derived tag is a cache/release
+identity, not a byte-reproducibility claim: the manifest's archive SHA remains
+the authoritative byte pin.
 
-The result of a vendor PR merge is: new input hash -> cold/warm image bake ->
-immutable R2 release -> canary Worker deploy pinned to that exact archive. No
-follow-up pin commit exists. Existing cloud boxes are updated only when a member
-or admin requests replacement; new boxes use the new pin immediately.
+After the Lody inputs are added, the result of a vendor PR merge is: new input
+hash -> valid-release reuse or cold/warm image bake -> immutable R2 release ->
+canary Worker deploy pinned to that exact archive. #204 already removed the
+follow-up pin commit for current image inputs. Existing cloud boxes are updated
+only when a member or admin requests replacement; new boxes use the new pin
+immediately.
 
 `release.yml` inherits the daemon build without Lody-specific orchestration
 because it already builds `packages/box/Dockerfile` for amd64 and arm64 and pins
@@ -693,7 +716,7 @@ legitimate code-splitting change updates this reviewed manifest in the vendor PR
 | Adapter repository size | Budget about 1-2 MiB and 1.3k files at this pin. Sync only tracked source, never histories or build output; the drift hash makes the exact size and accidental growth visible in the PR. |
 | Stale CLI version | Operators may see `0.76.0` from a much newer source build. Always log/display upstream SHA plus `distSha256`; do not infer compatibility from semver. |
 | Licenses | Bundled workspace and adapter code makes the root notice set part of the distributed package. Copy it into `dist`, pin it byte-for-byte, and review adapter license/stamp changes in every sync. |
-| First field migration | Legacy npm boxes have no stamp and remain usable. A cloud VM can be moved through the request-gated box-config v1 updater; it polls, replaces the container, and reports the installed ref (`packages/control-plane/core/box-config.ts:21-29`, `packages/control-plane/core/box-config.ts:126-180`). A microVM cannot update in place, so it keeps the old npm daemon until recreation. Correct `docs/BOX-IMAGE.md:251-264`, whose “never upgrades” text predates box config v1. |
+| First field migration | Legacy npm boxes have no stamp and remain usable. A cloud VM can be moved through the request-gated box-config v1 updater; it polls, replaces the container, and reports the installed ref (`packages/control-plane/core/box-config.ts:21-29`, `packages/control-plane/core/box-config.ts:126-180`). A microVM cannot update in place, so it keeps the old npm daemon until recreation. `docs/BOX-IMAGE.md` records this current split. |
 | Immutable R2 storage growth | Release-keyed objects accumulate. Apply a lifecycle policy only after the maximum rollback/field-update window, and never delete the release currently reported by canary or any pending box update. |
 
 ## Migration sequence
@@ -731,9 +754,11 @@ image and migration pieces are ready.
   tests, s6 comments, harness comments, and the build/stamp/dist-manifest tests.
 - Add the Corepack/frozen builder, package install, notice, stamp, target smoke,
   ACP queue source seam, and focused behavior test.
-- Delete the npm `lody@0.88.1` install item, all three files in
+- Delete the npm `lody@0.88.1` install item, all five files in
   `packages/box/patches/`, all Docker patch steps, and the harness patch list and
-  loop. Platform and Code Collab retain regression coverage, not patches.
+  loop. Platform and Code Collab retain regression coverage, not patches;
+  builtin-MCP and session-sandbox behavior must first be ported to reviewed
+  source/configuration seams or explicitly retired.
 - Make the advisory CI pair job required after the source-built image smoke is
   green.
 
@@ -750,15 +775,17 @@ image and migration pieces are ready.
 
 - Add `scripts/lody-merge.mjs`, `scripts/lody-pin.mjs`, the machine-readable
   seam/input manifests and tests, and root `lody:merge` scripts.
-- Touch `.github/workflows/canary.yml`, `.github/workflows/release.yml`,
-  `check-box-image.mjs`, `publish-box-image.mjs`, `core/box-images.ts`, their
-  tests, `docs/LODY-MERGE.md`, `docs/BOX-IMAGE.md`, `CLAUDE.md`, and
-  `vendor/lody/UPSTREAM.md`.
-- Add the content-derived, immutable R2 image job and pass its outputs into the
-  deploy; add release BuildKit caching.
-- Delete canary's manual stale-image advisory and three hard-coded R2 pins,
-  runbook §§3/5, manual adapter/baseline mechanics now emitted by the command,
-  and the verified-pair rule. Preserve the “never merge unattended” rule.
+- Extend `.github/workflows/canary.yml`,
+  `scripts/lib/box-image-inputs.mjs`, `box-image-key.mjs`, and their tests with
+  the Lody tree, adapter, lockfile, build, and seam inputs; #204 already added
+  the immutable R2 image job, versioned routes, publisher JSON mode, and exact
+  pin handoff to deploy. Add release BuildKit caching.
+- Touch `.github/workflows/release.yml`, `docs/LODY-MERGE.md`,
+  `docs/BOX-IMAGE.md`, `CLAUDE.md`, and `vendor/lody/UPSTREAM.md` for the final
+  automated shape.
+- Delete manual adapter/baseline mechanics now emitted by the command. Preserve
+  the “never merge unattended” rule; the npm-selection and compiled-patch audit
+  procedures were already removed from the rewritten runbook.
 
 ## What is simpler afterwards
 
@@ -766,8 +793,9 @@ image and migration pieces are ready.
   upstream revision mirrored by a checked squash trailer. The inherited five
   adapter gitlink SHAs and lockfile are supply-chain inputs, not a second daemon
   selection.
-- **Compiled-bundle patch scripts: 3 -> 0.** Remove all three scripts, three
-  Docker copies/invocations, and the harness's duplicate three-entry patch path.
+- **Compiled-bundle patch scripts: 5 -> 0.** Remove all five scripts, five
+  Docker copies/invocations, and the harness's duplicate five-entry patch path
+  after every still-required behavior has source/configuration coverage.
 - **Brittle compiled-artifact guards: 7 -> 0.** Remove one published-bundle
   SHA-256 guard, three hard-coded npm-version guards, and three compiled-anchor
   occurrence guards. Replace them with one source anchor plus behavior,
@@ -775,9 +803,10 @@ image and migration pieces are ready.
 - **Runbook sections devoted to selecting/patching npm: 2 -> 0.** Delete current
   §§3 and 5. Current §§1 and 2 also become one command rather than two manual
   procedures.
-- **Manual canary image operations after a vendor merge: 5 -> 0.** Remove the
-  separate build, untracked feature-flag edit, R2 publish, three-value source
-  pin edit, and follow-up pin merge. The vendor PR's reviewed merge click starts
-  the bake and deploy.
+- **Manual canary image operations after a current image-input change: already
+  5 -> 0 in #204.** The separate build, untracked feature-flag edit, R2 publish,
+  three-value source pin edit, and follow-up pin merge are gone. PR E adds Lody
+  to the existing release identity so the vendor PR's reviewed merge click also
+  starts or reuses the matching bake and deploy.
 - **Runtime daemon paths changed: 0.** s6, watchdog, bridge, guest tests, shell
   PATH, and the webapp harness keep the installed path they already use.

@@ -1,5 +1,10 @@
 # Lody sessions — phase 1 probe results
 
+> **Dated evidence.** As of 2026-09-04, the npm-artifact patch and daemon-pin
+> rules below are superseded by `docs/LODY-MERGE.md` and
+> `plans/LODY-DAEMON-FROM-TREE.md`. The measured 2026-08-29 behavior remains
+> historical evidence.
+
 Measured 2026-08-29 on this Linux box, against npm `lody@0.88.1` and the
 vendored subtree at upstream `966623d0` (`apps/cli` version 0.76.0). Plan of
 record: `plans/LODY-SESSIONS.md`. Phase 0 results: `lody-phase0.md`.

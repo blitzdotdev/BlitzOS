@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// TRANSITION STATUS (2026-09-04). The image still applies this script to its
+// npm lody@0.88.1 artifact until plans/LODY-DAEMON-FROM-TREE.md PR C. Preserve
+// or explicitly retire this behavior in source/configuration before deletion;
+// upstream merges follow docs/LODY-MERGE.md and never bump this artifact.
 // Removes the built-in Lody MCP server from every agent session in the
 // PUBLISHED `lody` npm bundle.
 //

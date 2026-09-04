@@ -1,5 +1,10 @@
 # How a new Anthropic model reaches the Lody composer
 
+Daemon sourcing is independent of model discovery. At HEAD the box still
+installs the transition `lody@0.88.1` npm artifact and its compiled patches
+until plan PR C; the target builds the daemon from `vendor/lody`. Any upstream
+change follows `docs/LODY-MERGE.md`.
+
 Investigated 2026-09-01, prompted by "Claude Fable 5.1 does not appear in the
 model picker". The short answer: **model discovery is already dynamic and
 nothing in BlitzOS or Lody needs a per-model edit — the only ceiling is the
@@ -37,7 +42,7 @@ working box — it changes what a box shows before its first probe.
 
 ## 2. Did upstream Lody need to change? No.
 
-Neither the vendored subtree nor the npm daemon gates on a model list.
+Neither the renderer nor the daemon gates on a model list.
 The one place a model list can be narrowed is Claude Code's own
 `settings.availableModels`, which the adapter applies as an **allowlist filter**
 over `initializationResult.models` (`applyAvailableModelsAllowlist`). It can
@@ -95,8 +100,9 @@ model configOption (what the composer renders), currentValue = default
   haiku                | Haiku
 ```
 
-**No rebake, no code change, no vendor bump.** The `lody` pin stayed at 0.88.1
-and the vendored static list was never consulted.
+**No rebake, no code change, no vendor bump in this 2026-09-01 measurement.**
+The transition daemon remained at its then-current npm artifact and the
+vendored static list was never consulted.
 
 ### Why it worked, precisely
 
@@ -166,8 +172,9 @@ Still outstanding:
    ship different CLIs. That is the deliberate trade — the pin never held a
    version in practice, because the first self-update moved it — but it means
    the box image is no longer bit-reproducible from the Dockerfile alone.
-   `codex` and `lody` stay pinned; the `lody` patches are guarded by a sha256
-   of the published bundle and would fail the build if it floated.
+   `codex` stays pinned. At HEAD the transition Lody npm artifact and compiled
+   patches remain fixed only until plan PR C; the target daemon is identified
+   by its vendored upstream commit and build stamp.
 
 With no pin deciding which models exist, these four
 `2.1.228` assertions need re-basing on a range or a probe rather than a
@@ -180,7 +187,7 @@ One thing to keep watching: `claude-acp.js` carries the Agent SDK's own baked
 model catalog (context windows, effort multipliers, `latest_per_family`)
 alongside the passthrough. It is not a filter — Fable 5.1 rendered fine without
 being in it — but a model absent from it may lose effort/context metadata until
-the `lody` pin moves (`0.88.1` here; `0.89.3` published).
+the daemon source advances through `docs/LODY-MERGE.md`.
 
 ### Standing rule for the next model
 

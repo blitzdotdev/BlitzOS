@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// TRANSITION STATUS (2026-09-04). The image still applies this script to its
+// npm lody@0.88.1 artifact until plans/LODY-DAEMON-FROM-TREE.md PR C. The target
+// build emits local mode from vendor/lody and deletes this compiled patch;
+// upstream merges follow docs/LODY-MERGE.md and never bump this artifact.
 // Re-enables Lody's local (OSS) platform in the PUBLISHED `lody` npm bundle.
 //
 // WHY THIS EXISTS. `lody@0.88.1` on npm is the CLOUD build. Its Vite config

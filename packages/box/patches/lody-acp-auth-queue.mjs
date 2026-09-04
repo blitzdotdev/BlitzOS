@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// TRANSITION STATUS (2026-09-04). The image still applies this script to its
+// npm lody@0.88.1 artifact until plans/LODY-DAEMON-FROM-TREE.md PR C. The target
+// moves this exact start-only rule to the declared message-processor source
+// seam; upstream merges follow docs/LODY-MERGE.md and never bump this artifact.
 // Gives `machine/acp-authenticate` its own queue chain in the PUBLISHED `lody`
 // npm bundle, so an interactive sign-in can be finished.
 //

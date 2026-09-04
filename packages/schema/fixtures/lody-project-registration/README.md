@@ -2,6 +2,11 @@
 
 The `local-project/*` requests BlitzOS authors, and the daemon's answers to them.
 
+At HEAD the box still installs the transition `lody@0.88.1` npm artifact and
+its compiled patches until plan PR C; the target daemon is built from
+`vendor/lody`. The recapture rule and upstream procedure are in
+`docs/LODY-MERGE.md`.
+
 ## Why this is a BlitzOS contract
 
 Phase 5 made a box register each `/workspace/<repo>` clone as a Lody local
@@ -14,7 +19,7 @@ payloads:
 | box (node) | `packages/box/rootfs/usr/local/libexec/blitz-lody-projects` | `local-project/list` and `local-project/add`, once per pass, over the daemon's unix control socket |
 | browser | `packages/webapp/src/lody/local-bridge.ts` (`projectResult`) and `rpc-client.ts` (`sendProjectControl`) | every `local-project/*` and `worktree/*` request the vendored renderer asks for, through `/lody/project` |
 | browser | `packages/webapp/src/lody/local-projects.ts` (`registerWorkspaceRepositories`) | `local-project/browse-dir` and `local-project/add`, once per surface mount: the same registration the box does, driven from the tab |
-| daemon (node) | `lody@0.88.1`, not in this tree | reads both and answers |
+| daemon (node) | transition image: npm artifact until plan PR C; target source: `vendor/lody/apps/cli` | reads both and answers |
 
 That is a payload crossing a runtime boundary with a BlitzOS author on two
 sides, so CLAUDE.md's cross-runtime rule applies. It is the same arrangement
@@ -36,6 +41,10 @@ a scratch clone whose `origin` is a GitHub HTTPS URL. The ids are the ones that
 daemon minted; nothing is hand-written.
 
 `request/` is what `blitz-lody-projects` sends, recorded from the same run.
+
+When a reviewed semantic change requires recapture, replace the historical
+sentence above with: “Captured from the daemon built from `vendor/lody` at
+`<upstreamSha>` (`distSha256` `<sha>`).” Use real stamp values.
 
 ## What each file is FOR
 

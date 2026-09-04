@@ -91,6 +91,8 @@ account; client prod serves it from a registry (mode A), pushed by the tag
 workflow. The automatic image job writes only canary's versioned R2 prefix and
 never touches the customer's account or GHCR. The full procedure and required
 R2 permission are in [BOX-IMAGE.md](BOX-IMAGE.md#automatic-canary-image-publish).
+Lody upstream merges follow [LODY-MERGE.md](LODY-MERGE.md); that runbook also
+records the temporary gap before the image key includes the vendored tree.
 
 Canary is one shared Worker and the last deploy wins. That is why it deploys
 from `main` and not from a laptop: a branch deployed by hand replaces whatever

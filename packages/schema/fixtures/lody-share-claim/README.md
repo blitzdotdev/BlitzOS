@@ -3,6 +3,11 @@
 What a verified session-share claim looks like on the way from the Go gateway to
 `blitz-lody-bridge`, and what the bridge is required to do with it.
 
+At HEAD the box still installs the transition `lody@0.88.1` npm artifact and
+its compiled patches until plan PR C; the target daemon is built from
+`vendor/lody`. The catalog recapture rule and upstream procedure are in
+`docs/LODY-MERGE.md`.
+
 ## Why this is a BlitzOS contract
 
 The claim starts life in the control plane, inside a webApp ticket
@@ -22,6 +27,14 @@ cross-runtime rule exists for.
 | bridge (node) | `packages/box/rootfs/usr/local/libexec/blitz-lody-bridge` | enforces the room ACL on `/sync`, scopes `/rpc` and `/project`, refuses `/control`, narrows `/platform` |
 
 Design: `plans/LODY-SHARING.md` §3, §4.
+
+## Catalog provenance
+
+`catalog-full.json` is daemon-authored transition evidence and
+`catalog-shared.json` is its bridge-derived projection. When reviewed semantic
+behavior requires recapture, record: “Captured from the daemon built from
+`vendor/lody` at `<upstreamSha>` (`distSha256` `<sha>`).” Use real stamp values
+and regenerate the shared projection through the real bridge.
 
 ## Shape
 

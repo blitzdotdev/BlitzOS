@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// TRANSITION STATUS (2026-09-04). The image still applies this script to its
+// npm lody@0.88.1 artifact until plans/LODY-DAEMON-FROM-TREE.md PR C. The target
+// source already resolves worktree roots and deletes this compiled patch;
+// upstream merges follow docs/LODY-MERGE.md and never bump this artifact.
 // Points Code Collab at the WORKTREE of a worktree session, in the PUBLISHED
 // `lody` npm bundle. Without it the "All Changes" side panel of every BlitzOS
 // worktree session says "No changes yet."

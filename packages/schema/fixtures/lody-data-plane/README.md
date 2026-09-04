@@ -2,6 +2,11 @@
 
 The frames the browser and the Lody session daemon exchange on `/lody/sync`.
 
+At HEAD the box still installs the transition `lody@0.88.1` npm artifact and
+its compiled patches until plan PR C; the target daemon is built from
+`vendor/lody`. The recapture rule and upstream procedure are in
+`docs/LODY-MERGE.md`.
+
 ## Why this is a BlitzOS contract
 
 It was not one in phase 1. The bridge
@@ -19,7 +24,7 @@ must agree:
 |---|---|---|
 | browser | `webapp/src/lody/data-plane-connection.ts` | one WebSocket text message = one JSON frame; parses with `LocalLoroDataPlaneServerMessageSchema` before delivering |
 | bridge (node) | `box/rootfs/usr/local/libexec/blitz-lody-bridge` | translates framing only: one newline-delimited line on the unix socket ⇄ one WebSocket message |
-| daemon (node) | `lody@0.88.1`, not in this tree | authors and reads the same frames |
+| daemon (node) | transition image: npm artifact until plan PR C; target source: `vendor/lody/apps/cli` | authors and reads the same frames |
 
 The SCHEMA stays Lody's — `vendor/lody/packages/shared/src/local-loro-data-plane.ts`
 is the source of truth and the conformance tests validate against it rather than
@@ -34,6 +39,10 @@ Every server frame under `server/` except `room-status-reconnecting.json` and
 (`packages/box/patches/lody-local-platform.mjs`) in local platform mode. The
 base64 blobs are genuine Loro exports and a genuine EphemeralStore presence
 snapshot, not hand-written bytes.
+
+When a reviewed semantic change requires recapture, replace the historical
+sentence above with: “Captured from the daemon built from `vendor/lody` at
+`<upstreamSha>` (`distSha256` `<sha>`).” Use real stamp values.
 
 The two exceptions are synthesized from the schema because the daemon never
 emits them on this path: `room-status` is authored by the CLI's own transport
@@ -54,8 +63,9 @@ it so a test can prove the round trip.
   discriminator is where a room is addressed.
 - `server/*.json` — one instance of each of the seven server → client types.
 - `server/pong-with-unknown-field.json` — the schemas are deliberately NOT
-  `.strict()`, so a newer daemon may add fields. That tolerance is load-bearing
-  across the 0.88.1 daemon / 0.76.0 subtree skew and is pinned here.
+  `.strict()`, so a newer daemon may add fields. That tolerance was
+  load-bearing across the daemon/subtree skew present when this corpus was
+  captured and remains pinned here.
 - `invalid/*.json` — frames every reader must REJECT. A rejected frame is
   counted and dropped, never thrown: the link is a broadcast pipe, so one bad
   frame from a skewed peer must not tear down rooms that are converging.

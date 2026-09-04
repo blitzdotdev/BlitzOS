@@ -4,6 +4,11 @@ The bytes `/lody/control` answers with when the caller negotiates
 `Accept: application/x-ndjson`, and the buffered envelope it answers with when
 nobody does.
 
+At HEAD the box still installs the transition `lody@0.88.1` npm artifact and
+its compiled patches until plan PR C; the target daemon is built from
+`vendor/lody`. The recapture rule and upstream procedure are in
+`docs/LODY-MERGE.md`.
+
 ## Why this is a BlitzOS contract
 
 The daemon serves `/session-control` two ways and picks by `Accept`
@@ -30,7 +35,7 @@ So there are now three runtimes that have to agree about these bytes:
 |---|---|---|
 | browser | `webapp/src/lody/rpc-client.ts` (`sendSessionControl`) | asks for the stream, reads it frame by frame, emits each response before resolving |
 | bridge (node) | `box/rootfs/usr/local/libexec/blitz-lody-bridge` | decides whether the negotiation goes upstream, and pipes the frames back unbuffered |
-| daemon (node) | `lody@0.88.1`, not in this tree | authors the frames |
+| daemon (node) | transition image: npm artifact until plan PR C; target source: `vendor/lody/apps/cli` | authors the frames |
 
 The FRAME UNION stays Lody's: `LocalSessionControlStreamFrameSchema`
 (`vendor/lody/packages/shared/src/node/local-ipc.ts:80`) is the source of truth.
@@ -49,6 +54,10 @@ through the real `blitz-lody-bridge`. The authorization URL in them is a real on
 that `claude auth login --claudeai` printed (claude 2.1.228, headless, scratch
 `HOME`); it is a PKCE challenge for a login nobody completed, so it authorizes
 nothing and has long since expired.
+
+When a reviewed semantic change requires recapture, replace the historical
+sentence above with: “Captured from the daemon built from `vendor/lody` at
+`<upstreamSha>` (`distSha256` `<sha>`).” Use real stamp values.
 
 Two files are synthesized, because the daemon cannot be made to emit them on
 demand:

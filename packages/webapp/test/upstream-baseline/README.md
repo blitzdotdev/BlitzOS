@@ -47,21 +47,5 @@ they are: data.
 
 ## Refreshing them at an upstream merge
 
-`docs/LODY-MERGE.md` §4 re-anchors every line number in `BLITZ-PATCHES.md` after
-a subtree pull. These baselines and the anchor tables in
-`lody-surface-tabs.test.tsx` are re-anchored in the same change, from a clone
-that has the new upstream commit:
-
-```sh
-PIN=<the new upstream sha>
-for f in sessions/session-tab-bar sessions/session-detail \
-         mobile/mobile-session-tab-sheet mobile/mobile-home-screen; do
-  git show "$PIN:packages/components/src/components/$f.tsx" \
-    > packages/webapp/test/upstream-baseline/"$(basename "$f").tsx.txt"
-done
-```
-
-Then update the sha named above, re-run
-`npx vitest run test/lody-surface-tabs.test.tsx`, and move each anchor's line
-number to wherever the merge put it. The test names every anchor by line number
-AND by text, so a stale number fails on the text rather than passing quietly.
+Follow the single procedure in `docs/LODY-MERGE.md`; it owns the baseline-copy,
+provenance, re-anchoring, and seam-test commands.

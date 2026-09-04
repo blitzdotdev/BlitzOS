@@ -1,5 +1,10 @@
 # Lody sessions — phase 0 spike results
 
+> **Dated evidence.** As of 2026-09-04, the npm-pin and verified-pair rules this
+> probe informed are superseded by `docs/LODY-MERGE.md` and
+> `plans/LODY-DAEMON-FROM-TREE.md`. The 2026-08-29 measurements below remain
+> historical evidence.
+
 Measured 2026-08-29 on branch `lody-sessions`, against upstream Lody
 `966623d0` and npm `lody@0.88.1`. Plan of record: `plans/LODY-SESSIONS.md`.
 

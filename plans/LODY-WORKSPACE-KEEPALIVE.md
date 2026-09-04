@@ -1,5 +1,10 @@
 # Lody workspace keep-alive (Tier 2)
 
+> **Historical design record.** As of 2026-09-04, use
+> `docs/LODY-MERGE.md` for upstream procedure and
+> `plans/LODY-DAEMON-FROM-TREE.md` for the source-built daemon migration.
+> Conflict footprints and measurements below remain dated design evidence.
+
 Status: Phases A-C are implemented with behavioral gates. The keep-alive pool
 is enabled by default and the attributed two-daemon activation gate is green:
 the final correctness-pass confirmation measured 55.3 ms p50 / 67.3 ms p95 to

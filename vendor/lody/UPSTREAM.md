@@ -1,9 +1,14 @@
-# Lody upstream pin
+# Lody upstream pins
 
-This directory is a squashed `git subtree` of the public Lody tree. Nothing in
-it is edited by hand except at a declared seam: see `BLITZ-PATCHES.md` for the
-list, and `plans/LODY-SESSIONS.md` §5 for the rules. The merge procedure is
-`docs/LODY-MERGE.md`.
+The upstream `AGENTS.md`, `CLAUDE.md`, `DEV.md`, `CONTRIBUTING.md`,
+`README*.md`, `SECURITY.md`, and `THIRD_PARTY_NOTICES.md` files in this
+directory describe Lody's own repository, not BlitzOS. BlitzOS rules are in the
+root `CLAUDE.md`, the only merge procedure is `docs/LODY-MERGE.md`, and the seam
+and conflict manual is `BLITZ-PATCHES.md`.
+
+`vendor/lody` is a squashed `git subtree` of the public Lody tree. No imported
+upstream file is edited by hand except at a seam declared in
+`BLITZ-PATCHES.md`.
 
 | Field | Value |
 |---|---|
@@ -11,52 +16,46 @@ list, and `plans/LODY-SESSIONS.md` §5 for the rules. The merge procedure is
 | Pinned commit | `f4b1ba259eb754cd954da776d8e7384a8c30f1c9` |
 | Commit date | 2026-09-04 (`fix(ci): harden Electron signing credentials [risk:high] (#358)`) |
 | Vendored on | 2026-09-03 (second merge; initial import 2026-08-29 at `966623d0`) |
-| npm `lody` (daemon) | 0.88.1 |
-| Subtree commit here | `Squashed 'vendor/lody/' changes from f3474894..f4b1ba25` |
+| Subtree squash commit | `8a75ee46516c8350300841774f2223757ea9c455` |
 
-The npm pin did NOT move with this merge, and that is the documented answer
-rather than an omission: npm now publishes through `0.89.4`, but no release has
-been verified as the daemon pair for this newer public-tree commit (whose
-changelog already names 0.90.0). `docs/LODY-MERGE.md` §3 permits an unchanged
-daemon only while the daemon-backed gates remain compatible. Here
-`lody-session-surface.test.tsx` proves 0.88.1 rejects the renderer's narrowed
-`machine/acp-capabilities-refresh` request as `invalid_request`, so this branch
-must not ship until a matching daemon is identified and verified; guessing
-0.89.4 is not the rule.
+The pinned upstream commit is the renderer and daemon source identity. The
+subtree squash commit is its repository-history mirror and must contain the
+matching `git-subtree-split` trailer. They are not independently selectable
+pins.
 
-The renderer and the daemon must move together. `apps/cli/package.json` in this
-subtree says 0.76.0 while npm publishes 0.88.1 — the public tree lags releases,
-which is the known skew recorded in `plans/LODY-SESSIONS.md` §11. We build the
-renderer from this subtree and install the daemon from npm, so both numbers are
-pinned here and both are re-checked at every merge.
+## Transition status
 
-## Refreshing the pin
+At HEAD, `packages/box/Dockerfile` still installs the transitional npm
+`lody@0.88.1` daemon and applies all five scripts in
+`packages/box/patches/`. That remains true only until plan PR C in
+`plans/LODY-DAEMON-FROM-TREE.md`; it is not a second pin to select or bump
+during an upstream merge.
 
-```sh
-git subtree pull --prefix vendor/lody https://github.com/LodyAI/Lody <ref> --squash
-```
+The target image builds `vendor/lody/apps/cli` from the pinned tree, overlays
+the five reviewed CLI adapters below at their gitlink SHAs, installs the packed
+artifact, and stamps it with the upstream and subtree commits. Follow
+`docs/LODY-MERGE.md` for the current manual/automated transition procedure.
 
-Then follow `plans/LODY-SESSIONS.md` §5.4: re-resolve the dependency catalog
-into `packages/webapp/package.json`, re-check the patch list in
-`scripts/apply-vendor-patches.mjs` against this subtree's `patches/` directory
-and `pnpm-workspace.yaml`'s `patchedDependencies` (that script applies the
-upstream patch files in place — there is no second copy to update), bump the
-npm `lody` pin, and run the three gates plus the phase-0 spike tests.
+## Adapter gitlink pins
 
-## What is NOT here
+The subtree contains six gitlinks. The CLI workspace builds the first five and
+explicitly excludes Kimi in `pnpm-workspace.yaml`.
 
-The six ACP extension packages under `packages/` are git submodules upstream, so
-the subtree carries their gitlinks and no sources:
+| Adapter | Gitlink commit | Build disposition |
+|---|---|---|
+| `acp-extension-core` | `23c792b910a903b74601e346473827106f991715` | review, vendor outside the subtree, and overlay |
+| `acp-extension-claude` | `d395b3dc69832c6566eb0da84a08486d16ba1e69` | review, vendor outside the subtree, and overlay |
+| `acp-extension-codex` | `0887c5620b7b1773fa401e65a1009f10f80715a7` | review, vendor outside the subtree, and overlay |
+| `acp-extension-dsh` | `c584a16e4f4ce982c762b2c11f0c344f1643fd6d` | review, vendor outside the subtree, and overlay |
+| `acp-extension-grok` | `77a994f4e0a5acec8c52020c0a8e01b0e90aaef9` | review, vendor outside the subtree, and overlay |
+| `acp-extension-kimi` | `aab809cca845e4b1d0a0db243d336ab5f128b177` | preserve as a gitlink; do not materialize for the CLI build |
 
-```
-packages/acp-extension-claude  packages/acp-extension-codex  packages/acp-extension-core
-packages/acp-extension-dsh     packages/acp-extension-grok   packages/acp-extension-kimi
-```
+Until plan PR B, the reviewed `vendor/lody-adapters/` trees do not exist and
+the runbook fetches these public commits into disposable scratch space for the
+manual pair gate. Plan PR B makes all five build inputs checked-in and
+network-free at build time.
 
-We do not build `apps/cli` from source, so this costs nothing on the daemon
-side — the npm `lody` package bundles the adapters prebuilt. It costs one thing
-on the renderer side: `@lody/shared` re-exports four DeepSeek selector
-constants from `acp-extension-dsh/capabilities`. That specifier is aliased to
-`packages/webapp/src/lody/stubs/acp-extension-dsh-capabilities.ts`, which
-exports them empty (agents v1 is claude and codex only, §0.6).
-`acp-extension-core` is installed from npm instead.
+## Updating these pins
+
+Use `docs/LODY-MERGE.md`. Do not copy a subtree command, adapter-sync sequence,
+or daemon-selection rule into this pin record.

@@ -1,5 +1,9 @@
 # Lody sessions: chats and GitHub worktrees, first-class
 
+> **Historical pull-request record.** As of 2026-09-04, its npm-daemon,
+> verified-pair, compiled-patch, and merge-procedure descriptions are superseded
+> by `docs/LODY-MERGE.md` and `plans/LODY-DAEMON-FROM-TREE.md`.
+
 Vendors Lody's session plane into BlitzOS: the daemon on the box, the renderer
 in the webapp, and the rail rebuilt around sessions instead of terminal tabs.
 Phases 0–7 of `plans/LODY-SESSIONS.md`, which is the plan and the record.

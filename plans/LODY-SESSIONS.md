@@ -1,5 +1,11 @@
 # Lody sessions: first-class chats and GitHub worktrees
 
+> **Historical design record.** As of 2026-09-04, every current-sounding
+> vendoring, npm-daemon-pin, verified-pair, canary-rebake, or upstream-merge rule
+> below is superseded by `docs/LODY-MERGE.md` and the approved migration in
+> `plans/LODY-DAEMON-FROM-TREE.md`. The measurements and design rationale remain
+> historical evidence.
+
 Vendor Lody's chat and git-worktree features into BlitzOS. Keep an upstream pin.
 Merge from upstream on a schedule. Demote harness TUI tabs; make sessions the
 primary primitive. Replace the flat tab list in the rail with Chats and

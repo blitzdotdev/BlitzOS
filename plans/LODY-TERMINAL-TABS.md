@@ -1,5 +1,10 @@
 # Terminal tabs inside the Lody session viewer
 
+> **Historical design record.** As of 2026-09-04, use
+> `docs/LODY-MERGE.md` for every upstream merge and
+> `plans/LODY-DAEMON-FROM-TREE.md` for daemon provenance. Any merge mechanics
+> or fixed seam counts below describe the implementation at that date.
+
 One tab strip, not two. Today a workspace with `VITE_BLITZ_LODY_SESSIONS` on
 draws Lody's session tab strip when a chat is open and the native pane tab strip
 when a terminal is, and the member reads that as two products. This plan makes a

@@ -75,6 +75,13 @@ configuration gate and under the `canary` environment:
    anything to the deploy job. The deploy pins those values and verifies that
    `/version` reports both the merged commit and the expected box-image tag.
 
+**Lody transition.** The four inputs above match what the Dockerfile consumes
+today, while it still installs the transition npm daemon. Until plan PR E in
+`plans/LODY-DAEMON-FROM-TREE.md`, a pure `vendor/lody` change does not change
+the release id. PR E adds the Lody tree, reviewed adapters, lockfile, and
+build/seam scripts to this existing mechanism. Follow `docs/LODY-MERGE.md` for
+the upstream procedure; do not duplicate it here.
+
 The `canary` environment's `CLOUDFLARE_API_TOKEN` must be able to write the
 `blitz-box-images` bucket. A token that can deploy the Worker but cannot write
 that R2 bucket makes the image job fail.
@@ -238,12 +245,16 @@ skips the build, and then the freshness of that tag is yours to guarantee.
 ## Upgrade and rollback
 
 Point the `BOX_IMAGE_*` vars at the new image and redeploy the control plane.
-The vars only affect **newly created** VMs: a workspace keeps the image it
-booted with for its whole life. To move existing workspaces to a new image,
-destroy and recreate them.
+New VMs use that pin immediately. An existing cloud VM moves only after an
+owner or admin requests an update through the box-config v1 routes in
+`packages/control-plane/core/box-config.ts`; the host updater emitted by
+`packages/control-plane/core/bootstrap.ts` polls, replaces the container, and
+reports the installed ref. MicroVMs have no in-place updater and keep their old
+image until recreation.
 
-Rollback is the same operation in reverse — restore the previous values and
-redeploy. VMs created during the bad window keep the bad image until recycled.
+Rollback starts by restoring the previous immutable pin and redeploying. New
+VMs then use it; request another box update for each existing cloud VM that must
+move back. Recreate an affected microVM.
 
 This boot-time pinning is why the control plane gates some per-workspace
 behavior on the VM's creation time (the `BOX_IMAGE_*_SINCE_MS` constants in
