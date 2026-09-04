@@ -45,15 +45,7 @@ export function useLodySurfaceIpc(
     held.current = {
       bridge,
       ipcClient: createBoundIpcClient(bridge.ipc),
-      runtimeLifecycle: createLodySurfaceRuntimeLifecycle({
-        onConstructionSlow: ({ attemptId, timeoutMs }) => {
-          console.warn("lody: runtime construction is still pending", {
-            attemptId,
-            platformUrl: endpoints.platformUrl,
-            timeoutMs,
-          });
-        },
-      }),
+      runtimeLifecycle: createLodySurfaceRuntimeLifecycle(),
       releaseSurface: () => releaseRef.current?.(),
       pendingTerminalRelease: null,
     };

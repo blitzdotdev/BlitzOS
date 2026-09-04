@@ -1,21 +1,12 @@
 /** One retained surface's rail subtree and shell-host ownership wrapper. */
-import { memo, useLayoutEffect } from "react";
+import { memo } from "react";
 import { createPortal } from "react-dom";
 import { SessionRailSidebar } from "./SessionRailSidebar.js";
 import { useLodySurfaceActiveState } from "./surface-active-context.js";
-import { markLodyActivationPhase } from "./surface-activation-performance.js";
 
 const RetainedSessionRailSidebar = memo(SessionRailSidebar);
 
-function LodyRailPortalCommitMarker({ targetKey }: { targetKey: string }) {
-  useLayoutEffect(() => {
-    markLodyActivationPhase(targetKey, "rail-portal-mount-commit");
-  }, [targetKey]);
-  return null;
-}
-
 export function LodySurfaceRailPortal(props: {
-  targetKey: string;
   activeSessionId: string | null;
   archiveOpen: boolean;
   openSession: (sessionId: string) => void;
@@ -32,7 +23,6 @@ export function LodySurfaceRailPortal(props: {
       inert={!shown}
       aria-hidden={shown ? undefined : "true"}
     >
-      <LodyRailPortalCommitMarker targetKey={props.targetKey} />
       <RetainedSessionRailSidebar
         terminals={rail.terminals}
         activeTerminalId={rail.activeTerminalId}

@@ -24,10 +24,7 @@ import {
   LocalLoroDataPlaneClientMessageSchema,
   LocalLoroDataPlaneServerMessageSchema,
 } from "@lody/shared/local-loro-data-plane";
-import {
-  createLodyDataPlaneConnection,
-  lodyLiveDataPlaneSocketCount,
-} from "../src/lody/data-plane-connection.js";
+import { createLodyDataPlaneConnection } from "../src/lody/data-plane-connection.js";
 
 const CORPUS = fileURLToPath(new URL("../../schema/fixtures/lody-data-plane/", import.meta.url));
 
@@ -152,7 +149,7 @@ describe("the browser connection parses the corpus at its boundary", () => {
       webSocketConstructor: ScriptedWebSocket as unknown as typeof WebSocket,
     });
     const socket = ScriptedWebSocket.instances[0]!;
-    expect(lodyLiveDataPlaneSocketCount()).toBe(1);
+    expect(ScriptedWebSocket.instances).toHaveLength(1);
     const received: string[] = [];
     handle.connection.onMessage((message: { type: string }) => received.push(message.type));
 
@@ -187,7 +184,7 @@ describe("the browser connection parses the corpus at its boundary", () => {
     expect(JSON.parse(socket.sent.at(-1)!)).toEqual(read("client/ping.json"));
 
     handle.dispose();
-    expect(lodyLiveDataPlaneSocketCount()).toBe(0);
+    expect(socket.readyState).toBe(3);
   });
 
   it("reports an established socket close and its redial as continuity edges", () => {
@@ -211,7 +208,7 @@ describe("the browser connection parses the corpus at its boundary", () => {
     expect(continuity).toEqual(["socket-close", "socket-redial"]);
     expect(ScriptedWebSocket.instances).toHaveLength(2);
     handle.dispose();
-    expect(lodyLiveDataPlaneSocketCount()).toBe(0);
+    expect(ScriptedWebSocket.instances[1]?.readyState).toBe(3);
     vi.useRealTimers();
   });
 
@@ -236,7 +233,7 @@ describe("the browser connection parses the corpus at its boundary", () => {
       expect(continuity).toEqual(["socket-close", "socket-redial"]);
       handle.dispose();
       expect(continuity).toEqual(["socket-close", "socket-redial"]);
-      expect(lodyLiveDataPlaneSocketCount()).toBe(0);
+      expect(ScriptedWebSocket.instances[1]?.readyState).toBe(3);
     } finally {
       vi.useRealTimers();
     }

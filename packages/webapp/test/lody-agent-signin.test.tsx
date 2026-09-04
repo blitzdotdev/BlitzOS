@@ -51,6 +51,7 @@ import {
 import { BLITZ_CLAUDE_CONFIG_ID, bootstrapLodyAgentConfigs } from "../src/lody/agent-configs";
 import { initLodyI18n } from "../src/lody/i18n";
 import type { LodyAtomStore, LodyWorkspaceRuntime } from "../src/lody/runtime";
+import { seedLodySurfaceWorkspaceContext } from "../src/lody/surface-workspace-context";
 import { installLodyDomStubs } from "./lody-dom-stubs";
 import { render, settle } from "./dom";
 
@@ -156,21 +157,12 @@ function AuthenticationProbe(props: {
   return null;
 }
 
-describe("the Lody surface seeds the workspace context its sign-in panel reads", () => {
-  /** Mounts the route tree at an address whose leaf renders nothing, so the
-   * `$workspaceName` route runs — and with it `useWorkspaceContextAtoms` — with
-   * none of the vendored pages loaded.
-   *
-   * A SETTINGS STUB, and it used to be the archive. The archive stopped being a
-   * stub when it got its page (`router.tsx`, `ArchiveRoute`), and a leaf that
-   * renders the real `ArchiveView` would need the whole provider stack this
-   * group deliberately does not build. Every settings address is still
-   * `EmptyRoute`, which is the property this helper wants. */
+describe("the retained surface seeds the workspace context its sign-in panel reads", () => {
+  /** Mounts a route leaf that needs no renderer provider stack. */
   async function mountRoute(
     store: LodyAtomStore,
-    options: { workspaceId?: string },
   ): Promise<{ unmount: () => Promise<void> }> {
-    const router = createLodySessionRouter(WORKSPACE_SLUG, options);
+    const router = createLodySessionRouter(WORKSPACE_SLUG);
     await act(async () => {
       await router.navigate({
         to: "/$workspaceName/settings/about",
@@ -188,22 +180,24 @@ describe("the Lody surface seeds the workspace context its sign-in panel reads",
 
   it("publishes the daemon's workspace id, not just its slug", async () => {
     const store = createStore();
-    const mounted = await mountRoute(store, { workspaceId: WORKSPACE_ID });
+    const release = seedLodySurfaceWorkspaceContext(store, {
+      workspace: { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID },
+    });
+    const mounted = await mountRoute(store);
     try {
       expect(store.get(currentWorkspaceSlugAtom)).toBe(WORKSPACE_SLUG);
-      // The regression: phase 3 passed `undefined` for the hook's `access`
-      // argument, and this stayed `null` for the whole life of the surface.
       expect(store.get(currentWorkspaceIdAtom)).toBe(WORKSPACE_ID);
     } finally {
       await mounted.unmount();
+      release();
     }
   });
 
-  it("leaves the id null when no workspace id is supplied, which is what broke", async () => {
+  it("does not let the route duplicate workspace-context ownership", async () => {
     const store = createStore();
-    const mounted = await mountRoute(store, {});
+    const mounted = await mountRoute(store);
     try {
-      expect(store.get(currentWorkspaceSlugAtom)).toBe(WORKSPACE_SLUG);
+      expect(store.get(currentWorkspaceSlugAtom)).toBeNull();
       expect(store.get(currentWorkspaceIdAtom)).toBeNull();
     } finally {
       await mounted.unmount();
@@ -231,7 +225,10 @@ describe("the Lody surface seeds the workspace context its sign-in panel reads",
 
     const store = createStore();
     store.set(runtimeAtom, runtime);
-    const router = createLodySessionRouter(WORKSPACE_SLUG, { workspaceId: WORKSPACE_ID });
+    const release = seedLodySurfaceWorkspaceContext(store, {
+      workspace: { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID },
+    });
+    const router = createLodySessionRouter(WORKSPACE_SLUG);
     await act(async () => {
       await router.navigate({
         to: "/$workspaceName/settings/about",
@@ -271,6 +268,7 @@ describe("the Lody surface seeds the workspace context its sign-in panel reads",
     } finally {
       await probe.unmount();
       await mounted.unmount();
+      release();
     }
   });
 

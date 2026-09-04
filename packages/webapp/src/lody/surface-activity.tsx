@@ -1,40 +1,18 @@
 /** Visibility mechanics shared by the retained Lody route trees. */
 import {
   Activity,
-  useEffect,
   useInsertionEffect,
   useLayoutEffect,
   useRef,
   type ReactNode,
 } from "react";
-import {
-  isLodyActivationTraceActive,
-  markLodyActivationPhase,
-} from "./surface-activation-performance.js";
-
-function LodyActivityRevealMarker({ targetKey }: { targetKey: string }) {
-  useLayoutEffect(() => {
-    markLodyActivationPhase(targetKey, "activity-reveal-commit");
-  }, [targetKey]);
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      markLodyActivationPhase(targetKey, "effects-settled");
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [targetKey]);
-  return null;
-}
 
 export function LodyRouteActivity(props: {
   active: boolean;
-  performanceTargetKey?: string;
   children: ReactNode;
 }) {
   return (
     <Activity mode={props.active ? "visible" : "hidden"}>
-      {props.performanceTargetKey !== undefined
-        && isLodyActivationTraceActive(props.performanceTargetKey)
-        && <LodyActivityRevealMarker targetKey={props.performanceTargetKey} />}
       {props.children}
     </Activity>
   );
@@ -82,7 +60,6 @@ function captureScrollPositions(root: HTMLElement): ScrollPosition[] {
 export function LodySurfaceVisibilityRoot(props: {
   hidden: boolean;
   active?: boolean;
-  performanceTargetKey?: string;
   className: string;
   children: ReactNode;
 }) {
@@ -111,9 +88,6 @@ export function LodySurfaceVisibilityRoot(props: {
       wasHiddenRef.current = true;
       return undefined;
     }
-    if (props.active !== false && props.performanceTargetKey !== undefined) {
-      markLodyActivationPhase(props.performanceTargetKey, "surface-visible-commit");
-    }
     if (!wasHiddenRef.current) return undefined;
     wasHiddenRef.current = false;
     for (const position of scrollPositionsRef.current) {
@@ -122,30 +96,20 @@ export function LodySurfaceVisibilityRoot(props: {
       element.scrollTop = position.top;
       element.scrollLeft = position.left;
     }
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled || rootRef.current !== root) return;
-      const previous = lastFocusedRef.current;
-      const target =
-        previous !== null && previous.isConnected && root.contains(previous)
-          ? previous
-          : composerIn(root) ?? root;
-      target.focus({ preventScroll: true });
-      if (props.performanceTargetKey !== undefined) {
-        markLodyActivationPhase(props.performanceTargetKey, "focus-restore");
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [props.active, props.hidden, props.performanceTargetKey]);
+    const previous = lastFocusedRef.current;
+    const target =
+      previous !== null && previous.isConnected && root.contains(previous)
+        ? previous
+        : composerIn(root) ?? root;
+    target.focus({ preventScroll: true });
+    return undefined;
+  }, [props.active, props.hidden]);
 
   return (
     <div
       ref={rootRef}
       className={props.className}
       data-lody-active={props.active === false ? "false" : "true"}
-      data-lody-performance-target={props.performanceTargetKey}
       hidden={props.hidden}
       inert={props.hidden}
       aria-hidden={props.hidden ? "true" : undefined}

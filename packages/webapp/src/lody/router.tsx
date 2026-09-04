@@ -55,7 +55,6 @@ import { ArchiveView } from "@lody/components/components/archive/archive-view";
 import { AppThemeShell } from "@lody/components/components/app-theme-shell";
 import { mobileWorkspaceBaseContextAtom } from "@lody/components/atoms";
 import { useIsMobile } from "@lody/components/hooks/use-mobile";
-import { useWorkspaceContextAtoms } from "@lody/components/hooks/use-workspace-context-atoms";
 import { WorkspaceRouteTargetProvider } from "@lody/components/providers/workspace-route-target";
 import { MobileSessionStack } from "./MobileSessionStack.js";
 import { LODY_ARCHIVE_ROUTE, LODY_CHAT_ROUTE, LODY_SESSION_ROUTE } from "./route-ids.js";
@@ -130,61 +129,23 @@ function EmptyRoute() {
 }
 
 /**
- * The `$workspaceName` guard, reduced to the two things the local platform's
- * own guard does (`routes/$workspaceName.tsx`, `LocalWorkspaceGuardRoute`):
- * publish the URL target for descendants, and drive the workspace-context atoms
- * the runtime keys off.
- *
- * The vendored hook does the atom write, not a hand-rolled `setWorkspaceContextAtom`
- * call: it publishes slug and id as ONE transaction and clears only its own
- * scope on unmount, and reproducing that by hand is how the two fall out of step.
- * The slug redirect their guard performs is dropped — our slug comes from the
- * daemon's catalog, so it is canonical by construction.
- *
- * THE SECOND ARGUMENT IS NOT OPTIONAL, AND PHASE 3 PASSED `undefined`.
- *
- * `useWorkspaceContextAtoms` publishes `{ slug, workspaceId: null }` in a
- * layout effect and fills the id in only from its `access` argument
- * (`hooks/use-workspace-context-atoms.ts:34`, gated on
- * `access?.status === 'member' && access.organizationId`). With `undefined`
- * there, `currentWorkspaceIdAtom` stays NULL for the whole life of the surface.
- *
- * That is a silent hole, because `activeWorkspaceRuntimeAtom` resolves from the
- * SLUG (`atoms/runtime.ts:485`) and so still answers `ready` — everything the
- * member normally touches keeps working, and only the consumers that read the
- * id directly break. `useMachineAcpAuthentication` is one of them: both of its
- * entry points guard on `workspaceId == null` and throw
- * `chat.validation.missingContext` — "Workspace context is missing" — which is
- * exactly what the canary box showed when Retry was pressed. Eleven more
- * consumers read the same atom (`use-machine-actions`, `use-remove-local-project`,
- * `use-local-projects-admin`, `sidebar-state`, `settings-machine-tab`, …).
- *
- * The id we pass is the daemon's own `lw_<uuid>` — the same value
- * `useImplicitLocalWorkspace()` hands `RuntimeProvider`, out of the same
- * `/lody/platform` catalog — so `resolveWorkspaceDataScope`'s id check
- * (`lib/workspace-data-scope.ts:32`) agrees rather than flipping every scoped
- * consumer to `switching`. `status: 'member'` is the hook's own gate value; a
- * local workspace has exactly one member and no other role to report.
+ * The `$workspaceName` guard reduced to its route-target publication. The
+ * retained surface above Activity is the sole workspace-context atom owner.
+ * Our slug comes from the daemon catalog, so no redirect is needed.
  */
-function workspaceRouteComponent(workspaceId: string) {
-  // The shape `useWorkspaceContextAtoms` reads, built once: a fresh object per
-  // render would re-run its `access` effect on every render of the route.
-  const access = { status: "member", organizationId: workspaceId };
-  return function WorkspaceRoute() {
-    // SAFETY: `strict: false` returns the params of every active match, and this
-    // component is only ever the `$workspaceName` route's own component, so
-    // `workspaceName` is the parameter that route declares. The `null` branch
-    // below covers the render that happens before a match resolves.
-    const params = useParams({ strict: false }) as { workspaceName?: string };
-    const slug = params.workspaceName ?? null;
-    useWorkspaceContextAtoms(slug, access);
-    if (slug === null) return null;
-    return (
-      <WorkspaceRouteTargetProvider slug={slug}>
-        <Outlet />
-      </WorkspaceRouteTargetProvider>
-    );
-  };
+function WorkspaceRoute() {
+  // SAFETY: `strict: false` returns the params of every active match, and this
+  // component is only ever the `$workspaceName` route's own component, so
+  // `workspaceName` is the parameter that route declares. The `null` branch
+  // below covers the render that happens before a match resolves.
+  const params = useParams({ strict: false }) as { workspaceName?: string };
+  const slug = params.workspaceName ?? null;
+  if (slug === null) return null;
+  return (
+    <WorkspaceRouteTargetProvider slug={slug}>
+      <Outlet />
+    </WorkspaceRouteTargetProvider>
+  );
 }
 
 /**
@@ -456,11 +417,6 @@ export { LODY_ARCHIVE_ROUTE, LODY_CHAT_ROUTE, LODY_SESSION_ROUTE } from "./route
 export type LodyRouter = ReturnType<typeof createLodySessionRouter>;
 
 export interface LodySessionRouterOptions {
-  /** The daemon's own `lw_<uuid>`, published into `currentWorkspaceIdAtom` by
-   * the `$workspaceName` route. See `workspaceRouteComponent` for what reads it
-   * and what a missing id costs. Absent leaves phase 3's behaviour, and is used
-   * only by the router unit tests that mount no runtime. */
-  workspaceId?: string;
   /** Every session page this tree renders follows without driving (seam patch
    * 4). Fixed per router, because it is a property of WHOSE box the surface is
    * mounted against, and that never changes under one router. */
@@ -497,7 +453,7 @@ export function createLodySessionRouter(
   const workspaceRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "$workspaceName",
-    component: workspaceRouteComponent(options.workspaceId ?? ""),
+    component: WorkspaceRoute,
   });
 
   // Pathless: it contributes an id segment and no URL segment, exactly as their

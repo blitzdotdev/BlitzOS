@@ -28,12 +28,8 @@
  *   `local:<uuid>`, never a BlitzOS membership id.
  * - `localProbeResultAtom` — Electron's CLI-state bridge fills it. See
  *   `seedLocalMachineIdentity` for why a plain write loses a race.
- * - the workspace-context atoms — their `$workspaceName` route fills them, and
- *   our route tree calls the same vendored hook (`router.tsx`, `WorkspaceRoute`)
- *   with the daemon's own workspace id. They are ALSO seeded above the router by
- *   `seedWorkspaceContext`, because the runtime is built from them and something
- *   above the router now waits for the runtime. The owner also repairs the pair
- *   when Activity runs the hidden route's cleanup.
+ * - the workspace-context atoms. One retained owner above Activity seeds the
+ *   daemon workspace identity and clears it only when the surface is evicted.
  *
  * IT STAYS MOUNTED. The bridge/store/runtime/provider tree remains live; React
  * Activity hides the route DOM and disconnects route effects until reveal.
@@ -391,7 +387,6 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
   // on every render of the host, and rebuilding the router would rebuild the
   // page under the member's cursor.
   const sharedSessionId = props.shared?.sessionId ?? null;
-  const workspaceId = snapshot?.workspace.workspaceId ?? null;
   // The own-box initial address, frozen at mount: the router builds once, after
   // the snapshot settles the slug, and later selections drive it imperatively.
   // A ref, not a dep, so a selection change never rebuilds the router. See the
@@ -401,11 +396,6 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
   const router = useMemo<LodyRouter | null>(() => {
     if (slug === null) return null;
     const routerOptions: LodySessionRouterOptions = { readOnly };
-    // The daemon's own id, into `currentWorkspaceIdAtom` through their
-    // `$workspaceName` route. Without it every consumer that reads the id
-    // directly — the ACP sign-in panel first among them — sees `null` and
-    // refuses with "Workspace context is missing". See `router.tsx`.
-    if (workspaceId !== null) routerOptions.workspaceId = workspaceId;
     // A shared surface opens on the shared session; an own surface opens on the
     // selection the shell restored. Shared wins because the two never coexist on
     // one surface, and a shared mount is never handed an own-box initial id.
@@ -414,7 +404,7 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
       routerOptions.initialSessionId = initialOwnSessionIdRef.current;
     }
     return createLodySessionRouter(slug, routerOptions);
-  }, [slug, workspaceId, readOnly, sharedSessionId]);
+  }, [slug, readOnly, sharedSessionId]);
 
   // Both seeds are effects, so the first render below sees a null user and no
   // visible machine; both atoms are jotai state, so the surface converges on
@@ -524,7 +514,7 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
   const routeTree = router === null
     ? null
     : (
-      <LodySurfaceRouteActivity targetKey={endpoints.platformUrl}>
+      <LodySurfaceRouteActivity>
         <RouterProvider router={router} />
       </LodySurfaceRouteActivity>
     );
@@ -534,7 +524,7 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
   );
 
   return (
-    <LodySurfaceVisibilityOwner targetKey={endpoints.platformUrl}>
+    <LodySurfaceVisibilityOwner>
       <LodySurfaceIpcOwner held={localBridge} />
       <LodySurfaceIdentityRevalidation
         endpoints={endpoints}
@@ -568,9 +558,8 @@ function SessionSurfaceContent(props: LodySessionSurfaceStableProps) {
                       ? {}
                       : { onActiveSessionChange: props.onActiveSessionChange })}
                   />
-                  <LodySurfaceRailActivity targetKey={endpoints.platformUrl}>
+                  <LodySurfaceRailActivity>
                     <LodySurfaceRailPortal
-                      targetKey={endpoints.platformUrl}
                       activeSessionId={activeSessionId}
                       archiveOpen={archiveOpen}
                       openSession={openSession}

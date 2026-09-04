@@ -3,7 +3,6 @@ import { Provider as JotaiProvider, atom, createStore, useAtomValue } from "jota
 import {
   currentWorkspaceIdAtom,
   currentWorkspaceSlugAtom,
-  setWorkspaceContextAtom,
 } from "@lody/components/atoms/workspace-context";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -51,10 +50,10 @@ function EffectProbe(props: { store: ProbeStore; counts: ProbeCounts }) {
 }
 
 describe("a hidden Lody route Activity", () => {
-  it("schedules no measurement timer when no activation trace is active", async () => {
+  it("reveals without scheduling a host measurement timer", async () => {
     const timer = vi.spyOn(globalThis, "setTimeout");
     const tree = (active: boolean) => (
-      <LodyRouteActivity active={active} performanceTargetKey="normal-reveal">
+      <LodyRouteActivity active={active}>
         <div>route</div>
       </LodyRouteActivity>
     );
@@ -110,7 +109,7 @@ describe("a hidden Lody route Activity", () => {
     await view.unmount();
   });
 
-  it("keeps the runtime workspace identity live when route effects clean up", async () => {
+  it("keeps one workspace identity through Activity hide and clears it on eviction", async () => {
     const store = createStore();
     const runtimeCounts = { mounts: 0, cleanups: 0 };
     const release = seedLodySurfaceWorkspaceContext(store, {
@@ -127,16 +126,10 @@ describe("a hidden Lody route Activity", () => {
       }, [slug]);
       return null;
     }
-    function RouteProbe() {
-      useEffect(() => () => {
-        store.set(setWorkspaceContextAtom, { slug: null, workspaceId: null });
-      }, []);
-      return <div>route</div>;
-    }
     const tree = (active: boolean) => (
       <JotaiProvider store={store}>
         <RuntimeProbe />
-        <LodyRouteActivity active={active}><RouteProbe /></LodyRouteActivity>
+        <LodyRouteActivity active={active}><div>route</div></LodyRouteActivity>
       </JotaiProvider>
     );
     const view = await render(tree(true));
@@ -147,8 +140,8 @@ describe("a hidden Lody route Activity", () => {
     expect(runtimeCounts).toEqual({ mounts: 1, cleanups: 0 });
 
     release();
-    store.set(setWorkspaceContextAtom, { slug: null, workspaceId: null });
     expect(store.get(currentWorkspaceSlugAtom)).toBeNull();
+    expect(store.get(currentWorkspaceIdAtom)).toBeNull();
     await view.unmount();
   });
 });

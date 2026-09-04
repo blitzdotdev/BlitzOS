@@ -60,13 +60,10 @@ export function LodySurfaceShellOwnership(props: {
   return null;
 }
 
-export function LodySurfaceRouteActivity(props: { targetKey: string; children: ReactNode }) {
+export function LodySurfaceRouteActivity(props: { children: ReactNode }) {
   const { active, hidden, surfaceTabs } = useLodySurfaceActiveState();
   return (
-    <LodyRouteActivity
-      active={active && !hidden}
-      performanceTargetKey={props.targetKey}
-    >
+    <LodyRouteActivity active={active && !hidden}>
       <SurfaceTabsContext.Provider value={surfaceTabs ?? null}>
         {props.children}
       </SurfaceTabsContext.Provider>
@@ -74,25 +71,21 @@ export function LodySurfaceRouteActivity(props: { targetKey: string; children: R
   );
 }
 
-export function LodySurfaceRailActivity(props: { targetKey: string; children: ReactNode }) {
+export function LodySurfaceRailActivity(props: { children: ReactNode }) {
   const { active } = useLodySurfaceActiveState();
   return (
-    <LodyRouteActivity
-      active={active}
-      performanceTargetKey={props.targetKey}
-    >
+    <LodyRouteActivity active={active}>
       {props.children}
     </LodyRouteActivity>
   );
 }
 
-export function LodySurfaceVisibilityOwner(props: { targetKey: string; children: ReactNode }) {
+export function LodySurfaceVisibilityOwner(props: { children: ReactNode }) {
   const { active, hidden } = useLodySurfaceActiveState();
   return (
     <LodySurfaceVisibilityRoot
       hidden={hidden}
       active={active}
-      performanceTargetKey={props.targetKey}
       className={LODY_SURFACE_CLASS}
     >
       {props.children}

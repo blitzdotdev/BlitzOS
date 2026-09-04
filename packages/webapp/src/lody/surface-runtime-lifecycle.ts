@@ -1,10 +1,4 @@
 /** Coordinates concrete runtime construction attempts with terminal IPC teardown. */
-import {
-  recordLodyRuntimeCreated,
-  recordLodyRuntimeDisposed,
-} from "./surface-runtime-stats.js";
-
-export const LODY_RUNTIME_CONSTRUCTION_WARNING_MS = 10_000;
 
 export interface LodyRuntimeLifecycleEvent {
   attemptId: number;
@@ -16,29 +10,18 @@ export interface LodySurfaceRuntimeLifecycle {
   releaseAfterRuntime(release: () => void): void;
 }
 
-export interface LodySurfaceRuntimeLifecycleOptions {
-  constructionWarningMs?: number;
-  onConstructionSlow?: (details: { attemptId: number; timeoutMs: number }) => void;
-}
-
 interface RuntimeAttempt {
   completion: Promise<void>;
   complete: () => void;
-  constructionWarning: ReturnType<typeof setTimeout>;
-  handleCreated: boolean;
 }
 
-export function createLodySurfaceRuntimeLifecycle(
-  options: LodySurfaceRuntimeLifecycleOptions = {},
-): LodySurfaceRuntimeLifecycle {
-  const warningMs = options.constructionWarningMs ?? LODY_RUNTIME_CONSTRUCTION_WARNING_MS;
+export function createLodySurfaceRuntimeLifecycle(): LodySurfaceRuntimeLifecycle {
   const attempts = new Map<number, RuntimeAttempt>();
   let releaseStarted = false;
 
   const finishAttempt = (attemptId: number): void => {
     const attempt = attempts.get(attemptId);
     if (attempt === undefined) return;
-    clearTimeout(attempt.constructionWarning);
     attempts.delete(attemptId);
     attempt.complete();
   };
@@ -50,29 +33,13 @@ export function createLodySurfaceRuntimeLifecycle(
         const completion = new Promise<void>((resolve) => {
           complete = resolve;
         });
-        const constructionWarning = setTimeout(() => {
-          options.onConstructionSlow?.({ attemptId: event.attemptId, timeoutMs: warningMs });
-        }, warningMs);
         attempts.set(event.attemptId, {
           completion,
           complete,
-          constructionWarning,
-          handleCreated: false,
         });
         return;
       }
-      if (event.phase === "created") {
-        const attempt = attempts.get(event.attemptId);
-        if (attempt !== undefined && !attempt.handleCreated) {
-          clearTimeout(attempt.constructionWarning);
-          attempt.handleCreated = true;
-          recordLodyRuntimeCreated();
-        }
-        return;
-      }
-      if (event.phase === "disposed" && attempts.get(event.attemptId)?.handleCreated === true) {
-        recordLodyRuntimeDisposed();
-      }
+      if (event.phase === "created") return;
       finishAttempt(event.attemptId);
     },
     releaseAfterRuntime: (release) => {
