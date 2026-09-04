@@ -61,13 +61,8 @@ export function isPreviewFile(file: string): boolean {
 }
 
 /** An app URL `blitz browser open` may point the browser panel at: https with
- * a host. Whether the host is one the panel embeds is the browser's call. */
+ * a host. Whether the host is one the panel embeds is the browser's call. A
+ * pattern rather than `URL`, because this package runs where there is no DOM. */
 export function isPreviewAppUrl(url: string): boolean {
-  if (url.length > MAX_PREVIEW_PATH_LENGTH) return false;
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "https:" && parsed.host !== "";
-  } catch {
-    return false;
-  }
+  return url.length <= MAX_PREVIEW_PATH_LENGTH && /^https:\/\/[^\s/?#]+/u.test(url);
 }
