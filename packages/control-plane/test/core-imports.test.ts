@@ -15,6 +15,7 @@ const expected = [
   "blobs.ts",
   "bootstrap.ts",
   "box-config.ts",
+  "box-image-manifest-loader.ts", // One emitted loader serves first boot and the host updater.
   "box-images.ts",
   "cloud-init.ts",
   "connections/catalog/discord.ts",
@@ -139,6 +140,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(114);
+    expect(expected).toHaveLength(115);
   });
 });

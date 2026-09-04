@@ -56,6 +56,15 @@ function registryUserData(callerUserData?: string): string {
   );
 }
 
+function emittedSection(source: string, startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker);
+  if (start < 0) throw new Error(`missing emitted section start: ${startMarker}`);
+  const bodyStart = start + startMarker.length;
+  const end = source.indexOf(endMarker, bodyStart);
+  if (end < 0) throw new Error(`missing emitted section end: ${endMarker}`);
+  return source.slice(bodyStart, end);
+}
+
 describe("production VM bootstrap", () => {
   beforeEach(async () => {
     await resetDatabase();
@@ -451,18 +460,33 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain('UPDATE_LOG="$STATE_DIR/box-update.log"');
   });
 
-  it("orders the updater's swap pull-first with a rollback start", () => {
-    const userData = registryUserData();
+  it("orders the updater's swap load/pull-first with a rollback start", () => {
+    const updater = emittedSection(
+      registryUserData(),
+      "cat >/usr/local/sbin/blitz-box-update <<'BOX_UPDATER'\n",
+      "\nBOX_UPDATER",
+    );
 
     // Origin refresh happens on every poll, before the update gate.
-    const refresh = userData.indexOf('mv "$origin_tmp" "$ORIGIN_PATH"');
-    const gate = userData.indexOf('[ "$update_requested" = true ] || exit 0');
-    const pull = userData.indexOf('docker pull "$next_ref"', gate);
-    const remove = userData.indexOf("docker rm -f blitz-box", pull);
-    const startNew = userData.indexOf('if start_box "$next_ref"; then', remove);
-    const rollback = userData.indexOf('start_box "$current_image"', startNew);
+    const refresh = updater.indexOf('mv "$origin_tmp" "$ORIGIN_PATH"');
+    const gate = updater.indexOf('[ "$update_requested" = true ] || exit 0');
+    const loaderSource = updater.indexOf(
+      ". /usr/local/libexec/blitz-box-image-manifest.sh",
+      gate,
+    );
+    const load = updater.indexOf(
+      'load_box_image_manifest "$next_ref" "" "" "$current_image" "$STATE_DIR"',
+      loaderSource,
+    );
+    const pull = updater.indexOf('docker pull "$next_ref"', gate);
+    const remove = updater.indexOf("docker rm -f blitz-box", gate);
+    const startNew = updater.indexOf('if start_box "$next_image"; then', remove);
+    const rollback = updater.indexOf('start_box "$current_image"', startNew);
     expect(refresh).toBeGreaterThan(-1);
     expect(gate).toBeGreaterThan(refresh);
+    expect(loaderSource).toBeGreaterThan(gate);
+    expect(load).toBeGreaterThan(loaderSource);
+    expect(remove).toBeGreaterThan(load);
     expect(pull).toBeGreaterThan(gate);
     expect(remove).toBeGreaterThan(pull);
     expect(startNew).toBeGreaterThan(remove);
@@ -551,6 +575,11 @@ write_files:
       BOX_IMAGE_TAG,
       BOX_IMAGE_SHA256,
     );
+    const imageSetup = emittedSection(
+      userData,
+      "chmod 0644 /usr/local/libexec/blitz-box-image-manifest.sh\n",
+      "\nblitz_phase box-image-ready",
+    );
 
     expect(userData).toContain(`readonly BOX_IMAGE_REF='${imageUrl}'`);
     expect(userData).toContain(`readonly BOX_IMAGE_TAG='${BOX_IMAGE_TAG}'`);
@@ -561,14 +590,18 @@ write_files:
     expect(userData).toContain('"$BOX_IMAGE_TAG"');
     expect(userData).not.toContain('docker pull "$BOX_IMAGE_REF"');
 
-    const download = userData.indexOf('download "$BOX_IMAGE_REF" "$image_archive"');
-    const checksum = userData.indexOf('verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"');
-    const load = userData.indexOf('gunzip -c "$image_archive" | docker load');
-    const run = userData.indexOf("docker run", load);
+    const download = imageSetup.indexOf('download "$BOX_IMAGE_REF" "$image_archive"');
+    const checksum = imageSetup.indexOf(
+      'verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"',
+    );
+    const load = imageSetup.indexOf('gunzip -c "$image_archive" | docker load');
+    const configuredTag = imageSetup.indexOf('box_image="$BOX_IMAGE_TAG"', load);
+    const run = userData.indexOf('/usr/local/bin/blitz-box-run "$box_image"');
     expect(download).toBeGreaterThan(-1);
     expect(checksum).toBeGreaterThan(download);
     expect(load).toBeGreaterThan(checksum);
-    expect(run).toBeGreaterThan(load);
+    expect(configuredTag).toBeGreaterThan(load);
+    expect(run).toBeGreaterThan(userData.indexOf("blitz_phase box-image-ready"));
   });
 
   it("keys archive image setup only to image availability on the current daemon", () => {
@@ -581,26 +614,33 @@ write_files:
       BOX_IMAGE_TAG,
       BOX_IMAGE_SHA256,
     );
+    const imageSetup = emittedSection(
+      userData,
+      "chmod 0644 /usr/local/libexec/blitz-box-image-manifest.sh\n",
+      "\nblitz_phase box-image-ready",
+    );
 
-    const inspectGuard = userData.indexOf(
+    const inspectGuard = imageSetup.indexOf(
       'if ! docker image inspect "$BOX_IMAGE_TAG" >/dev/null 2>&1; then',
     );
-    const download = userData.indexOf('download "$BOX_IMAGE_REF" "$image_archive"');
-    const load = userData.indexOf('gunzip -c "$image_archive" | docker load');
-    const guardEnd = userData.indexOf("\nfi\n", load);
-    const provenPresent = userData.indexOf(
+    const download = imageSetup.indexOf('download "$BOX_IMAGE_REF" "$image_archive"');
+    const load = imageSetup.indexOf('gunzip -c "$image_archive" | docker load');
+    const guardEnd = imageSetup.indexOf("\nfi\n", load);
+    const provenPresent = imageSetup.indexOf(
       'docker image inspect "$BOX_IMAGE_TAG" >/dev/null',
       guardEnd + 1,
     );
-    const run = userData.indexOf("docker run", provenPresent);
+    const configuredTag = imageSetup.indexOf('box_image="$BOX_IMAGE_TAG"', provenPresent);
+    const run = userData.indexOf('/usr/local/bin/blitz-box-run "$box_image"');
 
     expect(inspectGuard).toBeGreaterThan(-1);
     expect(download).toBeGreaterThan(inspectGuard);
     expect(load).toBeGreaterThan(download);
     expect(guardEnd).toBeGreaterThan(load);
     expect(provenPresent).toBeGreaterThan(guardEnd);
-    expect(run).toBeGreaterThan(provenPresent);
-    expect(userData.slice(inspectGuard, provenPresent)).not.toMatch(
+    expect(configuredTag).toBeGreaterThan(provenPresent);
+    expect(run).toBeGreaterThan(userData.indexOf("blitz_phase box-image-ready"));
+    expect(imageSetup.slice(inspectGuard, provenPresent)).not.toMatch(
       /(?:if|elif)[^\n]*\/var\/lib\/blitz/u,
     );
   });
@@ -639,18 +679,95 @@ write_files:
       BOX_IMAGE_TAG,
       BOX_IMAGE_SHA256,
     );
+    const loader = emittedSection(
+      userData,
+      "load_box_image_manifest() {\n",
+      "\n}\nBOX_IMAGE_MANIFEST_LOADER",
+    );
+    const imageSetup = emittedSection(
+      userData,
+      "chmod 0644 /usr/local/libexec/blitz-box-image-manifest.sh\n",
+      "\nblitz_phase box-image-ready",
+    );
 
-    expect(userData).toContain('download "$BOX_IMAGE_REF" "$manifest_path"');
-    expect(userData).toContain('value.get("parts")');
-    expect(userData).toContain('value.get("totalSha256")');
-    expect(userData).toContain('value.get("imageTag")');
-    expect(userData).toContain('download "$manifest_base/$part_name" "$part_path"');
-    expect(userData).toContain('verify_sha256 "$part_path" "$part_sha256"');
-    expect(userData).toContain('cat "$part_path" >>"$image_archive"');
-    expect(userData).toContain('verify_sha256 "$image_archive" "$manifest_total_sha256"');
-    expect(userData).toContain('verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"');
-    expect(userData).toContain('[ "$manifest_image_tag" = "$BOX_IMAGE_TAG" ]');
-    expect(userData).toContain('gunzip -c "$image_archive" | docker load');
+    expect(loader).toContain("if not isinstance(parts, list) or not parts:");
+    expect(loader).toContain("if not isinstance(part, dict):");
+    expect(loader).toContain("manifest part name is invalid");
+    expect(loader).toContain("manifest part sha256 must be a SHA-256 digest");
+    expect(loader).toContain("manifest totalSha256 must be a SHA-256 digest");
+    expect(loader).toContain("manifest imageTag is invalid");
+
+    const manifestDownload = loader.indexOf('download "$manifest_ref" "$manifest_path"');
+    const partsValidation = loader.indexOf('value.get("parts")', manifestDownload);
+    const totalValidation = loader.indexOf('value.get("totalSha256")', partsValidation);
+    const tagValidation = loader.indexOf('value.get("imageTag")', totalValidation);
+    const requiredTag = loader.indexOf(
+      '[ "$manifest_image_tag" != "$required_image_tag" ]',
+      tagValidation,
+    );
+    const inspectGuard = loader.indexOf(
+      'docker image inspect "$manifest_image_tag" >/dev/null 2>&1',
+      requiredTag,
+    );
+    const partDownload = loader.indexOf(
+      'download "$manifest_base/$part_name" "$part_path"',
+      inspectGuard,
+    );
+    const partChecksum = loader.indexOf(
+      'verify_sha256 "$part_path" "$part_sha256"',
+      partDownload,
+    );
+    const append = loader.indexOf('cat "$part_path" >>"$image_archive"', partChecksum);
+    const totalChecksum = loader.indexOf(
+      'verify_sha256 "$image_archive" "$manifest_total_sha256"',
+      append,
+    );
+    const requiredChecksum = loader.indexOf(
+      'verify_sha256 "$image_archive" "$required_total_sha256"',
+      totalChecksum,
+    );
+    const load = loader.indexOf('gunzip -c "$image_archive" | docker load', requiredChecksum);
+    const provenPresent = loader.indexOf(
+      'docker image inspect "$manifest_image_tag" >/dev/null 2>&1',
+      load,
+    );
+    expect(manifestDownload).toBeGreaterThan(-1);
+    expect(partsValidation).toBeGreaterThan(manifestDownload);
+    expect(totalValidation).toBeGreaterThan(partsValidation);
+    expect(tagValidation).toBeGreaterThan(totalValidation);
+    expect(requiredTag).toBeGreaterThan(tagValidation);
+    expect(inspectGuard).toBeGreaterThan(requiredTag);
+    expect(partDownload).toBeGreaterThan(inspectGuard);
+    expect(partChecksum).toBeGreaterThan(partDownload);
+    expect(append).toBeGreaterThan(partChecksum);
+    expect(totalChecksum).toBeGreaterThan(append);
+    expect(requiredChecksum).toBeGreaterThan(totalChecksum);
+    expect(load).toBeGreaterThan(requiredChecksum);
+    expect(provenPresent).toBeGreaterThan(load);
+
+    const source = imageSetup.indexOf(". /usr/local/libexec/blitz-box-image-manifest.sh");
+    const inspect = imageSetup.indexOf(
+      'if ! docker image inspect "$BOX_IMAGE_TAG" >/dev/null 2>&1; then',
+      source,
+    );
+    const call = imageSetup.indexOf("load_box_image_manifest", inspect);
+    const callEnd = imageSetup.indexOf('fail "box-image manifest', call);
+    const presentAtCall = imageSetup.indexOf(
+      'docker image inspect "$BOX_IMAGE_TAG" >/dev/null',
+      callEnd,
+    );
+    const selectedTag = imageSetup.indexOf('box_image="$BOX_IMAGE_TAG"', presentAtCall);
+    const run = userData.indexOf('/usr/local/bin/blitz-box-run "$box_image"');
+    expect(source).toBeGreaterThan(-1);
+    expect(inspect).toBeGreaterThan(source);
+    expect(call).toBeGreaterThan(inspect);
+    expect(callEnd).toBeGreaterThan(call);
+    expect(imageSetup.slice(call, callEnd)).toContain(
+      '"$BOX_IMAGE_REF" "$BOX_IMAGE_TAG" "$BOX_IMAGE_SHA256" "" /var/lib/blitz',
+    );
+    expect(presentAtCall).toBeGreaterThan(callEnd);
+    expect(selectedTag).toBeGreaterThan(presentAtCall);
+    expect(run).toBeGreaterThan(userData.indexOf("blitz_phase box-image-ready"));
     expect(userData).not.toContain('docker pull "$BOX_IMAGE_REF"');
   });
 
