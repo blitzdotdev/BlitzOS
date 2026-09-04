@@ -104,6 +104,85 @@ export interface PutAgentRuleResponse {
   rule: AgentRuleView;
 }
 
+/** The base-image s6 services a payload manifest may ask the updater to
+ * restart. This local copy is pinned to schema and rootfs by contract tests. */
+export const BOX_PAYLOAD_RESTART_SERVICES = [
+  "cgroups",
+  "cloudflared",
+  "dockerd",
+  "dufs",
+  "enroll",
+  "gateway",
+  "init-state",
+  "lody-bridge",
+  "lody-daemon",
+  "lody-projects",
+  "lody-watchdog",
+  "machine-stats",
+  "register",
+  "remote-control",
+  "rules",
+  "sshd",
+  "ttyd",
+  "user",
+  "watch",
+] as const;
+
+export type BoxPayloadRestartService = (typeof BOX_PAYLOAD_RESTART_SERVICES)[number];
+
+export interface BoxPayloadFile {
+  path: string;
+  sha256: string;
+  mode: string;
+}
+
+export interface BoxPayloadArchive {
+  url: string;
+  sha256: string;
+  bytes: number;
+}
+
+export interface BoxPayloadDaemonArchive extends BoxPayloadArchive {
+  version: string;
+  protocolVersion: number;
+}
+
+export type BoxPayloadRestart = Partial<Record<BoxPayloadRestartService, string[]>>;
+
+export interface BoxPayloadManifest {
+  version: string;
+  createdAt: number;
+  minUpdater: number;
+  files: BoxPayloadFile[];
+  archive: BoxPayloadArchive;
+  daemon?: BoxPayloadDaemonArchive;
+  restart: BoxPayloadRestart;
+}
+
+export interface BoxPayloadConfig {
+  version: string;
+  manifestUrl: string;
+}
+
+export const BOX_PAYLOAD_OUTCOMES = [
+  "applied",
+  "rolled-back",
+  "unsupported",
+  "fetch-failed",
+  "verify-failed",
+  "start-failed",
+  "up-to-date",
+] as const;
+
+export type BoxPayloadOutcome = (typeof BOX_PAYLOAD_OUTCOMES)[number];
+
+export interface BoxPayloadResultRequest {
+  version: string;
+  daemonVersion: string;
+  outcome: BoxPayloadOutcome;
+  detail: string;
+}
+
 /** The envelope `GET /workspaces/self/box-config` returns to the VM host.
  *
  * This crosses a runtime boundary: the producer is the control-plane Worker
@@ -121,6 +200,7 @@ export interface BoxConfigResponse {
   boxImageRef: string;
   controlPlaneOrigin: string;
   updateRequested: boolean;
+  payload?: BoxPayloadConfig | null;
 }
 
 /** What the host reports after an update attempt, in the order it tries:

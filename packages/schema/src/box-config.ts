@@ -1,3 +1,5 @@
+import type { BoxPayloadConfig } from "./box-payload.js";
+
 /** The envelope `GET /workspaces/self/box-config` returns to the VM host.
  *
  * This crosses a runtime boundary: the producer is the control-plane Worker
@@ -15,6 +17,7 @@ export interface BoxConfigResponse {
   boxImageRef: string;
   controlPlaneOrigin: string;
   updateRequested: boolean;
+  payload?: BoxPayloadConfig | null;
 }
 
 /** What the host reports after an update attempt, in the order it tries:
