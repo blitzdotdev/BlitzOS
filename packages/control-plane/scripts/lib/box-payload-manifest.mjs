@@ -121,4 +121,3 @@ export function validateBoxPayloadManifest(value, knownServices) {
   }
   return manifest;
 }
-

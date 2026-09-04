@@ -14,4 +14,3 @@ test("payload versions hash sorted path and Git object-id records", () => {
   assert.equal(boxPayloadVersion(entries), expected);
   assert.equal(boxPayloadPrefix(expected), `box-payload/${expected}`);
 });
-

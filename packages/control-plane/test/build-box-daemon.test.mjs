@@ -47,4 +47,3 @@ test("daemon staging emits only the installed lody prefix deterministically", as
   assert.match(listing.stdout, /^bin\/lody$/mu);
   assert.match(listing.stdout, /^lib\/node_modules\/lody\/dist\/index\.js$/mu);
 });
-

@@ -48,4 +48,3 @@ export async function hashFile(filePath) {
   }
   return { sha256: digest.digest("hex"), bytes };
 }
-
