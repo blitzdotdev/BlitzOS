@@ -32,6 +32,7 @@ import { installLodyDomStubs } from "./lody-dom-stubs.js";
 import { render, settle } from "./dom.js";
 import {
   claudeCredentialAvailable,
+  HARNESS_BOOT_TIMEOUT_MS,
   lodyDaemonAvailable,
   startLodyHarness,
   type LodyHarness,
@@ -175,12 +176,13 @@ describe.skipIf(!lodyDaemonAvailable())("phase 5: the composer in worktree mode"
         viewer={{ name: "Phase 5", avatarUrl: null }}
         workspaceTitle="Phase 5 workspace"
         railHost={railHost}
-        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        rail={{}}
       />,
     );
     await settle();
     await until("the landing composer", () => composer() ?? undefined);
-  }, 300_000);
+    // The harness's own number for a boot hook: its lock wait plus a boot.
+  }, HARNESS_BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
     await mounted?.unmount();

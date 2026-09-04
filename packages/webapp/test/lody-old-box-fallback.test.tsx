@@ -278,13 +278,56 @@ describe("the capability probe", () => {
     const fetchImpl = answering(503);
     const { seen, view } = await mountCapability(fetchImpl);
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(8_000);
     });
-    // Five attempts across the four delays, and then it stops asking. The
-    // optimistic ending is deliberate: the surface has its own poller for a
-    // slow daemon, and a good box on the legacy rail would lose the feature.
+    // Five attempts across the four delays, and then the optimistic verdict.
+    // It is deliberate: the surface has its own poller for a slow daemon, and a
+    // good box on the legacy rail would lose the feature.
     expect(fetchImpl).toHaveBeenCalledTimes(5);
     expect(seen.capability).toBe("present");
+    await view.unmount();
+  });
+
+  /**
+   * THE BLANK WORKSPACE (blitzos, 2026-09-03). A fresh VM whose gateway
+   * answered and whose daemon never wrote its catalog: the optimistic `present`
+   * mounted a surface that drew nothing — no rail, no "New session", no tabs —
+   * for the life of the tab, and the machine said "running" the whole time.
+   */
+  it("calls an unanswered optimistic present stalled, and takes the answer when it comes", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    let status = 503;
+    const fetchImpl = vi.fn(async () => new Response(status === 200 ? CATALOG : "", { status }));
+    const { seen, view } = await mountCapability(fetchImpl);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
+    expect(seen.capability).toBe("present");
+    // The verdict is provisional: the door keeps being asked, every few seconds.
+    const afterBudget = fetchImpl.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(fetchImpl.mock.calls.length).toBeGreaterThan(afterBudget);
+    expect(seen.capability).toBe("present");
+    // Forty-five seconds without an answer, and the shell takes the rail back.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(seen.capability).toBe("stalled");
+    // A daemon that was only slow brings the surface back without a reload.
+    status = 200;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(seen.capability).toBe("present");
+    // And a real answer settles it: nothing is asked again.
+    const settled = fetchImpl.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(fetchImpl.mock.calls.length).toBe(settled);
     await view.unmount();
   });
 
@@ -404,9 +447,6 @@ async function mountFallback(options: {
         workspaceTitle="Workspace"
         visible={rail.visible}
         railHost={rail.onVendorHost === undefined ? null : railHost}
-        terminals={[{ id: "12", label: "bash", agent: "terminal" }]}
-        activeTerminalId="12"
-        onSelectTerminal={() => undefined}
         onOpenSession={rail.openSession}
         onOpenLanding={rail.openLanding}
       />
@@ -578,6 +618,30 @@ describe("the rail's notice", () => {
     // non-admin whom to ask.
     expect(onOpenMachine).toHaveBeenCalledWith("workspace-one");
     await view.unmount();
+  });
+
+  it("says the daemon is not answering, keeps the native rail, and points at My machine", async () => {
+    const onOpenMachine = vi.fn();
+    const view = await railWith({ sessionsStalled: true, onOpenMachine });
+    const notice = view.container.querySelector(".rail-notice");
+    expect(notice?.textContent).toContain("Sessions are not answering on this machine");
+    // The flag-off rail underneath: a terminal still opens while the daemon
+    // is stuck, which is what lets a member look at the box at all.
+    expect(view.container.querySelector('button[aria-label="New tab"]')).not.toBeNull();
+    const action = notice?.querySelector<HTMLButtonElement>(".rail-notice__a");
+    expect(action?.textContent).toBe("Still checking. Open My machine to recreate it");
+    await act(async () => action?.click());
+    expect(onOpenMachine).toHaveBeenCalledWith("workspace-one");
+    await view.unmount();
+
+    const readOnly = await railWith({
+      workspace: workspaceModelFixture({ title: "rail-workspace", canControl: false }),
+      sessionsStalled: true,
+    });
+    expect(readOnly.container.querySelector(".rail-notice__d")?.textContent).toBe(
+      "Still checking. Ask a workspace admin to recreate it",
+    );
+    await readOnly.unmount();
   });
 
   it("tells a member who cannot open the dialog whom to ask instead", async () => {

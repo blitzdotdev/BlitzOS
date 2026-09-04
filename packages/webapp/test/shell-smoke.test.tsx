@@ -1273,3 +1273,88 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 });
+
+/**
+ * THE 409 ON OPEN (Brandon, 2026-09-03).
+ *
+ * The control plane projects a member's STOPPED machine as workspace phase
+ * `ready`, and the shell read `ready` as running: it dialled the box for the
+ * terminal, the capability probe and every poller, and each call answered 409
+ * "your machine in this workspace is not running". The workspace opened to a
+ * spinner over a wall of refusals, and the only way out was the "My machine"
+ * dialog. Now the viewer's own row in `members` decides, the shell dials
+ * nothing, and the main pane offers Start.
+ */
+describe("a workspace whose own machine is stopped", () => {
+  const stoppedMine: WorkspaceView = workspaceViewFixture({
+    id: "workspace-stopped",
+    name: "workspace-stopped-name",
+    phase: "ready",
+    members: [{
+      membershipId: "membership-one",
+      name: "Person",
+      avatarUrl: null,
+      role: "member",
+      machine: {
+        id: "machine-one",
+        state: "stopped",
+        machineTypeId: "cx23@fsn1",
+        volumeId: "volume-one",
+        volumeUsedPercent: null,
+        membershipId: "membership-one",
+        error: null,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    }],
+  });
+  const startedMine: WorkspaceView = {
+    ...stoppedMine,
+    phase: "creating",
+    retryAction: "poll",
+    members: [{
+      ...stoppedMine.members[0]!,
+      machine: { ...stoppedMine.members[0]!.machine!, state: "provisioning" },
+    }],
+  };
+
+  it("dials no box, offers Start, and starts the viewer's own machine", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-stopped");
+    const wire = {
+      ...client(),
+      me: vi.fn(async () => tenantMe),
+      poll: vi.fn(async () => ({ workspaces: [stoppedMine] })),
+      startMachine: vi.fn(async () => ({ machine: startedMine.members[0]!.machine! })),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+
+    const start = view.container.querySelector<HTMLButtonElement>(
+      ".workspace-stopped-state button",
+    );
+    expect(start?.textContent).toBe("Start machine");
+    expect(view.container.textContent).toContain("is stopped");
+    // Nothing reached for the box: no terminal, no probe, no port poll.
+    const boxCalls = vi.mocked(fetch).mock.calls.filter(([input]) =>
+      String(input).includes("/webapp/"),
+    );
+    expect(boxCalls).toEqual([]);
+
+    // Start is the member's own verb, and the refresh is what moves the pane
+    // on: the record comes back `creating` and the loading pane takes over.
+    wire.poll.mockResolvedValue({ workspaces: [startedMine] });
+    await click(start);
+    await settle();
+    await settle();
+    expect(wire.startMachine).toHaveBeenCalledWith("machine-one");
+    expect(view.container.querySelector(".workspace-stopped-state")).toBeNull();
+    // The loading pane names the phase in its label and the stage in its text.
+    // The loading pane prints its stage; "Creating workspace" is only its label.
+    expect(view.container.textContent).toContain("allocating · cx23@fsn1");
+    expect(view.container.textContent).toContain("allocating ·");
+    await view.unmount();
+  });
+});

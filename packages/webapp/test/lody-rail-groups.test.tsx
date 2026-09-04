@@ -40,6 +40,8 @@ import { repoRoot } from "./lody-daemon-harness.js";
  * import rather than on anything it asserts.
  */
 const mirror = vi.hoisted(() => ({ sessions: [] as Record<string, unknown>[] }));
+/** Every session id the rail asked the (mocked) session actions to archive. */
+const actions = vi.hoisted(() => ({ archived: [] as string[] }));
 
 vi.mock("@lody/components/hooks/use-visible-session-metas", () => ({
   useVisibleSessionMetas: () => ({
@@ -54,7 +56,9 @@ vi.mock("@lody/components/hooks/use-visible-session-metas", () => ({
 vi.mock("@lody/components/hooks/use-session-actions", () => ({
   useSessionActions: () => ({
     updateSessionTitle: async () => {},
-    archiveSession: async () => {},
+    archiveSession: async (sessionId: string) => {
+      actions.archived.push(sessionId);
+    },
     setSessionPinned: () => {},
   }),
 }));
@@ -63,6 +67,7 @@ import { runtimeAtom } from "@lody/components/atoms/runtime";
 import { currentWorkspaceIdAtom } from "@lody/components/atoms/workspace-context";
 import { userAtom } from "@lody/components/atoms";
 import { repoOrderAtom, setRepoOrderAtom } from "@lody/components/atoms/sidebar-state";
+import { lodyPresenceNowMsAtom, lodyPresenceStatesAtom } from "@lody/components/atoms/presence";
 import { LodyFixtureProviders } from "./lody-fixture-surface.js";
 import { installLodyDomStubs } from "./lody-dom-stubs.js";
 import { SessionRailSidebar } from "../src/lody/SessionRailSidebar.js";
@@ -162,9 +167,28 @@ interface RailMount {
  * `currentWorkspaceIdAtom` is what makes `activeWorkspaceRuntimeAtom` resolve
  * `ready` (`atoms/runtime.ts:507`), and it is also what scopes `repoOrderAtom`.
  */
+/** One `session` presence entry, as the presence room holds it
+ * (`shared/src/presence.ts:18`): the owning machine's heartbeat for a session
+ * with a live status, fresh for `LODY_PRESENCE_TTL_MS` (90 s). */
+function sessionPresence(sessionId: string, updatedAt: number, statusType = "working") {
+  return {
+    kind: "session",
+    sessionId,
+    machineId: MACHINE_ID,
+    instanceId: `presence-${sessionId}`,
+    status: { type: statusType },
+    updatedAt,
+  };
+}
+
 async function mountRail(options: {
   sessions: Record<string, unknown>[];
   repoOrder?: string[];
+  /** The session the surface is showing, as the shell reports it. */
+  activeSessionId?: string;
+  /** The presence room's `session` entries and the clock they are judged
+   * against, exactly the two atoms upstream's sidebar reads for its spinner. */
+  presence?: { states: Record<string, ReturnType<typeof sessionPresence>>; nowMs: number };
 }): Promise<RailMount> {
   mirror.sessions = options.sessions;
 
@@ -173,6 +197,10 @@ async function mountRail(options: {
   store.set(currentWorkspaceIdAtom, WORKSPACE_ID);
   store.set(userAtom, { id: USER_ID });
   if (options.repoOrder !== undefined) store.set(setRepoOrderAtom, options.repoOrder);
+  if (options.presence !== undefined) {
+    store.set(lodyPresenceStatesAtom, options.presence.states);
+    store.set(lodyPresenceNowMsAtom, options.presence.nowMs);
+  }
 
   const mount: RailMount = {
     container: document.createElement("div"),
@@ -187,11 +215,8 @@ async function mountRail(options: {
             (`strip-rail.css:306`). */}
         <div className="session-list session-list--vendor">
           <SessionRailSidebar
-            terminals={[]}
-            activeTerminalId=""
-            activeSessionId={null}
+            activeSessionId={options.activeSessionId ?? null}
             surfaceVisible
-            onSelectTerminal={() => {}}
             onSelectSession={() => {}}
             onOpenLanding={() => {
               mount.landings += 1;
@@ -222,6 +247,39 @@ function headerRow(container: HTMLElement, key: string): HTMLElement {
   const parent = groupHeader(container, key).parentElement;
   if (parent === null) throw new Error(`no heading row for ${key}`);
   return parent;
+}
+
+async function until<T>(what: string, read: () => T | undefined, timeoutMs = 10_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = read();
+    if (value !== undefined) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+  }
+}
+
+/** Archive a row through ITS OWN context menu and upstream's own "Archive
+ * chat?" confirmation — the affordance a member uses, not a call of ours. */
+async function archiveFromRow(row: HTMLElement): Promise<void> {
+  await act(async () => {
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+  });
+  await settle();
+  const entry = await until("the Archive entry in the row menu", () =>
+    [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find((node) =>
+      /archive/iu.test(node.textContent ?? ""),
+    ),
+  );
+  await click(entry);
+  const confirm = await until("the archive confirmation", () =>
+    [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      /^archive$/iu.test(button.textContent ?? ""),
+    ),
+  );
+  await click(confirm);
 }
 
 function sessionRow(container: HTMLElement, sessionId: string): HTMLElement | null {
@@ -385,6 +443,69 @@ describe("the repo heading's affordances (RAIL-3, RAIL-4)", () => {
       node.getAttribute("data-sidebar-group-key"),
     );
     expect(keys.filter((key) => key !== CHATS_GROUP_KEY)).toEqual([OTHER_REPO, REPO]);
+
+    await mount.unmount();
+  });
+
+  /**
+   * THE WORKING SPINNER (dogfood, 2026-09-03). A session whose tab spins in the
+   * strip drew a blank leading slot in its rail row: the row spins only through
+   * `liveSessionStatuses` (`session-list-rows.ts`, "live presence only"), and
+   * the rail passed none. It now builds that map from the presence room the way
+   * upstream's sidebar does, so the two agree.
+   */
+  it("spins the row of a session with fresh presence, and no other", async () => {
+    const now = 1_000_000;
+    const mount = await mountRail({
+      sessions: [CHAT_SESSION, WORKTREE_SESSION, SHARED_DIR_SESSION],
+      presence: {
+        states: {
+          // Fresh: the owning machine reported within the TTL.
+          fresh: sessionPresence("s-chat", now - 10_000),
+          // Stale: a heartbeat older than the 90 s TTL is a machine that
+          // stopped reporting, not a session still working.
+          stale: sessionPresence("s-worktree", now - 120_000),
+        },
+        nowMs: now,
+      },
+    });
+
+    const spinner = (sessionId: string): Element | null =>
+      mount.container.querySelector(
+        `[data-sidebar-session-id="${sessionId}"] [data-session-working-spinner]`,
+      );
+    expect(spinner("s-chat"), "the fresh session's row").not.toBeNull();
+    expect(spinner("s-worktree"), "the stale session's row").toBeNull();
+    expect(spinner("s-shared-dir"), "a session with no presence at all").toBeNull();
+
+    await mount.unmount();
+  });
+
+  /**
+   * ARCHIVING THE SESSION ON SCREEN LEAVES IT (dogfood, 2026-09-03): the page
+   * kept showing the archived session, tab and all. Upstream's sidebar
+   * archives and then navigates to the landing when the archived id is the
+   * selected one (`loro-app-sidebar.tsx:1397`); the rail now asks the shell for
+   * the same landing, and for nobody else's row.
+   */
+  it("asks for the landing when the archived row is the session on screen, and only then", async () => {
+    actions.archived.length = 0;
+    const mount = await mountRail({
+      sessions: [CHAT_SESSION, SHARED_DIR_SESSION],
+      activeSessionId: "s-chat",
+    });
+
+    const other = sessionRow(mount.container, "s-shared-dir");
+    if (other === null) throw new Error("no row for s-shared-dir");
+    await archiveFromRow(other);
+    expect(actions.archived).toEqual(["s-shared-dir"]);
+    expect(mount.landings, "another row's archive moves nothing").toBe(0);
+
+    const shown = sessionRow(mount.container, "s-chat");
+    if (shown === null) throw new Error("no row for s-chat");
+    await archiveFromRow(shown);
+    expect(actions.archived).toEqual(["s-shared-dir", "s-chat"]);
+    expect(mount.landings, "the shown session's archive asks for the landing").toBe(1);
 
     await mount.unmount();
   });

@@ -83,9 +83,6 @@ async function mountRegion() {
       workspaceTitle="Workspace"
       visible
       railHost={null}
-      terminals={[]}
-      activeTerminalId=""
-      onSelectTerminal={() => undefined}
     />
   );
 

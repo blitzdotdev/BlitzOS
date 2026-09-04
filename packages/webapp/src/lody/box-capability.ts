@@ -80,7 +80,7 @@ import { LODY_SESSIONS_ENABLED } from "./flag.js";
  * machine is arriving as they watch — so the prober keeps asking and the
  * surface converges on its own. See `useLodySessionsCapability`.
  */
-export type LodySessionsCapability = "probing" | "present" | "absent" | "noMachine";
+export type LodySessionsCapability = "probing" | "present" | "absent" | "noMachine" | "stalled";
 
 /** One probe's reading. `retry` is not a state a surface may act on. */
 export type LodyDoorReading = "present" | "absent" | "noMachine" | "retry";
@@ -94,7 +94,7 @@ export type LodyDoorReading = "present" | "absent" | "noMachine" | "retry";
  * notice has anything different to say.
  */
 export function lodySessionsUnavailable(capability: LodySessionsCapability): boolean {
-  return capability === "absent" || capability === "noMachine";
+  return capability === "absent" || capability === "noMachine" || capability === "stalled";
 }
 
 /**
@@ -195,6 +195,30 @@ export async function probeLodySessionsDoor(
 const PROBE_RETRY_DELAYS_MS = [500, 1000, 2000, 4000];
 
 /**
+ * How long an OPTIMISTIC `present` may go unanswered before it is called what
+ * it is (the blank blitzos workspace, 2026-09-03).
+ *
+ * The retry budget above ends on `present` without the door ever having
+ * answered, and that was the whole of the shell's opinion: the surface mounted
+ * and polled `/lody/platform` every half second, drawing nothing until the
+ * daemon wrote its catalog — no rail, no "New session", no tabs, because the
+ * surface owns all three. On a box whose daemon never provisions, that is a
+ * running workspace that shows a member nothing at all, for as long as the tab
+ * is open, with no way to open even a terminal.
+ *
+ * Forty-five seconds is longer than any daemon this shell has measured takes
+ * to write its catalog on a warm box, and short enough that a member is not
+ * left staring. After it the reading is `stalled`: the shell takes the rail and
+ * the panes back — terminals work, the notice says what is wrong — and keeps
+ * asking, so a daemon that was merely slow brings the surface back on its own.
+ */
+const DOOR_STALL_MS = 45_000;
+
+/** How often to ask again after the budget ran out without an answer, both
+ * before the stall is called and after. */
+const DOOR_REPROBE_INTERVAL_MS = 5_000;
+
+/**
  * How often to ask again while the member holds no machine here.
  *
  * Five seconds against a reachable edge, because the case this exists for is a
@@ -241,7 +265,7 @@ export function useLodySessionsCapability(
     // Said once per verdict, not once per probe: `noMachine` keeps asking now,
     // and a line per poll for the life of the tab is noise, not a record.
     let announced: LodySessionsCapability | null = null;
-    const announce = (reading: "absent" | "noMachine"): void => {
+    const announce = (reading: "absent" | "noMachine" | "stalled"): void => {
       if (announced === reading) return;
       announced = reading;
       // Not an error: an older image and a member without a machine are both
@@ -250,8 +274,47 @@ export function useLodySessionsCapability(
       console.info(
         reading === "absent"
           ? "lody: this box serves no session daemon; using the legacy rail"
-          : "lody: you hold no machine in this workspace; using the legacy rail",
+          : reading === "noMachine"
+            ? "lody: you hold no machine in this workspace; using the legacy rail"
+            : "lody: the session daemon on this box has not answered; using the legacy rail",
         { platformUrl },
+      );
+    };
+
+    // THE OPTIMISTIC `present` IS PROVISIONAL. Once the budget runs out without
+    // an answer, the door is asked every few seconds until it really answers:
+    // a 2xx settles `present` for good; a structural absence and the machineless
+    // 409 are read exactly as they are on the first attempt; and once
+    // `DOOR_STALL_MS` has passed without any of those, the reading is `stalled`
+    // — which keeps asking too, so a slow daemon recovers without a reload.
+    const watch = async (optimisticAt: number): Promise<void> => {
+      const reading = await probeLodySessionsDoor(platformUrl, options);
+      if (cancelled) return;
+      if (reading === "present") {
+        setCapability("present");
+        return;
+      }
+      if (reading === "absent") {
+        announce("absent");
+        setCapability("absent");
+        return;
+      }
+      if (reading === "noMachine") {
+        announce("noMachine");
+        setCapability("noMachine");
+        timer = window.setTimeout(
+          () => void attempt(PROBE_RETRY_DELAYS_MS.length),
+          boxGatewayPollIntervalMs(boxGatewayHealth(), NO_MACHINE_REPROBE_INTERVAL_MS),
+        );
+        return;
+      }
+      if (Date.now() - optimisticAt >= DOOR_STALL_MS) {
+        announce("stalled");
+        setCapability("stalled");
+      }
+      timer = window.setTimeout(
+        () => void watch(optimisticAt),
+        boxGatewayPollIntervalMs(boxGatewayHealth(), DOOR_REPROBE_INTERVAL_MS),
       );
     };
 
@@ -287,9 +350,19 @@ export function useLodySessionsCapability(
         );
         return;
       }
-      const delay = PROBE_RETRY_DELAYS_MS[index];
-      if (reading === "present" || delay === undefined) {
+      if (reading === "present") {
         setCapability("present");
+        return;
+      }
+      const delay = PROBE_RETRY_DELAYS_MS[index];
+      if (delay === undefined) {
+        // The budget is spent and the door has not answered: optimistic
+        // `present`, and the watchdog above decides whether it stays so.
+        setCapability("present");
+        timer = window.setTimeout(
+          () => void watch(Date.now()),
+          boxGatewayPollIntervalMs(boxGatewayHealth(), DOOR_REPROBE_INTERVAL_MS),
+        );
         return;
       }
       timer = window.setTimeout(() => void attempt(index + 1), delay);

@@ -302,6 +302,9 @@ describe("the overlay's vendor hooks", () => {
       hook: 'data-lody-session-tab-region="side-panel"',
       file: ["components", "sessions", "session-detail.tsx"],
     },
+    // The footer's icon buttons (seam patches 13 and 18): the class is the
+    // rest-state colour `getLoroSidebarFooterIconButtonClassName` spends.
+    { hook: "text-sidebar-foreground dark:text-sidebar-foreground-muted", file: ["components", "loro-sidebar.tsx"] },
   ];
 
   it.each(HOOKS)("still finds $hook in the vendored source", ({ hook, file }) => {
@@ -311,15 +314,17 @@ describe("the overlay's vendor hooks", () => {
   it("uses each hook in the skin", () => {
     for (const { hook } of HOOKS) {
       if (hook === "viewportClassName") continue; // the prop, not the selector
-      expect(skinCss).toContain(hook.replace("/", "\\/"));
+      // The skin selects on the first class of a two-class hook.
+      const [selector] = hook.split(" ");
+      expect(skinCss).toContain((selector ?? hook).replace("/", "\\/"));
     }
     expect(skinCss).toContain("[data-radix-scroll-area-viewport]");
   });
 
   it("keeps the rail's row geometry equal to the native row's", () => {
-    // `.shell-s` is the native Terminals row directly below the vendored Chats
-    // rows in the same list (`strip-rail.css:352`, mockup `.s`). The two have to
-    // be one row or the rail reads as two components.
+    // `.shell-s` is the native row — "Shared with you", drawn below the
+    // vendored Chats rows in the same list (`strip-rail.css`, mockup `.s`). The
+    // two have to be one row or the rail reads as two components.
     const railCss = read(webappSrc, "strip-rail.css");
     const nativeRow = /\.shell-s \{([^}]*)\}/u.exec(railCss)?.[1] ?? "";
     const vendorRow =

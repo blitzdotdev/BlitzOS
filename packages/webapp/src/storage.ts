@@ -149,9 +149,9 @@ export function storedWorkspacePreference(
  * The tab set a fresh workspace holds.
  *
  * WITH LODY SESSIONS ON IT IS EMPTY, and the workspace opens the CHAT LANDING
- * (plans/LODY-SESSIONS.md §0.4). TUI tabs are opt-in, through the `+` in the
- * rail's Terminals section — the one spawn affordance left now that the native
- * strip is deleted (plans/LODY-TERMINAL-TABS.md §4.6).
+ * (plans/LODY-SESSIONS.md §0.4). TUI tabs are opt-in, through the New tab
+ * control in the rail's footer — the one spawn affordance left now that the
+ * native strip is deleted (plans/LODY-TERMINAL-TABS.md §4.6).
  *
  * THERE IS NO LONGER A SECOND, LEGACY DEFAULT. `terminalFirstWorkspaceTabs()`
  * stood here and seeded `claude` + a side-pane Files panel into a fresh

@@ -105,6 +105,7 @@ import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
+import { WorkspaceStoppedState } from './WorkspaceStoppedState';
 import { dropPasteText, uploadDroppedFiles } from './file-drop';
 import {
   initialWorkspaceStore,
@@ -830,6 +831,22 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     await refreshWorkspaceRecords();
   }, [refreshWorkspaceRecords, requestDeleteWorkspace]);
 
+  /**
+   * Start the viewer's own machine in the active workspace, from the pane that
+   * replaces the loading spinner while it is stopped (`WorkspaceStoppedState`).
+   * The refresh is what moves the pane on: the record comes back `creating`,
+   * the poll hurries for a transitioning workspace, and `running` follows.
+   */
+  const startMyMachine = useCallback(async () => {
+    const workspace = storeRef.current.workspaces.find(({ id }) => id === activeWorkspaceId);
+    const membershipId = storeRef.current.viewer?.membership.id ?? null;
+    const machine = workspace?.members
+      .find((member) => member.membershipId === membershipId)?.machine ?? null;
+    if (machine === null) throw new Error('You have no machine in this workspace to start.');
+    await client.startMachine(machine.id);
+    await refreshWorkspaceRecords();
+  }, [activeWorkspaceId, client, refreshWorkspaceRecords]);
+
   const cancelConfirmation = useCallback(() => {
     setConfirmation(null);
   }, []);
@@ -1427,6 +1444,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         </div>
       );
     }
+    // A STOPPED machine is not a loading one. The shell dials nothing while it
+    // is stopped (`lifecycleStatusFor`), so a spinner here would never end;
+    // the pane offers the one verb that ends it instead, in the main column.
+    if (activeWorkspace.lifecycleStatus === 'stopped') {
+      return region !== 'main' ? null : (
+        <WorkspaceStoppedState workspaceName={activeWorkspace.title} onStart={startMyMachine} />
+      );
+    }
     if (activeSessionUrl === null || workspaceProvisioning) {
       return <WebAppLoadingPane ariaLabel={loadingLabel} stage={loadingStage} />;
     }
@@ -1469,13 +1494,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // away to a strip nobody could see, so a workspace full of terminals opened
   // with no tab control at all.
   const surfaceHostsTabs = surfaceTabsEnabled && lodyRail.visible;
-  // WHICH TERMINAL ROW THE RAIL HIGHLIGHTS (wave-3 finding ADJ1). While the
-  // surface is up a terminal is a TAB of it, so the row is the one the ADDRESS
-  // names, and `''` honestly means "a conversation owns the pane". With the
-  // panes up it is the pane's own focused tab, exactly as before.
-  const railTerminalId = lodyRail.visible
-    ? addressTerminalId ?? ''
-    : railActiveSessionId ?? '';
   const paneSessions = surfaceHostsTabs ? NO_WORKSPACE_TABS : renderedSessions;
   const surfaceTabBody = (workspaceTabId: string): ReactNode => {
     // `renderedSessions` is the mount rule, unchanged: a tab that has never
@@ -1624,6 +1642,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         : { onVendorHost: lodyRail.onVendorHost })}
       sessionsNeedNewerMachine={lodySessions === 'absent'}
       sessionsNeedMachine={lodySessions === 'noMachine'}
+      sessionsStalled={lodySessions === 'stalled'}
       onSelectWorkspace={selectWorkspace}
       onRenameWorkspace={renameWorkspace}
       onOpenWorkspaceSettings={(workspaceId) => {
@@ -1845,16 +1864,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               workspaceTitle={activeWorkspace?.title ?? 'Workspace'}
               visible={lodyRail.visible}
               railHost={lodyRail.railHost}
-              terminals={railSessions}
-              activeTerminalId={railTerminalId}
-              onSelectTerminal={selectTtydSession}
-              onCloseTerminal={closeTtydSession}
               onOpenSession={lodyRail.openSession}
               onOpenLanding={openFreshLanding}
               onOpenArchive={lodyRail.openArchive}
-              terminalsAction={(
+              newTabControl={(
                 <NewTabControl
-                  variant="icon"
+                  variant="footer"
                   livePorts={orderedLivePorts}
                   previewLinks={orderedPreviewLinks}
                   onSpawnSession={spawnTtydSession}

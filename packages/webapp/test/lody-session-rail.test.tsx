@@ -16,9 +16,10 @@
  *
  *     BLITZ_LODY_LIVE_TURN=1 npx vitest run test/lody-session-rail.test.tsx
  *
- * Everything else here is free, and deliberately so: the three sections, the
- * terminal rows, the New session affordance and the suppressed header and
- * footer are all structure, and structure is what phase 4 changed.
+ * Everything else here is free, and deliberately so: the two sections, the
+ * footer's New tab control, the New session affordance and the suppressed
+ * header and cut-down footer are all structure, and structure is what phase 4
+ * changed.
  */
 import "fake-indexeddb/auto";
 import { randomUUID } from "node:crypto";
@@ -39,6 +40,7 @@ import { installLodyDomStubs } from "./lody-dom-stubs";
 import { render, settle } from "./dom";
 import {
   claudeCredentialAvailable,
+  HARNESS_BOOT_TIMEOUT_MS,
   lodyDaemonAvailable,
   startLodyHarness,
   type LodyHarness,
@@ -81,7 +83,6 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
   let mounted: Awaited<ReturnType<typeof render>>;
   let api: LodySessionSurfaceApi | null = null;
   let activeSessionId: string | null = null;
-  const selectedTerminals: string[] = [];
   const consoleErrors: string[] = [];
   /** The rail's list region, stood up exactly as `SessionRail` renders it. */
   const railHost = document.createElement("div");
@@ -103,17 +104,10 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     );
 
   /**
-   * The surface, with two things a case may vary: whether it is hidden, and
-   * which terminal the SHELL says the member is looking at. Every other prop is
-   * identical across renders so the runtime is never rebuilt.
-   *
-   * The two travel together because that is the shell's own rule (wave 3,
-   * ADJ1): while the surface is up a terminal is a TAB of it, so
-   * `activeTerminalId` is the one the ADDRESS names and `''` means a
-   * conversation owns the pane; while the panes are up it is the pane's own
-   * focused tab. The default below is a chat address in both positions.
+   * The surface, with one thing a case may vary: whether it is hidden. Every
+   * other prop is identical across renders so the runtime is never rebuilt.
    */
-  let surface: (hidden: boolean, activeTerminalId?: string) => ReactNode = () => null;
+  let surface: (hidden: boolean) => ReactNode = () => null;
   /** Every session id the row's Share entry reported (phase 6). */
   const sharedSessions: string[] = [];
   /**
@@ -140,7 +134,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     };
     harness = await startLodyHarness();
     await seedSession(harness);
-    surface = (hidden: boolean, activeTerminalId = hidden ? "12" : "") => (
+    surface = (hidden: boolean) => (
       <SessionSurface
         endpoints={{
           ...harness.endpoints,
@@ -153,13 +147,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
         hidden={hidden}
         railHost={railHost}
         rail={{
-          terminals: [
-            { id: "11", label: "claude · tab 1", agent: "claude" },
-            { id: "12", label: "bash", agent: "terminal" },
-          ],
-          activeTerminalId,
-          onSelectTerminal: (tabId) => selectedTerminals.push(tabId),
-          terminalsAction: <button type="button" aria-label="New tab">+</button>,
+          newTabControl: <button type="button" aria-label="New tab">+</button>,
           onShareSession: (sessionId) => sharedSessions.push(sessionId),
           onOpenSession: (sessionId) => railNavigations.push(sessionId),
           onOpenLanding: () => railNavigations.push(null),
@@ -174,7 +162,10 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     );
     mounted = await render(surface(false));
     await settle();
-  }, 240_000);
+    // The lock wait plus a boot, which the harness says is the only honest
+    // hook budget: a shorter one fires on QUEUEING behind another daemon-backed
+    // suite rather than on anything being wrong.
+  }, HARNESS_BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
     await mounted?.unmount();
@@ -195,7 +186,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     ).toEqual([]);
   }, 90_000);
 
-  it("suppresses their header and all of the footer but Archive (seams #2 and #13)", () => {
+  it("suppresses their header and all of the footer but Archive, with New tab before it (seams #2, #13, #18)", () => {
     // §0.3: `div.shell-rhead` stays native, so their workspace switcher must
     // not render — it is the one control that would duplicate it.
     expect(railHost.querySelector("[data-workspace-switcher-trigger]")).toBeNull();
@@ -208,7 +199,20 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     }
     // Archive is upstream's only affordance that leads to the archive page, so
     // hiding it left the page unreachable. Seam patch 13 keeps exactly this one.
-    expect(railButton(/^Archive$/u), "the footer's Archive entry").toBeDefined();
+    const archive = railButton(/^Archive$/u);
+    expect(archive, "the footer's Archive entry").toBeDefined();
+    // The New tab control is in the SAME row, and before Archive: seam patch 18's
+    // `footerLeadingContent` is the start of the footer's utility row. It used
+    // to head a Terminals section of its own, which is gone.
+    const newTab = railButtons().find((button) => button.getAttribute("aria-label") === "New tab");
+    expect(newTab, "the footer's New tab control").toBeDefined();
+    expect(newTab?.parentElement).toBe(archive?.parentElement);
+    expect(
+      (newTab as HTMLElement).compareDocumentPosition(archive as HTMLElement)
+        & Node.DOCUMENT_POSITION_FOLLOWING,
+      "New tab precedes Archive",
+    ).not.toBe(0);
+    expect(railText()).not.toContain("Terminals");
   });
 
   it("offers + New session, and it asks the shell for the landing", async () => {
@@ -337,72 +341,13 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     expect(sharedSessions[0]).toMatch(/^[0-9a-f-]{36}$/u);
   }, 90_000);
 
-  it("draws Terminals always, and the Lody sections only once they hold rows", () => {
-    // Terminals is ours, injected through their `afterSessionListContent` slot,
-    // and it is always there: a workspace with no terminal tab is a state the
-    // member acts on from the `+` in that header.
-    expect(railText()).toContain("Terminals");
+  it("draws the Lody sections only once they hold rows", () => {
     // Chats and GitHub Worktrees are Lody's own section logic, fed from the
     // runtime — and upstream's rule is that an empty section renders nothing at
     // all, header included (`loro-app-sidebar.tsx:2095`). One chat was seeded
     // and no worktree session exists, so exactly one of the two is drawn.
     expect(railText()).toContain("Chats");
     expect(railText()).not.toContain("GitHub Worktrees");
-  });
-
-  it("keeps the terminal tabs exactly as the old rail drew them", async () => {
-    const rows = [...railHost.querySelectorAll<HTMLElement>(".shell-s")];
-    // The LABEL, not the whole row: the trailing slot now holds the close the
-    // deleted native tab strip used to own.
-    expect(rows.map((row) => row.querySelector(".shell-s__t")?.textContent))
-      .toEqual(["claude · tab 1", "bash"]);
-    // Same glyphs: `SessionTypeIcon` renders an svg into the same gutter span.
-    expect(rows[0]?.querySelector(".shell-g .shell-g__glyph")).not.toBeNull();
-    // The surface is showing a CONVERSATION, so no terminal row claims to be
-    // selected. That is `activeTerminalId === ''` now rather than "the surface
-    // is up": a terminal is a tab of this surface, so a row keeps its highlight
-    // exactly when its terminal is the tab on screen (wave 3, ADJ1).
-    expect(rows.some((row) => row.className.includes("shell-s--on"))).toBe(false);
-    await act(async () => {
-      rows[0]?.querySelector<HTMLButtonElement>(".shell-s__open")?.click();
-    });
-    expect(selectedTerminals).toEqual(["11"]);
-    // The `+ New tab` menu keeps a home in the rail, in the Terminals header.
-    expect(
-      railButtons().some((button) => button.getAttribute("aria-label") === "New tab"),
-    ).toBe(true);
-  });
-
-  it("marks the terminal whose TAB owns the surface's pane", async () => {
-    // The other half of ADJ1: the surface is still up, and a terminal tab is
-    // what it is drawing. The old rule dropped the highlight in exactly this
-    // state — the one where the member is looking at that terminal.
-    await act(async () => {
-      mounted.root.render(surface(false, "12"));
-    });
-    await settle();
-    const rows = [...railHost.querySelectorAll<HTMLElement>(".shell-s")];
-    expect(rows[1]?.className).toContain("shell-s--on");
-    expect(rows[0]?.className).not.toContain("shell-s--on");
-    await act(async () => {
-      mounted.root.render(surface(false));
-    });
-    await settle();
-  });
-
-  it("marks the active terminal when the panes own the view", async () => {
-    // `hidden` is what `CloudApp` sets when a terminal row is clicked, and the
-    // rail's highlight has to follow it: the surface is still MOUNTED.
-    await act(async () => {
-      mounted.root.render(surface(true));
-    });
-    await settle();
-    const rows = [...railHost.querySelectorAll<HTMLElement>(".shell-s")];
-    expect(rows[1]?.className).toContain("shell-s--on");
-    await act(async () => {
-      mounted.root.render(surface(false));
-    });
-    await settle();
   });
 
   // A DISPATCH IS A PAID TURN, and this is phase 4's whole budget: the rail's

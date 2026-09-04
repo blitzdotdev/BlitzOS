@@ -14,11 +14,12 @@
  *    `useVisibleSessionMetas` reads the runtime's session mirror, and
  *    `buildSessionListRows` turns metas into rows. The Chats / GitHub Worktrees
  *    split is `repoFullName`, exactly as it is upstream (`:1600`).
- * 2. The TERMINALS section, injected through their own `afterSessionListContent`
- *    slot. These rows are `webapp_state` tabs, not sessions — they never enter
- *    the CRDT and the daemon never sees them — so they are ours, drawn with our
- *    `.shell-s` markup and `SessionTypeIcon` glyphs, under their section header
- *    so the three headings match.
+ * 2. The NEW TAB control, in their footer through `footerLeadingContent` (seam
+ *    patch 18), to the left of Archive. It used to head a Terminals section of
+ *    our own rows under their `afterSessionListContent` slot; that section is
+ *    gone (2026-09-03), because a terminal is a TAB of the surface and the
+ *    surface's own strip already lists and closes it — the rail listed every
+ *    tab twice. What stays is the one spawn affordance, as a terminal glyph.
  * 3. The SUPPRESSION. `hideHeader` is the prop phase 4 added at declared seam #2
  *    (`vendor/lody/BLITZ-PATCHES.md`); the header it hides is the workspace
  *    switcher `div.shell-rhead` already serves. The footer used to go with it,
@@ -32,7 +33,6 @@
  * `afterSessionListContent`, and their own comment says why ("so Chats reads as
  * the last section"). Reordering means either a second seam patch or rebuilding
  * their scroll region, and §0's bias rule settles it: theirs wins, ours goes.
- * Terminals then reads last, below Chats.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -40,14 +40,15 @@ import { LoroSidebar } from "@lody/components/components/loro-sidebar";
 import { SessionList } from "@lody/components/components/session-list";
 import { SidebarSectionHeader } from "@lody/components/components/sidebar-row-shared";
 import { repoOrderAtom, setRepoOrderAtom } from "@lody/components/atoms/sidebar-state";
+import { lodyPresenceNowMsAtom, lodyPresenceStatesAtom } from "@lody/components/atoms/presence";
 import { activeWorkspaceRuntimeAtom } from "@lody/components/atoms/runtime";
 import { userAtom } from "@lody/components/atoms";
 import { useVisibleSessionMetas } from "@lody/components/hooks/use-visible-session-metas";
 import { useOnlineMachineIds } from "@lody/components/hooks/use-machine-online-status";
 import { useSessionActions } from "@lody/components/hooks/use-session-actions";
 import { buildSessionListRows } from "@lody/components/components/sessions/session-list-rows";
+import { findFreshSessionPresenceState } from "@lody/shared";
 import { SessionTypeIcon } from "../SessionTypeIcon.js";
-import type { DriveRailSession } from "../shell/rail-sessions.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 
 /**
@@ -93,6 +94,20 @@ interface LodySessionRowActions {
   onShareSessionWithTeam?: (sessionId: string) => void;
 }
 
+/** `LodyPresenceStateMap` (`shared/src/presence.ts:50`), narrowed to what the
+ * freshness helper reads. Stated on our side because `@lody/shared` is a
+ * namespace across the vendor type seam (`wire-types.ts`). */
+interface LodyPresenceStates {
+  [instanceId: string]: { kind: string; sessionId?: string; updatedAt: number };
+}
+
+/** Their `SessionStatus` (`shared/src/session-status-machine.ts`), narrowed to the one
+ * field a row reads: `requestPermission` draws the waiting hand, anything else
+ * the working spinner. */
+interface LodySessionStatus {
+  type: string;
+}
+
 /** One repo drag, as `SessionList` reports it (`SessionListRepoMove`,
  * `session-list.tsx:159`). Only the reordered list is read here — the indices
  * and the two names describe the same move. */
@@ -101,18 +116,6 @@ interface LodyRepoMove {
 }
 
 export interface SessionRailSidebarProps {
-  /** Every terminal tab the rail used to list, unchanged. */
-  terminals: DriveRailSession[];
-  /**
-   * The terminal tab the member is looking at, or `''` when none is.
-   *
-   * WHICH ONE THAT IS DEPENDS ON WHO IS DRAWING THE TABS. While the surface is
-   * up the tabs are the session strip's and the selection is the ADDRESS, so
-   * `''` means a conversation owns the pane and no terminal row is current.
-   * While the panes are up it is the pane's own focused tab, and `''` there
-   * still means "the first one", which is what the panes themselves show.
-   */
-  activeTerminalId: string;
   /** The chat session the surface is showing, or `null` on the landing and on
    * the archive. */
   activeSessionId: string | null;
@@ -122,18 +125,18 @@ export interface SessionRailSidebarProps {
   archiveActive?: boolean;
   /** `true` while the surface is the visible pane. */
   surfaceVisible: boolean;
-  onSelectTerminal: (tabId: string) => void;
-  /** Close one terminal tab from its rail row. See `TerminalRows`: it is the
-   * deleted native strip's close, moved here so every layout has one. */
-  onCloseTerminal?: (tabId: string) => void;
   onSelectSession: (sessionId: string) => void;
   /** "+ New session": their `home` nav entry, relabelled. */
   onOpenLanding: () => void;
   /** The footer's Archive entry, which is upstream's own (seam patch 13). */
   onOpenArchive?: () => void;
-  /** The `+ New tab` control, rendered in the Terminals section header so the
-   * Claude / Codex / terminal entries keep a home in the rail. */
-  terminalsAction?: ReactNode;
+  /**
+   * The `New tab` control — Claude / Codex / terminal — drawn in the footer to
+   * the left of Archive through `footerLeadingContent` (seam patch 18), so the
+   * Claude / Codex / terminal entries keep a home in the rail. It is the only
+   * spawn affordance a flag-on workspace has (plans/LODY-TERMINAL-TABS.md §4.1).
+   */
+  newTabControl?: ReactNode;
   /**
    * Right-click Share (plans/LODY-SESSIONS.md §0.1, LODY-SHARING.md §8).
    *
@@ -192,74 +195,6 @@ function orderedRepoFullNames(present: string[], order: readonly string[]): stri
     if (remaining.has(repoFullName)) ordered.push(repoFullName);
   }
   return ordered;
-}
-
-/**
- * Today's rail rows: same classes, same glyphs, same click.
- *
- * THE CLOSE BUTTON IS NEW, and it is the deleted strip's close moved rather
- * than a second one added. `closeTtydSession` reached the UI through exactly one
- * affordance — the `×` on the active cell of the native tab strip
- * (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2") — so on a layout the session strip
- * does not draw for (mobile, and a box with no session plane) deleting that
- * strip would leave a member able to open a terminal and never close it, with
- * its tmux session alive on the box for as long as the box is.
- *
- * It sits in the row's trailing slot, which the rail has always drawn and always
- * left empty, so no row grows. A row is a `div` rather than a `button` because a
- * button inside a button is not valid HTML; the label keeps its own `button`, so
- * the click target and the keyboard path are unchanged.
- */
-function TerminalRows(props: {
-  terminals: DriveRailSession[];
-  activeTerminalId: string;
-  active: boolean;
-  onSelect: (tabId: string) => void;
-  onClose?: (tabId: string) => void;
-}) {
-  return (
-    <>
-      {props.terminals.map((session, index) => {
-        const selected =
-          props.active &&
-          (session.id === props.activeTerminalId ||
-            (props.activeTerminalId === "" && index === 0));
-        return (
-          <div
-            className={`shell-s${selected ? " shell-s--on" : ""}`}
-            key={session.id}
-            data-session-id={session.id}
-            aria-current={selected ? "page" : undefined}
-          >
-            <button
-              className="shell-s__open"
-              type="button"
-              onClick={() => props.onSelect(session.id)}
-            >
-              <span className="shell-g">
-                <SessionTypeIcon
-                  type={session.agent}
-                  className="shell-g__glyph"
-                />
-              </span>
-              <span className="shell-s__t">{session.label}</span>
-            </button>
-            <span className="shell-s__a">
-              {props.onClose && (
-                <button
-                  className="shell-s__close"
-                  type="button"
-                  aria-label={`Close ${session.label}`}
-                  title={`Close ${session.label}`}
-                  onClick={() => props.onClose?.(session.id)}
-                >×</button>
-              )}
-            </span>
-          </div>
-        );
-      })}
-    </>
-  );
 }
 
 /** A shared session's own row. Ours, not `SessionList`'s, because the vendored
@@ -327,6 +262,33 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
     enabled: workspaceId !== null,
   });
 
+  // THE WORKING SPINNER, from the same signal the session tab draws its own.
+  //
+  // A row spins only through `liveSessionStatuses` (`session-list-rows.ts`:
+  // "sidebar working state is live presence only"), and upstream's sidebar
+  // builds that map from the presence room — the freshest `session` presence
+  // per id (`loro-app-sidebar.tsx:1537`). The tab bar reads the same room per
+  // session through `sessionLiveStatusAtomFamily`, so a session whose tab
+  // spins is exactly one whose row spins. This is their derivation, copied,
+  // because the rail used to pass nothing here and no row ever spun (dogfood,
+  // 2026-09-03).
+  const presenceStates = useAtomValue<LodyPresenceStates>(lodyPresenceStatesAtom);
+  const presenceNowMs = useAtomValue<number>(lodyPresenceNowMsAtom);
+  const liveSessionStatuses = useMemo(() => {
+    const next = new Map<string, LodySessionStatus>();
+    const metas: { id: string }[] = [...allActiveSessions, ...sessions];
+    for (const session of metas) {
+      if (next.has(session.id)) continue;
+      const fresh: { status: LodySessionStatus } | undefined = findFreshSessionPresenceState(
+        presenceStates,
+        session.id,
+        presenceNowMs,
+      );
+      if (fresh !== undefined) next.set(session.id, fresh.status);
+    }
+    return next;
+  }, [allActiveSessions, presenceNowMs, presenceStates, sessions]);
+
   const rows: LodySessionRow[] = useMemo(
     () =>
       workspaceId === null
@@ -358,10 +320,11 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
               defaultTitle: "New chat",
               onlineMachineIds,
               lineChangeScope: "all",
+              liveSessionStatuses,
             },
             allActiveSessions,
           ),
-    [allActiveSessions, onlineMachineIds, sessions, user?.id, workspaceId],
+    [allActiveSessions, liveSessionStatuses, onlineMachineIds, sessions, user?.id, workspaceId],
   );
 
   const { onSelectSession, onOpenLanding, onOpenArchive, onShareSession, onSelectSharedSession } =
@@ -439,7 +402,6 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
 
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [worktreesCollapsed, setWorktreesCollapsed] = useState(false);
-  const [terminalsCollapsed, setTerminalsCollapsed] = useState(false);
   const [sharedCollapsed, setSharedCollapsed] = useState(false);
 
   const selectedSessionId = props.surfaceVisible ? props.activeSessionId : null;
@@ -454,15 +416,6 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       : props.activeSessionId === null
         ? "home"
         : null;
-  // THE RAIL FOLLOWS THE ADDRESS (plans/LODY-TERMINAL-TABS.md wave 3, ADJ1).
-  //
-  // It used to follow `!surfaceVisible`, which is the pre-terminal-tabs rule:
-  // back then the surface and the terminals were two views and one of them was
-  // up. Now a terminal is a TAB of the surface, so a terminal row lost its
-  // highlight exactly when its terminal came on screen. The signal that a
-  // terminal owns the pane is the same one the strip draws its selection from:
-  // an addressed tab, which the shell passes here as `activeTerminalId`.
-  const terminalsHighlighted = props.surfaceVisible ? props.activeTerminalId !== "" : true;
   const rowActions = useMemo(() => {
     const actions: LodySessionRowActions = {
       selectedSessionId,
@@ -470,6 +423,14 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       onNavigateSessionTab: onSelectSession,
       onArchiveSession: (sessionId: string) => {
         void archiveSession(sessionId);
+        // ARCHIVING THE SESSION ON SCREEN LEAVES IT, which is upstream's own
+        // rule (`loro-app-sidebar.tsx:1397`: archive, then navigate to the
+        // chat landing when the archived id is the selected one). Without it
+        // the page kept showing the archived session and its tab in the strip
+        // stayed put (dogfood, 2026-09-03). The landing is asked for through
+        // the SHELL's navigator, as every rail click is, so the address moves
+        // with the surface.
+        if (sessionId === selectedSessionId) onOpenLanding();
       },
       onRenameSession: (sessionId: string, nextTitle: string) =>
         updateSessionTitle(sessionId, nextTitle),
@@ -481,7 +442,15 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
     // callback is present (`session-list.tsx:891`).
     if (onShareSession !== undefined) actions.onShareSessionWithTeam = onShareSession;
     return actions;
-  }, [archiveSession, onSelectSession, onShareSession, selectedSessionId, setSessionPinned, updateSessionTitle]);
+  }, [
+    archiveSession,
+    onOpenLanding,
+    onSelectSession,
+    onShareSession,
+    selectedSessionId,
+    setSessionPinned,
+    updateSessionTitle,
+  ]);
 
   const sessionListProps = useMemo(
     () => ({
@@ -511,9 +480,7 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
 
   // An EMPTY Lody section renders nothing at all, header included, and that is
   // upstream's rule rather than ours (`loro-app-sidebar.tsx:2095`): a heading
-  // over no rows is a promise the sidebar cannot keep. Terminals is the
-  // exception, because it is ours and a workspace with no terminal tab is a
-  // state the member can act on from the `+` in its header.
+  // over no rows is a promise the sidebar cannot keep.
   const showWorktrees = isLoading || worktrees.length > 0;
   const showChats = isLoading || chats.length > 0;
 
@@ -555,11 +522,11 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
           onToggleChatsCollapsed={() => setChatsCollapsed((collapsed) => !collapsed)}
         />
       )}
-      {/* Between Chats and Terminals: a shared session IS a session, so it
-          belongs with the sessions rather than below the tabs — and it stays
-          below the grantee's own, because the rail is theirs first. An empty
-          section renders nothing at all, upstream's rule, and here it is the
-          honest one: a member with no grants has nothing to say about them. */}
+      {/* Below Chats: a shared session IS a session, so it belongs with the
+          sessions — and it stays below the grantee's own, because the rail is
+          theirs first. An empty section renders nothing at all, upstream's
+          rule, and here it is the honest one: a member with no grants has
+          nothing to say about them. */}
       {sharedSessions.length > 0 && (
         <div className="session-rail-shared">
           <SidebarSectionHeader
@@ -577,26 +544,6 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
           )}
         </div>
       )}
-      <div className="session-rail-terminals">
-        <SidebarSectionHeader
-          label="Terminals"
-          collapsed={terminalsCollapsed}
-          toggleLabel="Terminals"
-          onToggleCollapsed={() => setTerminalsCollapsed((collapsed) => !collapsed)}
-          action={props.terminalsAction}
-        />
-        {!terminalsCollapsed && (
-          <TerminalRows
-            terminals={props.terminals}
-            activeTerminalId={props.activeTerminalId}
-            active={terminalsHighlighted}
-            onSelect={props.onSelectTerminal}
-            {...(props.onCloseTerminal === undefined
-              ? {}
-              : { onClose: props.onCloseTerminal })}
-          />
-        )}
-      </div>
     </>
   );
 
@@ -612,6 +559,12 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       // organize modes this rail does not have. Archive is the one entry that
       // stays, because it is the only way upstream offers into the archive page.
       footerItems={FOOTER_ITEMS}
+      // Seam patch 18. The New tab control sits at the start of that same row,
+      // to the left of Archive: the footer is where a rail keeps the controls
+      // that are not a list entry, and a spawn is one.
+      {...(props.newTabControl === undefined
+        ? {}
+        : { footerLeadingContent: props.newTabControl })}
       workspaceName=""
       userEmail=""
       workspaces={[]}

@@ -27,6 +27,8 @@ export type ShellNavProps = {
   sessionsNeedNewerMachine?: boolean;
   /** See `SessionRailProps.sessionsNeedMachine`. */
   sessionsNeedMachine?: boolean;
+  /** See `SessionRailProps.sessionsStalled`. */
+  sessionsStalled?: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   onOpenWorkspaceSettings: (workspaceId: string) => void;
@@ -63,6 +65,7 @@ export function ShellNav({
   onVendorHost,
   sessionsNeedNewerMachine,
   sessionsNeedMachine,
+  sessionsStalled,
   onSelectWorkspace,
   onRenameWorkspace,
   onOpenWorkspaceSettings,
@@ -106,6 +109,7 @@ export function ShellNav({
             {...(onVendorHost === undefined ? {} : { onVendorHost })}
             {...(sessionsNeedNewerMachine === undefined ? {} : { sessionsNeedNewerMachine })}
             {...(sessionsNeedMachine === undefined ? {} : { sessionsNeedMachine })}
+            {...(sessionsStalled === undefined ? {} : { sessionsStalled })}
             onSelectSession={onSelectSession}
             onCloseSession={onCloseSession}
             onSpawnSession={onSpawnSession}

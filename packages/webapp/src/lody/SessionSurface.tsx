@@ -79,7 +79,6 @@ import { SurfaceTabsContext, type SurfaceTabsBinding } from "./surface-tabs.js";
 import { useDefaultSessionProjectBackfill } from "./use-session-project-backfill.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
 import { SurfaceUnavailableNotice } from "./SurfaceLoadBoundary.js";
-import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { LodySurfaceProviders } from "./surface-providers.js";
 import "./lody-surface.css";
 import "./lody-surface-shell.css";
@@ -94,14 +93,8 @@ function nextDraftKey(): string {
   return `${Date.now()}-${draftKeySequence}`;
 }
 
-/** Everything the rail's Terminals section needs, and nothing else. */
+/** Everything the rail's native parts need from the shell, and nothing else. */
 export interface LodyRailBinding {
-  terminals: DriveRailSession[];
-  activeTerminalId: string;
-  onSelectTerminal: (tabId: string) => void;
-  /** Close one terminal tab from its rail row — the deleted native strip's
-   * close, moved (`SessionRailSidebar`'s `TerminalRows`). */
-  onCloseTerminal?: (tabId: string) => void;
   /**
    * THE SHELL'S OWN NAVIGATORS, and the reason they exist rather than the
    * surface routing itself.
@@ -120,8 +113,9 @@ export interface LodyRailBinding {
    */
   onOpenSession?: (sessionId: string) => void;
   onOpenLanding?: () => void;
-  /** The `+ New tab` control, rendered in the Terminals section header. */
-  terminalsAction?: ReactNode;
+  /** The `New tab` control, drawn in the rail footer to the left of Archive
+   * (seam patch 18). */
+  newTabControl?: ReactNode;
   /** The rail footer's Archive entry (seam patch 13). Absent, the portal falls
    * back to the surface's own router, exactly as `onOpenSession` does. */
   onOpenArchive?: () => void;
@@ -187,9 +181,9 @@ export interface LodySessionSurfaceProps {
    * `useResolvedWorkspaceScope` take its `currentWorkspaceIdAtom` branch there.
    */
   railHost?: HTMLElement | null;
-  /** What the rail's Terminals section draws, and what a click on one does.
-   * Terminal tabs are `webapp_state`, never sessions — the daemon never sees
-   * them — so they arrive as props and leave through this callback. */
+  /** The shell's half of the rail: its navigators, the footer's New tab
+   * control, and the "Shared with you" rows. None of it is in the daemon's
+   * session mirror, so it arrives as props and leaves through callbacks. */
   rail?: LodyRailBinding;
   /**
    * The workspace's own tabs, drawn as tabs of Lody's session tab strip
@@ -573,21 +567,15 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
       ? null
       : createPortal(
           <SessionRailSidebar
-            terminals={rail.terminals}
-            activeTerminalId={rail.activeTerminalId}
             activeSessionId={activeSessionId}
             archiveActive={archiveOpen}
             surfaceVisible={props.hidden !== true}
-            onSelectTerminal={rail.onSelectTerminal}
-            {...(rail.onCloseTerminal === undefined
-              ? {}
-              : { onCloseTerminal: rail.onCloseTerminal })}
             onSelectSession={rail.onOpenSession ?? openSession}
             onOpenLanding={rail.onOpenLanding ?? openLanding}
             onOpenArchive={rail.onOpenArchive ?? openArchive}
-            {...(rail.terminalsAction === undefined
+            {...(rail.newTabControl === undefined
               ? {}
-              : { terminalsAction: rail.terminalsAction })}
+              : { newTabControl: rail.newTabControl })}
             {...(rail.onShareSession === undefined
               ? {}
               : { onShareSession: rail.onShareSession })}
@@ -609,6 +597,16 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
       {/* The same notice the load boundary renders, out of the same module, so
           "the chunk never arrived" and "the box never answered" read alike. */}
       {error !== null && <SurfaceUnavailableNotice reason={error} />}
+      {/* Not blank while the daemon has not written its catalog yet: the
+          poller asks every half second, and a member watching a fresh box
+          should see that it is being asked. The shell's probe takes the rail
+          and the panes back if this goes on too long (`box-capability.ts`,
+          `stalled`), so this line is only ever a short wait. */}
+      {snapshot === null && error === null && (
+        <div className="lody-surface__notice" role="status">
+          <p className="lody-surface__notice-title">Starting sessions on your machine…</p>
+        </div>
+      )}
       {snapshot !== null && router !== null && error === null && (
         <JotaiProvider store={store}>
           <BlitzPlatformProviders
