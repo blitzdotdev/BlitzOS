@@ -24,7 +24,7 @@ Keep every org credential in one place: GitHub, Google Workspace, Linear, Discor
 
 ### Use the agents you already pay for
 
-Claude Code and Codex come installed in the agent sandbox. Or optionally install any agent harness, and use your existing billing plan.
+Claude Code and Codex come installed. Any other agent harness that supports ACP (OpenCode, Pi, DeepSeek, Kimi Code, Grok, etc.) is supported.
 
 ### Build tools and workflows
 
