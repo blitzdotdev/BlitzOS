@@ -1,7 +1,6 @@
 import {
   buildBootstrapScript,
   type BootstrapOptions,
-  type RecipeBootstrap,
 } from "./bootstrap.js";
 
 function cloudConfig(sshPublicKey: string | undefined): string {
@@ -93,12 +92,10 @@ mv /var/lib/blitz/tokens-ready.tmp ${TOKENS_READY_MARKER}
 `;
 }
 
-/** Boot shaping beyond the pinned base script: a recipe launch's invocation,
- * the org's usage-capture switch, the template's repo list, and the resolved
- * VM provider's own setup lines. Absent (or all-absent fields) emits the exact
- * pre-recipe bytes. */
+/** Boot shaping beyond the pinned base script: the org's usage-capture
+ * switch, the template's repo list, and the resolved VM provider's own setup
+ * lines. Absent (or all-absent fields) emits the exact base bytes. */
 export interface BootShaping {
-  recipe?: RecipeBootstrap;
   usageCapture?: boolean;
   /** Template repos ("owner/name") for the bootstrap's detached clone loop. */
   repos?: string[];
@@ -135,7 +132,6 @@ export function buildUserData(
     phoneHomeUrl,
     sshPublicKey,
   };
-  if (shaping?.recipe !== undefined) bootstrapOptions.recipe = shaping.recipe;
   if (shaping?.usageCapture !== undefined) {
     bootstrapOptions.usageCapture = shaping.usageCapture;
   }

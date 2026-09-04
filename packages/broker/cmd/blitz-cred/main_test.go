@@ -13,29 +13,11 @@ import (
 	"github.com/blitzdotdev/blitz-core/broker/internal/workspace"
 )
 
-func TestEnrollAcceptsCredentialWithAdditionalFields(t *testing.T) {
-	stateDir := t.TempDir()
-	credential := []byte(`{
-  "box_id": "box",
-  "access_token": "access",
-  "refresh_token": "refresh",
-  "token_type": "Bearer",
-  "expires_in": 900
-}`)
-	if err := os.WriteFile(filepath.Join(stateDir, store.CredentialFile), credential, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("BLITZ_STATE_DIR", stateDir)
-
-	if err := run([]string{"enroll", "--origin", "https://cp.example"}, io.Discard); err != nil {
-		t.Fatalf("blitz-cred rejected a credential with additional fields: %v", err)
-	}
-}
 
 // The verb list an agent reads when it guesses wrong. `--help` used to print
 // "unknown blitz-cred command" and exit 1.
 func TestHelpAndNoArgumentsNameEveryVerb(t *testing.T) {
-	verbs := []string{"api-token", "enroll", "register", "token", "watch"}
+	verbs := []string{"api-token", "register", "token", "watch"}
 	// Empty on purpose: help answers before the state check, so it works on a
 	// machine that is not a box.
 	t.Setenv("BLITZ_STATE_DIR", "")

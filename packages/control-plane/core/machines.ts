@@ -1,4 +1,4 @@
-import { boxHostname, type RecipeBootstrap } from "./bootstrap.js";
+import { boxHostname } from "./bootstrap.js";
 import { buildUserData, type BootShaping } from "./cloud-init.js";
 import { revokeMachineLeasesQuery } from "./connections/leases.js";
 import { hashSecret, randomToken } from "./crypto.js";
@@ -135,7 +135,6 @@ export interface ProvisionMachineInput {
   persistentVolume?: boolean;
   /** An existing machine row to bring back up, instead of inserting one. */
   machineId?: string;
-  recipe?: RecipeBootstrap;
   /** The plane that asked for this machine. Written on the INSERT and, for a
    * machine coming back from `destroyed`, re-stamped by the provision route —
    * see `provenanceForProvision`. */
@@ -236,7 +235,6 @@ export async function provisionMachine(
   const shaping: BootShaping = { usageCapture: orgCapture?.usage_capture === 1 };
   const providerAptSetup = vmProvider.bootstrapAptSetup?.();
   if (providerAptSetup !== undefined) shaping.providerAptSetup = providerAptSetup;
-  if (input.recipe !== undefined) shaping.recipe = input.recipe;
   const repos = await workspaceRepos(runtime.db, workspace.id);
   if (repos.length > 0) shaping.repos = repos.map(({ repo }) => repo);
   shaping.boxHostname = boxHostname(name, workspace.id);

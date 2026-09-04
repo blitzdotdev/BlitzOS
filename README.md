@@ -1,6 +1,6 @@
 <h1 align="center">BlitzOS</h1>
 
-<p align="center"><strong>AI workspace for teams. Create and share fully configured AI work environments</strong></p>
+<p align="center"><strong>Agent workspaces for the rest of the team</strong></p>
 
 <p align="center">
   <a href="#what-you-can-do-with-blitzos">What you can do</a> •
@@ -14,13 +14,17 @@
 
 ## What you can do with BlitzOS
 
-### Let teammates use agents without setup
+### Let teammates use agents with zero setup
 
-Teammates can just use agents instead of learning how to use them. Invite teammates to a workspace, and they get a cloud computer with the agent installed, team's repos cloned, agent rules configured, credentials given, and any other data installed.
+Teammates start using agents instead of learning how to use them. Set up a workspace once: git repos, credentials, agent rules, and skills. Add a teammate and they get their own cloud computer with the same setup, and start work immediately.
+
+### Manage credentials for the whole org
+
+Keep every org credential in one place: GitHub, Google Workspace, Linear, Discord, or any API key. Grant a workspace or a member access to exactly the credentials they need. Revoke it from the same place.
 
 ### Use the agents you already pay for
 
-Claude Code and Codex come installed in the agent sandbox. Or optionally install any agent harness, and use your existing billing plan.
+Claude Code and Codex come installed. Any other agent harness that supports ACP (OpenCode, Pi, DeepSeek, Kimi Code, Grok, etc.) is supported.
 
 ### Build tools and workflows
 

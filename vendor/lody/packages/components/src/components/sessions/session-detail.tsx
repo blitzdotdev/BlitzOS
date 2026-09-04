@@ -903,6 +903,12 @@ const SessionDetail = ({
   const chatRefsMap = useRef<
     Map<string, SessionChatInterfaceHandle | DraftSessionChatInterfaceHandle | null>
   >(new Map());
+  const chatRefCallbacksMap = useRef<
+    Map<
+      string,
+      (ref: SessionChatInterfaceHandle | DraftSessionChatInterfaceHandle | null) => void
+    >
+  >(new Map());
   const commentReferenceChangeHandlersRef = useRef<
     Map<string, (references: CommentReferencePayload[]) => void>
   >(new Map());
@@ -1956,19 +1962,29 @@ const SessionDetail = ({
   const setChatTabRef = useCallback(
     (tabId: string, ref: SessionChatInterfaceHandle | DraftSessionChatInterfaceHandle | null) => {
       chatRefsMap.current.set(tabId, ref);
-      // A DETACH IS IGNORED, and that is what keeps this from looping. Every
-      // render of this page hands each surface a fresh ref arrow, so React
-      // calls it with `null` and then with the handle inside one commit; taking
-      // the `null` would queue a state change on every commit for ever.
-      // `useImperativeHandle` re-attaches whenever the handle's own
-      // dependencies change — `lastCompletedAssistantMessageId` among them — so
-      // the attach alone carries every value this needs.
+      // A handle update can detach before it re-attaches. Ignore that detach so
+      // the assistant-turn mirror does not briefly clear during the update.
+      // `useImperativeHandle` re-attaches whenever the handle's own dependencies
+      // change — `lastCompletedAssistantMessageId` among them — so the attach
+      // alone carries every value this needs.
       if (ref === null || tabId !== activeTabSessionIdForForkRef.current) return;
       setActiveTabAssistantTurnId(
         'getLastAssistantTurnId' in ref ? ref.getLastAssistantTurnId() : null
       );
     },
     []
+  );
+  const getChatTabRef = useCallback(
+    (tabId: string) => {
+      const existing = chatRefCallbacksMap.current.get(tabId);
+      if (existing) return existing;
+      const callback = (
+        ref: SessionChatInterfaceHandle | DraftSessionChatInterfaceHandle | null
+      ) => setChatTabRef(tabId, ref);
+      chatRefCallbacksMap.current.set(tabId, callback);
+      return callback;
+    },
+    [setChatTabRef]
   );
 
   const handleInsertDroppedSessionMention = useCallback(
@@ -5333,7 +5349,7 @@ const SessionDetail = ({
                 aria-hidden={!isActive}
               >
                 <SessionChatInterface
-                  ref={(el) => setChatTabRef(tabSession.id, el)}
+                  ref={getChatTabRef(tabSession.id)}
                   session={tabSession}
                   workspaceSession={activeSession}
                   className="h-full"
@@ -5407,7 +5423,7 @@ const SessionDetail = ({
                 aria-hidden={!isActive}
               >
                 <DraftSessionChatInterface
-                  ref={(el) => setChatTabRef(draft.id, el)}
+                  ref={getChatTabRef(draft.id)}
                   draft={draft}
                   parentSession={activeSession}
                   commandsEnabled={isActive}
@@ -6003,7 +6019,7 @@ const SessionDetail = ({
   ) => {
     const pendingForkSourceId = pendingForkSourceByTargetSessionId.get(chatSession.id);
     return {
-      ref: (element: SessionChatInterfaceHandle | null) => setChatTabRef(chatSession.id, element),
+      ref: getChatTabRef(chatSession.id),
       session: chatSession,
       workspaceSession: activeSession,
       className: 'h-full',
@@ -6097,7 +6113,7 @@ const SessionDetail = ({
             aria-hidden={!isActive}
           >
             <DraftSessionChatInterface
-              ref={(el) => setChatTabRef(draft.id, el)}
+              ref={getChatTabRef(draft.id)}
               draft={draft}
               parentSession={activeSession}
               commandsEnabled={isActive}

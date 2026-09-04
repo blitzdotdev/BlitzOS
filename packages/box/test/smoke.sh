@@ -116,7 +116,7 @@ done
 [ "$ready" = true ] || fail "loopback services did not become ready"
 
 services=$(docker exec "$container" /command/s6-rc -a list)
-for service in init-state enroll register sshd ttyd dufs gateway watch dockerd; do
+for service in init-state register sshd ttyd dufs gateway watch dockerd; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
 for service in sshd ttyd dufs gateway watch dockerd; do
@@ -247,7 +247,6 @@ fi
 
 
 docker logs "$container" >"$test_dir/container.log" 2>&1
-grep -q 'enroll: skipped (no control-plane origin)' "$test_dir/container.log" || fail "enroll did not skip cleanly"
 grep -q 'register: skipped (no control-plane origin)' "$test_dir/container.log" || fail "register did not skip cleanly"
 grep -q 'watch: waiting for broker config' "$test_dir/container.log" || fail "watch did not wait cleanly"
 docker exec "$container" test ! -e /var/lib/blitz/broker.json || fail "no-CP mode created broker config"

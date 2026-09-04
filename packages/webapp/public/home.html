@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BlitzOS · Your company's AI operating system</title>
-<meta name="description" content="Give your team cloud computers where the agent is already set up: repos cloned, agent rules loaded, credentials scoped and short-lived.">
+<title>BlitzOS · Agent workspaces for your team</title>
+<meta name="description" content="Set up one agent workspace with your repos, credentials, agent rules, and skills. Every teammate gets their own cloud computer. Bring your own cloud and your own agent.">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#121212" media="(prefers-color-scheme: dark)">
 <link rel="preload" as="image" href="/workspace.png" fetchpriority="high">
@@ -52,7 +52,6 @@
   --bubble-user:#1c1c1f;
   --bubble-agent:#f5f5f5;
   --ok:#1d8b34;
-  --kbd-ring:transparent;
   --ease:cubic-bezier(.23,1,.32,1);
   --font-sans:"Geist","Geist Sans",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
   --font-mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
@@ -86,7 +85,6 @@
   --bubble-user:#2e2e33;
   --bubble-agent:#2c2c30;
   --ok:#4ec66e;
-  --kbd-ring:rgba(255,255,255,.18);
 }
 /* dark theme: follow the system when no explicit choice */
 @media (prefers-color-scheme:dark){
@@ -117,7 +115,6 @@
     --bubble-user:#2e2e33;
     --bubble-agent:#2c2c30;
     --ok:#4ec66e;
-    --kbd-ring:rgba(255,255,255,.18);
   }
 }
 @media (min-width:768px){:root{--pad-x:5.555556%}}
@@ -151,21 +148,12 @@ a{color:inherit}
 @media (min-width:1440px){.h-display{max-width:894px}.h-section{max-width:833px}}
 
 .body-lg{
-  max-width:584px;color:var(--supporting);
-  font-size:clamp(15px,1.5vw,20px);line-height:1.32;letter-spacing:-.01em;
+  max-width:701px;color:var(--supporting);
+  font-size:clamp(18px,1.8vw,24px);line-height:1.4;letter-spacing:-.01em;
   text-wrap:pretty;
 }
-.body-md{max-width:584px;color:var(--supporting);font-size:clamp(15px,1.2vw,18px);line-height:1.32;text-wrap:pretty}
+.body-md{max-width:700px;color:var(--supporting);font-size:clamp(17px,1.5vw,22px);line-height:1.4;text-wrap:pretty}
 .small{font-size:13px;color:var(--supporting)}
-.mono{font-family:var(--font-mono)}
-
-/* ---------- links ---------- */
-.link{
-  text-decoration:underline;text-underline-offset:4px;
-  text-decoration-color:var(--underline);
-  transition:text-decoration-color 180ms var(--ease);
-}
-.link:hover{text-decoration-color:var(--underline-hover)}
 
 /* ---------- buttons (atat: gray wash, 2px radius, 44px min height) ---------- */
 .btn{
@@ -227,52 +215,14 @@ section,footer{padding-left:var(--pad-x);padding-right:var(--pad-x)}
 .closing{display:flex;flex-direction:column;align-items:flex-start;gap:40px;padding-top:80px;padding-bottom:60px}
 .hero .body-lg{margin-top:20px}
 
-/* ---------- stage cards ---------- */
-.card{
-  width:100%;background:var(--stage);
-  border-radius:18px;box-shadow:inset 0 0 0 1px var(--ring);
-  padding:24px;
-}
-@media (min-width:768px){.card{border-radius:28px;padding:32px}}
-.card-grid{display:grid;grid-template-columns:1fr;gap:20px;width:100%}
-@media (min-width:768px){.card-grid{grid-template-columns:1fr 1fr}}
-@media (min-width:1024px){.card-grid{grid-template-columns:1fr 1fr 1fr}}
-.card h3{font-size:17px;font-weight:500;color:var(--ink);letter-spacing:-.01em}
-.card p{margin-top:10px;font-size:15px;color:var(--supporting);text-wrap:pretty}
-
-/* ---------- inline code chip ---------- */
-.kbd{
-  display:inline-block;padding:1px 7px;border-radius:6px;
-  background:var(--chip);color:#fff;
-  box-shadow:inset 0 0 0 1px var(--kbd-ring);
-  font-family:var(--font-mono);font-size:.82em;letter-spacing:0;
-  vertical-align:baseline;
-}
-
-/* ---------- feature list ---------- */
-.feature-grid{display:grid;grid-template-columns:1fr;gap:36px 48px;width:100%;margin-top:8px}
-@media (min-width:768px){.feature-grid{grid-template-columns:1fr 1fr}}
-@media (min-width:1440px){.feature-grid{grid-template-columns:1fr 1fr 1fr}}
-.feature{display:flex;flex-direction:column;align-items:flex-start;gap:10px;min-width:0}
-.feature .glyph{
-  display:grid;place-items:center;width:34px;height:34px;border-radius:10px;
-  background:var(--wash);font-size:15px;
-  transition:transform 180ms var(--ease);
-}
-.feature:hover .glyph{transform:scale(1.15)}
-.feature p{font-size:clamp(15px,1.2vw,18px);color:var(--supporting);text-wrap:pretty}
-.feature p strong{color:var(--ink);font-weight:500}
-
 /* ---------- laptop frame (atat screenshot treatment) ---------- */
-.frame-wrap{width:100%;margin-top:56px;background:var(--stage);border-radius:18px;box-shadow:inset 0 0 0 1px var(--ring);padding:clamp(16px,4vw,56px) clamp(16px,4vw,56px) 0}
-@media (min-width:768px){.frame-wrap{border-radius:28px}}
 .frame{
-  position:relative;width:100%;
-  border-radius:10px 10px 0 0;background:var(--chip);
-  padding:4px 4px 0;
+  position:relative;width:100%;margin-top:56px;
+  border-radius:10px;background:var(--chip);
+  padding:4px;
   box-shadow:0 30px 70px -34px rgba(0,0,0,.55),0 0 0 1px var(--frame-ring);
 }
-@media (min-width:768px){.frame{border-radius:20px 20px 0 0;padding:9px 9px 0}}
+@media (min-width:768px){.frame{border-radius:20px;padding:9px}}
 .frame .notch{
   position:absolute;top:0;left:50%;transform:translateX(-50%);
   width:11.4%;height:12px;background:var(--chip);
@@ -280,12 +230,10 @@ section,footer{padding-left:var(--pad-x);padding-right:var(--pad-x)}
 }
 .screen{
   position:relative;aspect-ratio:3008/1604;width:100%;overflow:hidden;
-  border-radius:7px 7px 0 0;background:var(--surface);
+  border-radius:7px;background:var(--surface);
   display:flex;flex-direction:column;
 }
-@media (min-width:768px){.screen{border-radius:12px 12px 0 0}}
-
-.frame-caption{margin-top:16px;padding-bottom:24px;font-size:13px;color:var(--supporting)}
+@media (min-width:768px){.screen{border-radius:12px}}
 
 /* ---------- real product screenshot inside the laptop frame ---------- */
 img.screen{
@@ -308,7 +256,7 @@ img.screen{
   box-shadow:inset 0 0 0 1px var(--ring-strong),0 18px 44px -24px rgba(0,0,0,.35);
 }
 .plan .name{
-  font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;
+  font-family:var(--font-mono);font-size:13px;letter-spacing:.08em;
   text-transform:uppercase;color:var(--supporting);
 }
 .plan .amount{
@@ -316,12 +264,12 @@ img.screen{
   color:var(--ink);font-size:clamp(34px,3.6vw,46px);font-weight:500;
   letter-spacing:-.025em;line-height:1;
 }
-.plan .amount .per{font-size:15px;font-weight:400;color:var(--supporting);letter-spacing:-.01em}
-.plan .desc{font-size:15px;color:var(--supporting);text-wrap:pretty}
-.plan ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px;width:100%}
+.plan .amount .per{font-size:17px;font-weight:400;color:var(--supporting);letter-spacing:-.01em}
+.plan .desc{font-size:18px;color:var(--supporting);text-wrap:pretty}
+.plan ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:11px;width:100%}
 .plan .btn{margin-top:auto;align-self:stretch}
-.plan li{display:flex;gap:10px;font-size:14px;color:var(--supporting);text-wrap:pretty}
-.plan li::before{content:"\2713";color:var(--ok);font-size:12px;line-height:1.45;flex:none}
+.plan li{display:flex;gap:10px;font-size:17px;color:var(--supporting);text-wrap:pretty}
+.plan li::before{content:"\2713";color:var(--ok);font-size:14px;line-height:1.45;flex:none}
 
 /* ---------- footer ---------- */
 footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding-top:60px;padding-bottom:120px}
@@ -359,94 +307,34 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
 
 <!-- ======================= HERO ======================= -->
 <section class="hero" aria-labelledby="hero-title">
-  <h1 class="h-display" id="hero-title">Your company's<br><span class="em">AI Operating System</span></h1>
-  <p class="body-lg">BlitzOS is your company's AI operating system. Use any agent on any cloud computer. Manage what credentials and context agents get. Create and share agent work environments with the team.</p>
+  <h1 class="h-display" id="hero-title"><span class="em">Agent workspaces</span><br>for the rest of the team</h1>
+  <p class="body-lg">Load your repos, credentials, agent rules, and skills once into an agent workspace. Add teammates to the workspace and they get a cloud computer with all of it in place, and start using agents instead of learning how to use them. Bring your own cloud. Bring your own agent.</p>
   <div class="btn-row">
     <a class="btn" href="/auth/google/start">Start free</a>
   </div>
 
-  <div class="frame-wrap">
-    <div class="frame">
-      <span class="notch" aria-hidden="true"></span>
-      <img class="screen" src="/workspace.png" width="3008" height="1604"
-           fetchpriority="high" decoding="async"
-           alt="A BlitzOS workspace in the browser: the session rail with worktrees and chats on the left, an agent session in the middle, and its diff on the right.">
-    </div>
-    <p class="frame-caption">A BlitzOS workspace: the session rail, an agent session, and its diff, in the browser.</p>
+  <div class="frame">
+    <span class="notch" aria-hidden="true"></span>
+    <img class="screen" src="/workspace.png" width="3008" height="1604"
+         fetchpriority="high" decoding="async"
+         alt="A BlitzOS workspace in the browser: the session rail with worktrees and chats on the left, an agent session in the middle, and its diff on the right.">
   </div>
-</section>
-
-<!-- ======================= WHY ======================= -->
-<section class="sec" id="why" aria-labelledby="why-title">
-  <h2 class="h-section" id="why-title">The frontier moves monthly. <span class="em">Your company can too.</span></h2>
-  <p class="body-md">AI capability improves faster than companies adopt it. BlitzOS closes that gap in three ways.</p>
-  <div class="card-grid">
-    <div class="card">
-      <h3>Test the frontier</h3>
-      <p>Run a new model on real work, in a workspace that already has the repos, credentials, and agent rules in place.</p>
-    </div>
-    <div class="card">
-      <h3>Ship setups to everyone</h3>
-      <p>Get one workspace right. Invite the team, and every member gets their own machine with the same agent, rules, and repos.</p>
-    </div>
-    <div class="card">
-      <h3>Keep control of access</h3>
-      <p>Each workspace sets the providers its agents may reach. Tokens are minted on request against that list, and they expire.</p>
-    </div>
-  </div>
-</section>
-
-<!-- ======================= SETUP ======================= -->
-<section class="sec" id="setup" aria-labelledby="setup-title">
-  <h2 class="h-section" id="setup-title">Set up one workspace. <span class="em">Hand it to the whole team.</span></h2>
-  <p class="body-md">A workspace holds the setup for one kind of work: repos, agent rules, connections, credentials, and machine type. Add a teammate and they get their own machine with that same setup. Need a variation? Create a new workspace from an existing one. It carries the machine type, the agent rules, the repos, and the connection allow-list.</p>
 </section>
 
 <!-- ======================= WORKSPACES ======================= -->
-<section class="sec" id="workspaces" aria-labelledby="ws-title">
-  <h2 class="h-section" id="ws-title">A sandboxed computer <span class="em">for every member.</span></h2>
-  <p class="body-md">Every member of a workspace gets their own cloud machine, with Linux and Docker inside, holding only the credentials and data that job needs. Claude Code and Codex come installed. Any other CLI agent installs on top. Run as many machines at once as the work needs, independent of any local dev setup. Watch the work from the browser, the terminal, or SSH.</p>
+<section class="sec" id="workspaces" aria-labelledby="workspaces-title">
+  <h2 class="h-section" id="workspaces-title"><span class="em">Zero setup</span><br>for teammates</h2>
+  <p class="body-md">Set up a workspace once: git repos, credentials, agent rules, and skills. Add a teammate and they get their own cloud computer with the same setup, and start work immediately.</p>
 </section>
 
-<!-- ======================= SHARING ======================= -->
-<section class="sec" id="sharing" aria-labelledby="mp-title">
-  <h2 class="h-section" id="mp-title">Share the workspace. <span class="em">Skip the setup work.</span></h2>
-  <p class="body-md">Add a teammate to a workspace and they get their own machine, already holding the same repos, the same agent rules, and the same connections. Their provider tokens are minted for them, never handed over. Add someone as a viewer and they read the workspace without using a machine at all.</p>
+<section class="sec" id="vault" aria-labelledby="vault-title">
+  <h2 class="h-section" id="vault-title"><span class="em">One credential vault</span><br>for the whole org</h2>
+  <p class="body-md">Keep every org credential in one place: GitHub, Google Workspace, Linear, Discord, YouTrack, and any API key. Grant a workspace or a member access to exactly the credentials they need. Revoke it from the same place.</p>
 </section>
 
-<!-- ======================= THE REST ======================= -->
-<section class="sec" id="platform" aria-labelledby="rest-title">
-  <h2 class="h-section" id="rest-title">And the rest of the OS.</h2>
-  <div class="feature-grid">
-    <div class="feature">
-      <span class="glyph" aria-hidden="true">▦</span>
-      <p><strong>Teenyapps.</strong> Agents build internal tools in a workspace: dashboards, CRMs, task managers. Preview one on its live port, then keep the deployed link beside it.</p>
-    </div>
-    <div class="feature">
-      <span class="glyph" aria-hidden="true">⌁</span>
-      <p><strong>Connections.</strong> GitHub, Google Workspace, Linear, Discord, and YouTrack. Each member connects their own account, or an admin holds one credential for the organization.</p>
-    </div>
-    <div class="feature">
-      <span class="glyph" aria-hidden="true">▲</span>
-      <p><strong>Agent Drive.</strong> Upload a file once. Attach it to any workspace, or share it with any teammate. Edits sync both ways.</p>
-    </div>
-    <div class="feature">
-      <span class="glyph" aria-hidden="true">✓</span>
-      <p><strong>Usage capture.</strong> Turn it on and real agent sessions land in a Drive folder, ready to become an eval suite.</p>
-    </div>
-    <div class="feature">
-      <span class="glyph" aria-hidden="true">⌘</span>
-      <p><strong>Machine API.</strong> An agent inside a workspace lists the workspaces its member reaches, then starts, stops, or recreates machines there and connects over SSH. It cannot add members or workspaces, or reach past its member's role.</p>
-    </div>
-    <div class="feature">
-      <span class="glyph" aria-hidden="true">◇</span>
-      <p><strong>Bring your own agent.</strong> Claude Code and Codex come installed. Any other CLI agent installs on top, on your existing billing plan.</p>
-    </div>
-    <div class="feature">
-      <span class="glyph" aria-hidden="true">☁</span>
-      <p><strong>Bring your own cloud.</strong> Hetzner, AWS, and your own Firecracker hosts are built in. Any other cloud is one <span class="kbd">VmProvider</span> implementation.</p>
-    </div>
-  </div>
+<section class="sec" id="byo" aria-labelledby="byo-title">
+  <h2 class="h-section" id="byo-title"><span class="em">Bring your own cloud.</span><br>Bring your own agent.</h2>
+  <p class="body-md">Plug in your own Hetzner or AWS keys. Use agents you already pay for. Claude Code and Codex come installed. Any other agent harness that supports ACP (OpenCode, Pi, DeepSeek, Kimi Code, Grok, etc.) is supported.</p>
 </section>
 
 <!-- ======================= PRICING ======================= -->
@@ -455,7 +343,7 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
   <div class="price-grid">
     <div class="plan">
       <span class="name">Individual</span>
-      <span class="amount">$0<span class="per">forever</span></span>
+      <span class="amount">$0 <span class="per">forever</span></span>
       <p class="desc">A company of one.</p>
       <ul>
         <li>Every feature</li>
@@ -466,13 +354,13 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
     </div>
     <div class="plan featured">
       <span class="name">Team</span>
-      <span class="amount">$100<span class="per">per member, per month</span></span>
+      <span class="amount">$100 <span class="per">per member, per month</span></span>
       <p class="desc">A company of two or more.</p>
       <ul>
         <li>Every feature</li>
         <li>Shared workspaces and drive</li>
-        <li>A machine per member, provider tokens minted per member</li>
-        <li>Billed for every member, including you</li>
+        <li>A machine per member</li>
+        <li>Billed per member, including you</li>
       </ul>
       <a class="btn" href="/auth/google/start">Start now</a>
     </div>
@@ -481,7 +369,7 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
 
 <!-- ======================= CLOSING ======================= -->
 <section class="closing" aria-labelledby="closing-title">
-  <h2 class="h-display" id="closing-title">Every new model <span class="em">increases company capability</span></h2>
+  <h2 class="h-display" id="closing-title">Set up your first workspace now.</h2>
   <div class="btn-row">
     <a class="btn" href="/auth/google/start">Start free</a>
   </div>
@@ -494,10 +382,8 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
   <nav class="foot-grid" aria-label="Product, resources, and project">
     <div class="foot-col">
       <span class="h">Product</span>
-      <a href="#setup">Workspace setup</a>
-      <a href="#workspaces">Agent workspaces</a>
-      <a href="#sharing">Team sharing</a>
-      <a href="#platform">Teenyapps</a>
+      <a href="#workspaces">Workspaces</a>
+      <a href="#vault">Credential vault</a>
       <a href="#pricing">Pricing</a>
     </div>
     <div class="foot-col">
@@ -515,7 +401,7 @@ footer{display:flex;flex-direction:column;align-items:flex-start;gap:10px;paddin
     </div>
   </nav>
   <div class="foot-bottom">
-    <span class="small">BlitzOS, your company's AI operating system.</span>
+    <span class="small">BlitzOS. Agent workspaces for your whole team.</span>
   </div>
 </footer>
 

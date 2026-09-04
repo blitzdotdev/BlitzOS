@@ -1,2 +1,0 @@
-Don't touch `main`; run "make check" and echo $HOME twice.
-Path with backslash: C:\temp\out; single 'quoted' words; it's fine.
