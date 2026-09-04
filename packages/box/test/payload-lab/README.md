@@ -58,14 +58,20 @@ machine ids. The session commands boot the same web runtime and seed the same
 agent-config rows as the browser. Progress goes to stderr; `create` and
 `prompt` print only the session id, while `status` and `wait` print JSON. State
 is kept in a mode-0700 directory under `/tmp`, never in the operator's HOME.
+The driver records which sessions it created and will answer permission
+requests only for those sessions. `create` and `prompt` accept `--permissions
+allow|deny|ask` (default `allow`); `wait` applies the recorded policy, returning
+`awaitingPermission` immediately for `ask` rather than consuming the timeout.
 
 ```sh
 driver=packages/box/test/payload-lab/session-driver/drive.mjs
 node "$driver" open --ssh blitz@box.example:22 --key /path/to/id_ed25519
-session=$(node "$driver" session create --agent claude --prompt 'say hi')
+session=$(node "$driver" session create --agent claude --prompt 'say hi' --permissions allow)
 node "$driver" session status "$session"
 node "$driver" session prompt "$session" 'now summarize the workspace'
 node "$driver" session wait "$session" --timeout 900
+node "$driver" session list
+node "$driver" session cancel "$session"
 ```
 
 Dry-run every experiment without credentials or network access:

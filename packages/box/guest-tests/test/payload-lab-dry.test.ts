@@ -16,9 +16,22 @@ describe("thin-image payload lab dry runs", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("open --ssh <user@host[:port]> --key <private-key>");
     expect(result.stdout).toContain("session create --agent <claude|codex>");
+    expect(result.stdout).toContain("--permissions <allow|deny|ask>");
     expect(result.stdout).toContain("session prompt <session-id> <text>");
     expect(result.stdout).toContain("session status <session-id>");
     expect(result.stdout).toContain("session wait <session-id> --timeout <seconds>");
+    expect(result.stdout).toContain("session cancel <session-id>");
+    expect(result.stdout).toContain("session list");
+  });
+
+  it("dry-runs cancellation through the shared lab helper", () => {
+    const result = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; cancel_turn workspace-1 session-1', "payload-lab", `${labDirectory}/lib.sh`],
+      { encoding: "utf8", env: { ...process.env, PAYLOAD_LAB_DRY: "1" } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stderr).toContain("DRY session-driver cancel session-1 on <workspace:workspace-1>");
   });
 
   for (let experiment = 1; experiment <= 16; experiment += 1) {

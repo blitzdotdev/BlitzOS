@@ -235,7 +235,12 @@ start_turn() {
     target="$user@$host:$port"
   fi
   node "$PAYLOAD_LAB_SESSION_DRIVER" open --ssh "$target" --key "$LAB_SSH_KEY" >&2
-  local args=(session create --agent "${LAB_TURN_AGENT:-claude}" --prompt "$prompt")
+  local args=(
+    session create
+    --agent "${LAB_TURN_AGENT:-claude}"
+    --prompt "$prompt"
+    --permissions allow
+  )
   if [ -n "${LAB_TURN_PROJECT:-}" ]; then
     args+=(--project "$LAB_TURN_PROJECT")
   fi
@@ -254,9 +259,18 @@ wait_turn() {
   node "$PAYLOAD_LAB_SESSION_DRIVER" session wait "$session_id" --timeout "$timeout"
 }
 
-# The VM host retains sshd on 2222 while the box owns port 22. The provisioned
-# lab key reaches both. Host access lets the harness run one updater tick and
-# read docker logs; no test hook is added to the box image.
+# Stops the exact active assistant turn for a driver-created session.
+cancel_turn() {
+  local workspace_id=$1 session_id=$2
+  if payload_lab_dry; then
+    dry_command "session-driver cancel $session_id on <workspace:$workspace_id>"
+    return 0
+  fi
+  node "$PAYLOAD_LAB_SESSION_DRIVER" session cancel "$session_id"
+}
+
+# Host-only experiments require a separately provisioned root key. The
+# workspace key reaches the box and is not accepted by the host sshd on 2222.
 host_ssh() {
   local workspace_id=$1 command=$2
   if payload_lab_dry; then

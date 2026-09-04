@@ -29,6 +29,11 @@ import { createStore } from "jotai";
 import { JSDOM } from "jsdom";
 import { createServer as createViteServer } from "vite";
 import { WebSocket as NodeWebSocket } from "ws";
+import {
+  answerSessionPermissions,
+  parsePermissionMode,
+  pendingPermissionRequests,
+} from "./permission-response.mjs";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_FILE), "../../../../..");
@@ -53,10 +58,12 @@ console.warn = stderrLog;
 
 const HELP = `Usage:
   drive.mjs open --ssh <user@host[:port]> --key <private-key>
-  drive.mjs session create --agent <claude|codex> [--project /workspace/path] [--prompt <text>]
-  drive.mjs session prompt <session-id> <text>
+  drive.mjs session create --agent <claude|codex> [--project /workspace/path] [--prompt <text>] [--permissions <allow|deny|ask>]
+  drive.mjs session prompt <session-id> <text> [--permissions <allow|deny|ask>]
   drive.mjs session status <session-id>
   drive.mjs session wait <session-id> --timeout <seconds>
+  drive.mjs session cancel <session-id>
+  drive.mjs session list
 
 The driver keeps only its SSH tunnel metadata under /tmp. It never reads the
 operator's HOME or SSH configuration. Progress is written to stderr; command
@@ -95,7 +102,9 @@ function parseState() {
     decoded.pid <= 0 ||
     typeof decoded.socketPath !== "string" ||
     decoded.socketPath !== BRIDGE_SOCKET ||
-    typeof decoded.target !== "string"
+    typeof decoded.target !== "string" ||
+    (decoded.sessions !== undefined &&
+      (typeof decoded.sessions !== "object" || decoded.sessions === null || Array.isArray(decoded.sessions)))
   ) {
     fail(`invalid session-driver state at ${STATE_FILE}; run 'open' again`);
   }
@@ -148,6 +157,38 @@ function requireTunnel() {
     fail("the saved SSH tunnel is not running; run 'open' again");
   }
   return state;
+}
+
+function ownedSession(sessionId) {
+  const state = parseState();
+  const record = state.sessions?.[sessionId];
+  if (
+    typeof record !== "object" || record === null ||
+    !["allow", "deny", "ask"].includes(record.permissions)
+  ) return null;
+  return record;
+}
+
+function rememberSession(sessionId, permissions) {
+  const state = parseState();
+  atomicWriteJson(STATE_FILE, {
+    ...state,
+    sessions: {
+      ...(state.sessions ?? {}),
+      [sessionId]: {
+        permissions,
+        createdAt: state.sessions?.[sessionId]?.createdAt ?? new Date().toISOString(),
+      },
+    },
+  });
+}
+
+function requireOwnedSession(sessionId) {
+  const record = ownedSession(sessionId);
+  if (record === null) {
+    fail(`session ${sessionId} was not created through this driver tunnel`);
+  }
+  return record;
 }
 
 function parseSshTarget(raw) {
@@ -313,6 +354,7 @@ async function openTunnel(argumentsList) {
       userId: snapshot.userId,
       machineId: snapshot.machineId,
       workspaceId: snapshot.workspace.workspaceId,
+      sessions: {},
     };
     atomicWriteJson(STATE_FILE, state);
     process.stdout.write(`${JSON.stringify({
@@ -515,11 +557,13 @@ function parseCreateArguments(argumentsList) {
   let agent;
   let project;
   let prompt;
+  let permissions = "allow";
   for (let index = 0; index < argumentsList.length; index += 1) {
     const argument = argumentsList[index];
     if (argument === "--agent") agent = argumentsList[++index];
     else if (argument === "--project") project = argumentsList[++index];
     else if (argument === "--prompt") prompt = argumentsList[++index];
+    else if (argument === "--permissions") permissions = parsePermissionMode(argumentsList[++index]);
     else fail(`unknown session create argument: ${argument ?? "<missing>"}`);
   }
   if (agent !== "claude" && agent !== "codex") fail("session create requires --agent claude or --agent codex");
@@ -527,7 +571,20 @@ function parseCreateArguments(argumentsList) {
     fail("--project must be /workspace or a path beneath it");
   }
   if (prompt !== undefined && prompt.trim() === "") fail("--prompt must not be empty");
-  return { agent, project, prompt };
+  return { agent, project, prompt, permissions };
+}
+
+function parsePromptArguments(argumentsList) {
+  if (argumentsList.length < 1) fail("session prompt requires <session-id> <text>");
+  const prompt = argumentsList[0];
+  let permissions = "allow";
+  for (let index = 1; index < argumentsList.length; index += 1) {
+    const argument = argumentsList[index];
+    if (argument === "--permissions") permissions = parsePermissionMode(argumentsList[++index]);
+    else fail(`unknown session prompt argument: ${argument ?? "<missing>"}`);
+  }
+  if (typeof prompt !== "string" || prompt.trim() === "") fail("session prompt text must not be empty");
+  return { prompt, permissions };
 }
 
 async function resolveProject(context, path) {
@@ -592,6 +649,7 @@ async function createSession(argumentsList) {
     if (options.prompt === undefined) {
       const draftProject = project ?? await resolveProject(context, "/workspace");
       await createDraftSession(context, { sessionId, agent: options.agent, project: draftProject });
+      rememberSession(sessionId, options.permissions);
       process.stdout.write(`${sessionId}\n`);
       return;
     }
@@ -616,6 +674,7 @@ async function createSession(argumentsList) {
       { timeoutMs: 20_000 },
     );
     assertDispatchAccepted(dispatch);
+    rememberSession(sessionId, options.permissions);
     stderrLog(`turn ${started.userTurnId} accepted for session ${sessionId}`);
     process.stdout.write(`${sessionId}\n`);
   });
@@ -713,7 +772,7 @@ function summarizeSession(sessionId, meta, history) {
   };
 }
 
-async function readSession(context, sessionId, waitForDocument = true) {
+async function readSessionData(context, sessionId, waitForDocument = true) {
   const roomId = context.modules.shared.getSessionRoomId(sessionId);
   await context.runtime.ensureDocStream(roomId);
   const read = async () => {
@@ -724,14 +783,24 @@ async function readSession(context, sessionId, waitForDocument = true) {
       const value = sessionStore.getState().history;
       return Array.isArray(value) ? [...value] : [];
     });
-    return summarizeSession(sessionId, snapshot.meta, history);
+    return {
+      summary: summarizeSession(sessionId, snapshot.meta, history),
+      meta: snapshot.meta,
+      history,
+    };
   };
   if (!waitForDocument) return await read();
   return await waitUntil(`session ${sessionId} to sync`, read);
 }
 
-async function promptSession(sessionId, prompt) {
-  if (prompt.trim() === "") fail("session prompt text must not be empty");
+async function readSession(context, sessionId, waitForDocument = true) {
+  const data = await readSessionData(context, sessionId, waitForDocument);
+  return data?.summary;
+}
+
+async function promptSession(sessionId, options) {
+  requireOwnedSession(sessionId);
+  rememberSession(sessionId, options.permissions);
   await withRuntime(async (context) => {
     const roomId = context.modules.shared.getSessionRoomId(sessionId);
     await context.runtime.ensureDocStream(roomId);
@@ -748,7 +817,7 @@ async function promptSession(sessionId, prompt) {
       sessionId,
       userId: context.snapshot.userId,
       agentType,
-      prompt,
+      prompt: options.prompt,
     });
     await syncSessionDocument(context, sessionId);
     const dispatch = await context.modules.session.dispatchLodyTurn(
@@ -782,12 +851,51 @@ function parseTimeout(argumentsList) {
 
 async function waitSession(sessionId, timeoutMs) {
   let terminalStatus;
+  const sessionOwner = ownedSession(sessionId);
+  const permissions = sessionOwner?.permissions ?? "ask";
+  const answeredRequestIds = new Set();
   await withRuntime(async (context) => {
     const deadline = Date.now() + timeoutMs;
     let priorState = null;
     while (Date.now() < deadline) {
-      const status = await readSession(context, sessionId, priorState === null);
-      if (status !== undefined) {
+      const data = await readSessionData(context, sessionId, priorState === null);
+      if (data !== undefined) {
+        const requests = pendingPermissionRequests(data.history);
+        if (requests.length > 0 && permissions === "ask") {
+          const request = requests[0];
+          terminalStatus = {
+            ...data.summary,
+            state: "awaitingPermission",
+            permissionRequest: {
+              requestId: request.requestId,
+              optionIds: request.options.map((option) => option.optionId),
+              toolSummary: request.toolSummary,
+            },
+          };
+          break;
+        }
+        if (requests.length > 0) {
+          if (sessionOwner === null) {
+            fail(`refusing to answer permission for unowned session ${sessionId}`);
+          }
+          await answerSessionPermissions({
+            sessionId,
+            permissions,
+            history: data.history,
+            answeredRequestIds,
+            respond: async (response) => {
+              await context.runtime.writer.respondSessionPermission(
+                response.sessionId,
+                response.requestId,
+                response.outcome,
+              );
+            },
+            log: stderrLog,
+          });
+          await sleep(POLL_INTERVAL_MS);
+          continue;
+        }
+        const status = data.summary;
         if (status.state !== priorState) {
           stderrLog(`session ${sessionId}: ${status.state}`);
           priorState = status.state;
@@ -814,6 +922,64 @@ async function waitSession(sessionId, timeoutMs) {
   if (terminalStatus.state !== "completed") process.exitCode = 1;
 }
 
+function activeAssistantTurnId(history) {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (typeof entry !== "object" || entry === null || entry.role !== "assistant") continue;
+    if (entry.finished === true || typeof entry.endedAt === "number") return null;
+    return typeof entry.id === "string" && entry.id !== "" ? entry.id : null;
+  }
+  return null;
+}
+
+async function cancelSession(sessionId) {
+  let result;
+  await withRuntime(async (context) => {
+    const data = await readSessionData(context, sessionId);
+    const turnId = activeAssistantTurnId(data.history);
+    if (turnId === null) fail(`session ${sessionId} has no active assistant turn to cancel`);
+    result = await context.runtime.requestSessionCancel(
+      context.snapshot.machineId,
+      sessionId,
+      turnId,
+      { timeoutMs: 20_000 },
+    );
+    if (result === null) fail(`session ${sessionId} cancel received no response`);
+  });
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  if (result.success !== true) process.exitCode = 1;
+}
+
+async function listSessions() {
+  await withRuntime(async (context) => {
+    const state = parseState();
+    const entries = await context.runtime.repo.listDoc();
+    const sessions = entries
+      .filter((entry) =>
+        context.modules.shared.isSessionDocRoomId(entry.docId) &&
+        !context.modules.shared.isLoroRepoDocDeleted(entry)
+      )
+      .map((entry) => {
+        const sessionId = context.modules.shared.getSessionIdFromRoomId(entry.docId);
+        const status = typeof entry.meta.status === "object" && entry.meta.status !== null &&
+          typeof entry.meta.status.type === "string"
+          ? entry.meta.status.type
+          : "idle";
+        return {
+          sessionId,
+          status,
+          agentType: typeof entry.meta.agentType === "string" ? entry.meta.agentType : null,
+          title: typeof entry.meta.title === "string" ? entry.meta.title : null,
+          archived: entry.meta.isArchived === true,
+          owned: sessionId !== null && state.sessions?.[sessionId] !== undefined,
+        };
+      })
+      .filter((session) => session.sessionId !== null)
+      .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+    process.stdout.write(`${JSON.stringify({ sessions })}\n`);
+  });
+}
+
 function requireSessionId(value) {
   if (typeof value !== "string" || !/^[0-9a-f-]{36}$/iu.test(value)) fail("a session id is required");
   return value;
@@ -835,10 +1001,14 @@ async function main() {
     await createSession(argumentsList.slice(2));
     return;
   }
+  if (action === "list") {
+    if (argumentsList.length !== 2) fail("session list takes no arguments");
+    await listSessions();
+    return;
+  }
   const sessionId = requireSessionId(argumentsList[2]);
   if (action === "prompt") {
-    if (argumentsList.length !== 4) fail("session prompt requires <session-id> <text>");
-    await promptSession(sessionId, argumentsList[3]);
+    await promptSession(sessionId, parsePromptArguments(argumentsList.slice(3)));
     return;
   }
   if (action === "status") {
@@ -848,6 +1018,11 @@ async function main() {
   }
   if (action === "wait") {
     await waitSession(sessionId, parseTimeout(argumentsList.slice(3)));
+    return;
+  }
+  if (action === "cancel") {
+    if (argumentsList.length !== 3) fail("session cancel requires only <session-id>");
+    await cancelSession(sessionId);
     return;
   }
   fail(`unknown session action: ${String(action)}`);
