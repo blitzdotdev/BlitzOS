@@ -115,6 +115,7 @@ const expected = [
   "webapp-proxy.ts",
   "webapp-surface.ts",
   "webapp-tickets.ts",
+  "wire-box-payload.ts",
   "wire-machines.ts",
   "wire-org-credentials.ts",
   "wire-sharing.ts",
@@ -138,6 +139,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(113);
+    expect(expected).toHaveLength(114);
   });
 });

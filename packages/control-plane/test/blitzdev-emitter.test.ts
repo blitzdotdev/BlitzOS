@@ -47,6 +47,7 @@ const expected = [
   "core/db.ts",
   "core/blobs.ts",
   "core/wire.ts",
+  "core/wire-box-payload.ts",
   "core/wire-machines.ts",
   "core/wire-org-credentials.ts",
   "core/wire-sharing.ts",

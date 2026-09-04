@@ -188,7 +188,7 @@ function restartService(value: string): BoxPayloadRestartService {
   return service;
 }
 
-function restart(value: JsonValue | undefined): BoxPayloadRestart {
+function restart(value: JsonValue | undefined) {
   const parsed = requiredObject(value, "manifest.restart");
   const result: BoxPayloadRestart = {};
   for (const [serviceName, dependenciesValue] of Object.entries(parsed)) {
@@ -228,15 +228,16 @@ export function parseBoxPayloadManifest(value: JsonValue): BoxPayloadManifest {
         ),
       };
 
-  return {
+  const manifest: BoxPayloadManifest = {
     version: version(parsed.version, "manifest.version"),
     createdAt: safePositiveInteger(parsed.createdAt, "manifest.createdAt"),
     minUpdater: safePositiveInteger(parsed.minUpdater, "manifest.minUpdater"),
     files: filesValue.map(file),
     archive: archive(parsed.archive, "manifest.archive"),
-    ...(daemon === undefined ? {} : { daemon }),
     restart: restart(parsed.restart),
   };
+  if (daemon !== undefined) manifest.daemon = daemon;
+  return manifest;
 }
 
 /** Parse the updater's report body. Unknown members are tolerated so a newer
