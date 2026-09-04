@@ -1879,6 +1879,7 @@ Declared ahead of time so a merge agent recognises them when they appear.
 | ~~`workspace-machine-rpc-facade.ts` — box websocket RPC plane~~ | — | **Not needed.** The facade's existing LOCAL plane is the one we want; it reaches `window.ipc`, which we install. What it needed instead was the predicate widening above, which is a far smaller patch than a new plane. | — |
 | ~~`packages/components/src/lib/electron-ipc-client.ts`~~ | — | **Applied as seam patch 18.** A page-global bridge is sufficient only while surfaces are sequential; Tier 2 requires a client per renderer subtree. | Tier 2 |
 | ~~`loro-sidebar.tsx` — suppression props~~ | — | **Applied**; see seam patch 2 above. | 4 |
+| `packages/components/src/hooks/use-toast.ts` (new), then Sonner producers | Direct `toast` imports in 57 production files | Bind a `useToast` result to one runtime `toasterId`. Async continuations capture that result before `await`, so a hidden surface cannot publish into another surface's toaster. | Tier 2 follow-up |
 
 ## Things upstream does not support that we work around OUTSIDE the vendor tree
 

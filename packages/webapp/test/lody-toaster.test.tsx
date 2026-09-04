@@ -134,6 +134,39 @@ describe("the vendored surface's toast host", () => {
       .not.toContain("A failed before handoff");
   });
 
+  it.fails("attributes a late failure to A after its operation crosses the handoff to B", async () => {
+    const tree = (active: "a" | "b") => (
+      <LodySurfaceThemeRoot>
+        <div data-surface="a">
+          <LodySurfaceProviders active={active === "a"}><div /></LodySurfaceProviders>
+        </div>
+        <div data-surface="b">
+          <LodySurfaceProviders active={active === "b"}><div /></LodySurfaceProviders>
+        </div>
+      </LodySurfaceThemeRoot>
+    );
+    let failOperation = (): void => undefined;
+    const failure = new Promise<void>((resolve) => {
+      failOperation = resolve;
+    });
+    const operation = failure.then(async () => {
+      await fireVendoredToast("A failed after handoff");
+    });
+    const view = await render(tree("a"));
+    cleanup = view.unmount;
+    await act(async () => view.root.render(tree("b")));
+    failOperation();
+    await operation;
+    const shownInB = view.container.querySelector("[data-surface='b']")?.textContent
+      ?.includes("A failed after handoff") === true;
+
+    await act(async () => view.root.render(tree("a")));
+    await settle();
+    const shownInA = view.container.querySelector("[data-surface='a']")?.textContent
+      ?.includes("A failed after handoff") === true;
+    expect({ shownInB, shownInA }).toEqual({ shownInB: false, shownInA: true });
+  });
+
   it("puts the toaster below the theme provider, so it paints in the shell's mode", async () => {
     const view = await mountProviders();
     await fireVendoredToast("Unable to close side chat");
