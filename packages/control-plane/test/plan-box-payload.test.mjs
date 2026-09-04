@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -28,6 +28,11 @@ function binaries(suffix = "") {
     chmodSync(filePath, 0o755);
   }
   return directory;
+}
+
+function git(repo, args) {
+  const result = spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
 }
 
 test.after(() => {
@@ -122,6 +127,30 @@ test("identical built content keeps its version while a binary change moves it",
   const changed = await buildPlannedPayload({ repo: repoRoot, binariesDirectory: binaries("-changed") });
   assert.equal(second, first);
   assert.notEqual(changed, first);
+});
+
+test("base-owned updater edits across commits do not move an identical payload", async () => {
+  const parent = temporaryDirectory("blitz-box-payload-commits-");
+  const repository = path.join(parent, "repo");
+  git(parent, ["clone", "-q", "--shared", repoRoot, repository]);
+  git(repository, ["config", "user.email", "box-payload-test@example.com"]);
+  git(repository, ["config", "user.name", "Box Payload Test"]);
+  const binariesDirectory = binaries();
+  const before = await buildPlannedPayload({ repo: repository, binariesDirectory });
+  appendFileSync(
+    path.join(repository, "packages/box/rootfs/usr/local/libexec/blitz-payload"),
+    "\n// base-only test edit\n",
+  );
+  appendFileSync(
+    path.join(repository, "packages/box/rootfs/etc/s6-overlay/s6-rc.d/payload/run"),
+    "\n# base-only test edit\n",
+  );
+  git(repository, ["add", "packages/box/rootfs"]);
+  git(repository, ["commit", "-qm", "edit base-owned payload updater"]);
+
+  const after = await buildPlannedPayload({ repo: repository, binariesDirectory });
+
+  assert.equal(after, before);
 });
 
 test("--print-version dry-builds the Docker stamp without probing an origin", () => {
