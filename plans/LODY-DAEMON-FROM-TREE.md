@@ -656,7 +656,7 @@ Every item below is a named failing gate, not a review reminder.
 
 | Gate | Fails when |
 |---|---|
-| `lody-adapter-drift.test.mjs` | one of the five vendored trees, stamps, URLs, or gitlink SHAs differs; Kimi is materialized or ceases to be explicitly excluded |
+| `lody-adapter-drift.test.mjs` | one of the five vendored trees or its per-file `MANIFEST.sha256`, stamps, URLs, or gitlink SHAs differs; Kimi is materialized or ceases to be explicitly excluded |
 | `lody-pin-provenance.test.mjs` | `UPSTREAM.md`, reachable squash trailer, baselines, adapter stamps, or generated stamp inputs disagree |
 | **Lody frozen install** | `corepack pnpm install --filter 'lody...' --frozen-lockfile` wants to rewrite the lock or cannot resolve the reviewed graph |
 | **Lody published-bundle imports** | upstream's build drops or fails `check:published-bundle-imports`; that script already checks workspace imports and runtime dependency smoke (`vendor/lody/apps/cli/scripts/check-published-bundle-imports.js:55-103`) |

@@ -268,6 +268,8 @@ npm run lody:adapters:check
 
 The sync fetches each exact public gitlink commit, archives only its tracked
 tree, and replaces the corresponding `vendor/lody-adapters/<name>/` snapshot.
+Each snapshot's `MANIFEST.sha256` records every source path, Git mode, and
+content digest; the stamp's Content SHA-256 is the digest of those manifest bytes.
 The check uses no network. It proves all five content hashes and stamps still
 match their gitlinks and `.gitmodules`, and that Kimi remains an unmaterialized,
 excluded gitlink. Record all six gitlink SHAs and any adapter-tree changes in

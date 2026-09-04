@@ -22,8 +22,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_REPOSITORY = path.resolve(SCRIPT_DIRECTORY, "..");
 export const LODY_ADAPTER_NAMES = Object.freeze(["core", "claude", "codex", "dsh", "grok"]);
+export const ADAPTER_MANIFEST_NAME = "MANIFEST.sha256";
 const GIT_SHA = /^[a-f0-9]{40}$/u;
 const HTTPS_URL = /^https:\/\/[^\s]+$/u;
+const ADAPTER_METADATA_FILES = new Set(["UPSTREAM.md", ADAPTER_MANIFEST_NAME]);
 
 function usage() {
   return `Vendor the five Lody CLI adapters at the subtree's gitlink pins.
@@ -58,18 +60,44 @@ function runBinary(command, args, cwd, input) {
   return result.stdout;
 }
 
-function compareGitPaths(left, right) {
-  return Buffer.compare(Buffer.from(left.path), Buffer.from(right.path));
+function compareUtf8(left, right) {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }
 
-function contentSha256(files) {
-  files.sort(compareGitPaths);
-  const aggregate = createHash("sha256");
-  for (const file of files) {
-    const digest = createHash("sha256").update(file.bytes).digest("hex");
-    aggregate.update(`${file.path}\0${file.mode}\0${digest}\n`);
+function compareEntryPaths(left, right) {
+  return compareUtf8(left.path, right.path);
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function manifestEntry(file) {
+  return {
+    path: file.path,
+    mode: file.mode,
+    sha256: sha256(file.bytes),
+    size: file.bytes.length,
+    hasCarriageReturn: file.bytes.includes(0x0d),
+  };
+}
+
+export function adapterManifestBytes(entries) {
+  const sorted = [...entries].sort(compareEntryPaths);
+  for (const entry of sorted) {
+    if (entry.path.startsWith("/") || /[\r\n]/u.test(entry.path)) {
+      throw new Error(`adapter path cannot be represented in the manifest: ${entry.path}`);
+    }
   }
-  return aggregate.digest("hex");
+  return Buffer.from(
+    sorted
+      .map((entry) => `${entry.sha256}  ${entry.mode}  ${entry.path}\n`)
+      .join(""),
+  );
+}
+
+function contentSha256(entries) {
+  return sha256(adapterManifestBytes(entries));
 }
 
 function gitText(repository, args) {
@@ -102,10 +130,12 @@ function adapterUrl(repository, name) {
 }
 
 function walkFiles(root, directory, files) {
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+  const directoryEntries = readdirSync(directory, { withFileTypes: true })
+    .sort((left, right) => compareUtf8(left.name, right.name));
+  for (const entry of directoryEntries) {
     const absolute = path.join(directory, entry.name);
     const relative = path.relative(root, absolute).split(path.sep).join("/");
-    if (relative === "UPSTREAM.md") continue;
+    if (ADAPTER_METADATA_FILES.has(relative)) continue;
     if (entry.isDirectory()) {
       walkFiles(root, absolute, files);
       continue;
@@ -128,10 +158,14 @@ function walkFiles(root, directory, files) {
   }
 }
 
-export function adapterContentSha256(root) {
+export function adapterManifestEntries(root) {
   const files = [];
   walkFiles(root, root, files);
-  return contentSha256(files);
+  return files.map(manifestEntry).sort(compareEntryPaths);
+}
+
+export function adapterContentSha256(root) {
+  return contentSha256(adapterManifestEntries(root));
 }
 
 function readBatchBlobs(repository, entries) {
@@ -178,20 +212,165 @@ function parseGitAdapterEntries(repository, name, treeish) {
     if (stage !== "0") throw new Error(`${name}: adapter index has an unresolved entry: ${file}`);
     if (!file.startsWith(prefix)) throw new Error(`${name}: adapter Git path escapes its root`);
     const relative = file.slice(prefix.length);
-    if (relative === "UPSTREAM.md") return [];
+    if (ADAPTER_METADATA_FILES.has(relative)) return [];
     return [{ path: relative, mode, object }];
   });
 }
 
-/** Hash the adapter bytes and modes stored in Git's index, or in a committed tree. */
-export function adapterGitContentSha256(repository, name, treeish = null) {
+/** Read adapter bytes and modes stored in Git's index, or in a committed tree. */
+export function adapterGitManifestEntries(repository, name, treeish = null) {
   const entries = parseGitAdapterEntries(repository, name, treeish);
   const blobs = readBatchBlobs(repository, entries);
-  return contentSha256(entries.map((entry, index) => ({
+  return entries.map((entry, index) => manifestEntry({
     path: entry.path,
     mode: entry.mode,
     bytes: blobs[index],
-  })));
+  })).sort(compareEntryPaths);
+}
+
+export function adapterGitManifestBytes(repository, name, treeish = null) {
+  return adapterManifestBytes(adapterGitManifestEntries(repository, name, treeish));
+}
+
+/** Hash the canonical manifest for Git's index, or for a committed tree. */
+export function adapterGitContentSha256(repository, name, treeish = null) {
+  return sha256(adapterGitManifestBytes(repository, name, treeish));
+}
+
+export function parseAdapterManifest(source) {
+  const bytes = Buffer.isBuffer(source) ? source : Buffer.from(source);
+  const text = bytes.toString("utf8");
+  if (!Buffer.from(text).equals(bytes)) throw new Error("adapter manifest is not valid UTF-8");
+  if (text !== "" && !text.endsWith("\n")) {
+    throw new Error("adapter manifest must end with a newline");
+  }
+  const entries = text === "" ? [] : text.slice(0, -1).split("\n").map((line) => {
+    const match = /^([a-f0-9]{64})  (100644|100755|120000)  (.+)$/u.exec(line);
+    if (match === null) throw new Error(`invalid adapter manifest line: ${line}`);
+    const entryPath = match[3];
+    if (
+      entryPath.startsWith("/")
+      || entryPath.split("/").some((part) => part === "" || part === "." || part === "..")
+      || ADAPTER_METADATA_FILES.has(entryPath)
+    ) {
+      throw new Error(`invalid adapter manifest path: ${entryPath}`);
+    }
+    return {
+      path: entryPath,
+      mode: match[2],
+      sha256: match[1],
+      size: null,
+      hasCarriageReturn: null,
+    };
+  });
+  for (let index = 1; index < entries.length; index += 1) {
+    if (compareEntryPaths(entries[index - 1], entries[index]) >= 0) {
+      throw new Error("adapter manifest paths are duplicated or not in UTF-8 byte order");
+    }
+  }
+  if (!adapterManifestBytes(entries).equals(bytes)) {
+    throw new Error("adapter manifest is not in canonical format");
+  }
+  return entries;
+}
+
+function describeEntry(entry) {
+  const size = entry.size === null ? "not recorded" : `${entry.size} bytes`;
+  const carriageReturns = entry.hasCarriageReturn === null
+    ? "not recorded"
+    : (entry.hasCarriageReturn ? "yes" : "no");
+  return `mode ${entry.mode}, sha256 ${entry.sha256}, size ${size}, CR ${carriageReturns}`;
+}
+
+export function adapterManifestDiff(expected, actual) {
+  const missing = [];
+  const extra = [];
+  const changed = [];
+  const expectedByPath = new Map(expected.map((entry) => [entry.path, entry]));
+  const actualByPath = new Map(actual.map((entry) => [entry.path, entry]));
+  const paths = [...new Set([...expectedByPath.keys(), ...actualByPath.keys()])].sort(compareUtf8);
+  for (const entryPath of paths) {
+    const expectedEntry = expectedByPath.get(entryPath);
+    const actualEntry = actualByPath.get(entryPath);
+    if (actualEntry === undefined) missing.push(expectedEntry);
+    else if (expectedEntry === undefined) extra.push(actualEntry);
+    else if (
+      expectedEntry.mode !== actualEntry.mode
+      || expectedEntry.sha256 !== actualEntry.sha256
+    ) {
+      changed.push({ path: entryPath, expected: expectedEntry, actual: actualEntry });
+    }
+  }
+  return { missing, extra, changed };
+}
+
+function formatManifestDiff(label, report) {
+  const lines = [`${label}:`];
+  if (report.missing.length > 0) {
+    lines.push("  missing files:");
+    for (const entry of report.missing) {
+      lines.push(`    - ${entry.path}`);
+      lines.push(`      expected: ${describeEntry(entry)}`);
+    }
+  }
+  if (report.extra.length > 0) {
+    lines.push("  extra files:");
+    for (const entry of report.extra) {
+      lines.push(`    + ${entry.path}`);
+      lines.push(`      actual: ${describeEntry(entry)}`);
+    }
+  }
+  if (report.changed.length > 0) {
+    lines.push("  changed files:");
+    for (const entry of report.changed) {
+      lines.push(`    ~ ${entry.path}`);
+      lines.push(`      expected: ${describeEntry(entry.expected)}`);
+      lines.push(`      actual:   ${describeEntry(entry.actual)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function reportHasChanges(report) {
+  return report.missing.length > 0 || report.extra.length > 0 || report.changed.length > 0;
+}
+
+export function verifyAdapterManifest(root, gitEntries = null) {
+  const manifestFile = path.join(root, ADAPTER_MANIFEST_NAME);
+  if (!existsSync(manifestFile)) {
+    return {
+      contentSha256: null,
+      errors: [`missing ${ADAPTER_MANIFEST_NAME}`],
+    };
+  }
+  const manifestBytes = readFileSync(manifestFile);
+  const manifestContentSha256 = sha256(manifestBytes);
+  let manifestEntries;
+  try {
+    manifestEntries = parseAdapterManifest(manifestBytes);
+  } catch (error) {
+    return {
+      contentSha256: manifestContentSha256,
+      errors: [error instanceof Error ? error.message : "invalid adapter manifest"],
+    };
+  }
+
+  const errors = [];
+  if (gitEntries !== null) {
+    const manifestReport = adapterManifestDiff(gitEntries, manifestEntries);
+    if (reportHasChanges(manifestReport)) {
+      errors.push(formatManifestDiff("manifest differs from Git content", manifestReport));
+    }
+  }
+  const expected = gitEntries ?? manifestEntries;
+  const treeReport = adapterManifestDiff(expected, adapterManifestEntries(root));
+  if (reportHasChanges(treeReport)) {
+    errors.push(formatManifestDiff(
+      `adapter tree differs from ${gitEntries === null ? ADAPTER_MANIFEST_NAME : "Git content"}`,
+      treeReport,
+    ));
+  }
+  return { contentSha256: manifestContentSha256, errors };
 }
 
 function stampValue(source, field) {
@@ -241,8 +420,8 @@ export function adapterDriftErrors(repository = DEFAULT_REPOSITORY) {
   if (!existsSync(adaptersRoot)) return ["missing reviewed adapter directory: vendor/lody-adapters"];
   const materialized = readdirSync(adaptersRoot, { withFileTypes: true })
     .map((entry) => entry.name)
-    .sort();
-  const expected = [...LODY_ADAPTER_NAMES].sort();
+    .sort(compareUtf8);
+  const expected = [...LODY_ADAPTER_NAMES].sort(compareUtf8);
   if (materialized.join("\n") !== expected.join("\n")) {
     errors.push(`materialized adapters are ${materialized.join(", ")}; expected ${expected.join(", ")}`);
   }
@@ -258,18 +437,19 @@ export function adapterDriftErrors(repository = DEFAULT_REPOSITORY) {
       const stamp = readAdapterStamp(path.join(root, "UPSTREAM.md"));
       const sha = gitlinkSha(repository, name);
       const url = adapterUrl(repository, name);
-      const contentSha256 = adapterGitContentSha256(repository, name);
-      const checkoutContentSha256 = adapterContentSha256(root);
+      const gitEntries = adapterGitManifestEntries(repository, name);
+      const manifest = verifyAdapterManifest(root, gitEntries);
       if (stamp.name !== name) errors.push(`${name}: stamp names ${stamp.name}`);
       if (stamp.sha !== sha) errors.push(`${name}: stamp ${stamp.sha} differs from gitlink ${sha}`);
       if (stamp.url !== url) errors.push(`${name}: stamp URL differs from .gitmodules`);
-      if (checkoutContentSha256 !== contentSha256) {
+      errors.push(...manifest.errors.map((error) => `${name}: ${error}`));
+      if (
+        manifest.contentSha256 !== null
+        && stamp.contentSha256 !== manifest.contentSha256
+      ) {
         errors.push(
-          `${name}: checkout content ${checkoutContentSha256} differs from Git index ${contentSha256}`,
+          `${name}: manifest hash ${manifest.contentSha256} differs from stamp ${stamp.contentSha256}`,
         );
-      }
-      if (stamp.contentSha256 !== contentSha256) {
-        errors.push(`${name}: content hash ${contentSha256} differs from stamp ${stamp.contentSha256}`);
       }
       if (existsSync(path.join(root, ".git"))) errors.push(`${name}: vendored tree contains .git`);
     } catch (error) {
@@ -330,8 +510,9 @@ function fetchAdapter(scratch, repository, name) {
   const archive = runBinary("git", ["archive", "--format=tar", sha], checkout);
   runBinary("tar", ["-x", "-C", tree], scratch, archive);
   const commitDate = gitText(checkout, ["show", "-s", "--format=%cI", sha]);
-  const contentSha256 = adapterContentSha256(tree);
-  return { name, sha, url, commitDate, contentSha256, tree };
+  const manifest = adapterManifestBytes(adapterManifestEntries(tree));
+  const contentSha256 = sha256(manifest);
+  return { name, sha, url, commitDate, contentSha256, manifest, tree };
 }
 
 export function syncAdapters(repository = DEFAULT_REPOSITORY) {
@@ -353,6 +534,7 @@ export function syncAdapters(repository = DEFAULT_REPOSITORY) {
         preserveTimestamps: true,
         verbatimSymlinks: true,
       });
+      writeFileSync(path.join(destination, ADAPTER_MANIFEST_NAME), adapter.manifest);
       writeStamp(
         destination,
         adapter.name,

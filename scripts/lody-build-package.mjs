@@ -21,10 +21,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  adapterContentSha256,
-  adapterGitContentSha256,
+  ADAPTER_MANIFEST_NAME,
+  adapterGitManifestEntries,
   LODY_ADAPTER_NAMES,
   readAdapterStamp,
+  verifyAdapterManifest,
 } from "./lody-sync-adapters.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
@@ -227,12 +228,10 @@ function overlayAdapters(lodyRoot, provenance, sourceMode, treeish) {
     materializeAdapter(name, destination, sourceMode, treeish);
     const stampFile = path.join(destination, "UPSTREAM.md");
     const stamp = readAdapterStamp(stampFile);
-    const checkoutContentSha256 = adapterContentSha256(destination);
-    const contentSha256 = sourceMode
-      ? (hasGitIndex()
-          ? adapterGitContentSha256(REPOSITORY, name)
-          : checkoutContentSha256)
-      : adapterGitContentSha256(REPOSITORY, name, treeish);
+    const gitEntries = sourceMode
+      ? (hasGitIndex() ? adapterGitManifestEntries(REPOSITORY, name) : null)
+      : adapterGitManifestEntries(REPOSITORY, name, treeish);
+    const manifest = verifyAdapterManifest(destination, gitEntries);
     if (stamp.name !== name)
       throw new Error(`${name}: adapter stamp names ${stamp.name}`);
     if (stamp.sha !== provenance.adapterShas[name]) {
@@ -240,18 +239,17 @@ function overlayAdapters(lodyRoot, provenance, sourceMode, treeish) {
         `${name}: adapter stamp ${stamp.sha} differs from UPSTREAM.md ${provenance.adapterShas[name]}`,
       );
     }
-    if (checkoutContentSha256 !== contentSha256) {
-      throw new Error(
-        `${name}: adapter checkout ${checkoutContentSha256} differs from Git content ${contentSha256}`,
-      );
+    if (manifest.errors.length > 0) {
+      throw new Error(`${name}: ${manifest.errors.join("\n")}`);
     }
-    if (contentSha256 !== stamp.contentSha256) {
+    if (manifest.contentSha256 !== stamp.contentSha256) {
       throw new Error(
-        `${name}: adapter content ${contentSha256} differs from stamp ${stamp.contentSha256}`,
+        `${name}: adapter manifest ${manifest.contentSha256 ?? "missing"} differs from stamp ${stamp.contentSha256}`,
       );
     }
     adapterShas[name] = stamp.sha;
     rmSync(stampFile);
+    rmSync(path.join(destination, ADAPTER_MANIFEST_NAME));
   }
   return adapterShas;
 }
@@ -275,7 +273,10 @@ export function distContentSha256(root) {
   const files = [];
   walkRegularFiles(root, root, files);
   files.sort((left, right) =>
-    left.relative.localeCompare(right.relative, "en"),
+    Buffer.compare(
+      Buffer.from(left.relative, "utf8"),
+      Buffer.from(right.relative, "utf8"),
+    ),
   );
   const aggregate = createHash("sha256");
   for (const file of files) {
