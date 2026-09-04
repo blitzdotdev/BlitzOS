@@ -21,11 +21,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  ADAPTER_MANIFEST_NAME,
-  adapterGitManifestEntries,
+  adapterGitEntries,
   LODY_ADAPTER_NAMES,
   readAdapterStamp,
-  verifyAdapterManifest,
+  verifyAdapterCheckout,
 } from "./lody-sync-adapters.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
@@ -229,9 +228,9 @@ function overlayAdapters(lodyRoot, provenance, sourceMode, treeish) {
     const stampFile = path.join(destination, "UPSTREAM.md");
     const stamp = readAdapterStamp(stampFile);
     const gitEntries = sourceMode
-      ? (hasGitIndex() ? adapterGitManifestEntries(REPOSITORY, name) : null)
-      : adapterGitManifestEntries(REPOSITORY, name, treeish);
-    const manifest = verifyAdapterManifest(destination, gitEntries);
+      ? (hasGitIndex() ? adapterGitEntries(REPOSITORY, name) : null)
+      : adapterGitEntries(REPOSITORY, name, treeish);
+    const checkout = verifyAdapterCheckout(destination, gitEntries);
     if (stamp.name !== name)
       throw new Error(`${name}: adapter stamp names ${stamp.name}`);
     if (stamp.sha !== provenance.adapterShas[name]) {
@@ -239,17 +238,11 @@ function overlayAdapters(lodyRoot, provenance, sourceMode, treeish) {
         `${name}: adapter stamp ${stamp.sha} differs from UPSTREAM.md ${provenance.adapterShas[name]}`,
       );
     }
-    if (manifest.errors.length > 0) {
-      throw new Error(`${name}: ${manifest.errors.join("\n")}`);
-    }
-    if (manifest.contentSha256 !== stamp.contentSha256) {
-      throw new Error(
-        `${name}: adapter manifest ${manifest.contentSha256 ?? "missing"} differs from stamp ${stamp.contentSha256}`,
-      );
+    if (checkout.errors.length > 0) {
+      throw new Error(`${name}: ${checkout.errors.join("\n")}`);
     }
     adapterShas[name] = stamp.sha;
     rmSync(stampFile);
-    rmSync(path.join(destination, ADAPTER_MANIFEST_NAME));
   }
   return adapterShas;
 }

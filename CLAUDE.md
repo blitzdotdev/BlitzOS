@@ -122,8 +122,9 @@ tree; an upstream merge never selects or bumps an independent npm package.
 
 - Integration code never goes inside `vendor/lody`; it lives in
   `packages/webapp/src/lody/`.
-- `vendor/lody-adapters` is generated supply-chain input. Change it only with
-  `npm run lody:adapters:sync`; never edit an adapter or its stamp by hand.
+- `vendor/lody-adapters` is generated supply-chain input. Sync it, stage the
+  result, then run the network-free check. Use `--check --fetch` to compare
+  staged bytes with upstream. Never edit an adapter or its stamp by hand.
 - The only allowed in-vendor edits are source seams declared in
   `vendor/lody/BLITZ-PATCHES.md`, each with an upstream-PR sketch. Declare a new
   vendor edit there first, or do not make it.

@@ -55,6 +55,8 @@ jobs:
           key: lody-pnpm-${{ runner.os }}-${{ hashFiles('vendor/lody/pnpm-lock.yaml') }}
           restore-keys: lody-pnpm-${{ runner.os }}-
       - run: npm ci
+      - name: Authenticate adapter snapshots against upstream
+        run: node scripts/lody-sync-adapters.mjs --check --fetch
       - name: Build and stamp the tree daemon
         run: node scripts/lody-build-package.mjs --out "$RUNNER_TEMP/lody-artifact" --scratch "$RUNNER_TEMP/lody-scratch"
       - name: Run the ported daemon seam tests against the built tree

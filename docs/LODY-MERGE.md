@@ -259,21 +259,26 @@ The CLI workspace uses five adapter gitlinks: core, Claude, Codex, DSH, and
 Grok. Kimi remains a gitlink but is excluded by
 `vendor/lody/pnpm-workspace.yaml`; do not materialize it for this build.
 
-Sync and check the reviewed trees:
+Sync, review, stage, and check the reviewed trees:
 
 ```sh
 npm run lody:adapters:sync
+git diff -- vendor/lody-adapters
+git add vendor/lody-adapters
 npm run lody:adapters:check
+npm run lody:adapters:check -- --fetch
 ```
 
 The sync fetches each exact public gitlink commit, archives only its tracked
 tree, and replaces the corresponding `vendor/lody-adapters/<name>/` snapshot.
-Each snapshot's `MANIFEST.sha256` records every source path, Git mode, and
-content digest; the stamp's Content SHA-256 is the digest of those manifest bytes.
-The check uses no network. It proves all five content hashes and stamps still
-match their gitlinks and `.gitmodules`, and that Kimi remains an unmaterialized,
-excluded gitlink. Record all six gitlink SHAs and any adapter-tree changes in
-the PR body.
+Sync reports the old and new SHAs plus file write and removal counts. It exits
+without comparing its output to the old index.
+
+The first check uses no network. It proves all five stamps match their gitlinks
+and `.gitmodules`. It also checks package presence and rejects unstaged snapshot
+changes. The fetch check exports every exact upstream commit and compares its
+bytes and modes with the staged snapshot. Record all six gitlink SHAs and any
+adapter-tree changes in the PR body.
 
 ## Build and stamp the daemon
 

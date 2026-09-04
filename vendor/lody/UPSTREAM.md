@@ -46,9 +46,10 @@ explicitly excludes Kimi in `pnpm-workspace.yaml`.
 | `acp-extension-kimi` | `aab809cca845e4b1d0a0db243d336ab5f128b177` | preserve as a gitlink; do not materialize for the CLI build |
 
 `npm run lody:adapters:sync` replaces those five reviewed trees from the exact
-public commits. `npm run lody:adapters:check` is network-free and rejects a
-gitlink, URL, stamp, tree-content, Kimi-materialization, or workspace-exclusion
-drift.
+public commits. Stage its output before checking it. The network-free check
+rejects gitlink, URL, stamp, checkout, Kimi, or workspace-exclusion drift.
+Pass `--fetch` to authenticate the staged bytes against all five upstream
+commits.
 
 ## Updating these pins
 

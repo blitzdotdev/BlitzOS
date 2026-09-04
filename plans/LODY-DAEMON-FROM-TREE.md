@@ -228,17 +228,16 @@ The script:
    are already recorded there (`vendor/lody/.gitmodules:1-18`);
 2. reads the five required object IDs directly from the gitlinks;
 3. fetches each public repository at exactly that object ID into a temporary
-   directory, verifies `git rev-parse HEAD`, and copies only tracked files—never
-   `.git` or build output—into `vendor/lody-adapters/<name>`;
-4. writes a per-adapter `UPSTREAM.md` containing name, URL, 40-character commit,
-   and a SHA-256 over sorted `path\0mode\0content` records; and
-5. refuses a dirty destination unless `--check` proves it is already identical.
+   directory and verifies `git rev-parse HEAD`;
+4. copies tracked files into `vendor/lody-adapters/<name>` without `.git`; and
+5. writes a per-adapter `UPSTREAM.md` with the name, URL, commit, commit date,
+   and sync date.
 
-`test/lody-adapter-drift.test.mjs` is network-free. It compares each stamp to
-the corresponding upstream gitlink, recomputes the reviewed tree hash excluding
-the stamp, rejects symlinks that escape the adapter root, asserts there are
-exactly five materialized build adapters, and asserts Kimi is neither copied
-nor accidentally admitted to the workspace.
+The network-free check is
+`packages/webapp/test/lody-adapters-drift.test.mjs`. It compares each stamp to
+the corresponding gitlink and rejects unstaged checkout changes. It requires
+all five package files and keeps Kimi excluded. The opt-in fetch check compares
+the staged paths, modes, and bytes with exact upstream exports.
 
 At build time, copy `vendor/lody` to `/src/lody`, remove the five empty gitlink
 directories in that disposable copy, and copy the reviewed adapter trees into
@@ -656,7 +655,7 @@ Every item below is a named failing gate, not a review reminder.
 
 | Gate | Fails when |
 |---|---|
-| `lody-adapters-drift.test.mjs` | one of the five vendored trees or its per-file `MANIFEST.sha256`, stamps, URLs, or gitlink SHAs differs; Kimi is materialized or ceases to be explicitly excluded; or the Dockerfile ignore rules exclude a tracked input copied by the Lody builder |
+| `lody-adapters-drift.test.mjs` | one of the five stamps, URLs, or gitlink SHAs differs; a package or snapshot is missing; the checkout differs from Git's index; Kimi is included; or Docker ignore rules exclude a builder input |
 | `lody-pin-provenance.test.mjs` | `UPSTREAM.md`, reachable squash trailer, baselines, adapter stamps, or generated stamp inputs disagree |
 | **Lody frozen install** | `corepack pnpm install --filter 'lody...' --frozen-lockfile` wants to rewrite the lock or cannot resolve the reviewed graph |
 | **Lody published-bundle imports** | upstream's build drops or fails `check:published-bundle-imports`; that script already checks workspace imports and runtime dependency smoke (`vendor/lody/apps/cli/scripts/check-published-bundle-imports.js:55-103`) |
@@ -709,7 +708,7 @@ legitimate code-splitting change updates this reviewed manifest in the vendor PR
 | Unreleased upstream `main` | A same-commit pair can still contain unreleased regressions. Prefer public release tags; label a main snapshot; require the pair matrix; bake to canary before any `v*` client-prod tag. The existing release split is R2 canary versus tagged GHCR prod (`CLAUDE.md:218-227`). |
 | Build time and disk | Cold bake adds about 2m11s and peaked near 3.2 GB. Cache only the pnpm store, preserve a warm BuildKit/GHA cache, and keep the build in its own stage so unrelated runtime layers do not invalidate it. |
 | Native dependencies / architectures | `cpu-features` and `ssh2` optional accelerators warned in the spike, and another Node ABI/architecture may lack a prebuild (`/var/lib/blitz/home/codex/daemonbuild-result.md:59-66`, `/var/lib/blitz/home/codex/daemonbuild-result.md:119-123`). Install external runtime dependencies in each target stage and run the import/help smoke under both release platforms; add a compiler only if a required dependency proves it needs one. |
-| Adapter repository size | Budget about 1-2 MiB and 1.3k files at this pin. Sync only tracked source, never histories or build output; the drift hash makes the exact size and accidental growth visible in the PR. |
+| Adapter repository size | Budget about 1-2 MiB and 1.3k files at this pin. Sync only tracked source, never histories or build output. Review the exact size and any accidental growth in the staged diff. |
 | Stale CLI version | Operators may see `0.76.0` from a much newer source build. Always log/display upstream SHA plus `distSha256`; do not infer compatibility from semver. |
 | Licenses | Bundled workspace and adapter code makes the root notice set part of the distributed package. Copy it into `dist`, pin it byte-for-byte, and review adapter license/stamp changes in every sync. |
 | First field migration | Legacy npm boxes have no stamp and remain usable. A cloud VM can be moved through the request-gated box-config v1 updater; it polls, replaces the container, and reports the installed ref (`packages/control-plane/core/box-config.ts:21-29`, `packages/control-plane/core/box-config.ts:126-180`). A microVM cannot update in place, so it keeps the old npm daemon until recreation. `docs/BOX-IMAGE.md` records this current split. |
@@ -746,8 +745,8 @@ reviewed artifact; the shipping image and migration pieces remain separate.
 ### PR B — make adapter inputs reviewed (landed)
 
 - Landed: `vendor/lody-adapters/<five trees>` plus five stamps,
-  `scripts/lody-sync-adapters.mjs`, `test/lody-adapter-drift.test.mjs`, and root
-  package scripts.
+  `scripts/lody-sync-adapters.mjs`,
+  `packages/webapp/test/lody-adapters-drift.test.mjs`, and root package scripts.
 - The shared builder uses this reviewed overlay. Assert
   Kimi remains an excluded gitlink.
 - Landed footprint: 1,285 upstream entries plus five stamps. The sync/drift

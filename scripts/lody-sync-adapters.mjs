@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -22,19 +21,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_REPOSITORY = path.resolve(SCRIPT_DIRECTORY, "..");
 export const LODY_ADAPTER_NAMES = Object.freeze(["core", "claude", "codex", "dsh", "grok"]);
-export const ADAPTER_MANIFEST_NAME = "MANIFEST.sha256";
 const GIT_SHA = /^[a-f0-9]{40}$/u;
 const HTTPS_URL = /^https:\/\/[^\s]+$/u;
-const ADAPTER_METADATA_FILES = new Set(["UPSTREAM.md", ADAPTER_MANIFEST_NAME]);
+const ADAPTER_METADATA_FILES = new Set(["UPSTREAM.md"]);
 
 function usage() {
   return `Vendor the five Lody CLI adapters at the subtree's gitlink pins.
 
 Usage:
-  node scripts/lody-sync-adapters.mjs [--check]
+  node scripts/lody-sync-adapters.mjs [--check [--fetch]]
 
 Options:
-  --check     Verify checked-in adapter trees without network access.
+  --check     Verify the checked-in adapter trees against Git's index.
+  --fetch     With --check, compare the tracked trees to their upstream commits.
   --help, -h  Print this text.`;
 }
 
@@ -68,41 +67,8 @@ function compareEntryPaths(left, right) {
   return compareUtf8(left.path, right.path);
 }
 
-function sha256(bytes) {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
-function manifestEntry(file) {
-  return {
-    path: file.path,
-    mode: file.mode,
-    sha256: sha256(file.bytes),
-    size: file.bytes.length,
-    hasCarriageReturn: file.bytes.includes(0x0d),
-  };
-}
-
-export function adapterManifestBytes(entries) {
-  const sorted = [...entries].sort(compareEntryPaths);
-  for (const entry of sorted) {
-    if (entry.path.startsWith("/") || /[\r\n]/u.test(entry.path)) {
-      throw new Error(`adapter path cannot be represented in the manifest: ${entry.path}`);
-    }
-  }
-  return Buffer.from(
-    sorted
-      .map((entry) => `${entry.sha256}  ${entry.mode}  ${entry.path}\n`)
-      .join(""),
-  );
-}
-
-function contentSha256(entries) {
-  return sha256(adapterManifestBytes(entries));
-}
-
 function gitText(repository, args) {
-  const stdout = runText("git", args, repository);
-  return stdout.trim();
+  return runText("git", args, repository).trim();
 }
 
 function gitlinkSha(repository, name, treeish = "HEAD") {
@@ -158,14 +124,10 @@ function walkFiles(root, directory, files) {
   }
 }
 
-export function adapterManifestEntries(root) {
+export function adapterTreeEntries(root) {
   const files = [];
   walkFiles(root, root, files);
-  return files.map(manifestEntry).sort(compareEntryPaths);
-}
-
-export function adapterContentSha256(root) {
-  return contentSha256(adapterManifestEntries(root));
+  return files.sort(compareEntryPaths);
 }
 
 function readBatchBlobs(repository, entries) {
@@ -218,71 +180,17 @@ function parseGitAdapterEntries(repository, name, treeish) {
 }
 
 /** Read adapter bytes and modes stored in Git's index, or in a committed tree. */
-export function adapterGitManifestEntries(repository, name, treeish = null) {
+export function adapterGitEntries(repository, name, treeish = null) {
   const entries = parseGitAdapterEntries(repository, name, treeish);
   const blobs = readBatchBlobs(repository, entries);
-  return entries.map((entry, index) => manifestEntry({
+  return entries.map((entry, index) => ({
     path: entry.path,
     mode: entry.mode,
     bytes: blobs[index],
   })).sort(compareEntryPaths);
 }
 
-export function adapterGitManifestBytes(repository, name, treeish = null) {
-  return adapterManifestBytes(adapterGitManifestEntries(repository, name, treeish));
-}
-
-/** Hash the canonical manifest for Git's index, or for a committed tree. */
-export function adapterGitContentSha256(repository, name, treeish = null) {
-  return sha256(adapterGitManifestBytes(repository, name, treeish));
-}
-
-export function parseAdapterManifest(source) {
-  const bytes = Buffer.isBuffer(source) ? source : Buffer.from(source);
-  const text = bytes.toString("utf8");
-  if (!Buffer.from(text).equals(bytes)) throw new Error("adapter manifest is not valid UTF-8");
-  if (text !== "" && !text.endsWith("\n")) {
-    throw new Error("adapter manifest must end with a newline");
-  }
-  const entries = text === "" ? [] : text.slice(0, -1).split("\n").map((line) => {
-    const match = /^([a-f0-9]{64})  (100644|100755|120000)  (.+)$/u.exec(line);
-    if (match === null) throw new Error(`invalid adapter manifest line: ${line}`);
-    const entryPath = match[3];
-    if (
-      entryPath.startsWith("/")
-      || entryPath.split("/").some((part) => part === "" || part === "." || part === "..")
-      || ADAPTER_METADATA_FILES.has(entryPath)
-    ) {
-      throw new Error(`invalid adapter manifest path: ${entryPath}`);
-    }
-    return {
-      path: entryPath,
-      mode: match[2],
-      sha256: match[1],
-      size: null,
-      hasCarriageReturn: null,
-    };
-  });
-  for (let index = 1; index < entries.length; index += 1) {
-    if (compareEntryPaths(entries[index - 1], entries[index]) >= 0) {
-      throw new Error("adapter manifest paths are duplicated or not in UTF-8 byte order");
-    }
-  }
-  if (!adapterManifestBytes(entries).equals(bytes)) {
-    throw new Error("adapter manifest is not in canonical format");
-  }
-  return entries;
-}
-
-function describeEntry(entry) {
-  const size = entry.size === null ? "not recorded" : `${entry.size} bytes`;
-  const carriageReturns = entry.hasCarriageReturn === null
-    ? "not recorded"
-    : (entry.hasCarriageReturn ? "yes" : "no");
-  return `mode ${entry.mode}, sha256 ${entry.sha256}, size ${size}, CR ${carriageReturns}`;
-}
-
-export function adapterManifestDiff(expected, actual) {
+export function adapterEntryDiff(expected, actual) {
   const missing = [];
   const extra = [];
   const changed = [];
@@ -296,7 +204,7 @@ export function adapterManifestDiff(expected, actual) {
     else if (expectedEntry === undefined) extra.push(actualEntry);
     else if (
       expectedEntry.mode !== actualEntry.mode
-      || expectedEntry.sha256 !== actualEntry.sha256
+      || !expectedEntry.bytes.equals(actualEntry.bytes)
     ) {
       changed.push({ path: entryPath, expected: expectedEntry, actual: actualEntry });
     }
@@ -304,7 +212,12 @@ export function adapterManifestDiff(expected, actual) {
   return { missing, extra, changed };
 }
 
-function formatManifestDiff(label, report) {
+function describeEntry(entry) {
+  const carriageReturns = entry.bytes.includes(0x0d) ? "yes" : "no";
+  return `mode ${entry.mode}, size ${entry.bytes.length} bytes, CR ${carriageReturns}`;
+}
+
+function formatEntryDiff(label, report) {
   const lines = [`${label}:`];
   if (report.missing.length > 0) {
     lines.push("  missing files:");
@@ -335,42 +248,26 @@ function reportHasChanges(report) {
   return report.missing.length > 0 || report.extra.length > 0 || report.changed.length > 0;
 }
 
-export function verifyAdapterManifest(root, gitEntries = null) {
-  const manifestFile = path.join(root, ADAPTER_MANIFEST_NAME);
-  if (!existsSync(manifestFile)) {
-    return {
-      contentSha256: null,
-      errors: [`missing ${ADAPTER_MANIFEST_NAME}`],
-    };
+export function verifyAdapterCheckout(root, gitEntries = null) {
+  if (!existsSync(root)) return { errors: ["missing adapter directory"] };
+  const packageFile = path.join(root, "package.json");
+  if (
+    !existsSync(packageFile)
+    || !lstatSync(packageFile).isFile()
+    || lstatSync(packageFile).size === 0
+  ) {
+    return { errors: ["missing or empty package.json"] };
   }
-  const manifestBytes = readFileSync(manifestFile);
-  const manifestContentSha256 = sha256(manifestBytes);
-  let manifestEntries;
-  try {
-    manifestEntries = parseAdapterManifest(manifestBytes);
-  } catch (error) {
-    return {
-      contentSha256: manifestContentSha256,
-      errors: [error instanceof Error ? error.message : "invalid adapter manifest"],
-    };
+  if (gitEntries === null) {
+    // Docker builder contexts have no .git, so only snapshot existence is checkable here.
+    return { errors: [] };
   }
-
-  const errors = [];
-  if (gitEntries !== null) {
-    const manifestReport = adapterManifestDiff(gitEntries, manifestEntries);
-    if (reportHasChanges(manifestReport)) {
-      errors.push(formatManifestDiff("manifest differs from Git content", manifestReport));
-    }
-  }
-  const expected = gitEntries ?? manifestEntries;
-  const treeReport = adapterManifestDiff(expected, adapterManifestEntries(root));
-  if (reportHasChanges(treeReport)) {
-    errors.push(formatManifestDiff(
-      `adapter tree differs from ${gitEntries === null ? ADAPTER_MANIFEST_NAME : "Git content"}`,
-      treeReport,
-    ));
-  }
-  return { contentSha256: manifestContentSha256, errors };
+  const report = adapterEntryDiff(gitEntries, adapterTreeEntries(root));
+  return {
+    errors: reportHasChanges(report)
+      ? [formatEntryDiff("adapter checkout differs from Git content", report)]
+      : [],
+  };
 }
 
 function stampValue(source, field) {
@@ -388,7 +285,6 @@ export function readAdapterStamp(file) {
     sha: stampValue(source, "Commit"),
     commitDate: stampValue(source, "Commit date"),
     syncDate: stampValue(source, "Synced on"),
-    contentSha256: stampValue(source, "Content SHA-256"),
   };
   if (!LODY_ADAPTER_NAMES.includes(stamp.name)) throw new Error("adapter stamp has an invalid name");
   if (!HTTPS_URL.test(stamp.url)) throw new Error(`${stamp.name} stamp has an invalid URL`);
@@ -398,9 +294,6 @@ export function readAdapterStamp(file) {
   }
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(stamp.syncDate)) {
     throw new Error(`${stamp.name} stamp has an invalid sync date`);
-  }
-  if (!/^[a-f0-9]{64}$/u.test(stamp.contentSha256)) {
-    throw new Error(`${stamp.name} stamp has an invalid content hash`);
   }
   return stamp;
 }
@@ -412,6 +305,25 @@ function checkWorkspaceExclusion(repository, errors) {
   if (!workspace.includes("- '!packages/acp-extension-kimi'")) {
     errors.push("Kimi is no longer explicitly excluded by vendor/lody/pnpm-workspace.yaml");
   }
+}
+
+export function adapterCheckoutHasDrift(repository, name) {
+  const relative = `vendor/lody-adapters/${name}`;
+  const diff = spawnSync("git", ["diff", "--quiet", "--", relative], {
+    cwd: repository,
+    stdio: "ignore",
+  });
+  if (diff.status !== 0 && diff.status !== 1) {
+    throw new Error(`${name}: could not compare the adapter checkout to Git's index`);
+  }
+  if (diff.status === 1) return true;
+  return gitText(repository, [
+    "ls-files",
+    "--others",
+    "--exclude-standard",
+    "--",
+    relative,
+  ]) !== "";
 }
 
 export function adapterDriftErrors(repository = DEFAULT_REPOSITORY) {
@@ -429,27 +341,20 @@ export function adapterDriftErrors(repository = DEFAULT_REPOSITORY) {
 
   for (const name of LODY_ADAPTER_NAMES) {
     const root = path.join(adaptersRoot, name);
-    if (!existsSync(root)) {
-      errors.push(`${name}: missing vendored adapter directory`);
-      continue;
-    }
     try {
+      const checkout = verifyAdapterCheckout(root);
+      errors.push(...checkout.errors.map((error) => `${name}: ${error}`));
+      if (checkout.errors.length > 0) continue;
       const stamp = readAdapterStamp(path.join(root, "UPSTREAM.md"));
       const sha = gitlinkSha(repository, name);
       const url = adapterUrl(repository, name);
-      const gitEntries = adapterGitManifestEntries(repository, name);
-      const manifest = verifyAdapterManifest(root, gitEntries);
       if (stamp.name !== name) errors.push(`${name}: stamp names ${stamp.name}`);
-      if (stamp.sha !== sha) errors.push(`${name}: stamp ${stamp.sha} differs from gitlink ${sha}`);
+      if (stamp.sha !== sha) {
+        errors.push(`${name}: recorded upstream ${stamp.sha} differs from gitlink ${sha}`);
+      }
       if (stamp.url !== url) errors.push(`${name}: stamp URL differs from .gitmodules`);
-      errors.push(...manifest.errors.map((error) => `${name}: ${error}`));
-      if (
-        manifest.contentSha256 !== null
-        && stamp.contentSha256 !== manifest.contentSha256
-      ) {
-        errors.push(
-          `${name}: manifest hash ${manifest.contentSha256} differs from stamp ${stamp.contentSha256}`,
-        );
+      if (adapterCheckoutHasDrift(repository, name)) {
+        errors.push(`${name}: checkout drifted from Git index`);
       }
       if (existsSync(path.join(root, ".git"))) errors.push(`${name}: vendored tree contains .git`);
     } catch (error) {
@@ -464,7 +369,7 @@ export function adapterDriftErrors(repository = DEFAULT_REPOSITORY) {
   return errors;
 }
 
-function writeStamp(root, name, url, sha, commitDate, contentSha256) {
+function writeStamp(root, name, url, sha, commitDate) {
   const syncDate = new Date().toISOString().slice(0, 10);
   const contents = `# ${name} ACP adapter upstream pin
 
@@ -478,7 +383,6 @@ Do not edit its contents by hand.
 | Commit | \`${sha}\` |
 | Commit date | ${commitDate} |
 | Synced on | ${syncDate} |
-| Content SHA-256 | \`${contentSha256}\` |
 `;
   writeFileSync(path.join(root, "UPSTREAM.md"), contents);
 }
@@ -510,16 +414,56 @@ function fetchAdapter(scratch, repository, name) {
   const archive = runBinary("git", ["archive", "--format=tar", sha], checkout);
   runBinary("tar", ["-x", "-C", tree], scratch, archive);
   const commitDate = gitText(checkout, ["show", "-s", "--format=%cI", sha]);
-  const manifest = adapterManifestBytes(adapterManifestEntries(tree));
-  const contentSha256 = sha256(manifest);
-  return { name, sha, url, commitDate, contentSha256, manifest, tree };
+  return { name, sha, url, commitDate, tree };
+}
+
+export function adapterFetchErrors(repository = DEFAULT_REPOSITORY) {
+  const errors = [];
+  const scratch = mkdtempSync(path.join(tmpdir(), "lody-adapters-check-"));
+  try {
+    for (const name of LODY_ADAPTER_NAMES) {
+      try {
+        const fetched = fetchAdapter(scratch, repository, name);
+        const report = adapterEntryDiff(
+          adapterTreeEntries(fetched.tree),
+          adapterGitEntries(repository, name),
+        );
+        if (reportHasChanges(report)) {
+          errors.push(formatEntryDiff(
+            `${name}: tracked snapshot differs from upstream ${fetched.sha}`,
+            report,
+          ));
+        }
+      } catch (error) {
+        errors.push(`${name}: ${error instanceof Error ? error.message : "upstream check failed"}`);
+      }
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return errors;
+}
+
+function snapshotPaths(root) {
+  if (!existsSync(root)) return new Set();
+  const paths = new Set(adapterTreeEntries(root).map((entry) => entry.path));
+  if (existsSync(path.join(root, "UPSTREAM.md"))) paths.add("UPSTREAM.md");
+  return paths;
 }
 
 export function syncAdapters(repository = DEFAULT_REPOSITORY) {
+  const previous = new Map();
   for (const name of LODY_ADAPTER_NAMES) {
     if (destinationHasLocalChanges(repository, name)) {
       throw new Error(`${name}: vendor/lody-adapters has local changes; commit or remove them before syncing`);
     }
+    const root = path.join(repository, "vendor/lody-adapters", name);
+    previous.set(name, {
+      sha: existsSync(path.join(root, "UPSTREAM.md"))
+        ? readAdapterStamp(path.join(root, "UPSTREAM.md")).sha
+        : "none",
+      paths: snapshotPaths(root),
+    });
   }
   const scratch = mkdtempSync(path.join(tmpdir(), "lody-adapters-"));
   try {
@@ -534,16 +478,13 @@ export function syncAdapters(repository = DEFAULT_REPOSITORY) {
         preserveTimestamps: true,
         verbatimSymlinks: true,
       });
-      writeFileSync(path.join(destination, ADAPTER_MANIFEST_NAME), adapter.manifest);
-      writeStamp(
-        destination,
-        adapter.name,
-        adapter.url,
-        adapter.sha,
-        adapter.commitDate,
-        adapter.contentSha256,
+      writeStamp(destination, adapter.name, adapter.url, adapter.sha, adapter.commitDate);
+      const nextPaths = snapshotPaths(destination);
+      const before = previous.get(adapter.name);
+      const removed = [...before.paths].filter((entry) => !nextPaths.has(entry)).length;
+      process.stdout.write(
+        `${adapter.name}: old ${before.sha}; new ${adapter.sha}; wrote ${nextPaths.size} files; removed ${removed} files\n`,
       );
-      process.stdout.write(`${adapter.name} ${adapter.sha} ${adapter.contentSha256}\n`);
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -552,13 +493,16 @@ export function syncAdapters(repository = DEFAULT_REPOSITORY) {
 
 function parseCli(argv) {
   let check = false;
+  let fetch = false;
   let help = false;
   for (const flag of argv) {
     if (flag === "--check") check = true;
+    else if (flag === "--fetch") fetch = true;
     else if (flag === "--help" || flag === "-h") help = true;
     else throw new Error(`unknown argument: ${flag}`);
   }
-  return { check, help };
+  if (fetch && !check) throw new Error("--fetch requires --check");
+  return { check, fetch, help };
 }
 
 export function main(argv = process.argv.slice(2)) {
@@ -567,10 +511,16 @@ export function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${usage()}\n`);
     return;
   }
-  if (!options.check) syncAdapters();
+  if (!options.check) {
+    syncAdapters();
+    return;
+  }
   const errors = adapterDriftErrors();
+  if (options.fetch && errors.length === 0) errors.push(...adapterFetchErrors());
   if (errors.length > 0) throw new Error(`Lody adapter drift:\n- ${errors.join("\n- ")}`);
-  process.stdout.write(`verified ${LODY_ADAPTER_NAMES.length} Lody adapter trees\n`);
+  process.stdout.write(
+    `verified ${LODY_ADAPTER_NAMES.length} Lody adapter trees${options.fetch ? " against upstream" : ""}\n`,
+  );
 }
 
 if (
