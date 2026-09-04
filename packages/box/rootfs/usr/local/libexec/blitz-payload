@@ -30,6 +30,8 @@ const MODE_PATTERN = /^[0-7]{4}$/u;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 const HTTP_URL_PATTERN = /^https?:\/\/[^/\s?#]+(?:[/?][^\s#]*)?$/u;
 const LOG_MAX_BYTES = 1024 * 1024;
+const FAILED_RETRY_MS = 6 * 60 * 60 * 1000;
+const QUIET_LOG_INTERVAL_MS = 60 * 60 * 1000;
 const RESTART_SERVICES = new Set([
   'cgroups',
   'cloudflared',
@@ -61,6 +63,12 @@ const RESULT_OUTCOMES = new Set([
   'verify-failed',
   'start-failed',
   'up-to-date',
+]);
+const FAILED_OUTCOMES = new Set([
+  'verify-failed',
+  'rolled-back',
+  'start-failed',
+  'unsupported',
 ]);
 
 class FetchFailure extends Error {}
@@ -1309,11 +1317,40 @@ async function recordOutcome(config, state, outcome, detail) {
     : state.current;
   const persistent = { ...state };
   delete persistent.reportVersion;
+  const recordedAt = Date.now();
   const next = {
     ...persistent,
     lastOutcome: outcome,
-    lastAttemptAt: Date.now(),
+    lastAttemptAt: recordedAt,
   };
+  if (FAILED_OUTCOMES.has(outcome)) {
+    const previous = failedRelease(next);
+    next.failed = {
+      version: reportVersion,
+      outcome,
+      at: recordedAt,
+      attempts: previous !== null && previous.version === reportVersion
+        ? previous.attempts + 1
+        : 1,
+    };
+  } else if (outcome === 'applied') {
+    delete next.failed;
+  }
+  if (outcome === 'booted') {
+    log(`booted ${reportVersion} daemon ${next.daemonVersion}`);
+  } else if (outcome === 'up-to-date') {
+    const quiet = quietLogRecord(next.quietLog);
+    if (
+      quiet === null
+      || quiet.version !== reportVersion
+      || recordedAt - quiet.at >= QUIET_LOG_INTERVAL_MS
+    ) {
+      log(`tick: up-to-date ${reportVersion}`);
+      next.quietLog = { version: reportVersion, at: recordedAt };
+    }
+  } else {
+    log(`${outcome} ${reportVersion}: ${detail}`);
+  }
   await writeState(config, next);
   return { state: next, result: {
     version: reportVersion,
@@ -1321,6 +1358,46 @@ async function recordOutcome(config, state, outcome, detail) {
     outcome,
     detail,
   } };
+}
+
+function failedRelease(state) {
+  const failed = state.failed;
+  if (
+    failed === null
+    || typeof failed !== 'object'
+    || typeof failed.version !== 'string'
+    || !FAILED_OUTCOMES.has(failed.outcome)
+    || !Number.isSafeInteger(failed.at)
+    || failed.at < 0
+    || !Number.isSafeInteger(failed.attempts)
+    || failed.attempts < 1
+  ) return null;
+  return failed;
+}
+
+function quietLogRecord(value) {
+  if (
+    value === null
+    || typeof value !== 'object'
+    || typeof value.version !== 'string'
+    || !Number.isSafeInteger(value.at)
+    || value.at < 0
+  ) return null;
+  return value;
+}
+
+async function reconcileFailedPin(config, state, pin) {
+  const failed = failedRelease(state);
+  if (
+    failed === null
+    || pin === null
+    || (pin.version === failed.version && pin.version !== state.current)
+  ) return state;
+  const next = { ...state };
+  delete next.failed;
+  await writeState(config, next);
+  log(`cleared failed ${failed.version}: pin is ${pin.version}`);
+  return next;
 }
 
 async function applyPayload(pin, manifest, config, initialState) {
@@ -1560,6 +1637,7 @@ async function tick(config) {
     bootReportPending = false;
     reportedBoot = true;
   }
+  state = await reconcileFailedPin(config, state, pin);
   if (pin === null) {
     await garbageCollect(config, state);
     return;
@@ -1575,6 +1653,15 @@ async function tick(config) {
       state = current.state;
       await postResult(origin, token, current.result, config);
     }
+    await garbageCollect(config, state);
+    return;
+  }
+  const failed = failedRelease(state);
+  if (
+    failed !== null
+    && failed.version === pin.version
+    && Date.now() - failed.at < FAILED_RETRY_MS
+  ) {
     await garbageCollect(config, state);
     return;
   }

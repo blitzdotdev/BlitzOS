@@ -107,7 +107,7 @@ same node major as the image (22).
 /opt/blitz/payload/baked/…            image layer, the payload built into this image
 /opt/blitz/payload/current -> …       symlink; baked at first boot
 /var/lib/blitz/payload/versions/<v>/  downloaded, verified payloads (volume; survives VM replace)
-/var/lib/blitz/payload/state.json     { current, previous, lastOutcome, lastAttemptAt }
+/var/lib/blitz/payload/state.json     { current, previous, lastOutcome, lastAttemptAt, failed? }
 /opt/blitz/lody/baked/, /opt/blitz/lody/current -> …, /var/lib/blitz/daemon/versions/<v>/
 /usr/local/bin/<x> -> /opt/blitz/payload/current/rootfs/usr/local/bin/<x>   (every payload-owned entry)
 ```
@@ -142,6 +142,15 @@ Loop every `BLITZ_PAYLOAD_INTERVAL` (default 300 s; first tick 60 s after boot):
       Report `booted` on every boot (so the control plane learns the baked
       version); reserve `up-to-date` for a later tick whose pin already runs.
 3. Keep `current` and `previous`; delete older `versions/*` and `.staging` leftovers.
+
+Failed target versions are locally rate-limited. `verify-failed`, `rolled-back`,
+`start-failed`, and `unsupported` persist
+`failed: {version, outcome, at, attempts}` in `state.json`; the same pin is not
+attempted or reported again for six hours. A different pin is attempted at
+once, and returning the pin to the running version clears the failure.
+
+`/var/lib/blitz/payload/log` records the boot report, every outcome transition,
+and an unchanged `tick: up-to-date <version>` heartbeat at most once per hour.
 
 Invariants (each one a guest test): never a half-applied `current` (the symlink
 flips once, after full verification); a crash at any step leaves either the old

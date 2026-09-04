@@ -43,6 +43,19 @@ interface PayloadResult {
   detail: string;
 }
 
+interface FailedPayloadState {
+  version: string;
+  outcome: string;
+  at: number;
+  attempts: number;
+}
+
+interface PayloadState {
+  current: string;
+  daemonVersion: string;
+  failed?: FailedPayloadState;
+}
+
 interface RunResult {
   status: number | null;
   signal: NodeJS.Signals | null;
@@ -347,6 +360,14 @@ class Harness {
     if (!existsSync(logPath)) return [];
     return readFileSync(logPath, "utf8").trim().split("\n").filter((line) => line !== "");
   }
+
+  state(): PayloadState {
+    // SAFETY: the real updater is the sole writer; every field used by the
+    // tests is asserted immediately after parsing.
+    return JSON.parse(
+      readFileSync(path.join(this.payloadState, "state.json"), "utf8"),
+    ) as PayloadState;
+  }
 }
 
 function runUpdater(
@@ -544,6 +565,133 @@ describe("blitz-payload", () => {
     expect(harness.currentTarget()).toBe(path.join(harness.payloadRoot, "baked"));
   });
 
+  it.each([
+    {
+      name: "verify-failed",
+      expected: "verify-failed",
+      setup: () => {
+        const release = makePayloadArchive([
+          { path: "rootfs/usr/local/bin/tool", content: "new\n" },
+        ]);
+        release.archive.sha256 = "0".repeat(64);
+        return new Harness({ release });
+      },
+    },
+    {
+      name: "rolled-back",
+      expected: "rolled-back",
+      setup: () => {
+        const release = makePayloadArchive([
+          { path: "rootfs/usr/local/bin/tool", content: "unhealthy\n" },
+        ]);
+        return new Harness({
+          release,
+          health: (target) => !target.endsWith(`versions${path.sep}${release.version}`),
+        });
+      },
+    },
+    {
+      name: "start-failed",
+      expected: "start-failed",
+      setup: () => new Harness({
+        release: makePayloadArchive([
+          { path: "rootfs/usr/local/bin/tool", content: "unhealthy\n" },
+        ]),
+        health: () => false,
+      }),
+    },
+    {
+      name: "unsupported",
+      expected: "unsupported",
+      setup: () => {
+        const release = makePayloadArchive([
+          { path: "rootfs/usr/local/bin/tool", content: "new\n" },
+        ]);
+        release.minUpdater = 2;
+        return new Harness({ release });
+      },
+    },
+  ])("remembers $name and does not retry or report it on the next tick", async ({
+    expected,
+    setup,
+  }) => {
+    const harness = setup();
+    await harness.start();
+
+    await expectOneOutcome(harness, expected);
+    const failedAfterAttempt = harness.state().failed;
+    expect(failedAfterAttempt).toMatchObject({
+      version: harness.options.release?.version,
+      outcome: expected,
+      attempts: 1,
+    });
+    expect(failedAfterAttempt?.at).toEqual(expect.any(Number));
+    const manifestRequests = harness.requests.filter((request) => request === "GET /manifest.json");
+
+    await expectOneOutcome(harness, "booted");
+
+    expect(harness.requests.filter((request) => request === "GET /manifest.json"))
+      .toHaveLength(manifestRequests.length);
+    expect(harness.results.filter((result) => result.outcome === expected)).toHaveLength(1);
+    expect(harness.state().failed).toEqual(failedAfterAttempt);
+  });
+
+  it("allows one more failed-version attempt after six hours", async () => {
+    const release = makePayloadArchive([
+      { path: "rootfs/usr/local/bin/tool", content: "new\n" },
+    ]);
+    release.archive.sha256 = "0".repeat(64);
+    const harness = new Harness({ release });
+    await harness.start();
+    await expectOneOutcome(harness, "verify-failed");
+    const state = harness.state();
+    if (state.failed === undefined) throw new Error("failed release was not persisted");
+    state.failed.at = Date.now() - (6 * 60 * 60 * 1000);
+    writeFileSync(
+      path.join(harness.payloadState, "state.json"),
+      `${JSON.stringify(state)}\n`,
+    );
+
+    await expectOneOutcome(harness, "verify-failed");
+
+    expect(harness.results.filter((result) => result.outcome === "verify-failed")).toHaveLength(2);
+    expect(harness.state().failed).toMatchObject({ attempts: 2, outcome: "verify-failed" });
+  });
+
+  it("a different pin is attempted immediately after a failed version", async () => {
+    const failedRelease = makePayloadArchive([
+      { path: "rootfs/usr/local/bin/tool", content: "bad\n" },
+    ], "bad-v2");
+    failedRelease.archive.sha256 = "0".repeat(64);
+    const harness = new Harness({ release: failedRelease });
+    await harness.start();
+    await expectOneOutcome(harness, "verify-failed");
+
+    const nextRelease = makePayloadArchive([
+      { path: "rootfs/usr/local/bin/tool", content: "good\n" },
+    ], "good-v3");
+    harness.options.release = nextRelease;
+    harness.options.pinVersion = nextRelease.version;
+    await expectOneOutcome(harness, "applied");
+    expect(harness.currentContent()).toBe("good\n");
+    expect(harness.state().failed).toBeUndefined();
+  });
+
+  it("a pin back to the running version clears the failed version", async () => {
+    const release = makePayloadArchive([
+      { path: "rootfs/usr/local/bin/tool", content: "bad\n" },
+    ]);
+    release.archive.sha256 = "0".repeat(64);
+    const harness = new Harness({ release });
+    await harness.start();
+    await expectOneOutcome(harness, "verify-failed");
+
+    harness.options.pinVersion = BAKED_PAYLOAD_VERSION;
+    await expectOneOutcome(harness, "booted");
+
+    expect(harness.state().failed).toBeUndefined();
+  });
+
   it("bounds 401, 5xx, and unreachable control-plane ticks without changing current", async () => {
     const cases: Array<{ name: string; harness: Harness; makeUnreachable?: boolean }> = [
       { name: "401", harness: new Harness({ expectedToken: "different-bearer" }) },
@@ -576,6 +724,25 @@ describe("blitz-payload", () => {
     expect(result.detail).toContain("boot report");
     expect(harness.requests).not.toContain("GET /manifest.json");
     expect(harness.calls(harness.s6Log)).toEqual([]);
+  });
+
+  it("logs one boot line and one rate-limited quiet-tick line", async () => {
+    const harness = new Harness({ pinVersion: BAKED_PAYLOAD_VERSION });
+    await harness.start();
+    const child = spawn(process.execPath, [updater], { env: harness.environment(false) });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    await new Promise((resolve) => setTimeout(resolve, 280));
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+
+    expect(harness.results.map((result) => result.outcome), stderr).toContain("booted");
+    expect(harness.results.map((result) => result.outcome), stderr).toContain("up-to-date");
+    expect(harness.calls(path.join(harness.payloadState, "log"))).toEqual([
+      `blitz-payload: booted ${BAKED_PAYLOAD_VERSION} daemon ${BAKED_DAEMON_VERSION}`,
+      `blitz-payload: tick: up-to-date ${BAKED_PAYLOAD_VERSION}`,
+    ]);
   });
 
   it("garbage-collects payload versions down to current and previous", async () => {
