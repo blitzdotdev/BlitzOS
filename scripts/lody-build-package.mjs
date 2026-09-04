@@ -26,6 +26,7 @@ import {
   readAdapterStamp,
   verifyAdapterCheckout,
 } from "./lody-sync-adapters.mjs";
+import { writeLodyNpmShrinkwrap } from "./lody-npm-shrinkwrap.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY = path.resolve(SCRIPT_DIRECTORY, "..");
@@ -35,8 +36,7 @@ const DEFAULT_MANIFEST = path.join(
 );
 const GIT_SHA = /^[a-f0-9]{40}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
-const CHUNK_PATH = /^(package\/dist\/chunks\/.+)-[A-Za-z0-9_-]{8}\.js$/u;
-
+const MANIFEST_HASH = "[hash]";
 function usage() {
   return `Build and stamp the Lody daemon package from the reviewed tree.
 
@@ -299,7 +299,6 @@ export function createBuildStamp(
   adapterShas,
   lockfileSha256,
   distSha256,
-  builtAt,
   node,
   pnpm,
 ) {
@@ -307,8 +306,6 @@ export function createBuildStamp(
   assertHash(subtreeCommit, GIT_SHA, "subtreeCommit");
   assertHash(lockfileSha256, SHA256, "lockfileSha256");
   assertHash(distSha256, SHA256, "distSha256");
-  if (Number.isNaN(Date.parse(builtAt)))
-    throw new Error("builtAt is not an ISO-8601 timestamp");
   if (!/^\d+\.\d+\.\d+/u.test(node))
     throw new Error("node has an invalid version");
   if (!/^\d+\.\d+\.\d+/u.test(pnpm))
@@ -325,41 +322,35 @@ export function createBuildStamp(
     adapterShas: orderedAdapters,
     lockfileSha256,
     distSha256,
-    builtAt,
     node,
     pnpm,
   };
 }
 
-export function normalizePackagePath(file) {
-  const match = CHUNK_PATH.exec(file);
-  return match === null ? file : `${match[1]}-[hash].js`;
-}
-
-function counts(entries) {
-  const found = new Map();
-  for (const entry of entries) found.set(entry, (found.get(entry) ?? 0) + 1);
-  return found;
+function manifestEntryMatches(pattern, file) {
+  if (!pattern.includes(MANIFEST_HASH)) return pattern === file;
+  const [prefix, suffix] = pattern.split(MANIFEST_HASH);
+  return (
+    file.startsWith(prefix) &&
+    file.endsWith(suffix) &&
+    /^[A-Za-z0-9_-]{8}$/u.test(file.slice(prefix.length, -suffix.length))
+  );
 }
 
 export function packageManifestReport(expected, actual) {
-  const wanted = counts(expected);
-  const packed = counts(actual.map(normalizePackagePath));
-  const missing = [];
-  const extra = [];
-  for (const [entry, count] of wanted) {
-    for (let index = packed.get(entry) ?? 0; index < count; index += 1)
-      missing.push(entry);
-  }
-  for (const [entry, count] of packed) {
-    for (let index = wanted.get(entry) ?? 0; index < count; index += 1)
-      extra.push(entry);
-  }
-  return { missing, extra };
+  return {
+    missing: expected.filter(
+      (entry) => !actual.some((file) => manifestEntryMatches(entry, file)),
+    ),
+  };
+}
+
+function readJson(file) {
+  return JSON.parse(readFileSync(file, "utf8"));
 }
 
 export function readPackageManifest(file = DEFAULT_MANIFEST) {
-  const decoded = JSON.parse(readFileSync(file, "utf8"));
+  const decoded = readJson(file);
   if (!Array.isArray(decoded))
     throw new Error("lody-package-manifest.json must be an array");
   return decoded.map((entry) => {
@@ -478,28 +469,12 @@ export function publishPackageOutput(
     const stagedStamp = path.join(staging, "BUILD.json");
     writeFileSync(stagedStamp, stampJson);
     chmodSync(stagedStamp, 0o444);
-    const tarballs = readdirSync(staging).filter((entry) =>
-      /^lody-.+\.tgz$/u.test(entry),
-    );
-    if (tarballs.length !== 1) {
-      throw new Error(
-        `staged Lody output contains ${tarballs.length} tarballs; expected exactly one`,
-      );
-    }
 
     renameSync(
       stagedTarball,
       path.join(outputDirectory, path.basename(scratchTarball)),
     );
     renameSync(stagedStamp, path.join(outputDirectory, "BUILD.json"));
-    const publishedTarballs = readdirSync(outputDirectory).filter((entry) =>
-      /^lody-.+\.tgz$/u.test(entry),
-    );
-    if (publishedTarballs.length !== 1) {
-      throw new Error(
-        `published Lody output contains ${publishedTarballs.length} tarballs; expected exactly one`,
-      );
-    }
     return {
       tarball: path.join(outputDirectory, path.basename(scratchTarball)),
       stampFile: path.join(outputDirectory, "BUILD.json"),
@@ -540,7 +515,7 @@ function packageTarball(lodyRoot, packRoot, environment) {
   return path.join(packRoot, cliTarballs[0]);
 }
 
-function verifyTarball(tarball, scratch, expected, stamp) {
+function verifyTarball(tarball, scratch, expected, stamp, shrinkwrap) {
   const listing = runText("tar", ["-tzf", tarball], scratch, process.env)
     .split("\n")
     .filter((entry) => entry !== "" && !entry.endsWith("/"));
@@ -550,11 +525,6 @@ function verifyTarball(tarball, scratch, expected, stamp) {
       `packed Lody package is missing:\n- ${report.missing.join("\n- ")}`,
     );
   }
-  if (report.extra.length > 0) {
-    process.stderr.write(
-      `warning: packed Lody package has extra entries:\n- ${report.extra.join("\n- ")}\n`,
-    );
-  }
   const packedRoot = path.join(scratch, "packed");
   mkdirSync(packedRoot);
   runBinary("tar", ["-xzf", tarball, "-C", packedRoot], scratch);
@@ -562,11 +532,23 @@ function verifyTarball(tarball, scratch, expected, stamp) {
   if (distContentSha256(packedDist) !== stamp.distSha256) {
     throw new Error("packed dist content differs from BUILD.json distSha256");
   }
-  const packedStamp = JSON.parse(
-    readFileSync(path.join(packedDist, "BUILD.json"), "utf8"),
-  );
+  const packedStamp = readJson(path.join(packedDist, "BUILD.json"));
   if (JSON.stringify(packedStamp) !== JSON.stringify(stamp)) {
     throw new Error("packed dist/BUILD.json differs from the output stamp");
+  }
+  const packedShrinkwrap = readJson(
+    path.join(packedRoot, "package/npm-shrinkwrap.json"),
+  );
+  if (JSON.stringify(packedShrinkwrap) !== JSON.stringify(shrinkwrap)) {
+    throw new Error("packed npm-shrinkwrap.json differs from pnpm-lock.yaml");
+  }
+  const packedPackage = readJson(path.join(packedRoot, "package/package.json"));
+  const packedDependencies = JSON.stringify(packedPackage.dependencies);
+  const lockedDependencies = JSON.stringify(shrinkwrap.packages[""].dependencies);
+  const productionOnly = packedPackage.devDependencies === undefined &&
+    packedDependencies === lockedDependencies;
+  if (!productionOnly) {
+    throw new Error("packed package.json is not the shrinkwrap's production manifest");
   }
 }
 
@@ -576,8 +558,7 @@ export function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${usage()}\n`);
     return;
   }
-  // Refuse replacement before doing the expensive install and build. The
-  // publisher checks again and reserves the directory against another writer.
+  // Refuse replacement before build; the publisher checks again before reserving.
   assertEmptyOutputDirectory(options.out);
   const started = Date.now();
   let scratch;
@@ -634,14 +615,12 @@ export function main(argv = process.argv.slice(2)) {
       path.join(lodyRoot, "THIRD_PARTY_NOTICES.md"),
       path.join(dist, "THIRD_PARTY_NOTICES.md"),
     );
-    // The package manifest names LICENSE, but the CLI directory relies on the
-    // workspace-root copy. Materialize it only in this disposable pack tree.
+    // Materialize the workspace-root LICENSE only in this disposable pack tree.
     cpSync(
       path.join(lodyRoot, "LICENSE"),
       path.join(lodyRoot, "apps/cli/LICENSE"),
     );
-    // package.json excludes source maps. Remove them before hashing so the
-    // digest describes the installed dist tree, not unpublished build output.
+    // Remove unpublished source maps before hashing the installed dist tree.
     removeUnpublishedSourceMaps(dist);
     const pnpm = runText(
       "corepack",
@@ -655,7 +634,6 @@ export function main(argv = process.argv.slice(2)) {
       adapterShas,
       sha256File(path.join(lodyRoot, "pnpm-lock.yaml")),
       distContentSha256(dist),
-      new Date().toISOString(),
       process.versions.node,
       pnpm,
     );
@@ -664,8 +642,15 @@ export function main(argv = process.argv.slice(2)) {
     writeFileSync(distStamp, stampJson);
     chmodSync(distStamp, 0o444);
 
+    const shrinkwrap = writeLodyNpmShrinkwrap(lodyRoot);
     const scratchTarball = packageTarball(lodyRoot, packRoot, environment);
-    verifyTarball(scratchTarball, scratch, readPackageManifest(), stamp);
+    verifyTarball(
+      scratchTarball,
+      scratch,
+      readPackageManifest(),
+      stamp,
+      shrinkwrap,
+    );
     const { tarball, stampFile } = publishPackageOutput(
       scratchTarball,
       stampJson,

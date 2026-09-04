@@ -12,11 +12,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createBuildStamp,
   distContentSha256,
-  normalizePackagePath,
   packageManifestReport,
   publishPackageOutput,
   readPackageManifest,
 } from "../../../scripts/lody-build-package.mjs";
+import {
+  createLodyNpmShrinkwrap,
+  pnpmIgnoredBuildDependencies,
+} from "../../../scripts/lody-npm-shrinkwrap.mjs";
+
+const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
 
 const scratch = [];
 
@@ -40,7 +45,6 @@ describe("the Lody package build stamp", () => {
       adapterShas,
       "8".repeat(64),
       "9".repeat(64),
-      "2026-09-04T00:00:00.000Z",
       "22.20.0",
       "10.20.0",
     );
@@ -51,7 +55,6 @@ describe("the Lody package build stamp", () => {
       "adapterShas",
       "lockfileSha256",
       "distSha256",
-      "builtAt",
       "node",
       "pnpm",
     ]);
@@ -74,35 +77,24 @@ describe("the Lody package build stamp", () => {
 });
 
 describe("the reviewed Lody package manifest", () => {
-  it("normalizes only Vite chunk hashes and preserves multiplicity", () => {
-    expect(normalizePackagePath("package/dist/chunks/index-C9ZZe-9e.js")).toBe(
-      "package/dist/chunks/index-[hash].js",
-    );
-    expect(normalizePackagePath("package/dist/index.js")).toBe(
-      "package/dist/index.js",
-    );
-
+  it("requires only fixed runtime assets and hashed WASM glue", () => {
     const expected = readPackageManifest();
-    let chunk = 0;
-    const actual = expected.map((entry) => {
-      if (!entry.includes("[hash]")) return entry;
-      chunk += 1;
-      return entry.replace("[hash]", `h${String(chunk).padStart(7, "0")}`);
-    });
+    expect(expected).toHaveLength(15);
+    const actual = expected.map((entry) =>
+      entry.replace("[hash]", "Br-Fa9wV"),
+    );
     expect(packageManifestReport(expected, actual)).toEqual({
       missing: [],
-      extra: [],
     });
   });
 
-  it("fails closed on missing entries while reporting additions separately", () => {
+  it("fails closed on missing entries and permits unrelated chunks", () => {
     const expected = [
       "package/dist/index.js",
       "package/dist/chunks/acp-[hash].js",
     ];
     expect(packageManifestReport(expected, ["package/dist/index.js"])).toEqual({
       missing: ["package/dist/chunks/acp-[hash].js"],
-      extra: [],
     });
     expect(
       packageManifestReport(expected, [
@@ -110,7 +102,97 @@ describe("the reviewed Lody package manifest", () => {
         "package/dist/chunks/acp-Abcd1234.js",
         "package/dist/new-worker.js",
       ]),
-    ).toEqual({ missing: [], extra: ["package/dist/new-worker.js"] });
+    ).toEqual({ missing: [] });
+  });
+});
+
+describe("the Lody npm shrinkwrap", () => {
+  it("pins the real CLI production graph to pnpm versions and integrities", () => {
+    const lodyRoot = path.join(repositoryRoot, "vendor/lody");
+    const shrinkwrap = createLodyNpmShrinkwrap(
+      readFileSync(path.join(lodyRoot, "pnpm-lock.yaml"), "utf8"),
+      JSON.parse(
+        readFileSync(
+          path.join(lodyRoot, "apps/cli/package.json"),
+          "utf8",
+        ),
+      ),
+      pnpmIgnoredBuildDependencies(
+        readFileSync(path.join(lodyRoot, "pnpm-workspace.yaml"), "utf8"),
+      ),
+    );
+
+    expect(shrinkwrap.lockfileVersion).toBe(3);
+    expect(shrinkwrap.packages[""].dependencies).toEqual({
+      "@lydell/node-pty": "1.2.0-beta.14",
+      "better-sqlite3": "^13.0.2",
+      "loro-crdt": "1.15.1",
+      "shell-env": "^4.0.3",
+      tinypool: "^1.0.0",
+      typescript: "^5.9.3",
+    });
+    expect(shrinkwrap.packages["node_modules/better-sqlite3"]).toMatchObject({
+      version: "13.0.3",
+      resolved: "https://registry.npmjs.org/better-sqlite3/-/better-sqlite3-13.0.3.tgz",
+      integrity:
+        "sha512-RbOBxmLBG8uvFUc15X9+9SFemKcQ0WBuISBVkpuiaUB2qblC8UWlHEjdWVoZ8AdhSwmoEgsiXKfopX0CQxaACQ==",
+      gypfile: false,
+    });
+    expect(shrinkwrap.packages["node_modules/@lydell/node-pty-linux-arm64"]).toMatchObject({
+      version: "1.2.0-beta.14",
+      cpu: ["arm64"],
+      os: ["linux"],
+      optional: true,
+    });
+    expect(Object.values(shrinkwrap.packages).slice(1)).toHaveLength(32);
+    for (const entry of Object.values(shrinkwrap.packages).slice(1)) {
+      expect(entry.resolved).toMatch(/^https:\/\/registry\.npmjs\.org\//u);
+      expect(entry.integrity).toMatch(/^sha512-/u);
+    }
+  });
+
+  it("nests a transitive version that conflicts with the hoisted version", () => {
+    const lockfile = `lockfileVersion: '9.0'
+
+importers:
+  apps/cli:
+    dependencies:
+      first:
+        specifier: 1.0.0
+        version: 1.0.0
+      second:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+  first@1.0.0:
+    resolution: {integrity: sha512-first}
+  second@1.0.0:
+    resolution: {integrity: sha512-second}
+  shared@1.0.0:
+    resolution: {integrity: sha512-shared-one}
+  shared@2.0.0:
+    resolution: {integrity: sha512-shared-two}
+
+snapshots:
+  first@1.0.0:
+    dependencies:
+      shared: 1.0.0
+  second@1.0.0:
+    dependencies:
+      shared: 2.0.0
+  shared@1.0.0: {}
+  shared@2.0.0: {}
+`;
+    const shrinkwrap = createLodyNpmShrinkwrap(lockfile, {
+      name: "fixture",
+      version: "1.0.0",
+      dependencies: { first: "1.0.0", second: "1.0.0" },
+    });
+    expect(shrinkwrap.packages["node_modules/shared"].version).toBe("1.0.0");
+    expect(
+      shrinkwrap.packages["node_modules/second/node_modules/shared"].version,
+    ).toBe("2.0.0");
   });
 });
 
