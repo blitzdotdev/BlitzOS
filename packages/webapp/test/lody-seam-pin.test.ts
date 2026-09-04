@@ -72,7 +72,8 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     expectSeam("session-detail.tsx", [
       // Seam patch 4's hunks are additive and remove nothing, which is why they
       // are absent from this list and still covered by the subsequence check.
-      // So are three of seam patch 6's four; its fourth is the last anchor here.
+      // So are three of seam patch 6's five; hunks 24 and 25 replace the
+      // disabled expression and the four ref sites named below.
       // hunk 7: the `react` import gains `type ReactNode`
       [
         90,
@@ -96,6 +97,12 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // disabled. Its other three hunks add lines and remove none, so they are
       // covered by the subsequence check rather than named here.
       [3358, "      disabled: launcherState === 'disabled' || isCreatingSideSession,"],
+      // Seam patch 6 hunk 25: all four chat surfaces reuse one callback per tab
+      // id instead of making a new ref arrow on every parent render.
+      [4921, "                  ref={(el) => setChatTabRef(tabSession.id, el)}"],
+      [4983, "                  ref={(el) => setChatTabRef(draft.id, el)}"],
+      [5548, "      ref: (element: SessionChatInterfaceHandle | null) => setChatTabRef(chatSession.id, element),"],
+      [5629, "              ref={(el) => setChatTabRef(draft.id, el)}"],
       // Seam patch 7 hunk 12: the page's GitHub state answers the
       // `githubIntegration` capability, so the two lines of the memo it was
       // built by are rewritten. Its other three hunks in this file add lines

@@ -21,11 +21,9 @@
  * subsequence check, and its PARTS are named here — the prop on the vendored
  * side, the call on ours, and the three mechanisms a merge could quietly drop.
  *
- * WHAT NEEDS EYES. That a disabled Side Chat entry looks disabled, and that it
- * becomes enabled the moment the first assistant turn lands. The second is the
- * one worth watching for: it depends on `useImperativeHandle` re-attaching when
- * `lastCompletedAssistantMessageId` changes, which is React's behaviour and not
- * something jsdom can be asked about without the whole page.
+ * WHAT THIS SOURCE PIN CANNOT PROVE. It cannot run React's ref commit cycle
+ * without the whole page. It proves that all four sites use the callback cache
+ * and that `useImperativeHandle` still depends on the latest assistant turn.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -90,17 +88,25 @@ describe("the Side Chat launcher knows there is nothing to fork", () => {
     expect(chatInterface).toContain("[handleCopyConversationHistory, lastCompletedAssistantMessageId, openSearch]");
   });
 
-  it("ignores the detach, which is the whole of the loop safety", () => {
-    // Every render hands each surface a fresh ref arrow, so React calls it with
-    // `null` and then with the handle inside one commit. Taking the `null` would
-    // queue a state change on every commit for ever; taking only the attach
-    // settles on a value React can bail out on.
+  it("keeps one ref callback per tab id at all four chat surfaces", () => {
+    expect(detail.includes("const chatRefCallbacksMap = useRef<")).toBe(true);
+    expect(detail.includes("const getChatTabRef = useCallback(")).toBe(true);
+    expect(detail).toContain("chatRefCallbacksMap.current.get(tabId)");
+    expect(detail).toContain("if (existing) return existing;");
+    expect(detail).toContain("chatRefCallbacksMap.current.set(tabId, callback)");
+    expect(detail).toContain("return callback;");
+    const cachedRefSites = detail.match(/(?:ref=\{|ref: )getChatTabRef\(/gu) ?? [];
+    expect(cachedRefSites).toHaveLength(4);
+    expect(detail).not.toContain("ref={(el) => setChatTabRef(");
+    expect(detail).not.toContain(
+      "ref: (element: SessionChatInterfaceHandle | null) => setChatTabRef(",
+    );
+
+    // A real handle update can detach before it re-attaches. The guard keeps
+    // that valid update from briefly clearing the rendered assistant turn.
     expect(detail).toContain(
       "if (ref === null || tabId !== activeTabSessionIdForForkRef.current) return;",
     );
-    // And the callback keeps its empty dependency list: the active tab arrives
-    // through a ref precisely so `setChatTabRef`'s identity does not change on
-    // every tab switch and re-attach every surface.
     const setter = /const setChatTabRef = useCallback\(([\s\S]*?)\n  \);/u.exec(detail)?.[1] ?? "";
     expect(setter, "setChatTabRef is still one callback").not.toBe("");
     expect(setter.trimEnd().endsWith("[]")).toBe(true);
