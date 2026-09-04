@@ -1,0 +1,12 @@
+{
+  "input": {
+    "version": 2,
+    "kind": "ftp",
+    "url": "ftp://x",
+    "title": "x",
+    "requestedAt": 1787000009000
+  },
+  "expected": {
+    "focus": null
+  }
+}

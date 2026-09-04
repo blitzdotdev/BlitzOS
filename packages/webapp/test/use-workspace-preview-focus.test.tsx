@@ -6,12 +6,14 @@ import { render } from "./dom.js";
 
 const FILES_BASE = "https://box.example/workspace/";
 
+/** The focus as the hook hands it on: the browser's own reading of the marker. */
 function marker(requestedAt: number, path = "/dashboard"): PreviewFocus {
-  return { version: 1, port: 3000, path, title: "Docs", requestedAt };
+  return { kind: "port", port: 3000, path, title: "Docs", requestedAt };
 }
 
+/** The same focus as the gateway serves it: a version-2 marker. */
 function focusResponse(focus: PreviewFocus | null): Response {
-  return new Response(JSON.stringify({ focus }), {
+  return new Response(JSON.stringify({ focus: focus === null ? null : { version: 2, ...focus } }), {
     status: 200,
     headers: { "content-type": "application/json" },
   });

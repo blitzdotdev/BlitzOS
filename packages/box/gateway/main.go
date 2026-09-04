@@ -821,56 +821,113 @@ func (g *gateway) servePreviews(response http.ResponseWriter, request *http.Requ
 }
 
 type previewFocus struct {
-	Version     int    `json:"version"`
-	Port        int    `json:"port"`
-	Path        string `json:"path"`
-	Title       string `json:"title"`
-	RequestedAt int64  `json:"requestedAt"`
+	Version int    `json:"version"`
+	Kind    string `json:"kind,omitempty"`
+	Port    int    `json:"port,omitempty"`
+	Path    string `json:"path,omitempty"`
+	File    string `json:"file,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Title   string `json:"title"`
+	// RequestedAt is the millisecond epoch the browser opens each focus once by.
+	RequestedAt int64 `json:"requestedAt"`
 }
 
-// parsePreviewFocus validates the marker `blitz preview open` writes. Anything
-// that is not a version-1 object with a usable, non-reserved port and a rooted,
-// traversal-free path is treated as no focus at all (nil), the same way the
-// browser falls back to null. The marker is written by the in-box agent's own
-// uid, so the CLI's checks are convenience, not a boundary: this reader repeats
-// every one of them. Unknown extra fields are tolerated for forward
-// compatibility, matching parsePreviewLinks.
+// isPreviewFile accepts an absolute path under /workspace with no `..` segment
+// and no line break: the browser turns it into a URL under the gateway's
+// `/workspace/` surface, which is where dufs serves that directory.
+func isPreviewFile(file string) bool {
+	if !strings.HasPrefix(file, "/workspace/") || len(file) > maxPreviewPathBytes {
+		return false
+	}
+	if strings.ContainsAny(file, "\r\n") {
+		return false
+	}
+	for _, segment := range strings.Split(file, "/") {
+		if segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// isPreviewAppURL accepts an https URL with a host. The browser decides
+// whether the host is one it embeds; the marker only has to be a real URL.
+func isPreviewAppURL(raw string) bool {
+	if len(raw) > maxPreviewPathBytes {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	return err == nil && parsed.Scheme == "https" && parsed.Host != ""
+}
+
+// parsePreviewFocus validates the marker `blitz browser open` writes (and the
+// version-1 marker `blitz teenyapp open` wrote before it). A version-1 marker
+// is a port; a version-2 marker names its kind: `port`, `file` or `url`.
+// Anything else is treated as no focus at all (nil), the same way the browser
+// falls back to null. The marker is written by the in-box agent's own uid, so
+// the CLI's checks are convenience, not a boundary: this reader repeats every
+// one of them. Unknown extra fields are tolerated for forward compatibility,
+// matching parsePreviewLinks.
 func parsePreviewFocus(data []byte) *previewFocus {
 	var fields struct {
 		Version     *int    `json:"version"`
+		Kind        *string `json:"kind"`
 		Port        *int    `json:"port"`
 		Path        *string `json:"path"`
+		File        *string `json:"file"`
+		URL         *string `json:"url"`
 		Title       *string `json:"title"`
 		RequestedAt *int64  `json:"requestedAt"`
 	}
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return nil
 	}
-	if fields.Version == nil || *fields.Version != 1 {
-		return nil
-	}
-	if fields.Port == nil || *fields.Port < minPreviewPort || *fields.Port > maxPreviewPort {
-		return nil
-	}
-	if _, reserved := excludedPorts[*fields.Port]; reserved {
-		return nil
-	}
-	if fields.Path == nil || !isPreviewPath(*fields.Path) {
-		return nil
-	}
-	if fields.Title == nil {
+	if fields.Version == nil || fields.Title == nil {
 		return nil
 	}
 	if fields.RequestedAt == nil || *fields.RequestedAt < 0 || *fields.RequestedAt > 9007199254740991 {
 		return nil
 	}
-	return &previewFocus{
-		Version:     *fields.Version,
-		Port:        *fields.Port,
-		Path:        *fields.Path,
-		Title:       *fields.Title,
-		RequestedAt: *fields.RequestedAt,
+	focus := &previewFocus{Version: *fields.Version, Title: *fields.Title, RequestedAt: *fields.RequestedAt}
+	kind := "port"
+	switch *fields.Version {
+	case 1:
+	case 2:
+		if fields.Kind == nil {
+			return nil
+		}
+		kind = *fields.Kind
+		focus.Kind = kind
+	default:
+		return nil
 	}
+	switch kind {
+	case "port":
+		if fields.Port == nil || *fields.Port < minPreviewPort || *fields.Port > maxPreviewPort {
+			return nil
+		}
+		if _, reserved := excludedPorts[*fields.Port]; reserved {
+			return nil
+		}
+		if fields.Path == nil || !isPreviewPath(*fields.Path) {
+			return nil
+		}
+		focus.Port = *fields.Port
+		focus.Path = *fields.Path
+	case "file":
+		if fields.File == nil || !isPreviewFile(*fields.File) {
+			return nil
+		}
+		focus.File = *fields.File
+	case "url":
+		if fields.URL == nil || !isPreviewAppURL(*fields.URL) {
+			return nil
+		}
+		focus.URL = *fields.URL
+	default:
+		return nil
+	}
+	return focus
 }
 
 func (g *gateway) servePreviewFocus(response http.ResponseWriter, request *http.Request) {

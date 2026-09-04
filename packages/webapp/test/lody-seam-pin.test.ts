@@ -68,7 +68,7 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     ]);
   });
 
-  it("removes nothing from session-detail.tsx but seam patches 4, 5, 6, 7, 15, 16, 19 and 20's anchors", () => {
+  it("removes nothing from session-detail.tsx but seam patches 4, 5, 6, 7, 15, 16 and 19's anchors", () => {
     expectSeam("session-detail.tsx", [
       // Seam patch 4's hunks are additive and remove nothing, which is why they
       // are absent from this list and still covered by the subsequence check.
@@ -154,9 +154,6 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       // whose schema is an enum of the fixed panels.
       [3858, "        tab: activeSidebarTab,"],
       [3859, "        tabs: openedSidebarTabs,"],
-      // Seam patch 20's hunks in this file — the `PreviewTarget` import, the
-      // prop, and the two `SessionBrowserPanel` pass-throughs — add lines and
-      // remove none, so they are covered by the subsequence check alone.
     ]);
   });
 
@@ -169,20 +166,6 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       [37, "  kind: 'files' | 'changes' | 'pr' | 'browser' | 'session';"],
       // hunk 3, the `custom` arm of `SidePanelTabIcon`, adds lines and removes none.
     ]);
-  });
-
-  it("removes nothing from session-browser-panel.tsx but seam patch 20's anchor", () => {
-    expectSeam("session-browser-panel.tsx", [
-      // hunk 11: Share is off for a page the host serves — it would mint a tunnel
-      // for it. Every other hunk in this file adds lines and removes none.
-      [966, "        shareAvailable={currentAddress !== null}"],
-    ]);
-  });
-
-  it("removes nothing from managed-preview-surface.tsx", () => {
-    // Seam patch 20's three hunks here — the prop, its default, and the two
-    // `hostViewer` early returns — are all additive.
-    expectSeam("managed-preview-surface.tsx", []);
   });
 
   it("removes nothing from the two mobile files but seam patch 16's anchors", () => {

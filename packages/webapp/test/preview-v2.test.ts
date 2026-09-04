@@ -125,9 +125,9 @@ describe('box preview contract', () => {
   });
 
   it('keeps the blitz.dev default when the suffix var is unset or blank', () => {
-    expect(embeddablePreviewHostSuffixes(undefined)).toEqual(['blitz.dev']);
-    expect(embeddablePreviewHostSuffixes('')).toEqual(['blitz.dev']);
-    expect(embeddablePreviewHostSuffixes('  , ,')).toEqual(['blitz.dev']);
+    expect(embeddablePreviewHostSuffixes(undefined)).toEqual(['blitz.dev', 'app.teenyapp.com']);
+    expect(embeddablePreviewHostSuffixes('')).toEqual(['blitz.dev', 'app.teenyapp.com']);
+    expect(embeddablePreviewHostSuffixes('  , ,')).toEqual(['blitz.dev', 'app.teenyapp.com']);
     // The module-level allowlist is the default in this test environment.
     expect(EMBEDDABLE_PREVIEW_HOST_SUFFIXES).toEqual(DEFAULT_EMBEDDABLE_PREVIEW_HOST_SUFFIXES);
   });

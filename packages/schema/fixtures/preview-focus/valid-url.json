@@ -1,0 +1,18 @@
+{
+  "input": {
+    "version": 2,
+    "kind": "url",
+    "url": "https://demo.app.teenyapp.com/",
+    "title": "demo.app.teenyapp.com",
+    "requestedAt": 1787000008000
+  },
+  "expected": {
+    "focus": {
+      "version": 2,
+      "kind": "url",
+      "url": "https://demo.app.teenyapp.com/",
+      "title": "demo.app.teenyapp.com",
+      "requestedAt": 1787000008000
+    }
+  }
+}

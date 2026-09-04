@@ -40,12 +40,19 @@ describe('preview-focus browser consumer contract', () => {
   it('pins the shared preview-focus fixture corpus', () => {
     expect(Object.keys(focusFixtures).map((path) => path.split('/').at(-1)).sort()).toEqual([
       'absent.json',
+      'bad-kind.json',
       'bad-path.json',
+      'file-outside-workspace.json',
+      'file-traversal.json',
       'reserved-port-17445.json',
       'reserved-port-7446.json',
       'reserved-port.json',
       'traversal-path.json',
+      'url-not-https.json',
       'valid-defaults.json',
+      'valid-file.json',
+      'valid-url.json',
+      'valid-v1-legacy.json',
       'valid-with-path.json',
     ]);
   });
@@ -81,18 +88,28 @@ describe('preview-focus browser consumer contract', () => {
     });
     expect(parsePreviewFocus(marker('/app/../../workspace/'))).toBeNull();
     expect(parsePreviewFocus(marker(`/${'a'.repeat(maxPathLength)}`))).toBeNull();
-    expect(parsePreviewFocus(marker('/dashboard'))?.path).toBe('/dashboard');
+    const parsed = parsePreviewFocus(marker('/dashboard'));
+    expect(parsed?.kind === 'port' ? parsed.path : null).toBe('/dashboard');
   });
+
+  /** The browser's own reading of a served marker: a version-1 marker is a
+   * port, a version-2 marker names its kind, and the wire's `version` is not
+   * something the shell acts on. */
+  function targetOf(focus: JsonValue): Record<string, JsonValue | undefined> | null {
+    if (focus === null || typeof focus !== 'object' || Array.isArray(focus)) return null;
+    const { version, kind, ...rest } = focus;
+    return { kind: version === 1 ? 'port' : kind, ...rest };
+  }
 
   it('accepts every marker the gateway keeps and rejects every one it drops', () => {
     for (const [path, fixture] of Object.entries(focusFixtures)) {
       // The canonical gateway response body parses to exactly its focus.
-      expect(parsePreviewFocus(fixture.expected), path).toEqual(fixture.expected.focus);
+      expect(parsePreviewFocus(fixture.expected), path).toEqual(targetOf(fixture.expected.focus));
       // Defense in depth: even if a box handed back the raw marker as the focus,
       // the browser's own guards reach the same verdict — reserved ports
       // (reserved-port.json) and unrooted paths (bad-path.json) still collapse
       // to null; the valid markers still pass; an absent marker stays null.
-      expect(parsePreviewFocus({ focus: fixture.input }), path).toEqual(fixture.expected.focus);
+      expect(parsePreviewFocus({ focus: fixture.input }), path).toEqual(targetOf(fixture.expected.focus));
     }
   });
 
@@ -100,7 +117,10 @@ describe('preview-focus browser consumer contract', () => {
     expect(parsePreviewFocus(null)).toBeNull();
     expect(parsePreviewFocus({})).toBeNull();
     expect(parsePreviewFocus({ focus: {} })).toBeNull();
-    // Wrong version.
+    // Wrong version, and a version 2 that names no kind.
+    expect(parsePreviewFocus({
+      focus: { version: 3, kind: 'port', port: 3000, path: '/', title: 't', requestedAt: 1 },
+    })).toBeNull();
     expect(parsePreviewFocus({
       focus: { version: 2, port: 3000, path: '/', title: 't', requestedAt: 1 },
     })).toBeNull();
@@ -127,7 +147,7 @@ describe('preview-focus browser consumer contract', () => {
     await expect(fetchWorkspacePreviewFocus(base, okFetcher)).resolves.toEqual({
       ok: true,
       focus: {
-        version: 1,
+        kind: 'port',
         port: 5173,
         path: '/dashboard',
         title: 'Docs',

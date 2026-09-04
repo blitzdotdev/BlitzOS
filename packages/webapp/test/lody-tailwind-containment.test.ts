@@ -44,6 +44,7 @@ const BLITZ_STYLESHEETS = [
   "webapp-base.css",
   "webapp-shell.css",
   "webapp-workspace.css",
+  "browser/browser-panel.css",
   "webapp-select.css",
   "files-drive.css",
   "drive-shell.css",

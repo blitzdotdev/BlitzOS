@@ -1,0 +1,12 @@
+{
+  "input": {
+    "version": 2,
+    "kind": "url",
+    "url": "http://demo.app.teenyapp.com/",
+    "title": "x",
+    "requestedAt": 1787000012000
+  },
+  "expected": {
+    "focus": null
+  }
+}

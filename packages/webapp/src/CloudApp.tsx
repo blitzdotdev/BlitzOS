@@ -44,9 +44,11 @@ import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
 import { LodySessionsRegion, lodySurfaceMounts } from './lody/LodySessionsRegion';
+import { BrowserPanel } from './browser/BrowserPanel';
+import { browserFrameUrl, browserTargetFromFocus, type BrowserTarget } from './browser/browser-target';
 import {
+  BROWSER_SIDE_PANEL_ID,
   CONNECTIONS_SIDE_PANEL_ID,
-  managedPreviewViewerUrl,
   sidePanelQuickActionIcon,
   type SessionHostSidePanelTab,
   type SessionSidePanelHostState,
@@ -231,6 +233,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // and drives it through `sidePanelRequest`, one `seq` per press.
   const [sidePanelState, setSidePanelState] = useState<SessionSidePanelHostState | null>(null);
   const [sidePanelRequest, setSidePanelRequest] = useState<SessionSidePanelRequest | null>(null);
+  // What the browser panel shows (`browser/BrowserPanel.tsx`): set by its
+  // address bar and by the box's `blitz browser open`. Held here rather than
+  // in the panel so the page survives the tab being switched away and back.
+  const [browserTarget, setBrowserTarget] = useState<BrowserTarget | null>(null);
+  useEffect(() => {
+    setBrowserTarget(null);
+  }, [activeWorkspaceId]);
   const requestSidePanel = useCallback((tabId: string, action: 'open' | 'close') => {
     setSidePanelRequest((previous) => ({ tabId, action, seq: (previous?.seq ?? 0) + 1 }));
   }, []);
@@ -419,7 +428,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     activeWorkspaceId,
     activeFilesBase,
     (focus) => {
-      openPreviewPort(focus.port, focus.path);
+      // With a session on screen the browser panel is the destination: show
+      // the target and open our tab. Otherwise the top strip's preview tab is,
+      // exactly as `blitz teenyapp open` has always landed.
+      const target = browserTargetFromFocus(focus);
+      if (sidePanelDriven) {
+        setBrowserTarget(target);
+        requestSidePanel(BROWSER_SIDE_PANEL_ID, 'open');
+      } else if (target.kind === 'port') {
+        openPreviewPort(target.port, target.path);
+      } else {
+        const frameUrl = activeFilesBase === null ? null : browserFrameUrl(target, activeFilesBase);
+        openPreviewLink(frameUrl ?? (target.kind === 'url' ? target.url : ''), focus.title);
+      }
     },
   );
 
@@ -1521,16 +1542,28 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       />
     );
   };
-  // Our Connections panel as a tab of Lody's side panel (seam patch 19). One
-  // host tab, rebuilt only when what it shows changes; the icon is the same
-  // glyph the strip's Connections button wears, in the size Lody's tab bar
-  // draws its own.
+  // Our Browser and Connections panels as tabs of Lody's side panel (seam
+  // patch 19), rebuilt only when what they show changes; each icon is the same
+  // glyph the strip's button wears, in the size Lody's tab bar draws its own.
   const connectionsReadOnly = activeWorkspace?.accessRole === 'viewer';
   const workspaceConnections = activeWorkspace?.connections;
-  const connectionsHostTabs = useMemo<SessionHostSidePanelTab[]>(() => (
+  const hostTabs = useMemo<SessionHostSidePanelTab[]>(() => (
     activeWorkspaceId === ''
       ? []
       : [{
+          id: BROWSER_SIDE_PANEL_ID,
+          label: 'Browser',
+          icon: sidePanelQuickActionIcon(BROWSER_SIDE_PANEL_ID, 'h-3.5 w-3.5 opacity-70'),
+          content: (
+            <div className="webapp-side-panel-host">
+              <BrowserPanel
+                target={browserTarget}
+                filesBase={activeFilesBase}
+                onNavigate={setBrowserTarget}
+              />
+            </div>
+          ),
+        }, {
           id: CONNECTIONS_SIDE_PANEL_ID,
           label: 'Connections',
           icon: sidePanelQuickActionIcon(CONNECTIONS_SIDE_PANEL_ID, 'h-3.5 w-3.5 opacity-70'),
@@ -1550,8 +1583,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           ),
         }]
   ), [
+    activeFilesBase,
     activePendingRequests,
     activeWorkspaceId,
+    browserTarget,
     client,
     connectionsFocus,
     connectionsReadOnly,
@@ -1561,12 +1596,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   ]);
   const sidePanel: SidePanelBinding | undefined = surfaceTabsEnabled
     ? {
-        hostTabs: connectionsHostTabs,
+        hostTabs,
         request: sidePanelRequest,
         onStateChange: setSidePanelState,
-        // Seam patch 20: a loopback address in Lody's Browser panel is a port on
-        // this box, and the gateway already proxies those.
-        resolveManagedPreviewViewerUrl: (target) => managedPreviewViewerUrl(activeFilesBase, target),
       }
     : undefined;
   // One press of the right icon strip. With a session on screen every button

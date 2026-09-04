@@ -1,0 +1,18 @@
+{
+  "input": {
+    "version": 2,
+    "kind": "file",
+    "file": "/workspace/site/index.html",
+    "title": "index.html",
+    "requestedAt": 1787000007000
+  },
+  "expected": {
+    "focus": {
+      "version": 2,
+      "kind": "file",
+      "file": "/workspace/site/index.html",
+      "title": "index.html",
+      "requestedAt": 1787000007000
+    }
+  }
+}
