@@ -1773,11 +1773,18 @@ authentication concurrency, classify it as C and stop for a human.
 ### 20. Hosts may omit Lody's built-in MCP server
 
 **Anchors:** `apps/cli/src/agent/agent-client.ts`, the first guard in
-`buildBuiltinMcpServers`; and
+`buildBuiltinMcpServers` and the workspace-server failure message; and
 `apps/cli/src/session/session-execution-helpers.ts`, the
 `lodyMcpToolsReminder` declaration; plus
 `apps/cli/src/mcp/lody-mcp-http-server.ts`, the early configuration logging in
 `startLodyMcpHttpServer`.
+
+The two logging hunks are replacements against pristine upstream:
+
+| File | Upstream line and anchor | What the hunk does |
+|---|---|---|
+| `apps/cli/src/agent/agent-client.ts` | 777-779, the `const message` assignment beginning `Workspace MCP servers could not be loaded` | Describes an agent with no MCP server when the built-in list is empty. |
+| `apps/cli/src/mcp/lody-mcp-http-server.ts` | 223, `options.logger.info('[mcp-http] disabled via LODY_MCP_HTTP_DISABLED; using stdio MCP only');` | Says built-in MCP remains disabled when both host switches are set. Omission retains upstream's stdio message. |
 
 `LODY_MCP_BUILTIN_DISABLED=1` makes the built-in server list empty and omits the
 prompt reminder for tools that are no longer present. Workspace-configured MCP
@@ -1799,7 +1806,8 @@ and its explicit MCP-disable log line.
 
 **Candidate upstream PR:** “allow embedding hosts to disable the built-in Lody
 MCP server.” Document one environment option, return no built-ins when selected,
-and suppress only the matching prompt hint.
+suppress the matching prompt hint, and make fallback logs describe the selected
+empty built-in list.
 
 **Merge conflict drill.** If upstream gains an equivalent option, classify this
 as A and use it from the service. If either method or reminder moves, classify

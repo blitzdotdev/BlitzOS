@@ -13,9 +13,12 @@ nothing else.
 | `mobile-session-tab-sheet.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-session-tab-sheet.tsx` |
 | `mobile-home-screen.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-home-screen.tsx` |
 | `message-processor.ts.txt` | `vendor/lody/apps/cli/src/lib/message-processor.ts` |
+| `agent-client.ts.txt` | `vendor/lody/apps/cli/src/agent/agent-client.ts` |
+| `lody-mcp-http-server.ts.txt` | `vendor/lody/apps/cli/src/mcp/lody-mcp-http-server.ts` |
 
 The two mobile files arrived with seam patch 16, which is the first patch to edit
 a mobile-only file. The daemon message processor arrived with source seam 19.
+The agent and MCP server baselines cover seam 20's conditional fallback logs.
 `components/chat/chat-landing.tsx` is patched by seam patches
 7, 15 and 16 and has NO baseline here: adding one means declaring seam patch 7's
 removals in that file as well, which is a job for whoever needs it.

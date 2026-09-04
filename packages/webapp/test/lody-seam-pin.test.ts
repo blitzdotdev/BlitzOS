@@ -1,7 +1,7 @@
 /**
  * The seam pin: every vendored file BlitzOS patches, against pristine upstream.
  *
- * WHY THIS IS ITS OWN FILE, AND IT IS NOT TIDINESS. These assertions read five
+ * WHY THIS IS ITS OWN FILE, AND IT IS NOT TIDINESS. These assertions read seven
  * text files off disk and import nothing. They used to live in
  * `lody-surface-tabs.test.tsx`, whose file-level `beforeAll` imports the route
  * tree — Monaco, shiki, three, the Loro WASM — and that import is the slowest
@@ -61,6 +61,14 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
   });
 
   it("pins the opt-in MCP and cgroup seams selected by the box service", () => {
+    expectSeamAgainstBaseline("agent/agent-client.ts", [
+      [777, "      const message = `Workspace MCP servers could not be loaded (${formatErrorMessage("],
+      [778, "        error"],
+      [779, "      )}). The agent started with only the built-in Lody server.`;"],
+    ], "cli");
+    expectSeamAgainstBaseline("mcp/lody-mcp-http-server.ts", [
+      [223, "    options.logger.info('[mcp-http] disabled via LODY_MCP_HTTP_DISABLED; using stdio MCP only');"],
+    ], "cli");
     const cliSource = (path: string): string =>
       readFileSync(join(repoRoot, "vendor/lody/apps/cli/src", path), "utf8");
     const agentClient = cliSource("agent/agent-client.ts");
@@ -78,6 +86,8 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     expect(mcpHttpServer).toContain(
       "[mcp] built-in server disabled via LODY_MCP_BUILTIN_DISABLED",
     );
+    expect(agentClient).toContain("? 'without an MCP server'");
+    expect(mcpHttpServer).toContain("? '[mcp-http] disabled via LODY_MCP_HTTP_DISABLED; built-in MCP remains disabled'");
     expect(sandbox).toContain("this.deps.environment.LODY_SESSION_CGROUP_PARENT?.trim()");
     expect(sandbox).toContain("if (options.capacityLimits === false)");
     expect(sessionManager).toContain(
