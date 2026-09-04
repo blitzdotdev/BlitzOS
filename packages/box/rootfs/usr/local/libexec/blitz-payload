@@ -1147,13 +1147,20 @@ function probeDaemon(socketPath, timeoutMs) {
   });
 }
 
+// The gateway's `/healthz` sits behind the webApp-ticket check, so a bare local
+// probe is answered 403 — by a gateway that is up. `blitz-healthcheck` accepts
+// any answer for the same reason. Healthy therefore means "an HTTP response
+// arrived and it is not a 5xx": a gateway that cannot serve says so with 5xx or
+// with no answer at all. Demanding 2xx here made every apply fail its health
+// check, roll back, fail the rollback's check too, and report `start-failed`
+// (fancy-marten, 2026-09-04).
 async function probeGateway(config, timeoutMs) {
   try {
     const response = await fetch(config.gatewayHealthUrl, {
       signal: AbortSignal.timeout(timeoutMs),
     });
     await response.body?.cancel();
-    return response.ok;
+    return response.status < 500;
   } catch {
     return false;
   }
