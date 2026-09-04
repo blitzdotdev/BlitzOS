@@ -1,9 +1,8 @@
 # How a new Anthropic model reaches the Lody composer
 
-Daemon sourcing is independent of model discovery. At HEAD the box still
-installs the transition `lody@0.88.1` npm artifact and its compiled patches
-until plan PR C; the target builds the daemon from `vendor/lody`. Any upstream
-change follows `docs/LODY-MERGE.md`.
+Daemon sourcing is independent of model discovery. The box builds and stamps
+the daemon from `vendor/lody`; any upstream change follows
+`docs/LODY-MERGE.md`.
 
 Investigated 2026-09-01, prompted by "Claude Fable 5.1 does not appear in the
 model picker". The short answer: **model discovery is already dynamic and
@@ -172,9 +171,8 @@ Still outstanding:
    ship different CLIs. That is the deliberate trade — the pin never held a
    version in practice, because the first self-update moved it — but it means
    the box image is no longer bit-reproducible from the Dockerfile alone.
-   `codex` stays pinned. At HEAD the transition Lody npm artifact and compiled
-   patches remain fixed only until plan PR C; the target daemon is identified
-   by its vendored upstream commit and build stamp.
+   `codex` stays pinned. Lody is independent: its daemon is identified by the
+   vendored upstream commit and build stamp.
 
 With no pin deciding which models exist, these four
 `2.1.228` assertions need re-basing on a range or a probe rather than a

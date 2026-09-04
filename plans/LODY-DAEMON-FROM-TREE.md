@@ -1,13 +1,13 @@
 # Build the Lody daemon from the vendored tree
 
-Status: approved direction; implementation is split into five shippable pull
-requests below. The target is one upstream Lody revision for both renderer and
-daemon, with no independently selected npm daemon release.
+Status: approved direction; plan PRs A, B, and C are implemented, with D and E
+still pending below. The target is one upstream Lody revision for both renderer
+and daemon, with no independently selected npm daemon release.
 
 ## Decision and evidence
 
-The box currently installs `lody@0.88.1` globally, copies that npm tree into the
-runtime image, and rewrites its compiled `dist/index.js` with five scripts
+Before plan PR C, the box installed `lody@0.88.1` globally, copied that npm tree
+into the runtime image, and rewrote its compiled `dist/index.js` with five scripts
 (`packages/box/Dockerfile:38-63`, `packages/box/Dockerfile:135-142`). The renderer
 comes from the squashed public subtree. Before the 2026-09-04 documentation
 migration, policy called that npm version plus the subtree revision one
@@ -361,30 +361,23 @@ to anchor the CLI source hunk as well as renderer seams. The current helper is
 hard-coded to the components tree (`packages/webapp/test/upstream-seam-pin.ts:32-55`),
 so first parameterize its upstream root.
 
-The spike evaluated three compiled-bundle scripts that become source or
+The spike evaluated three compiled-bundle scripts that are now source or
 upstream behavior:
 
-- `packages/box/patches/lody-local-platform.mjs`: source already hardcodes the
+- `lody-local-platform.mjs`: source already hardcodes the
   public bundle to local mode (`vendor/lody/apps/cli/vite.config.ts:11-18`);
-- `packages/box/patches/lody-code-collab-worktree-root.mjs`: source now detects
+- `lody-code-collab-worktree-root.mjs`: source now detects
   local worktrees, uses the worktree path, waits while one is being prepared,
   and never falls back to the shared clone
   (`vendor/lody/apps/cli/src/lib/message-handler.ts:6234-6311`); and
-- `packages/box/patches/lody-acp-auth-queue.mjs`: its behavior is now tested at
-  source instead of rewritten into compiled output. The current script's
-  version/anchor patch is exactly the behavior being moved
-  (`packages/box/patches/lody-acp-auth-queue.mjs:23-39`,
-  `packages/box/patches/lody-acp-auth-queue.mjs:54-78`).
+- `lody-acp-auth-queue.mjs`: its start-only behavior is tested at source instead
+  of rewritten into compiled output.
 
 Two more compiled-bundle scripts landed after the spike:
-`lody-builtin-mcp-off.mjs` and `lody-session-sandbox.mjs`. Before removing the
-npm daemon, preserve their required behavior as reviewed source/configuration
-seams or explicitly retire it with human approval. Then remove the npm pin from
-the global install, all five patch files and Docker `COPY`/patch commands,
-`PATCH_SCRIPTS`, and the patch loop from the harness. Today those are duplicated
-in both places (`packages/box/Dockerfile:44-63`,
-`packages/webapp/test/lody-daemon-harness.ts:65-76`,
-`packages/webapp/test/lody-daemon-harness.ts:454-468`).
+`lody-builtin-mcp-off.mjs` and `lody-session-sandbox.mjs`. PR C preserved their
+behavior as default-inert source/configuration seams selected by s6, then
+removed the npm pin, all five patch files and Docker commands, and the harness's
+duplicate patch path.
 
 ## Pair identity at connect
 
@@ -547,10 +540,9 @@ corpora retain qualified historical capture sentences naming the old npm daemon
 `packages/schema/fixtures/lody-project-registration/README.md:34-48`,
 `packages/schema/fixtures/lody-session-control-stream/README.md:48-60`).
 
-The `lody-daemon` CI job is a required check even while the shipping image stays
-on the transitional npm daemon. The former verified-pair rule was removed from
-current documentation on 2026-09-04; the runbook's explicit image transition
-status remains until PR C lands.
+The `lody-daemon` CI job is a required check, and PR C moved the same build into
+the shipping image. The former verified-pair rule was removed from current
+documentation on 2026-09-04.
 
 ## Merge automation and canary bake
 
@@ -750,19 +742,18 @@ reviewed artifact; the shipping image and migration pieces remain separate.
 - Landed footprint: 1,285 upstream entries plus five stamps. The sync/drift
   code replaced the temporary scratch-fetch procedure.
 
-### PR C — ship the source-built daemon (medium, about 300-450 net lines)
+### PR C — ship the source-built daemon (landed)
 
-- Touch `packages/box/Dockerfile`, `vendor/lody/UPSTREAM.md`,
+- Landed across `packages/box/Dockerfile`, `vendor/lody/UPSTREAM.md`,
   `vendor/lody/BLITZ-PATCHES.md`, CLI `message-processor.ts`, source/baseline
   tests, s6 comments, harness comments, and the build/stamp/dist-manifest tests.
-- Add the Corepack/frozen builder, package install, notice, stamp, target smoke,
+- Added the Corepack/frozen builder, package install, notice, stamp, target smoke,
   ACP queue source seam, and focused behavior test.
-- Delete the npm `lody@0.88.1` install item, all five files in
-  `packages/box/patches/`, all Docker patch steps, and the harness patch list and
-  loop. Platform and Code Collab retain regression coverage, not patches;
-  builtin-MCP and session-sandbox behavior must first be ported to reviewed
-  source/configuration seams or explicitly retired.
-- Keep the required CI pair job green while moving the same builder into the
+- Deleted the npm daemon install item, all five compiled-patch files and Docker
+  steps, and the harness patch list and loop. Platform and Code Collab retain
+  regression coverage; builtin MCP and session sandbox use reviewed opt-in
+  source/configuration seams.
+- Kept the required CI pair job while moving the same builder into the
   source-built image smoke.
 
 ### PR D — expose and compare the pair (medium, about 300-450 lines)

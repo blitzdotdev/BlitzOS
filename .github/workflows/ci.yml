@@ -56,7 +56,7 @@ jobs:
           restore-keys: lody-pnpm-${{ runner.os }}-
       - run: npm ci
       - name: Build and stamp the tree daemon
-        run: node scripts/lody-build-package.mjs --seam-acp-auth --out "$RUNNER_TEMP/lody-artifact"
+        run: node scripts/lody-build-package.mjs --out "$RUNNER_TEMP/lody-artifact"
       - name: Install the daemon artifact and Claude CLI
         run: |
           tarball=$(find "$RUNNER_TEMP/lody-artifact" -maxdepth 1 -name 'lody-*.tgz' -print -quit)
@@ -153,4 +153,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: docker build --platform linux/amd64 -f packages/box/Dockerfile .
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+      - run: docker build --platform linux/amd64 --tag blitz-box:ci -f packages/box/Dockerfile .
+      - name: Verify the installed daemon provenance contract
+        env:
+          BLITZ_BOX_IMAGE: blitz-box:ci
+        run: npx vitest run --maxWorkers=1 test/lody-build-install.test.ts
+        working-directory: packages/box/guest-tests

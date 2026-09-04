@@ -32,20 +32,6 @@ const DEFAULT_MANIFEST = path.join(
 const GIT_SHA = /^[a-f0-9]{40}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const CHUNK_PATH = /^(package\/dist\/chunks\/.+)-[A-Za-z0-9_-]{8}\.js$/u;
-const ACP_QUEUE_BEFORE = `      case 'session/preview-revoke':
-        return \`session:\${message.sessionId}:preview\`;
-      case 'session/cancel':
-        return null;
-      default:
-        return null;`;
-const ACP_QUEUE_AFTER = `      case 'session/preview-revoke':
-        return \`session:\${message.sessionId}:preview\`;
-      case 'session/cancel':
-        return null;
-      case 'machine/acp-authenticate':
-        return message.action === 'start' ? \`acp-auth:\${message.configId}\` : null;
-      default:
-        return null;`;
 
 function usage() {
   return `Build and stamp the Lody daemon package from the reviewed tree.
@@ -57,7 +43,6 @@ Options:
   --out <dir>       Write the tarball and BUILD.json here (default: ./lody-build).
   --tree-ish <rev>  Export <rev>:vendor/lody and its adapter snapshots (default: HEAD).
   --source <dir>    Copy an already-materialized Lody tree instead of using Git.
-  --seam-acp-auth   Apply the guarded transitional ACP-auth queue source seam.
   --keep-scratch    Keep and print the disposable build directory.
   --json            Print the completed BUILD.json stamp.
   --help, -h        Print this text.
@@ -248,17 +233,6 @@ function overlayAdapters(lodyRoot, provenance, sourceMode, treeish) {
   return adapterShas;
 }
 
-function applyAcpAuthSeam(lodyRoot) {
-  const file = path.join(lodyRoot, "apps/cli/src/lib/message-processor.ts");
-  const source = readFileSync(file, "utf8");
-  if (source.split(ACP_QUEUE_BEFORE).length !== 2) {
-    throw new Error(
-      "ACP-auth queue seam moved; refusing an unexpected source shape",
-    );
-  }
-  writeFileSync(file, source.replace(ACP_QUEUE_BEFORE, ACP_QUEUE_AFTER));
-}
-
 function walkRegularFiles(root, directory, files) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const absolute = path.join(directory, entry.name);
@@ -394,7 +368,6 @@ function parseCli(argv) {
     out: path.resolve("lody-build"),
     treeish: "HEAD",
     source: null,
-    seamAcpAuth: false,
     keepScratch: false,
     json: false,
     help: false,
@@ -402,7 +375,6 @@ function parseCli(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === "--help" || flag === "-h") options.help = true;
-    else if (flag === "--seam-acp-auth") options.seamAcpAuth = true;
     else if (flag === "--keep-scratch") options.keepScratch = true;
     else if (flag === "--json") options.json = true;
     else if (flag === "--out" || flag === "--source" || flag === "--tree-ish") {
@@ -503,7 +475,6 @@ export function main(argv = process.argv.slice(2)) {
       options.source !== null,
       options.treeish,
     );
-    if (options.seamAcpAuth) applyAcpAuthSeam(lodyRoot);
 
     const shim = path.join(scratch, "corepack-bin");
     mkdirSync(shim);

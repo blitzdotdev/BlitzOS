@@ -1,14 +1,14 @@
 /**
  * The seam pin: every vendored file BlitzOS patches, against pristine upstream.
  *
- * WHY THIS IS ITS OWN FILE, AND IT IS NOT TIDINESS. These assertions read four
+ * WHY THIS IS ITS OWN FILE, AND IT IS NOT TIDINESS. These assertions read five
  * text files off disk and import nothing. They used to live in
  * `lody-surface-tabs.test.tsx`, whose file-level `beforeAll` imports the route
  * tree — Monaco, shiki, three, the Loro WASM — and that import is the slowest
  * thing in the suite. When the machine is loaded it exceeds the hook budget,
  * and vitest then reports EVERY test in the file as skipped, the pin included.
  * A check that is meant to fail loudly on an undeclared vendor edit must not be
- * the first thing a slow machine turns off, so it now costs four `readFileSync`
+ * the first thing a slow machine turns off, so it now costs five `readFileSync`
  * calls and nothing else.
  *
  * TWO KINDS OF CLAIM.
@@ -48,6 +48,42 @@ const expectSeam = (file: string, anchors: readonly SeamAnchor[]): void =>
   expectSeamAgainstBaseline(`components/sessions/${file}`, anchors);
 
 describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
+  it("only adds the declared ACP authentication lane to message-processor.ts", () => {
+    expectSeamAgainstBaseline("lib/message-processor.ts", [], "cli");
+    const processor = readFileSync(
+      join(repoRoot, "vendor/lody/apps/cli/src/lib/message-processor.ts"),
+      "utf8",
+    );
+    expect(processor).toContain("case 'machine/acp-authenticate':");
+    expect(processor).toContain(
+      "return message.action === 'start' ? `acp-auth:${message.configId}` : null;",
+    );
+  });
+
+  it("pins the opt-in MCP and cgroup seams selected by the box service", () => {
+    const cliSource = (path: string): string =>
+      readFileSync(join(repoRoot, "vendor/lody/apps/cli/src", path), "utf8");
+    const agentClient = cliSource("agent/agent-client.ts");
+    const promptHelpers = cliSource("session/session-execution-helpers.ts");
+    const sandbox = cliSource("session/session-sandbox.ts");
+    const sessionManager = cliSource("session/session-manager.ts");
+    const service = readFileSync(
+      join(repoRoot, "packages/box/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run"),
+      "utf8",
+    );
+
+    expect(agentClient).toContain("process.env.LODY_MCP_BUILTIN_DISABLED === '1'");
+    expect(promptHelpers).toContain("process.env.LODY_MCP_BUILTIN_DISABLED === '1'");
+    expect(sandbox).toContain("this.deps.environment.LODY_SESSION_CGROUP_PARENT?.trim()");
+    expect(sandbox).toContain("if (options.capacityLimits === false)");
+    expect(sessionManager).toContain(
+      "{ capacityLimits: process.env.LODY_SESSION_CAPACITY_LIMITS !== '0' }",
+    );
+    expect(service).toContain("LODY_MCP_BUILTIN_DISABLED=1");
+    expect(service).toContain("LODY_SESSION_CGROUP_PARENT=/blitz-user.slice/lody-sessions");
+    expect(service).toContain("LODY_SESSION_CAPACITY_LIMITS=0");
+  });
+
   it("removes nothing from session-tab-bar.tsx but the declared anchors", () => {
     expectSeam("session-tab-bar.tsx", [
       // hunk 1: the `react` import gains `type ReactNode`

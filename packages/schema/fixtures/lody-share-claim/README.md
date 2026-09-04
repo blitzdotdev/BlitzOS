@@ -3,10 +3,8 @@
 What a verified session-share claim looks like on the way from the Go gateway to
 `blitz-lody-bridge`, and what the bridge is required to do with it.
 
-At HEAD the box still installs the transition `lody@0.88.1` npm artifact and
-its compiled patches until plan PR C; the target daemon is built from
-`vendor/lody`. The catalog recapture rule and upstream procedure are in
-`docs/LODY-MERGE.md`.
+The box builds and stamps its daemon from `vendor/lody`. The catalog recapture
+rule and upstream procedure are in `docs/LODY-MERGE.md`.
 
 ## Why this is a BlitzOS contract
 

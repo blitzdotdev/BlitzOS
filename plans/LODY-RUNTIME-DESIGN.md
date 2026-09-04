@@ -1561,7 +1561,7 @@ queuedFor=10000ms active=1 waiting=0
 only exit is the 285 s timeout. Verified directly against the daemon's own
 control socket, so it is not something our chain introduced.
 
-**Shipped:** `packages/box/patches/lody-acp-auth-queue.mjs`, a second patch to
+**Shipped at the time:** `lody-acp-auth-queue.mjs`, a second patch to
 the published npm bundle beside `lody-local-platform.mjs`. It adds one case:
 
 ```js

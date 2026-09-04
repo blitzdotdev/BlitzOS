@@ -2,7 +2,7 @@
 
 The `.tsx.txt` files here are byte-for-byte copies of vendored Lody files as
 UPSTREAM wrote them, before any BlitzOS seam patch. They are evidence, not code:
-`packages/webapp/test/lody-surface-tabs.test.tsx` reads them to prove that every
+`packages/webapp/test/lody-seam-pin.test.ts` reads them to prove that every
 line the vendored tree lost is one `vendor/lody/BLITZ-PATCHES.md` declares, and
 nothing else.
 
@@ -12,9 +12,11 @@ nothing else.
 | `session-detail.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-detail.tsx` |
 | `mobile-session-tab-sheet.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-session-tab-sheet.tsx` |
 | `mobile-home-screen.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-home-screen.tsx` |
+| `message-processor.ts.txt` | `vendor/lody/apps/cli/src/lib/message-processor.ts` |
 
-The last two arrived with seam patch 16, which is the first patch to edit a
-mobile-only file. `components/chat/chat-landing.tsx` is patched by seam patches
+The two mobile files arrived with seam patch 16, which is the first patch to edit
+a mobile-only file. The daemon message processor arrived with source seam 19.
+`components/chat/chat-landing.tsx` is patched by seam patches
 7, 15 and 16 and has NO baseline here: adding one means declaring seam patch 7's
 removals in that file as well, which is a job for whoever needs it.
 

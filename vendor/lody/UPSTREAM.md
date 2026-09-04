@@ -23,18 +23,13 @@ subtree squash commit is its repository-history mirror and must contain the
 matching `git-subtree-split` trailer. They are not independently selectable
 pins.
 
-## Transition status
+## Installed daemon
 
-At HEAD, `packages/box/Dockerfile` still installs the transitional npm
-`lody@0.88.1` daemon and applies all five scripts in
-`packages/box/patches/`. That remains true only until plan PR C in
-`plans/LODY-DAEMON-FROM-TREE.md`; it is not a second pin to select or bump
-during an upstream merge.
-
-The target image builds `vendor/lody/apps/cli` from the pinned tree, overlays
+The image builds `vendor/lody/apps/cli` from the pinned tree, overlays
 the five reviewed CLI adapters below at their gitlink SHAs, installs the packed
 artifact, and stamps it with the upstream and subtree commits. Follow
-`docs/LODY-MERGE.md` for the current manual/automated transition procedure.
+`docs/LODY-MERGE.md` for the current upstream procedure. There is no independent
+npm daemon pin or compiled-bundle rewrite step.
 
 ## Adapter gitlink pins
 

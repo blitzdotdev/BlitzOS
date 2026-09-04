@@ -4,7 +4,7 @@
  * cross-runtime rule).
  *
  * This drives the REAL `/usr/local/libexec/blitz-lody-bridge` against a stand-in
- * daemon that serves `/session-control` the way `lody@0.88.1` serves it: NDJSON
+ * daemon that serves `/session-control` the way the captured Lody corpus does: NDJSON
  * when the request carries `Accept: application/x-ndjson`, one buffered envelope
  * when it does not (`apps/cli/src/lib/local-session-control.ts:33`).
  *

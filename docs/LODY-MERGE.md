@@ -26,17 +26,15 @@ this runbook for every row marked manual.
 |---|---|---|
 | Resolve the ref, pull the subtree, update pins and baselines, run gates, push, and open the PR | **Manual until plan PR E** | `scripts/lody-merge.mjs` through `npm run lody:merge` |
 | Materialize the five CLI adapters at their gitlink SHAs | **Automated by `npm run lody:adapters:sync`** | `scripts/lody-sync-adapters.mjs` and reviewed `vendor/lody-adapters/` trees |
-| Build, check, pack, and stamp the daemon from the merged tree | **Automated by `npm run lody:build`; not used by the image until plan PR C** | shared `scripts/lody-build-package.mjs`, then the `lody-build` Docker stage |
+| Build, check, pack, and stamp the daemon from the merged tree | **Automated by `npm run lody:build` and the image's `lody-build` stage** | shared `scripts/lody-build-package.mjs` |
 | Run the real-daemon pair matrix against the PR artifact | **Required in the `lody-daemon` CI job** | `LODY_BUNDLE` and `LODY_CLAUDE_BINARY` select the job's installed artifact |
 | Serve and compare daemon provenance | **Inspect `BUILD.json` locally until plan PR D** | `/lody/build` plus browser comparison; legacy boxes have no route |
 | Publish and deploy a canary box image after merge | **Automated now by `.github/workflows/canary.yml`** | Plan PR E expands the existing image inputs to include the full Lody tree, adapters, lockfile, and build/seam scripts |
 
-The current shipping image is transitional: `packages/box/Dockerfile` still
-installs `lody@0.88.1` and applies the five scripts in
-`packages/box/patches/`. Do not select or bump an npm daemon during an upstream
-merge. Plan PR C replaces that installation with the package built below. The
-renderer/daemon identity is the upstream commit and build stamp, never the
-stale `apps/cli/package.json` version.
+The shipping image builds and installs the daemon package from this same
+vendored tree. There is no npm daemon release to select or bump during an
+upstream merge. The renderer/daemon identity is the upstream commit and build
+stamp, never the stale `apps/cli/package.json` version.
 
 ## Prepare a branch
 
@@ -196,13 +194,11 @@ fi
 
 For every retained seam, refresh the upstream anchor and line number in
 `BLITZ-PATCHES.md`. Run its conflict drill and delete any seam whose upstream
-replacement has landed. The target daemon adds one source seam at
-`apps/cli/src/lib/message-processor.ts`: only
-`machine/acp-authenticate` with `action: "start"` moves to
-`acp-auth:<configId>`; submit and cancel remain on the default chain. The
-current source protocol makes `configId`—not caller-supplied agent identity—the
-daemon-authoritative start target. Until plan PR C lands, that rule is applied
-only to the disposable build copy in the build section below.
+replacement has landed. Daemon seams 19-21 cover the ACP-authentication queue,
+the optional built-in MCP server, and host-selected cgroup parent/capacity
+policy. Their environment options retain upstream defaults when absent; the box
+service selects the host behavior. The ACP rule moves only an authentication
+`start` to `acp-auth:<configId>`; submit and cancel remain on the default chain.
 
 The ambient-IPC audit is not a formatting gate. Any newly reachable unbound IPC
 site reported by `lody-ipc-client-isolation.test.ts` is a class-C decision.
@@ -210,7 +206,7 @@ site reported by `lody-ipc-client-isolation.test.ts` is a class-C decision.
 ## Refresh pristine baselines
 
 The seam tests read checked-in pristine upstream sources because a shallow CI
-clone may not contain the upstream commit object. Refresh all four from a clone
+clone may not contain the upstream commit object. Refresh all five from a clone
 that does contain `NEW_SHA`:
 
 ```sh
@@ -219,6 +215,8 @@ for file in sessions/session-tab-bar sessions/session-detail \
   git show "$NEW_SHA:packages/components/src/components/$file.tsx" \
     > "packages/webapp/test/upstream-baseline/$(basename "$file").tsx.txt"
 done
+git show "$NEW_SHA:apps/cli/src/lib/message-processor.ts" \
+  > packages/webapp/test/upstream-baseline/message-processor.ts.txt
 ```
 
 Update the provenance SHA in
@@ -277,9 +275,8 @@ the PR body.
 
 ## Build and stamp the daemon
 
-Build the same package the image will install. Until plan PR C moves the
-ACP-auth queue behavior into the subtree, the root command opts into its
-guarded, disposable-copy seam.
+Build the same package the image installs. Every retained daemon seam already
+lives in the subtree; the builder never rewrites the compiled output.
 
 ```sh
 LODY_OUT=$(mktemp -d)
@@ -395,9 +392,8 @@ real values:
 Captured from the daemon built from `vendor/lody` at `<upstreamSha>` (`distSha256` `<sha>`).
 ```
 
-The current README statements naming the transitional npm daemon in the four
-`packages/schema/fixtures/lody-*/README.md` files are historical capture facts,
-not a daemon-selection rule.
+The qualified README paragraphs naming the old npm daemon in the captured
+corpora are historical capture facts, not a daemon-selection rule.
 
 ## Run all gates
 
@@ -434,8 +430,6 @@ Automation must stop for:
 - a red or unexpectedly skipped non-paid pair gate;
 - a new ambient IPC site reported by the source audit;
 - a fixture semantic change that requires a reviewed recapture;
-- the disposition of any still-live transition bundle behavior before plan PR C
-  removes its compiled patch; and
 - the final PR review and merge click.
 
 Everything else is routine evidence gathering and may be automated.
@@ -476,16 +470,16 @@ keys through `packages/control-plane/scripts/publish-box-image.mjs`, passes the
 exact ref/tag/archive digest to `deploy`, and verifies both commit and image tag
 through `/version`.
 
-That automation exists now, but a pure `vendor/lody` change does not yet change
-the four-path release ID, and `packages/box/Dockerfile` still installs the
-transitional npm daemon. Until plan PR C ships the source-built daemon and plan
-PR E adds Lody inputs, the locally built package proves the PR pair but does not
-enter the canary image. A human must not treat today's canary job as proof that
-the source-built daemon shipped.
+That automation exists now, and `packages/box/Dockerfile` installs the
+source-built daemon. A pure `vendor/lody` change does not yet change the
+four-path release ID, however. Until plan PR E adds the Lody inputs, the locally
+built package proves the PR pair but a later vendor-only merge may reuse the
+previous canary image. A human must not treat today's release key as proof that
+the newly merged Lody pin shipped.
 
-After plan PRs C and E, the Dockerfile consumes the source-built package and the
-existing canary release key includes `vendor/lody`, reviewed adapters, the
-lockfile, and build/seam scripts. The same human merge click then causes a
+After plan PR E, the existing canary release key includes `vendor/lody`,
+reviewed adapters, the lockfile, and build/seam scripts. The same human merge
+click then causes a
 matching immutable image to be reused or baked, published, pinned, and deployed
 without a follow-up source commit. Plan PR D adds `/lody/build` so the browser
 can compare the running box stamp with its renderer commit.

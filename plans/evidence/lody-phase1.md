@@ -121,7 +121,7 @@ to the npm artifact at image build, never to `vendor/`.
 
 > **Correction, 2026-08-30 (what phase 1 actually shipped).** The patch is the
 > same edit at **four** call sites, not one, and it lives at
-> `packages/box/patches/lody-local-platform.mjs`. The anchor
+> the now-retired `lody-local-platform.mjs`. The anchor
 > `resolvePlatformKind("cloud")` occurs exactly 4× in the 0.88.1 bundle; the
 > script asserts that count and the file's sha256.
 >

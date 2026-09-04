@@ -439,8 +439,8 @@ describe.skipIf(!lodyDaemonAvailable())("phase 5: worktree sessions against a re
    * state and no error.
    *
    * The daemon's own terminal resolver gets this right one file away
-   * (`lib/terminal-workdir-resolver.ts:97`), and `packages/box/patches/lody-code-collab-worktree-root.mjs`
-   * gives the Code Collab resolver the same two lines.
+   * (`lib/terminal-workdir-resolver.ts:97`), and upstream commit `dabbf960`
+   * gave the Code Collab resolver the same worktree selection.
    *
    * NO TURN IS PAID FOR HERE. The panel resolves from the session document
    * alone, so writing into the worktree by hand is the same input a turn would

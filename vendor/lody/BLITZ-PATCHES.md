@@ -1737,66 +1737,111 @@ conversions, including public browser; (5) two-provider poison-global and
 post-disposal tests. The API contains no Blitz URL, workspace or relay concept.
 Drop seam 17's reset implementation once the keyed provider lands upstream.
 
-## Transition-only patches to the published npm artifact
+## Daemon source and configuration seams
 
-At HEAD, `packages/box/Dockerfile` installs `lody@0.88.1` from npm and applies
-these five scripts at box-image build. Nothing under `vendor/lody` changes.
-This is the shipping transition only, until plan PR C replaces the npm package
-with the daemon built from this tree. An upstream merge does not select, bump,
-or re-audit an npm artifact; that procedure exists only in repository history.
+The box daemon is built from this subtree. These seams are inert under upstream
+defaults and are selected by the box service environment where configuration is
+needed. The package build does not rewrite `dist/index.js` after Vite emits it.
 
-| Patch | Target | Anchor | Reason |
-|---|---|---|---|
-| `packages/box/patches/lody-local-platform.mjs` | `lody/dist/index.js` | 4× `resolvePlatformKind("cloud")` | The transitional npm artifact is the CLOUD build: its Vite config inlines the platform as a literal, so the local composition root is unreachable and the daemon blocks on a device-authorization login. The patch restores the `LODY_PLATFORM` env read. The source build already emits local mode, so this patch is deleted by plan PR C. |
-| `packages/box/patches/lody-acp-auth-queue.mjs` | `lody/dist/index.js` | the `extractQueueKey` switch tail in `MessageProcessor` | Every `machine/*` message falls to `extractQueueKey`'s `default: return null`, and `ConcurrentQueue` maps `null` onto ONE serial chain (`__default__`). `machine/acp-authenticate` with `action: 'start'` runs `claude auth login --claudeai`, which blocks on stdin until the member pastes the code back — so the `submit-code` carrying that code queues behind the login waiting for it, and so does `cancel`. The patch gives a `start` its own per-agent chain. Without it an interactive agent sign-in can never be completed, only timed out after 285 s. |
-| `packages/box/patches/lody-code-collab-worktree-root.mjs` | `lody/dist/index.js` | the `project?.kind === "local"` branch of `resolveCodeCollabWorkspaceRoot` | That branch answers with the local project's ROOT PATH and never reads `project.useWorktree` or `meta.isWorktree`, so once no live `Session` object is left the whole Code Collab surface of a worktree session — All Changes, the Files tab, every file chip — resolves to the `/workspace/<repo>` clone instead of the worktree. The clone is clean by design, so the panel renders an empty SUCCESS ("No changes yet.") rather than an error. The patch answers with the worktree when the session is a worktree session and the worktree exists. Without it the side panel of every BlitzOS worktree session is silently empty. |
-| `packages/box/patches/lody-builtin-mcp-off.mjs` | `lody/dist/index.js` | the first line of `AgentClient.buildMcpServers` (`const builtin = this.buildBuiltinMcpServers(workdir);`) and the `LODY_MCP_TOOLS_REMINDER` declaration in `buildPrompt` | Every ACP agent is handed one stdio MCP server, `lody __internal lody-mcp-server`, which is the whole `lody` bundle loaded again as a child of the agent: 266 MB resident per session (measured on a cx33, 2026-09-02), the largest per-session fixed cost on a box, serving tools BlitzOS does not use (`lody_session_*`, `lody_task_*`, `lody_review_submit`, `lody_report_preview_candidate`). Codex starts it in its own process group, so the daemon's group kill never reaches it and it outlives its agent. The patch makes the built-in list empty — workspace-configured MCP servers still load — and blanks the per-turn reminder that would otherwise advertise the missing tools. |
-| `packages/box/patches/lody-session-sandbox.mjs` | `lody/dist/index.js` | the `parentDir` line of `LinuxCgroupSessionSandbox.initialize` and the `memoryMaxBytes`/`cpuMax` lines of `calculateAutomaticSessionSandboxLimits` | The daemon ends a session by signalling the agent's process group, but codex runs tool commands under their own session id and starts MCP servers in their own groups, and Claude Code's Bash tool is detached — so `npm test` trees and MCP servers outlive the session. Lody's per-session cgroup sandbox (`cgroup.kill` on termination) is the fix and is inert on a box, because it derives its parent from the daemon's own cgroup, which cannot hand controllers to children while holding the daemon (cgroup v2's no-internal-process rule). The patch parents the leaves beside `lody.scope` instead, under `blitz-user.slice/lody-sessions`, which `blitz-cgroup init` builds with `+memory +pids +cpu` and hands to uid 1000; and it drops upstream's memory/cpu capacity split (25% reserved, the rest divided across open sessions), so the leaves write `max` and keep only `pids.max` 1024. The box's own ceiling stays the only budget. |
+### 19. ACP authentication starts have their own queue lane
 
-Applied in that order. **The order is not cosmetic:** `lody-local-platform`
-guards on a sha256 of `dist/index.js` AS PUBLISHED, so nothing may rewrite the
-file before it runs. The other four therefore guard on the installed package's
-version plus their own anchor at exactly one occurrence — a file hash can
-only ever pin the first patch in a chain. All five are idempotent: re-running
-any of them on an already-patched bundle reports it and exits 0, which is what
-lets `packages/webapp/test/lody-daemon-harness.ts` copy a real box's bundle and
-re-apply the image build's patches to the copy.
+**Anchor:** `apps/cli/src/lib/message-processor.ts`, the
+`MessageProcessor.extractQueueKey` switch immediately before `session/cancel`.
 
-The queue patch is strictly NARROWING. The only message that changes chains is
-the `machine/acp-authenticate` start that was blocking the others; nothing gains
-a peer it did not already have. Grouping starts per agent type is a rule the
-daemon already enforces one layer in, from `runningByAgentType`
-(`apps/cli/src/agent/acp-authentication.ts`), so this moves it out rather than
-inventing it. **Open upstream as "keyless control messages should not serialize
-behind a long-running interactive login", and drop this patch when it merges.**
+Only `machine/acp-authenticate` with `action: 'start'` returns
+`acp-auth:${message.configId}`. Submit-code and cancel return `null`, so they can
+run while the interactive login waits for input. Starts for one persisted agent
+configuration serialize, while starts for different configurations may overlap;
+the authentication manager retains its separate per-agent-type exclusion after
+resolving the configuration. This is strictly narrowing: no other message gains
+a peer it did not already have.
 
-The table is the current-behavior record; `docs/LODY-MERGE.md` is the only
-procedure. Plan PR C may delete a compiled script only after its behavior is
-supplied by the source build, moved to a declared source seam, or deliberately
-retired. The approved design already settles three: source builds local mode,
-upstream now resolves Code Collab worktree roots, and ACP authentication becomes
-the source seam below. The built-in MCP and cgroup-sandbox behavior landed after
-the initial spike and must receive an explicit source/configuration disposition
-before their transition scripts disappear.
+Guard: `apps/cli/src/lib/message-processor.test.ts` holds one start open, proves
+submit and cancel run before release, proves same-config starts serialize, and
+proves different-config starts may overlap. The pristine-source hunk is also
+pinned by `packages/webapp/test/lody-seam-pin.test.ts`.
 
-### Target daemon source seam: ACP authentication queue
-
-Plan PR C moves the queue behavior to
-`apps/cli/src/lib/message-processor.ts`, beside `extractQueueKey`. Only
-`machine/acp-authenticate` with `action: 'start'` returns
-`acp-auth:${message.configId}`. Submit and cancel return `null`, so they remain
-able to run while the interactive login waits. The current source protocol
-accepts a daemon-authoritative persisted config ID for start rather than the
-caller-supplied agent type used by the transitional npm artifact. Starts for one
-config serialize; the authentication manager retains its per-agent-type
-exclusion after resolving that config.
+**Candidate upstream PR:** “keyless control messages should not serialize behind
+a long-running interactive login.” Add the start-only queue key and the focused
+concurrency cases without mentioning BlitzOS.
 
 **Merge conflict drill.** If upstream adds an equivalent non-blocking lane,
-classify this as A and do not add the seam. If the switch merely moves, classify
-it as B and keep the exact start-only rule. If upstream replaces queueing or
-authentication concurrency, classify it as C and stop for a human. The focused
-source test must hold one start open, prove submit and cancel run before release,
-prove same-config starts serialize, and prove different-config starts may overlap.
+classify this as A and drop the seam. If the switch merely moves, classify it as
+B and keep the exact start-only rule. If upstream replaces queueing or
+authentication concurrency, classify it as C and stop for a human.
+
+### 20. Hosts may omit Lody's built-in MCP server
+
+**Anchors:** `apps/cli/src/agent/agent-client.ts`, the first guard in
+`buildBuiltinMcpServers`; and
+`apps/cli/src/session/session-execution-helpers.ts`, the
+`LODY_MCP_TOOLS_REMINDER` declaration.
+
+`LODY_MCP_BUILTIN_DISABLED=1` makes the built-in server list empty and omits the
+prompt reminder for tools that are no longer present. Workspace-configured MCP
+servers still resolve and load through `buildMcpServers`. Omission preserves
+upstream's HTTP-or-stdio built-in server and prompt exactly. The box selects the
+opt-out because the child duplicates the daemon bundle per session and its
+process group can outlive the ACP agent.
+
+Guard: `packages/webapp/test/lody-seam-pin.test.ts` pins both source branches and
+the box service setting; the tree-built daemon suites prove normal ACP session
+startup with the setting selected.
+
+**Candidate upstream PR:** “allow embedding hosts to disable the built-in Lody
+MCP server.” Document one environment option, return no built-ins when selected,
+and suppress only the matching prompt hint.
+
+**Merge conflict drill.** If upstream gains an equivalent option, classify this
+as A and use it from the service. If either method or reminder moves, classify
+as B and move both halves together. If MCP assembly or prompt ownership changes,
+classify as C and stop until the host can prove the advertised and configured
+tool surfaces still agree.
+
+### 21. Hosts may select an existing cgroup parent and external capacity policy
+
+**Anchors:** `apps/cli/src/session/session-sandbox.ts`,
+`LinuxCgroupSessionSandbox.initialize` immediately after `readSelfCgroupPath`
+and `calculateAutomaticSessionSandboxLimits`; plus
+`apps/cli/src/session/session-manager.ts`, the rebalance call.
+
+`LODY_SESSION_CGROUP_PARENT` supplies a cgroup-v2 path relative to the cgroup
+mount instead of nesting `lody-sessions` below the daemon's own cgroup. Omission
+preserves upstream's derived parent. `LODY_SESSION_CAPACITY_LIMITS=0` keeps the
+per-session `pids.max` of 1024 but leaves `memory.max` and `cpu.max` unlimited;
+omission preserves upstream's 75-percent capacity split. The box points at
+`/blitz-user.slice/lody-sessions`, whose controllers and ownership are prepared
+by `blitz-cgroup init`, so session leaves can use `cgroup.kill` without violating
+cgroup v2's no-internal-process rule while the box remains the resource ceiling.
+
+Guard: `packages/webapp/test/lody-seam-pin.test.ts` pins the opt-in branches and
+service values; `apps/cli/tests/session-sandbox.test.ts` exercises both source
+configuration choices. Existing box smoke coverage verifies the session leaf
+path, controller files, `pids.max`, unlimited memory/CPU, and descendant cleanup.
+
+**Candidate upstream PR:** “make the execution-sandbox cgroup parent and
+capacity allocation host-configurable.” Parse an optional parent path and an
+optional capacity-policy switch while retaining today's defaults.
+
+**Merge conflict drill.** If upstream adds equivalent settings, classify this
+as A and rename the service variables. If cgroup initialization or rebalance
+moves, classify as B and keep the two opt-ins together. If upstream changes the
+sandbox lifecycle or removes per-session cgroups, classify as C and stop: the
+reviewer must re-prove descendant containment and termination before adapting.
+
+## Retired compiled-bundle patches
+
+| Retired script | Disposition | Evidence |
+|---|---|---|
+| `lody-local-platform.mjs` | Obsolete upstream | Upstream commit `2fe304c38041a5ee8739e12d7a6ad749280d7a66` made the public Vite build define `process.env.LODY_PLATFORM` as `"local"`; the tree build therefore enters the local composition root without a bundle rewrite. |
+| `lody-code-collab-worktree-root.mjs` | Obsolete upstream | Upstream commit `dabbf960b2fc3987ca7c965133e4abd9be27caab` (`fix(cli): scope All Changes to local worktrees (#280)`) resolves and waits for the session worktree rather than falling back to the clone. |
+| `lody-acp-auth-queue.mjs` | Replaced by source seam 19 | The start-only queue lane now lives beside `extractQueueKey` and is compiled into the package. |
+| `lody-builtin-mcp-off.mjs` | Replaced by source/configuration seam 20 | The generic opt-out is compiled into the package and selected by the box service. |
+| `lody-session-sandbox.mjs` | Replaced by source/configuration seam 21 | The generic cgroup parent and capacity-policy options are compiled into the package and selected by the box service. |
+
+The retired scripts and their compiled-artifact guard tests are deleted. Their
+behavior is now either supplied by upstream or declared and guarded at source,
+so neither the image build nor the test harness mutates a compiled daemon.
 
 ## Planned seams (not yet applied)
 

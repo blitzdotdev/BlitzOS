@@ -4,10 +4,8 @@ The bytes `/lody/control` answers with when the caller negotiates
 `Accept: application/x-ndjson`, and the buffered envelope it answers with when
 nobody does.
 
-At HEAD the box still installs the transition `lody@0.88.1` npm artifact and
-its compiled patches until plan PR C; the target daemon is built from
-`vendor/lody`. The recapture rule and upstream procedure are in
-`docs/LODY-MERGE.md`.
+The box builds and stamps its daemon from `vendor/lody`. The recapture rule and
+upstream procedure are in `docs/LODY-MERGE.md`.
 
 ## Why this is a BlitzOS contract
 
@@ -35,7 +33,7 @@ So there are now three runtimes that have to agree about these bytes:
 |---|---|---|
 | browser | `webapp/src/lody/rpc-client.ts` (`sendSessionControl`) | asks for the stream, reads it frame by frame, emits each response before resolving |
 | bridge (node) | `box/rootfs/usr/local/libexec/blitz-lody-bridge` | decides whether the negotiation goes upstream, and pipes the frames back unbuffered |
-| daemon (node) | transition image: npm artifact until plan PR C; target source: `vendor/lody/apps/cli` | authors the frames |
+| daemon (node) | `vendor/lody/apps/cli` | authors the frames |
 
 The FRAME UNION stays Lody's: `LocalSessionControlStreamFrameSchema`
 (`vendor/lody/packages/shared/src/node/local-ipc.ts:80`) is the source of truth.

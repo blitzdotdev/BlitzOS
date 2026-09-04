@@ -677,6 +677,10 @@ export class AgentClient implements acp.Client {
   }
 
   private buildBuiltinMcpServers(workdir: string): acp.McpServer[] {
+    if (process.env.LODY_MCP_BUILTIN_DISABLED === '1') {
+      return [];
+    }
+
     if (!this.options.workspaceId || !this.options.machineId) {
       return [];
     }

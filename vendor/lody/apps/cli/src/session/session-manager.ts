@@ -2279,7 +2279,8 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
           totalMemoryBytes: getEffectiveMemoryLimitBytes(),
           totalCpuCount: os.cpus().length,
         },
-        activeSessions.length
+        activeSessions.length,
+        { capacityLimits: process.env.LODY_SESSION_CAPACITY_LIMITS !== '0' }
       );
 
       const results = await Promise.allSettled(

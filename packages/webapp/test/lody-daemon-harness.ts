@@ -6,8 +6,7 @@
  * in the difference between the two (`plans/evidence/lody-phase1.md` §0).
  * This module stands up the same three processes a box runs, in the same order:
  *
- * 1. the daemon — a tree-built package is copied unchanged; a legacy npm
- *    package gets every `packages/box/patches/` script in image-build order;
+ * 1. the daemon — the selected tree-built package is copied unchanged;
  * 2. `packages/box/rootfs/usr/local/libexec/blitz-lody-bridge`, unmodified;
  * 3. a TCP front door that maps `/lody/*` onto the bridge's unix socket, which
  *    is what `packages/box/gateway/main.go` does. The Go gateway itself cannot
@@ -22,13 +21,14 @@
  * is 118. So the data dir is a short `os.tmpdir()` path, not the scratchpad.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -41,7 +41,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { createConnection, createServer as createTcpServer } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
@@ -61,24 +61,141 @@ export function repoRoot(): string {
     directory = parent;
   }
 }
+const INSTALLED_LODY_BUNDLE = "/opt/blitz/npm/lib/node_modules/lody";
 
-/** A package directory. CI overrides the box image's installed daemon path. */
-export const LODY_BUNDLE = process.env.LODY_BUNDLE ?? "/opt/blitz/npm/lib/node_modules/lody";
-/** Every patch the image build applies to a legacy published bundle, IN THE
- * ORDER the Dockerfile applies them. A tree-built package carries BUILD.json
- * and already contains its reviewed source behavior, so it is used as-is. */
-const LEGACY_NPM_PATCH_SCRIPTS = [
-  join(repoRoot(), "packages/box/patches/lody-local-platform.mjs"),
-  join(repoRoot(), "packages/box/patches/lody-acp-auth-queue.mjs"),
-  join(repoRoot(), "packages/box/patches/lody-code-collab-worktree-root.mjs"),
-  join(repoRoot(), "packages/box/patches/lody-builtin-mcp-off.mjs"),
-  join(repoRoot(), "packages/box/patches/lody-session-sandbox.mjs"),
-];
+function upstreamSha(root: string): string {
+  const source = readFileSync(join(root, "vendor/lody/UPSTREAM.md"), "utf8");
+  const sha = /\| Pinned commit \| `([a-f0-9]{40})` \|/u.exec(source)?.[1];
+  if (sha === undefined)
+    throw new Error("vendor/lody/UPSTREAM.md has no pinned commit");
+  return sha;
+}
+
+function localBuildFingerprint(root: string): string {
+  const digest = createHash("sha256");
+  const addPath = (relative: string): void => {
+    const absolute = join(root, relative);
+    if (statSync(absolute).isDirectory()) {
+      for (const entry of readdirSync(absolute).sort()) {
+        addPath(join(relative, entry));
+      }
+      return;
+    }
+    digest
+      .update(relative)
+      .update("\0")
+      .update(readFileSync(absolute))
+      .update("\0");
+  };
+  for (const relative of [
+    "scripts/lody-build-package.mjs",
+    "scripts/lody-package-manifest.json",
+    "scripts/lody-sync-adapters.mjs",
+    "vendor/lody/UPSTREAM.md",
+    "vendor/lody/pnpm-lock.yaml",
+    "vendor/lody/apps/cli/src/lib/message-processor.ts",
+    "vendor/lody/apps/cli/src/agent/agent-client.ts",
+    "vendor/lody/apps/cli/src/session/session-execution-helpers.ts",
+    "vendor/lody/apps/cli/src/session/session-manager.ts",
+    "vendor/lody/apps/cli/src/session/session-sandbox.ts",
+    "vendor/lody-adapters",
+  ]) {
+    addPath(relative);
+  }
+  return digest.digest("hex");
+}
+
+function runBuildStep(command: string, args: string[], cwd: string): void {
+  const result = spawnSync(command, args, {
+    cwd,
+    env: process.env,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(" ")} exited ${result.status ?? "without status"}`,
+    );
+  }
+}
+
+function buildCachedLodyBundle(root: string): string {
+  const sha = upstreamSha(root);
+  const cacheRoot = join(homedir(), ".cache", "blitz-lody-build", sha);
+  const bundle = join(cacheRoot, "install", "lib", "node_modules", "lody");
+  const fingerprint = localBuildFingerprint(root);
+  const fingerprintFile = join(cacheRoot, "SOURCE.sha256");
+  if (
+    existsSync(join(bundle, "dist", "BUILD.json")) &&
+    existsSync(fingerprintFile) &&
+    readFileSync(fingerprintFile, "utf8").trim() === fingerprint
+  ) {
+    return bundle;
+  }
+
+  process.stderr.write(
+    `lody-daemon-harness: building vendored daemon in ${cacheRoot}\n`,
+  );
+  rmSync(cacheRoot, { recursive: true, force: true });
+  const artifact = join(cacheRoot, "artifact");
+  mkdirSync(artifact, { recursive: true });
+  runBuildStep(
+    process.execPath,
+    [
+      join(root, "scripts/lody-build-package.mjs"),
+      "--source",
+      join(root, "vendor/lody"),
+      "--out",
+      artifact,
+    ],
+    root,
+  );
+  const tarballs = readdirSync(artifact).filter((entry) =>
+    /^lody-.+\.tgz$/u.test(entry),
+  );
+  if (tarballs.length !== 1) {
+    throw new Error(`tree build produced ${tarballs.length} Lody tarballs`);
+  }
+  runBuildStep(
+    "npm",
+    [
+      "install",
+      "--global",
+      "--prefix",
+      join(cacheRoot, "install"),
+      "--omit=dev",
+      join(artifact, tarballs[0]!),
+    ],
+    root,
+  );
+  if (!existsSync(join(bundle, "dist", "BUILD.json"))) {
+    throw new Error("tree-built Lody install has no dist/BUILD.json");
+  }
+  writeFileSync(fingerprintFile, `${fingerprint}\n`);
+  return bundle;
+}
+
+/**
+ * A package directory, resolved in pair-by-construction order:
+ * explicit CI artifact, stamped image install, then (when a legacy unstamped
+ * package is installed) a cached build of this tree. A machine with no daemon
+ * at all stays unavailable so daemon-free test jobs do not unexpectedly build.
+ */
+function resolveLodyBundle(): string {
+  if (process.env.LODY_BUNDLE !== undefined) return process.env.LODY_BUNDLE;
+  if (existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "BUILD.json"))) {
+    return INSTALLED_LODY_BUNDLE;
+  }
+  if (existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "index.js"))) {
+    return buildCachedLodyBundle(repoRoot());
+  }
+  return INSTALLED_LODY_BUNDLE;
+}
+
+export const LODY_BUNDLE = resolveLodyBundle();
 const BRIDGE_SCRIPT = join(repoRoot(), "packages/box/rootfs/usr/local/libexec/blitz-lody-bridge");
 const REPO_NODE_MODULES = join(repoRoot(), "node_modules");
 
-/** `true` when this machine can run the exit test at all. CI has no `lody`
- * installed, so the test skips there rather than failing. */
+/** `true` after resolving an explicit, installed, or on-demand tree bundle. */
 export function lodyDaemonAvailable(): boolean {
   const available = existsSync(join(LODY_BUNDLE, "dist", "index.js"));
   if (!available && process.env.LODY_REQUIRE_BUNDLE === "1") {
@@ -139,9 +256,9 @@ export interface LodyShareClaim {
  * WHY IT IS REQUIRED. The lease is one TCP port for the whole `lody-oss`
  * installation profile, with no override, and a BOX RUNS ITS OWN DAEMON on it
  * (`s6-rc.d/lody-daemon`). Every daemon-backed suite here runs on a box. Before
- * the image shipped `lody-local-platform.mjs`, the box's daemon could not reach
- * local mode and never took the lease, so an unsupervised harness worked by
- * accident; on a current image it exits with "Cannot start: foreground process
+ * the image shipped a local tree build, the box's daemon could not reach local
+ * mode and never took the lease, so an unsupervised harness worked by accident;
+ * on a current image it exits with "Cannot start: foreground process
  * N already owns the local agent runtime" and the harness reports a 60 s
  * provisioning timeout that names the wrong cause.
  *
@@ -403,7 +520,7 @@ let releaseProcessLock: (() => void) | null = null;
  * lock waits fires on QUEUEING rather than on anything being wrong — which is
  * how phase 6's relay suite first failed, with a 180 s hook and a 900 s lock.
  * The two numbers are one number, and this is it: the wait, plus a suite's own
- * boot (a patched bundle copy, a daemon provisioning its implicit workspace, a
+ * boot (a tree-built bundle copy, a daemon provisioning its implicit workspace, a
  * bridge, a runtime).
  */
 export const HARNESS_BOOT_TIMEOUT_MS = HARNESS_LOCK_WAIT_MS + 120_000;
@@ -461,21 +578,6 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   // changed for every later suite on this machine.
   const bundle = join(root, "lody");
   cpSync(LODY_BUNDLE, bundle, { recursive: true });
-  const patchScripts = existsSync(join(bundle, "dist", "BUILD.json"))
-    ? []
-    : LEGACY_NPM_PATCH_SCRIPTS;
-  for (const script of patchScripts) {
-    const patch = spawn(process.execPath, [script, join(bundle, "dist", "index.js")], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const patchResult = await new Promise<number>((resolve) => patch.once("exit", (code) => resolve(code ?? 1)));
-    if (patchResult !== 0) {
-      rmSync(root, { recursive: true, force: true });
-      releaseLock();
-      throw new Error(`${script} refused the installed bundle`);
-    }
-  }
-
   let daemonLog = "";
   const daemon = spawn(process.execPath, [join(bundle, "dist", "index.js"), "start"], {
     cwd: root,
@@ -484,6 +586,9 @@ export async function startLodyHarness(): Promise<LodyHarness> {
       LODY_PLATFORM: "local",
       LODY_DATA_DIR: dataDir,
       LODY_MCP_HTTP_DISABLED: "1",
+      LODY_MCP_BUILTIN_DISABLED: "1",
+      LODY_SESSION_CGROUP_PARENT: "/blitz-user.slice/lody-sessions",
+      LODY_SESSION_CAPACITY_LIMITS: "0",
       ...supervisorLaunchEnv(),
     },
     // The fourth entry is the supervisor's half of the contract above: a worker

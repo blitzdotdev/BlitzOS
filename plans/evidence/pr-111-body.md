@@ -76,7 +76,7 @@ both sides.
 
 The published `lody` npm package is the CLOUD build — its Vite config inlines
 the platform as a literal, so the local composition root is unreachable and the
-daemon blocks on a device-authorization login. `packages/box/patches/lody-local-platform.mjs`
+daemon blocks on a device-authorization login. The now-retired `lody-local-platform.mjs`
 restores the env read at image build, guarded by a sha256 of the input and an
 anchor count, so a version bump fails the image build loudly rather than
 shipping a box that cannot start.

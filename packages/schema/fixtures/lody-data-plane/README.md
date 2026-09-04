@@ -2,10 +2,8 @@
 
 The frames the browser and the Lody session daemon exchange on `/lody/sync`.
 
-At HEAD the box still installs the transition `lody@0.88.1` npm artifact and
-its compiled patches until plan PR C; the target daemon is built from
-`vendor/lody`. The recapture rule and upstream procedure are in
-`docs/LODY-MERGE.md`.
+The box builds and stamps its daemon from `vendor/lody`. The recapture rule and
+upstream procedure are in `docs/LODY-MERGE.md`.
 
 ## Why this is a BlitzOS contract
 
@@ -24,7 +22,7 @@ must agree:
 |---|---|---|
 | browser | `webapp/src/lody/data-plane-connection.ts` | one WebSocket text message = one JSON frame; parses with `LocalLoroDataPlaneServerMessageSchema` before delivering |
 | bridge (node) | `box/rootfs/usr/local/libexec/blitz-lody-bridge` | translates framing only: one newline-delimited line on the unix socket ⇄ one WebSocket message |
-| daemon (node) | transition image: npm artifact until plan PR C; target source: `vendor/lody/apps/cli` | authors and reads the same frames |
+| daemon (node) | `vendor/lody/apps/cli` | authors and reads the same frames |
 
 The SCHEMA stays Lody's — `vendor/lody/packages/shared/src/local-loro-data-plane.ts`
 is the source of truth and the conformance tests validate against it rather than
@@ -35,8 +33,8 @@ it, and with each other, across an upstream merge.
 
 Every server frame under `server/` except `room-status-reconnecting.json` and
 `error-payload-too-large-terminal.json` was **captured from a real
-`lody@0.88.1` daemon** on 2026-08-30, running the box's own patched bundle
-(`packages/box/patches/lody-local-platform.mjs`) in local platform mode. The
+`lody@0.88.1` daemon** on 2026-08-30, running the then-shipping box bundle in
+local platform mode. The
 base64 blobs are genuine Loro exports and a genuine EphemeralStore presence
 snapshot, not hand-written bytes.
 

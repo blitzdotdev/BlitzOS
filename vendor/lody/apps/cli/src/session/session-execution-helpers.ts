@@ -64,7 +64,9 @@ const GITHUB_WORKTREE_SYSTEM_COMMANDS = `\n\nThe following are system instructio
   - The agent may use a one-time URL rewrite to fetch SSH git submodules over HTTPS, as long as the submodule is also authorized for lody or is public: git -c url."https://github.com/".insteadOf=git@github.com: submodule update --init --recursive`;
 
 const LODY_MCP_TOOLS_REMINDER =
-  '\n\nUse the available Lody MCP tools when relevant; rely on their tool descriptions for complete, current capabilities and usage guidance.';
+  process.env.LODY_MCP_BUILTIN_DISABLED === '1'
+    ? ''
+    : '\n\nUse the available Lody MCP tools when relevant; rely on their tool descriptions for complete, current capabilities and usage guidance.';
 
 // TODO: use system prompt
 export const buildPrompt = (

@@ -187,6 +187,21 @@ done
 docker exec "$container" grep -q 'blitz-cgroup enter user/lody.scope' \
   /etc/s6-overlay/s6-rc.d/lody-daemon/run \
   || fail "the lody daemon does not enter the user ceiling"
+docker exec "$container" test -f /opt/blitz/lody/BUILD.json \
+  || fail "the image-level Lody BUILD.json is missing"
+docker exec "$container" test -f /opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json \
+  || fail "the packaged Lody BUILD.json is missing"
+docker exec "$container" node -e '
+  const fs = require("node:fs");
+  const image = JSON.parse(fs.readFileSync("/opt/blitz/lody/BUILD.json", "utf8"));
+  const installed = JSON.parse(fs.readFileSync("/opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json", "utf8"));
+  if (JSON.stringify(image) !== JSON.stringify(installed)) process.exit(1);
+' || fail "the image-level and packaged Lody stamps differ"
+docker exec "$container" /opt/blitz/npm/bin/lody --help >/dev/null \
+  || fail "the tree-built Lody CLI does not answer --help"
+docker exec "$container" grep -Eq '^[[:space:]]*/opt/blitz/npm/bin/lody start$' \
+  /etc/s6-overlay/s6-rc.d/lody-daemon/run \
+  || fail "the lody daemon service no longer points at /opt/blitz/npm/bin/lody"
 where=$(cgroup_of dockerd) || fail "dockerd is not running"
 [ "$where" = /blitz-user.slice/dockerd.scope ] \
   || fail "dockerd must sit beside its containers, not in them: [$where]"

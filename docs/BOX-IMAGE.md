@@ -75,12 +75,29 @@ configuration gate and under the `canary` environment:
    anything to the deploy job. The deploy pins those values and verifies that
    `/version` reports both the merged commit and the expected box-image tag.
 
-**Lody transition.** The four inputs above match what the Dockerfile consumes
-today, while it still installs the transition npm daemon. Until plan PR E in
-`plans/LODY-DAEMON-FROM-TREE.md`, a pure `vendor/lody` change does not change
-the release id. PR E adds the Lody tree, reviewed adapters, lockfile, and
-build/seam scripts to this existing mechanism. Follow `docs/LODY-MERGE.md` for
-the upstream procedure; do not duplicate it here.
+**Lody release identity.** The Dockerfile now consumes more than the four paths
+in today's canary release id: it builds `vendor/lody` with the reviewed adapter
+snapshots and shared package script. Until plan PR E in
+`plans/LODY-DAEMON-FROM-TREE.md`, a pure Lody-input change does not change that
+release id and can therefore reuse an older image. PR E adds the tree, adapters,
+lockfile, and build/seam scripts to this existing mechanism. Follow
+`docs/LODY-MERGE.md` for the upstream procedure; do not duplicate it here.
+
+### Lody daemon package and provenance
+
+The `lody-build` Docker stage runs the same
+`scripts/lody-build-package.mjs --source vendor/lody` path used by the pair
+gate. It overlays the five reviewed adapter snapshots, performs the frozen pnpm
+install and CLI build, verifies the package manifest, and emits a tarball plus
+`BUILD.json`. A BuildKit cache mount retains the pnpm 10.20 store by Node line
+and target platform; the lockfile and build inputs still invalidate the build
+layer. Files outside the Lody inputs, including `packages/webapp`, do not.
+
+The vendors stage installs that tarball at the established global prefix, so
+the package remains `/opt/blitz/npm/lib/node_modules/lody` and s6 still executes
+`/opt/blitz/npm/bin/lody start`. The identical stamp is carried inside the
+package at `dist/BUILD.json` and outside it at `/opt/blitz/lody/BUILD.json`.
+Serving it over `/lody/build` is deliberately deferred to plan PR D.
 
 The `canary` environment's `CLOUDFLARE_API_TOKEN` must be able to write the
 `blitz-box-images` bucket. A token that can deploy the Worker but cannot write

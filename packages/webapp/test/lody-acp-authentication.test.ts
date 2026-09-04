@@ -1,4 +1,5 @@
-// @vitest-environment node
+import "fake-indexeddb/auto";
+
 /**
  * The second canary dogfood finding, against a real daemon
  * (plans/LODY-RUNTIME-DESIGN.md §12.4).
@@ -40,8 +41,12 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { WebSocket as NodeWebSocket } from "ws";
+import { getMachineFlockDocId, machineFlockKeys } from "@lody/shared";
+import { BLITZ_CLAUDE_CONFIG_ID } from "../src/lody/agent-configs.js";
 import { sendSessionControl } from "../src/lody/rpc-client.js";
 import { fetchLodyPlatformSnapshot, type LodyPlatformSnapshot } from "../src/lody/platform-snapshot.js";
+import { createLodyRuntime, type LodyRuntimeHandle } from "../src/lody/runtime.js";
 import type { LodySessionControlMessage } from "../src/lody/wire-types.js";
 import { HARNESS_BOOT_TIMEOUT_MS, lodyDaemonAvailable, startLodyHarness, type LodyHarness } from "./lody-daemon-harness.js";
 
@@ -89,6 +94,7 @@ function progressStatuses(responses: readonly LodySessionControlMessage[]): stri
 describe.skipIf(!lodyDaemonAvailable())("machine/acp-authenticate over the real chain", () => {
   let harness: LodyHarness;
   let snapshot: LodyPlatformSnapshot;
+  let handle: LodyRuntimeHandle;
   let scratch: string;
   let fakeClaude: string;
 
@@ -101,25 +107,45 @@ describe.skipIf(!lodyDaemonAvailable())("machine/acp-authenticate over the real 
     fakeClaude = join(scratch, "claude");
     writeFileSync(fakeClaude, FAKE_CLAUDE);
     chmodSync(fakeClaude, 0o755);
+
+    handle = await createLodyRuntime({
+      endpoints: {
+        ...harness.endpoints,
+        webSocketConstructor: NodeWebSocket as unknown as typeof WebSocket,
+      },
+      snapshot,
+      installGlobals: false,
+    });
+    const flockDocId = getMachineFlockDocId(handle.runtime.workspaceId, snapshot.machineId);
+    const flock = await handle.runtime.repo.openFlockDoc(flockDocId);
+    await flock.syncOnce();
+    const key = machineFlockKeys.agentConfig(BLITZ_CLAUDE_CONFIG_ID) as readonly string[];
+    await handle.runtime.writer.flockRowPutIfAbsent(flockDocId, key, {
+      id: BLITZ_CLAUDE_CONFIG_ID,
+      machineId: snapshot.machineId,
+      name: "Claude Code",
+      cliType: "builtin",
+      agentType: "claude",
+      env: {},
+      runtimeOverrides: { claudeCodeExecutable: fakeClaude },
+    });
+    await flock.syncOnce();
   }, HARNESS_BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
     if (scratch !== undefined) rmSync(scratch, { recursive: true, force: true });
+    await handle?.dispose();
     await harness?.stop();
   });
 
-  /** One `machine/acp-authenticate`, with the fields the daemon's `.strict()`
-   * schema requires and no `configId` — a config id makes the daemon follow a
-   * successful login with a capability refresh, which launches an ACP adapter
-   * this test has no business launching. */
+  /** One `machine/acp-authenticate`, with only the fields the daemon's current
+   * `.strict()` source schema accepts. Launch details come from the persisted
+   * config row above rather than crossing the control request. */
   function authenticate(fields: Record<string, string>): LodySessionControlMessage {
     return {
       type: "machine/acp-authenticate",
       machineId: snapshot.machineId,
       workspaceId: snapshot.workspace.workspaceId,
-      cliType: "builtin",
-      agentType: "claude",
-      runtimeOverrides: { claudeCodeExecutable: fakeClaude },
       ...fields,
     } as unknown as LodySessionControlMessage;
   }
@@ -131,7 +157,7 @@ describe.skipIf(!lodyDaemonAvailable())("machine/acp-authenticate over the real 
 
     const started = sendSessionControl(
       harness.endpoints,
-      authenticate({ requestId, action: "start" }),
+      authenticate({ requestId, action: "start", configId: BLITZ_CLAUDE_CONFIG_ID }),
       (response) => streamed.push(response),
     ).finally(() => {
       settled = true;
@@ -202,7 +228,11 @@ describe.skipIf(!lodyDaemonAvailable())("machine/acp-authenticate over the real 
     // it just answers late. `action: 'cancel'` for an id nothing is running
     // under settles immediately, so this costs no waiting either way.
     const body = JSON.stringify(
-      authenticate({ requestId: "auth-buffered", action: "cancel" }),
+      authenticate({
+        requestId: "auth-buffered",
+        action: "cancel",
+        authenticationRequestId: "not-running",
+      }),
     );
     const post = async (accept: string | null): Promise<string> => {
       const headers: Record<string, string> = {
