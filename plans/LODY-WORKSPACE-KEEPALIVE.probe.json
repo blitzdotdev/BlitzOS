@@ -1,0 +1,108 @@
+{
+  "benchmark": "jsdom React commit with installLodyDomStubs fixed element sizes",
+  "command": "LODY_BUNDLE=/var/lib/blitz/home/.cache/blitz-lody-build/f4b1ba259eb754cd954da776d8e7384a8c30f1c9/install/lib/node_modules/lody BLITZ_LODY_SWITCH_PROBE=1 BLITZ_LODY_PROBE_OUTPUT=../../plans/LODY-WORKSPACE-KEEPALIVE.probe.json npx vitest run --config vite.wt-test.config.ts --maxWorkers=1 test/lody-keepalive-activation.probe.test.tsx",
+  "artifactPath": "../../plans/LODY-WORKSPACE-KEEPALIVE.probe.json",
+  "identities": "two independent source-built daemons",
+  "cycles": 5,
+  "coldB": {
+    "target": "B",
+    "visible": 170.3847089999981,
+    "ready": 438.12483200000133,
+    "socketUsable": 191.65273799999704
+  },
+  "activations": [
+    {
+      "target": "B",
+      "visible": 158.28728899999987,
+      "ready": 158.28728899999987,
+      "socketUsable": 0.2360419999968144
+    },
+    {
+      "target": "A",
+      "visible": 181.43007300000318,
+      "ready": 181.43007300000318,
+      "socketUsable": 0.08488799999759067
+    },
+    {
+      "target": "B",
+      "visible": 177.06729600000108,
+      "ready": 177.06729600000108,
+      "socketUsable": 0.06864900000073249
+    },
+    {
+      "target": "A",
+      "visible": 238.41456599999947,
+      "ready": 238.41456599999947,
+      "socketUsable": 0.05579299999953946
+    },
+    {
+      "target": "B",
+      "visible": 148.92665499999566,
+      "ready": 148.92665499999566,
+      "socketUsable": 0.037721000000601634
+    },
+    {
+      "target": "A",
+      "visible": 170.13027399999555,
+      "ready": 170.13027399999555,
+      "socketUsable": 0.05157699999836041
+    },
+    {
+      "target": "B",
+      "visible": 149.4622359999994,
+      "ready": 149.4622359999994,
+      "socketUsable": 0.04479400000127498
+    },
+    {
+      "target": "A",
+      "visible": 127.34993799999938,
+      "ready": 127.34993799999938,
+      "socketUsable": 0.03976400000101421
+    },
+    {
+      "target": "B",
+      "visible": 116.60023800000636,
+      "ready": 116.60023800000636,
+      "socketUsable": 0.05187600000499515
+    },
+    {
+      "target": "A",
+      "visible": 100.02997499999765,
+      "ready": 100.02997499999765,
+      "socketUsable": 0.025899000000208616
+    }
+  ],
+  "activationP50": {
+    "visible": 149.4622359999994,
+    "ready": 149.4622359999994
+  },
+  "activationP95": {
+    "visible": 238.41456599999947,
+    "ready": 238.41456599999947
+  },
+  "cycleP50": 319.0569289999912,
+  "cycleP95": 415.48186200000055,
+  "memory": {
+    "before": {
+      "rss": 731561984,
+      "heapUsed": 565565088,
+      "external": 12131170,
+      "openSockets": 1,
+      "gcExposed": false
+    },
+    "twoLive": {
+      "rss": 741654528,
+      "heapUsed": 580723640,
+      "external": 12146207,
+      "openSockets": 2,
+      "gcExposed": false
+    },
+    "afterEviction": {
+      "rss": 754585600,
+      "heapUsed": 576762064,
+      "external": 12073884,
+      "openSockets": 1,
+      "gcExposed": false
+    }
+  }
+}
