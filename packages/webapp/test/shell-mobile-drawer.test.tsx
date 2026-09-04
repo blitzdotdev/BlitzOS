@@ -24,14 +24,17 @@ import { workspaceModelFixture } from "./workspace-fixtures.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const railCss = readFileSync(join(here, "..", "src", "strip-rail.css"), "utf8");
 
-/** The one media query the drawer lives in. */
+/** The media query the drawer lives in: the `max-width` block that carries its
+ * open rule. Not the FIRST such block — the rail's footer trigger has one of its
+ * own for the phone-sized footer button, above this one in the file. */
 function drawerBreakpoint(): number {
-  const block = /@media \(max-width: (\d+)px\) \{([\s\S]*?)\n\}/u.exec(railCss);
-  if (block === null) throw new Error("strip-rail.css has no max-width media query");
-  if (!block[2]?.includes(".shell-nav--open")) {
+  const blocks = [...railCss.matchAll(/@media \(max-width: (\d+)px\) \{([\s\S]*?)\n\}/gu)];
+  if (blocks.length === 0) throw new Error("strip-rail.css has no max-width media query");
+  const drawer = blocks.find((block) => block[2]?.includes(".shell-nav--open"));
+  if (drawer === undefined) {
     throw new Error("the drawer's open rule left the max-width media query");
   }
-  return Number(block[1]);
+  return Number(drawer[1]);
 }
 
 const workspace = workspaceModelFixture({ title: "drawer-workspace" });
