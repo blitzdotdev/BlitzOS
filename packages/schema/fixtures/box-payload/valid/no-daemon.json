@@ -1,0 +1,25 @@
+{
+  "version": "20260904T2200Z-a1b2c3d4",
+  "createdAt": 1788552000000,
+  "minUpdater": 1,
+  "files": [
+    {
+      "path": "rootfs/usr/local/bin/blitz-rules",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": "0755"
+    },
+    {
+      "path": "rootfs/opt/blitz/skel/agent-rules.md",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mode": "0644"
+    }
+  ],
+  "archive": {
+    "url": "http://thinlab.example/box-payload/20260904T2200Z-a1b2c3d4/payload.tar.gz",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "bytes": 850
+  },
+  "restart": {
+    "rules": ["rootfs/usr/local/bin/blitz-rules", "rootfs/opt/blitz/skel/agent-rules.md"]
+  }
+}

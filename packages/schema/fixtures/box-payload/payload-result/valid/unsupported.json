@@ -1,0 +1,6 @@
+{
+  "version": "20260904T2300Z-1234abcd",
+  "daemonVersion": "0.88.1+blitz.3",
+  "outcome": "unsupported",
+  "detail": "manifest requires updater protocol 2"
+}
