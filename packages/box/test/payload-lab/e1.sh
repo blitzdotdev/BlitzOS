@@ -18,6 +18,10 @@ turn_prompt=${LAB_E1_PROMPT:-"Use the shell to run 'sleep ${LAB_E1_TURN_SECONDS:
 turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt") \
   || experiment_fail "could not start the E1 turn"
 wait_session_running "$WORKSPACE_ID" 60 || experiment_fail "the E1 turn did not become active"
+started_status=$(node "$PAYLOAD_LAB_SESSION_DRIVER" session status "$turn_id") \
+  || experiment_fail "the E1 session did not sync back"
+printf '%s' "$started_status" | jq -e '.state == "running"' >/dev/null \
+  || experiment_fail "the E1 session is not the turn reported active"
 before_pids=$(service_pids "$WORKSPACE_ID")
 before_sessions=$(printf '%s\n%s\n' "$turn_id" "$(session_catalog "$WORKSPACE_ID")" | sed '/^$/d' | sort -u)
 

@@ -19,6 +19,10 @@ turn_prompt=${LAB_E4_PROMPT:-"Use the shell to run 'sleep $turn_seconds' and wai
 turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt") \
   || experiment_fail "could not start the E4 turn"
 wait_session_running "$WORKSPACE_ID" 60 || experiment_fail "the E4 turn did not become active"
+started_status=$(node "$PAYLOAD_LAB_SESSION_DRIVER" session status "$turn_id") \
+  || experiment_fail "the E4 session did not sync back"
+printf '%s' "$started_status" | jq -e '.state == "running"' >/dev/null \
+  || experiment_fail "the E4 session is not the turn reported active"
 before_pid=$(daemon_pid "$WORKSPACE_ID")
 
 publish_variant daemon-e4
@@ -63,6 +67,10 @@ done
 wait "$tick_pid" || experiment_fail "updater tick failed"
 wait_session_running "$WORKSPACE_ID" 60 \
   || experiment_fail "the interrupted turn was not re-dispatched"
+redispatched_status=$(node "$PAYLOAD_LAB_SESSION_DRIVER" session status "$turn_id") \
+  || experiment_fail "the re-dispatched E4 session did not sync back"
+printf '%s' "$redispatched_status" | jq -e '.state == "running"' >/dev/null \
+  || experiment_fail "the exact E4 turn was not running after redispatch"
 wait_payload_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" applied "$LAB_OUTCOME_TIMEOUT" \
   || experiment_fail "control plane did not record applied"
 

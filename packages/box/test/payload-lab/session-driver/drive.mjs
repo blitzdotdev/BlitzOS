@@ -298,6 +298,7 @@ async function openTunnel(argumentsList) {
     tunnel.once("spawn", resolvePromise);
     tunnel.once("error", reject);
   });
+  if (!Number.isInteger(tunnel.pid) || tunnel.pid <= 0) fail("SSH started without a process id");
   tunnel.unref();
 
   try {
