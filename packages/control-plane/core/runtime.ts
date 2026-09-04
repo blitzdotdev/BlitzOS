@@ -59,6 +59,10 @@ export interface RuntimeVariables {
   boxImageRef: string;
   boxImageSha256: string;
   boxImageTag: string;
+  /** Deployment-wide in-place payload pin. An empty ref disables delivery;
+   * version is the publisher-derived identifier paired with a non-empty ref. */
+  boxPayloadRef: string;
+  boxPayloadVersion: string;
   sessionTtlMs: number;
   requestRateLimiter?: RateLimit;
   googleClientId: string;

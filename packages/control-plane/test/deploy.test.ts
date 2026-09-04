@@ -14,6 +14,7 @@ import {
   commandFailureMessage,
   configVarProblems,
   configuredAccountId,
+  DEPLOY_OVERRIDE_VAR_NAMES,
   deployControlPlane,
   d1DatabasePatch,
   localSecretValueProblems,
@@ -215,12 +216,22 @@ describe("control-plane deploy command", () => {
     // needs no commit.
     expect(overrideVarsFromEnvironment({
       BLITZ_DEPLOY_VAR_CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+      BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF: "https://cp.example/box-payload/release-1/manifest.json",
+      BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION: "release-1",
       BLITZ_DEPLOY_VAR_PAYMENT_URL: "",
       CLOUDFLARE_API_TOKEN: "not-a-var",
       PAYMENT_URL: "unprefixed, so not a var either",
-    })).toEqual({ CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required" });
+    })).toEqual({
+      BOX_PAYLOAD_REF: "https://cp.example/box-payload/release-1/manifest.json",
+      BOX_PAYLOAD_VERSION: "release-1",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
 
     expect(overrideVarsFromEnvironment({})).toEqual({});
+    expect(() => overrideVarsFromEnvironment({ BLITZ_DEPLOY_VAR_PAYLOD_REF: "typo" }))
+      .toThrow("not a known deploy override");
+    expect(DEPLOY_OVERRIDE_VAR_NAMES).toContain("BOX_PAYLOAD_REF");
+    expect(DEPLOY_OVERRIDE_VAR_NAMES).toContain("BOX_PAYLOAD_VERSION");
   });
 
   it("passes the checked-out commit to the deploy, so GET /version can report it", async () => {
@@ -630,7 +641,14 @@ describe("control-plane deploy command", () => {
     // (step 9). Shipping any of them as a `<...>` placeholder made step 4
     // refuse to run and left the documented order impossible to follow.
     expect(placeholderVars(parseToml(wranglerExample))).toEqual([]);
-    for (const deferred of ["APP_URL", "BOX_IMAGE_REF", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_ZONE_ID"]) {
+    for (const deferred of [
+      "APP_URL",
+      "BOX_IMAGE_REF",
+      "BOX_PAYLOAD_REF",
+      "BOX_PAYLOAD_VERSION",
+      "CLOUDFLARE_ACCOUNT_ID",
+      "CLOUDFLARE_ZONE_ID",
+    ]) {
       expect(wranglerExample, deferred).toContain(`${deferred} = ""`);
     }
   });
@@ -682,6 +700,18 @@ describe("control-plane deploy command", () => {
       },
     })).toEqual([]);
     expect(configVarProblems({ vars: {} })).toEqual([]);
+    expect(configVarProblems({
+      vars: {
+        BOX_PAYLOAD_REF: "https://cp.example/box-payload/release-1/manifest.json",
+        BOX_PAYLOAD_VERSION: "release-1",
+      },
+    })).toEqual([]);
+    expect(configVarProblems({
+      vars: { BOX_PAYLOAD_REF: "not-a-url", BOX_PAYLOAD_VERSION: "release-1" },
+    })).toEqual([expect.stringContaining("BOX_PAYLOAD_REF")]);
+    expect(configVarProblems({
+      vars: { BOX_PAYLOAD_REF: "https://cp.example/manifest.json", BOX_PAYLOAD_VERSION: "" },
+    })).toEqual([expect.stringContaining("BOX_PAYLOAD_VERSION")]);
 
     await expect(
       deployControlPlane({

@@ -200,6 +200,10 @@ const machine: SharedShape<wire.MachineView, schema.MachineView> = {
   machineTypeId: "mv-2c2g@lab",
   volumeId: volume.id,
   volumeUsedPercent: 62,
+  payloadVersion: payloadManifest.version,
+  daemonVersion: payloadDaemon.version,
+  payloadOutcome: "rolled-back",
+  payloadReportedAt: 1_700_000_004_000,
   membershipId: "membership",
   error: null,
   createdAt: 1_700_000_000_000,
@@ -212,6 +216,10 @@ const unreportedMachine: SharedShape<wire.MachineView, schema.MachineView> = {
   ...machine,
   id: "machine-unreported",
   volumeUsedPercent: null,
+  payloadVersion: null,
+  daemonVersion: null,
+  payloadOutcome: null,
+  payloadReportedAt: null,
 };
 
 const machineStats: SharedShape<
@@ -252,6 +260,11 @@ const setMachineTypeRequest: SharedShape<
   wire.SetMachineTypeRequest,
   schema.SetMachineTypeRequest
 > = { machineTypeId: pricedMachineType.id };
+
+const setMachinePayloadHoldRequest: SharedShape<
+  wire.SetMachinePayloadHoldRequest,
+  schema.SetMachinePayloadHoldRequest
+> = { payloadHold: true };
 
 const addWorkspaceMemberRequest: SharedShape<
   wire.AddWorkspaceMemberRequest,
@@ -930,6 +943,7 @@ const fullFieldValues = [
   workspaceMember,
   viewerMember,
   machineResponse,
+  setMachinePayloadHoldRequest,
   setMachineTypeRequest,
   addWorkspaceMemberRequest,
   updateWorkspaceMemberRequest,
@@ -1054,6 +1068,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.MachineView>().toEqualTypeOf<schema.MachineView>();
     expectTypeOf<wire.MachineStatsRequest>().toEqualTypeOf<schema.MachineStatsRequest>();
     expectTypeOf<wire.MachineResponse>().toEqualTypeOf<schema.MachineResponse>();
+    expectTypeOf<wire.SetMachinePayloadHoldRequest>()
+      .toEqualTypeOf<schema.SetMachinePayloadHoldRequest>();
     expectTypeOf<wire.SetMachineTypeRequest>().toEqualTypeOf<schema.SetMachineTypeRequest>();
     expectTypeOf<wire.WorkspaceMemberView>().toEqualTypeOf<schema.WorkspaceMemberView>();
     expectTypeOf<wire.AddWorkspaceMemberRequest>().toEqualTypeOf<schema.AddWorkspaceMemberRequest>();

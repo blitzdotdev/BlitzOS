@@ -119,8 +119,8 @@ export function installControlPlaneRoutes(
   // /workspaces/:id routes it shares a prefix with.
   addWorkspaceEnvironmentRoutes(router, runtimeFactory);
   // Mostly box-authenticated (/workspaces/self/*), registered ahead for the
-  // same reason; its one session route (/workspaces/:id/box-update) collides
-  // with nothing.
+  // same reason. Its session routes arm whole-workspace image updates and set
+  // one machine's payload hold; neither collides with later registrations.
   addBoxConfigRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Box-authenticated too, and registered here for the same prefix reason: the
   // guest's own disk report (packages/schema/fixtures/machine-stats/).

@@ -189,6 +189,7 @@ export {
   type MachineStatsRequest,
   type MachineView,
   type ProvisionMemberMachineRequest,
+  type SetMachinePayloadHoldRequest,
   type SetMachineTypeRequest,
   type UpdateWorkspaceMemberRequest,
   type UpdateWorkspaceRequest,

@@ -77,6 +77,10 @@ test("embedded box-config parser matches every config fixture", (context) => {
   const parser = embeddedSection(bootstrap, "BOX_CONFIG_PARSER");
   const directory = mkdtempSync(path.join(tmpdir(), "blitz-box-config-"));
   const entries = fixtures("config-");
+  assert.ok(
+    entries.some(([name]) => name === "config-valid-payload.json"),
+    "the additive payload config fixture is missing",
+  );
   try {
     for (const [name, fixture] of entries) {
       const responsePath = path.join(directory, name);
@@ -93,6 +97,12 @@ test("embedded box-config parser matches every config fixture", (context) => {
           `${boxImageRef}\t${controlPlaneOrigin}\t${updateRequested}\n`,
           `${name}: parsed TSV mismatch`,
         );
+        if (name === "config-valid-payload.json") {
+          assert.equal(typeof fixture.response.payload, "object");
+          // The host image updater predates in-place payloads and must keep
+          // parsing its original three fields when the additive pin appears.
+          assert.ok(!result.stdout.includes("manifestUrl"));
+        }
       } else {
         assert.notEqual(result.status, 0, `${name} unexpectedly passed`);
       }

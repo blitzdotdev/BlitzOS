@@ -98,11 +98,30 @@ test("a config generated from the example carries every key", () => {
 test("the example declares deployment metadata and routes /version to the worker", () => {
   const example = readFileSync(path.join(packageDirectory, "wrangler.toml.example"), "utf8");
   assert.match(example, /GIT_COMMIT_SHA/u);
+  assert.match(example, /^BOX_PAYLOAD_REF = ""$/mu);
+  assert.match(example, /^BOX_PAYLOAD_VERSION = ""$/mu);
   assert.match(
     example,
     /CLOUD_WORKSPACE_CREDENTIAL_POLICY = "deployment-fallback"/u,
   );
   assert.match(example, /"\/version"/u);
+});
+
+test("a stale config is repaired with both halves of the payload pin", () => {
+  const example = readFileSync(path.join(packageDirectory, "wrangler.toml.example"), "utf8");
+  const stale = example
+    .replace(/^BOX_PAYLOAD_REF = ""\n/mu, "")
+    .replace(/^BOX_PAYLOAD_VERSION = ""\n/mu, "");
+  assert.deepEqual(missingConfigKeys(example, stale), [
+    "vars.BOX_PAYLOAD_REF",
+    "vars.BOX_PAYLOAD_VERSION",
+  ]);
+  const plan = configRepairPlan(example, stale);
+  assert.deepEqual(plan.filled, [
+    { path: "vars.BOX_PAYLOAD_REF", value: "" },
+    { path: "vars.BOX_PAYLOAD_VERSION", value: "" },
+  ]);
+  assert.deepEqual(plan.unfillable, []);
 });
 
 // --- routing list drift -----------------------------------------------------

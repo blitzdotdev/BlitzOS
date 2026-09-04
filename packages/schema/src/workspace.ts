@@ -1,3 +1,4 @@
+import type { BoxPayloadOutcome } from "./box-payload.js";
 import type { WorkspaceEnvironment } from "./environment.js";
 
 export const PHASES = [
@@ -64,6 +65,13 @@ export interface MachineView {
    * volume, or no guest has reported one (every box image before the reporter
    * shipped). Null is never 0 — an unmeasured disk is not an empty one. */
   volumeUsedPercent: number | null;
+  /** The payload and daemon versions from the guest's last payload report.
+   * Null means this machine has not reported since the payload channel
+   * shipped. */
+  payloadVersion: string | null;
+  daemonVersion: string | null;
+  payloadOutcome: BoxPayloadOutcome | null;
+  payloadReportedAt: number | null;
   membershipId: string;
   error: string | null;
   createdAt: number;
@@ -154,6 +162,13 @@ export interface MachineResponse {
  * location needs a volume move, which is deferred (plan §5). */
 export interface SetMachineTypeRequest {
   machineTypeId: string;
+}
+
+/** Enables or disables payload delivery for one machine. A hold leaves the
+ * deployment-wide pin in place and makes only this machine's box-config
+ * answer `payload: null`. */
+export interface SetMachinePayloadHoldRequest {
+  payloadHold: boolean;
 }
 
 export interface AddWorkspaceMemberRequest {

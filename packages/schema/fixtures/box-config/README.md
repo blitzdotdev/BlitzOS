@@ -15,7 +15,10 @@ URL), whose `controlPlaneOrigin` is exactly an http(s) origin (scheme, host,
 optional port, nothing after — the host writes it verbatim into
 `/var/lib/blitz/origin`, which the box gateway compares against the browser
 Origin header), and whose `updateRequested` is a boolean. Unknown extra keys
-are tolerated on both sides for forward compatibility. An unversioned or
+are tolerated on both sides for forward compatibility. That includes the
+additive `payload: {version, manifestUrl} | null` field consumed by the
+in-box payload updater: the old host image updater deliberately ignores it,
+as pinned by `config-valid-payload.json`. An unversioned or
 versioned tarball HTTPS `boxImageRef` is accepted by the parser; the updater
 then reports the attempt `unsupported` rather than rejecting the poll, so the
 origin refresh still happens. On a rejected envelope the host changes nothing
