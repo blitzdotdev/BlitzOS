@@ -20,6 +20,7 @@ export const BOX_PAYLOAD_RESTART_SERVICES = [
   "lody-projects",
   "lody-watchdog",
   "machine-stats",
+  "payload",
   "register",
   "remote-control",
   "rules",
