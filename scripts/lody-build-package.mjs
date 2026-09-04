@@ -22,6 +22,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   adapterContentSha256,
+  adapterGitContentSha256,
   LODY_ADAPTER_NAMES,
   readAdapterStamp,
 } from "./lody-sync-adapters.mjs";
@@ -207,6 +208,13 @@ function materializeAdapter(name, destination, sourceMode, treeish) {
   archiveGitTree(revision, destination);
 }
 
+function hasGitIndex() {
+  return spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
+    cwd: REPOSITORY,
+    stdio: "ignore",
+  }).status === 0;
+}
+
 function overlayAdapters(lodyRoot, provenance, sourceMode, treeish) {
   const adapterShas = {};
   for (const name of LODY_ADAPTER_NAMES) {
@@ -219,12 +227,22 @@ function overlayAdapters(lodyRoot, provenance, sourceMode, treeish) {
     materializeAdapter(name, destination, sourceMode, treeish);
     const stampFile = path.join(destination, "UPSTREAM.md");
     const stamp = readAdapterStamp(stampFile);
-    const contentSha256 = adapterContentSha256(destination);
+    const checkoutContentSha256 = adapterContentSha256(destination);
+    const contentSha256 = sourceMode
+      ? (hasGitIndex()
+          ? adapterGitContentSha256(REPOSITORY, name)
+          : checkoutContentSha256)
+      : adapterGitContentSha256(REPOSITORY, name, treeish);
     if (stamp.name !== name)
       throw new Error(`${name}: adapter stamp names ${stamp.name}`);
     if (stamp.sha !== provenance.adapterShas[name]) {
       throw new Error(
         `${name}: adapter stamp ${stamp.sha} differs from UPSTREAM.md ${provenance.adapterShas[name]}`,
+      );
+    }
+    if (checkoutContentSha256 !== contentSha256) {
+      throw new Error(
+        `${name}: adapter checkout ${checkoutContentSha256} differs from Git content ${contentSha256}`,
       );
     }
     if (contentSha256 !== stamp.contentSha256) {

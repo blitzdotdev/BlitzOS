@@ -74,7 +74,7 @@ list drifting as seams are added or retired.
 DECLARED_SEAM_FILES=$(mktemp)
 ACTUAL_SEAM_FILES=$(mktemp)
 UNDECLARED_SEAM_FILES=$(mktemp)
-rg -o '`(?:apps|packages)/[^`]+\.(?:ts|tsx|js|mjs)`' \
+grep -oE '`(apps|packages)/[^`]+\.(ts|tsx|js|mjs)`' \
   vendor/lody/BLITZ-PATCHES.md | tr -d '`' | sort -u | \
   while IFS= read -r file; do
     git cat-file -e "HEAD:vendor/lody/$file" 2>/dev/null && printf '%s\n' "$file"
@@ -319,8 +319,8 @@ serially:
 
 ```sh
 cd packages/webapp
-PAIR_TESTS=$(rg -l 'lody-daemon-harness' test \
-  --glob '*.test.ts' --glob '*.test.tsx' | grep -v '\.probe\.' | sort)
+PAIR_TESTS=$(grep -rl --include='*.test.ts' --include='*.test.tsx' \
+  'lody-daemon-harness' test | grep -v '\.probe\.' | sort)
 npx vitest run --maxWorkers=1 $PAIR_TESTS
 cd ../..
 ```

@@ -58,6 +58,20 @@ function runBinary(command, args, cwd, input) {
   return result.stdout;
 }
 
+function compareGitPaths(left, right) {
+  return Buffer.compare(Buffer.from(left.path), Buffer.from(right.path));
+}
+
+function contentSha256(files) {
+  files.sort(compareGitPaths);
+  const aggregate = createHash("sha256");
+  for (const file of files) {
+    const digest = createHash("sha256").update(file.bytes).digest("hex");
+    aggregate.update(`${file.path}\0${file.mode}\0${digest}\n`);
+  }
+  return aggregate.digest("hex");
+}
+
 function gitText(repository, args) {
   const stdout = runText("git", args, repository);
   return stdout.trim();
@@ -117,13 +131,67 @@ function walkFiles(root, directory, files) {
 export function adapterContentSha256(root) {
   const files = [];
   walkFiles(root, root, files);
-  files.sort((left, right) => left.path.localeCompare(right.path, "en"));
-  const aggregate = createHash("sha256");
-  for (const file of files) {
-    const digest = createHash("sha256").update(file.bytes).digest("hex");
-    aggregate.update(`${file.path}\0${file.mode}\0${digest}\n`);
+  return contentSha256(files);
+}
+
+function readBatchBlobs(repository, entries) {
+  if (entries.length === 0) return [];
+  const input = Buffer.from(`${entries.map((entry) => entry.object).join("\n")}\n`);
+  const output = runBinary("git", ["cat-file", "--batch"], repository, input);
+  const blobs = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const headerEnd = output.indexOf(0x0a, offset);
+    if (headerEnd === -1) throw new Error(`could not read adapter blob ${entry.object}`);
+    const header = output.subarray(offset, headerEnd).toString("utf8");
+    const match = /^([a-f0-9]+) blob ([0-9]+)$/u.exec(header);
+    if (match === null || match[1] !== entry.object) {
+      throw new Error(`invalid adapter blob response for ${entry.object}`);
+    }
+    const size = Number.parseInt(match[2], 10);
+    const start = headerEnd + 1;
+    const end = start + size;
+    if (output[end] !== 0x0a) throw new Error(`truncated adapter blob ${entry.object}`);
+    blobs.push(output.subarray(start, end));
+    offset = end + 1;
   }
-  return aggregate.digest("hex");
+  if (offset !== output.length) throw new Error("unexpected trailing adapter blob content");
+  return blobs;
+}
+
+function parseGitAdapterEntries(repository, name, treeish) {
+  const root = `vendor/lody-adapters/${name}`;
+  const prefix = `${root}/`;
+  const args = treeish === null
+    ? ["ls-files", "--stage", "-z", "--", root]
+    : ["ls-tree", "-rz", treeish, "--", root];
+  const output = runBinary("git", args, repository).toString("utf8");
+  return output.split("\0").filter((entry) => entry !== "").flatMap((entry) => {
+    const match = treeish === null
+      ? /^(100644|100755|120000) ([a-f0-9]+) ([0-3])\t([\s\S]+)$/u.exec(entry)
+      : /^(100644|100755|120000) blob ([a-f0-9]+)\t([\s\S]+)$/u.exec(entry);
+    if (match === null) throw new Error(`${name}: invalid Git adapter entry`);
+    const mode = match[1];
+    const object = match[2];
+    const stage = treeish === null ? match[3] : "0";
+    const file = treeish === null ? match[4] : match[3];
+    if (stage !== "0") throw new Error(`${name}: adapter index has an unresolved entry: ${file}`);
+    if (!file.startsWith(prefix)) throw new Error(`${name}: adapter Git path escapes its root`);
+    const relative = file.slice(prefix.length);
+    if (relative === "UPSTREAM.md") return [];
+    return [{ path: relative, mode, object }];
+  });
+}
+
+/** Hash the adapter bytes and modes stored in Git's index, or in a committed tree. */
+export function adapterGitContentSha256(repository, name, treeish = null) {
+  const entries = parseGitAdapterEntries(repository, name, treeish);
+  const blobs = readBatchBlobs(repository, entries);
+  return contentSha256(entries.map((entry, index) => ({
+    path: entry.path,
+    mode: entry.mode,
+    bytes: blobs[index],
+  })));
 }
 
 function stampValue(source, field) {
@@ -190,10 +258,16 @@ export function adapterDriftErrors(repository = DEFAULT_REPOSITORY) {
       const stamp = readAdapterStamp(path.join(root, "UPSTREAM.md"));
       const sha = gitlinkSha(repository, name);
       const url = adapterUrl(repository, name);
-      const contentSha256 = adapterContentSha256(root);
+      const contentSha256 = adapterGitContentSha256(repository, name);
+      const checkoutContentSha256 = adapterContentSha256(root);
       if (stamp.name !== name) errors.push(`${name}: stamp names ${stamp.name}`);
       if (stamp.sha !== sha) errors.push(`${name}: stamp ${stamp.sha} differs from gitlink ${sha}`);
       if (stamp.url !== url) errors.push(`${name}: stamp URL differs from .gitmodules`);
+      if (checkoutContentSha256 !== contentSha256) {
+        errors.push(
+          `${name}: checkout content ${checkoutContentSha256} differs from Git index ${contentSha256}`,
+        );
+      }
       if (stamp.contentSha256 !== contentSha256) {
         errors.push(`${name}: content hash ${contentSha256} differs from stamp ${stamp.contentSha256}`);
       }

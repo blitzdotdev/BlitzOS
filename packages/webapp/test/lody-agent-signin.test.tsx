@@ -28,12 +28,18 @@ import { Provider as JotaiProvider, createStore } from "jotai";
 import { I18nextProvider } from "react-i18next";
 import { RouterProvider } from "@tanstack/react-router";
 import { runtimeAtom } from "@lody/components/atoms/runtime";
+import { machineMetaCacheAtom } from "@lody/components/atoms/doc-meta";
 import {
   currentWorkspaceIdAtom,
   currentWorkspaceSlugAtom,
   setWorkspaceContextAtom,
 } from "@lody/components/atoms/workspace-context";
 import { useMachineAcpAuthentication } from "@lody/components/hooks/use-machine-acp-authentication";
+import {
+  ACP_AUTHENTICATION_INTERACTIONS_PROTOCOL_VERSION,
+  MACHINE_PROTOCOL_CAPABILITIES,
+  getMachineRoomId,
+} from "@lody/shared";
 import type { JsonValue } from "@blitzos/schema";
 import { AUTH_NOTICE_POLL_MS, LodyAgentAuthNotice } from "../src/lody/agent-auth-notice";
 import { sessionNeedsAgentSignIn } from "../src/lody/session-auth-recovery";
@@ -842,6 +848,39 @@ const AUTHORIZATION_URL =
   "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code";
 
 describe("the ACP sign-in panel, given a progress frame", () => {
+  it("asks for a machine update instead of opening a window without interactive auth", async () => {
+    const popups = installFakePopups();
+    const store = createStore();
+    store.set(runtimeAtom, stubRuntime({
+      withSessionStore: async <T,>(
+        _sessionId: string,
+        fn: (store: { getState: () => unknown }) => T,
+      ) => fn({ getState: () => ({ history: [noticeEntry("acp_auth_required")] }) }),
+    } as unknown as Partial<LodyWorkspaceRuntime>));
+    store.set(setWorkspaceContextAtom, { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID });
+    const mounted = await render(
+      <JotaiProvider store={store}>
+        <I18nextProvider i18n={initLodyI18n()}>
+          <LodyAgentAuthNotice store={store} sessionId="session-1" machineId={MACHINE_ID} />
+        </I18nextProvider>
+      </JotaiProvider>,
+    );
+    try {
+      await settle();
+      const start = [...mounted.container.querySelectorAll("button")].find((button) =>
+        /Sign in with Claude/u.test(button.textContent ?? ""),
+      );
+      expect(start?.disabled).toBe(true);
+      expect(mounted.container.textContent).toContain(
+        "Update the target Machine to use interactive authentication for this Provider.",
+      );
+      expect(popups.popups).toHaveLength(0);
+    } finally {
+      popups.restore();
+      await mounted.unmount();
+    }
+  });
+
   it("reaches its authorization state and navigates the window it opened", async () => {
     const popups = installFakePopups();
     let emit: ((message: Record<string, unknown>) => void) | null = null;
@@ -869,6 +908,15 @@ describe("the ACP sign-in panel, given a progress frame", () => {
     const store = createStore();
     store.set(runtimeAtom, runtime);
     store.set(setWorkspaceContextAtom, { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID });
+    store.set(machineMetaCacheAtom, {
+      [getMachineRoomId(MACHINE_ID)]: {
+        id: MACHINE_ID,
+        protocolCapabilities: {
+          [MACHINE_PROTOCOL_CAPABILITIES.acpAuthenticationInteractions]:
+            ACP_AUTHENTICATION_INTERACTIONS_PROTOCOL_VERSION,
+        },
+      },
+    });
     const mounted = await render(
       <JotaiProvider store={store}>
         <I18nextProvider i18n={initLodyI18n()}>

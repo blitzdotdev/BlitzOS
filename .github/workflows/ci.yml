@@ -79,8 +79,8 @@ jobs:
           LODY_REQUIRE_BUNDLE: "1"
         run: |
           test -f "$LODY_BUNDLE/dist/index.js"
-          mapfile -t pair_tests < <(rg -l 'lody-daemon-harness' test \
-            --glob '*.test.ts' --glob '*.test.tsx' | grep -v '\.probe\.' | sort)
+          mapfile -t pair_tests < <(grep -rl --include='*.test.ts' --include='*.test.tsx' \
+            'lody-daemon-harness' test | grep -v '\.probe\.' | sort)
           test "${#pair_tests[@]}" -gt 0
           npx vitest run --maxWorkers=1 "${pair_tests[@]}" 2>&1 | tee "$RUNNER_TEMP/lody-pair.log"
         working-directory: packages/webapp
