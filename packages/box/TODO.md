@@ -30,10 +30,10 @@ reserved for boxes already in the field. Successor plan:
   workspace directory is a caller bind mount at `/workspace`.
 - One unprivileged `blitz` user runs the work. Root does init, sshd, and UID
   mapping only. No password login. No root login.
-- Supervision: pinned s6-overlay. Service graph: init-state → enroll (first
-  start) → `blitz-cred register` → sshd · ttyd · dufs · HTTP gateway ·
-  `blitz-cred watch`. No CP config on the volume → enroll, register, and watch
-  are SKIPPED (2026-08-11). The box runs alone: `docker run` → working box,
+- Supervision: pinned s6-overlay. Service graph: init-state →
+  `blitz-cred register` → sshd · ttyd · dufs · HTTP gateway ·
+  `blitz-cred watch`. No CP config on the volume → register and watch are
+  SKIPPED (2026-08-11). The box runs alone: `docker run` → working box,
   zero accounts; agent credentials = native HOME files (`claude login` over
   ssh, once). The CP + broker are an opt-in overlay.
 - Image contents, all pinned by digest or version: `node:22-bookworm-slim` base
@@ -63,11 +63,11 @@ reserved for boxes already in the field. Successor plan:
     Never curl|sh.
   - Mac docs: Colima (decided 2026-08-11). Free, OSS. Other docker-compatible
     runtimes work, undocumented.
-- Enrollment: `blitz-cred enroll` (2026-08-11) — the shared device-flow client
-  from the broker Go module; no image-init script. First start, one-shot.
-  Generate the keypair atomically if absent. Run device authorization with the
-  pubkey. Print only the URI + user code. Persist the binding 0600. Reuse it
-  forever. Idempotent across interrupt and retry (Lane 1 FIX). Skipped when a
+- Enrollment: the box never enrolls itself (device-code `enroll` service and
+  `blitz-cred enroll` deleted 2026-09-04). Hosted provisioning writes the
+  origin and `box-credential.json` from the phone-home answer before the
+  container starts; the broker image keeps the shared device-flow client.
+  The paragraph below is history: Skipped when a
   credential already exists (hosted: phone_home delivered it) or no CP is
   configured.
 - Proof on later CP calls (decided 2026-08-11): the device-flow OAuth tokens.
@@ -116,9 +116,10 @@ reserved for boxes already in the field. Successor plan:
   Codex only).
 - Box-side WireGuard config tied to closed ingress. Standalone = SSH tunnel.
   Hosted WG lives on the host VM.
-- `blitz-git-credential`, with no replacement (decided 2026-08-11). Git auth
-  is caller-owned: `ssh -A`, `scp` a key, or pipe `gh auth token`. Docs show
-  the pattern.
+- `blitz-git-credential` was deleted 2026-08-11 and is back: it mints a
+  GitHub token control-plane-side (`/agent/credentials/github/token`) and is
+  wired through the baked `/etc/gitconfig`. `ssh -A`, `scp` a key, or piping
+  `gh auth token` still work for anyone who prefers them.
 
 ## Standalone connectivity (no closed ingress)
 
@@ -171,9 +172,9 @@ report.
    `scp` a key, or pipe `gh auth token` over ssh. The docs show the pattern.
    Prefer per-repo deploy keys over copying a main identity.
 6. Second pass, cross-package synthesis (2026-08-11): the box runs with no
-   control plane (enroll/register/watch skipped; HOME credentials) · hosted
+   control plane (register/watch skipped; HOME credentials) · hosted
    enrollment = the phone_home response delivers the credential, no human ·
-   enrollment code = `blitz-cred enroll`, shared with the broker image · the
+   no enrollment code on the box since 2026-09-04 · the
    cross-runtime conformance fixtures live in the shared `schema` package and
    pin every side of a contract. Front door: `packages/oss/README.md`.
 

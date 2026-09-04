@@ -21,8 +21,7 @@
 # something that shadows it.
 #
 # WHY THE FLAG GOES FIRST: codex accepts `-c` more than once and the last one
-# wins, so a caller that really wants a different value keeps the last word. The
-# recipe path already passes its own `-c model_reasoning_effort=…` this way.
+# wins, so a caller that really wants a different value keeps the last word.
 #
 # NOTHING HERE IS FATAL. The flag is an ordinary argument and codex ignores a
 # config key it does not know, so a future version that drops the key still

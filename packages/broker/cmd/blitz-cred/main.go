@@ -3,13 +3,11 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
-	"github.com/blitzdotdev/blitz-core/broker/internal/enroll"
 	"github.com/blitzdotdev/blitz-core/broker/internal/workspace"
 )
 
@@ -28,7 +26,6 @@ const registerTimeout = 45 * time.Second
 const usageText = `usage: blitz-cred COMMAND [ARGUMENTS]
 
   api-token                    print a currently-valid control-plane bearer, and nothing else
-  enroll --origin URL          claim this box's control-plane credential
   register                     register broker keys and pin the broker config
   token claude|codex           print the harness login token
   watch                        deposit harness logins to the broker as they change`
@@ -59,15 +56,6 @@ func run(args []string, output io.Writer) error {
 		return errors.New("BLITZ_STATE_DIR is required")
 	}
 	switch args[0] {
-	case "enroll":
-		flags := flag.NewFlagSet("enroll", flag.ContinueOnError)
-		flags.SetOutput(io.Discard)
-		origin := flags.String("origin", "", "control-plane origin")
-		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || *origin == "" {
-			return errors.New("usage: blitz-cred enroll --origin URL")
-		}
-		_, err := enroll.Run(context.Background(), stateDir, *origin, "blitz-cred", output, nil)
-		return err
 	case "register":
 		if len(args) != 1 {
 			return errors.New("register takes no arguments")
