@@ -69,7 +69,13 @@ interface OpenResult {
 function runOpen(args: string[], verb = "browser"): OpenResult {
   const directory = mkdtempSync(join(tmpdir(), "preview-focus-"));
   const focusPath = join(directory, "preview-focus.json");
+  // From the temp directory, never from wherever vitest was launched: a bare
+  // argument resolves against the CLI's cwd, and on a box this checkout lives
+  // under /workspace, where `abc` becomes a legal file target and the
+  // invalid-invocation cases read exit 0. CI runners sit outside /workspace,
+  // which is why this only failed on a box.
   const result = spawnSync("sh", [blitzPath, verb, "open", ...args], {
+    cwd: directory,
     encoding: "utf8",
     env: { ...process.env, BLITZ_PREVIEW_FOCUS_PATH: focusPath },
   });
