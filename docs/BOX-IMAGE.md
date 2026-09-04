@@ -67,11 +67,15 @@ configuration gate and under the `canary` environment:
    The build argument turns Lody on for canary while the committed
    `env.defaults` stays off for self-hosters; the Dockerfile rejects any
    non-empty value other than `0` or `1`.
-5. It runs
+5. It boots that enabled image through its real `/init` entrypoint with
+   `IMAGE=<imageTag> LODY_BOOT_ONLY=1 packages/box/test/smoke.sh`. The smoke has
+   a 180-second wall-clock readiness deadline and must pass before any archive
+   object is published.
+6. It runs
    `node packages/control-plane/scripts/publish-box-image.mjs --image <imageTag> --prefix <prefix> --app-url <APP_URL> --json publish.json`.
    The publisher uploads every part before `manifest.json`, so a release is
    not visible until all its parts exist.
-6. It exposes the release ref, tag, SHA-256, release id, and whether it built
+7. It exposes the release ref, tag, SHA-256, release id, and whether it built
    anything to the deploy job. The deploy pins those values and verifies that
    `/version` reports both the merged commit and the expected box-image tag.
 
@@ -246,12 +250,15 @@ copy; it carries the `--privileged` and long-`--mount` reasoning with it.
 key-only SSH, ttyd/tmux, files, ports, previews, DinD, and the
 unprivileged degradation path. It builds both the default-disabled image and
 the same `BLITZ_LODY_SESSIONS=1` variant canary ships, then boots the enabled
-variant. The Lody checks wait up to three minutes for the supervised daemon and
-bridge, probe bridge health and `/lody/platform`, compare the installed and
-outer `BUILD.json` bytes, inspect the live daemon environment and cgroup, and
-require its built-in-MCP-disable log. The shipping CLI has no credential-free
-adapter, so real session-leaf limits and cleanup are instead exercised by the
-vendor sandbox suite in the daemon pair gate.
+variant. The Lody checks use a 180-second wall-clock deadline with bounded host
+commands while waiting for the supervised daemon and bridge, probe bridge
+health and `/lody/platform`, compare the installed and outer `BUILD.json`
+bytes, inspect the live daemon environment and cgroup, and require its
+built-in-MCP-disable log. In CI the smoke also requires memory, pids, and CPU
+delegation and proves that the `blitz` user can create and remove a child under
+`lody-sessions` with `memory.max`, `pids.max`, and `cpu.max`. The shipping CLI
+has no credential-free adapter, so real session limits and cleanup are instead
+exercised by the vendor sandbox suite in the daemon pair gate.
 
 ```sh
 # Builds a throwaway blitz-box:smoke from this tree, then tests it:

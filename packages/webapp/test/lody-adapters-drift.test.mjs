@@ -37,3 +37,23 @@ test("an untracked non-empty adapter destination is a local change", () => {
     rmSync(repository, { recursive: true, force: true });
   }
 });
+
+test("an ignored-only adapter destination is a local change", () => {
+  const repository = mkdtempSync(
+    path.join(tmpdir(), "lody-adapter-ignored-status-"),
+  );
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: repository });
+    writeFileSync(
+      path.join(repository, ".gitignore"),
+      "vendor/lody-adapters/core/dist/\n",
+    );
+    const destination = path.join(repository, "vendor/lody-adapters/core/dist");
+    mkdirSync(destination, { recursive: true });
+    writeFileSync(path.join(destination, "generated.js"), "export {};\n");
+
+    expect(destinationHasLocalChanges(repository, "core")).toBe(true);
+  } finally {
+    rmSync(repository, { recursive: true, force: true });
+  }
+});

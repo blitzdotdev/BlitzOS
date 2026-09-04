@@ -115,16 +115,19 @@ describe("the reviewed Lody package manifest", () => {
 });
 
 describe("Lody package publication", () => {
-  it("replaces the tarball and stamp pair without retaining stale archives", () => {
+  it("publishes into an empty output despite an interrupted sibling staging directory", () => {
     const root = mkdtempSync(path.join(tmpdir(), "lody-publish-"));
     scratch.push(root);
     const sourceTarball = path.join(root, "lody-2.0.0.tgz");
     const output = path.join(root, "artifact");
     writeFileSync(sourceTarball, "new tarball\n");
     mkdirSync(output);
-    writeFileSync(path.join(output, "lody-1.0.0.tgz"), "old tarball\n");
-    writeFileSync(path.join(output, "lody-0.9.0.tgz"), "older tarball\n");
-    writeFileSync(path.join(output, "BUILD.json"), "old stamp\n");
+    const interrupted = path.join(root, ".artifact.publish-interrupted");
+    mkdirSync(interrupted);
+    writeFileSync(
+      path.join(interrupted, "lody-1.0.0.tgz"),
+      "partial tarball\n",
+    );
 
     const published = publishPackageOutput(
       sourceTarball,
@@ -139,6 +142,27 @@ describe("Lody package publication", () => {
     expect(readFileSync(published.tarball, "utf8")).toBe("new tarball\n");
     expect(readFileSync(published.stampFile, "utf8")).toBe(
       '{"upstreamSha":"new"}\n',
+    );
+    expect(readFileSync(path.join(interrupted, "lody-1.0.0.tgz"), "utf8")).toBe(
+      "partial tarball\n",
+    );
+  });
+
+  it("refuses a non-empty output directory without replacing its contents", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "lody-publish-refuse-"));
+    scratch.push(root);
+    const sourceTarball = path.join(root, "lody-2.0.0.tgz");
+    const output = path.join(root, "artifact");
+    writeFileSync(sourceTarball, "new tarball\n");
+    mkdirSync(output);
+    writeFileSync(path.join(output, "BUILD.json"), "existing stamp\n");
+
+    expect(() =>
+      publishPackageOutput(sourceTarball, '{"upstreamSha":"new"}\n', output),
+    ).toThrow(/--out must name a nonexistent or empty directory/u);
+    expect(readdirSync(output)).toEqual(["BUILD.json"]);
+    expect(readFileSync(path.join(output, "BUILD.json"), "utf8")).toBe(
+      "existing stamp\n",
     );
   });
 });

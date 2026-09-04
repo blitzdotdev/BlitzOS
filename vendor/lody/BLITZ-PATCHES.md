@@ -1828,11 +1828,14 @@ service values. The `Lody daemon pair gate` runs
 `apps/cli/tests/session-sandbox.test.ts` from the built scratch tree, covering
 the configured sibling parent, leaf `pids.max`, unlimited memory/CPU, process
 placement, termination, and cleanup as well as the upstream defaults. The
-enabled-image smoke proves the real s6 daemon enters `lody.scope` and that the
-pre-created sibling parent has the expected owner, controllers, unlimited
-parent `pids.max`, and 4096-process enclosing user ceiling. It does not claim a
-real leaf: the shipping CLI registers only credential-requiring Claude and
-Codex adapters, so CI cannot create a session without a member credential.
+enabled-image smoke proves the real s6 daemon enters `lody.scope`, requires
+memory, pids, and CPU delegation in CI, and runs as `blitz` to create and remove
+a probe child beneath the pre-created sibling parent. That child must expose
+`memory.max`, `pids.max`, and `cpu.max`; the parent must also retain its expected
+owner, unlimited `pids.max`, and 4096-process enclosing user ceiling. The probe
+is not presented as a real session: the shipping CLI registers only
+credential-requiring Claude and Codex adapters, so CI cannot create one without
+a member credential.
 
 **Candidate upstream PR:** “make the execution-sandbox cgroup parent and
 capacity allocation host-configurable.” Parse an optional parent path and an

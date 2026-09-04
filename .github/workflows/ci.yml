@@ -160,8 +160,18 @@ jobs:
   box-image:
     name: Box image build check (amd64)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # 40 minutes for the two image builds, the smoke's hard 3-minute boot
+    # deadline, and 2 minutes for diagnostics and cleanup.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build and boot the Lody-enabled image
         run: packages/box/test/smoke.sh
+      - name: Upload box smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: box-smoke-diagnostics
+          path: packages/box/test/.smoke-tmp/**
+          if-no-files-found: warn
+          include-hidden-files: true

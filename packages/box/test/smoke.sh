@@ -20,46 +20,74 @@ smoke_tmp="$script_dir/.smoke-tmp"
 mkdir -p "$smoke_tmp"
 test_dir=$(mktemp -d "$smoke_tmp/run.XXXXXX")
 preserve_test_dir=false
+diagnostics_collected=false
 
 "$script_dir/syntax.sh"
 
 cleanup() {
-  docker rm -f "$container" >/dev/null 2>&1 || true
-  docker rm -f "$unprivileged_container" >/dev/null 2>&1 || true
-  docker volume rm "$state_volume" >/dev/null 2>&1 || true
-  docker volume rm "$unprivileged_volume" >/dev/null 2>&1 || true
-  docker image rm "$lody_sessions_image" >/dev/null 2>&1 || true
+  timeout --kill-after=1s 10s docker rm -f "$container" >/dev/null 2>&1 || true
+  timeout --kill-after=1s 10s docker rm -f "$unprivileged_container" >/dev/null 2>&1 || true
+  timeout --kill-after=1s 10s docker volume rm "$state_volume" >/dev/null 2>&1 || true
+  timeout --kill-after=1s 10s docker volume rm "$unprivileged_volume" >/dev/null 2>&1 || true
+  timeout --kill-after=1s 10s docker image rm "$lody_sessions_image" >/dev/null 2>&1 || true
   if [ "$preserve_test_dir" != true ]; then
     rm -rf "$test_dir"
   fi
 }
 trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
-fail() {
-  echo "FAIL: $*" >&2
+collect_diagnostics() {
+  if [ "$diagnostics_collected" = true ]; then
+    return
+  fi
+  diagnostics_collected=true
   preserve_test_dir=true
   diagnostics="$test_dir/failure-diagnostics.log"
   {
     echo "== docker logs: $container =="
-    docker logs "$container" 2>&1 || true
+    timeout --kill-after=1s 10s docker logs "$container" 2>&1 || true
     echo
     echo "== s6 service list: $container =="
-    docker exec "$container" /command/s6-rc -a list 2>&1 || true
+    timeout --kill-after=1s 10s docker exec "$container" /command/s6-rc -a list 2>&1 || true
     echo
     echo "== s6 service state: $container =="
-    for service_path in $(docker exec "$container" sh -c 'find /run/service -mindepth 1 -maxdepth 1 -type d -print' 2>/dev/null || true); do
-      docker exec "$container" /command/s6-svstat "$service_path" 2>&1 || true
-    done
+    service_paths=$(timeout --kill-after=1s 10s docker exec "$container" \
+      sh -c 'find /run/service -mindepth 1 -maxdepth 1 -type d -print' 2>/dev/null || true)
+    while IFS= read -r service_path; do
+      [ -n "$service_path" ] || continue
+      timeout --kill-after=1s 10s docker exec "$container" \
+        /command/s6-svstat "$service_path" 2>&1 || true
+    done <<<"$service_paths"
     echo
     echo "== docker logs: $unprivileged_container =="
-    docker logs "$unprivileged_container" 2>&1 || true
+    timeout --kill-after=1s 10s docker logs "$unprivileged_container" 2>&1 || true
+    echo
+    echo "== .smoke-tmp files =="
+    find "$smoke_tmp" -type f -printf '%p (%s bytes)\n' 2>&1 || true
   } >"$diagnostics"
+  cat "$diagnostics" >&2
   echo "Diagnostics preserved at: $diagnostics" >&2
+}
+
+fail() {
+  trap - ERR
+  echo "FAIL: $*" >&2
+  collect_diagnostics
   exit 1
 }
+
+signal_failure() {
+  local signal=$1
+  local status=$2
+  trap - ERR HUP INT TERM
+  echo "FAIL: received $signal" >&2
+  collect_diagnostics
+  exit "$status"
+}
+
+trap 'signal_failure HUP 129' HUP
+trap 'signal_failure INT 130' INT
+trap 'signal_failure TERM 143' TERM
 trap 'fail "unexpected command failure at line $LINENO"' ERR
 
 if [ -z "${IMAGE:-}" ]; then
@@ -110,24 +138,42 @@ docker run -d \
 
 ready=false
 platform_json=''
-for _attempt in $(seq 1 900); do
-  if [ "$(docker inspect --format '{{.State.Running}}' "$container")" != true ]; then
+readiness_deadline=$((SECONDS + 180))
+run_readiness_command() {
+  local remaining=$((readiness_deadline - SECONDS))
+  local command_timeout=5
+  [ "$remaining" -gt 0 ] || return 124
+  if [ "$remaining" -lt "$command_timeout" ]; then
+    command_timeout=$remaining
+  fi
+  timeout --kill-after=1s "${command_timeout}s" "$@"
+}
+
+while [ "$SECONDS" -lt "$readiness_deadline" ]; do
+  running=$(run_readiness_command docker inspect \
+    --format '{{.State.Running}}' "$container" 2>/dev/null || true)
+  if [ "$running" = false ]; then
     fail "container exited during startup"
   fi
-  listeners=$(docker exec "$container" ss -ltnH 2>/dev/null || true)
-  platform_json=$(docker exec "$container" \
+  listeners=$(run_readiness_command docker exec "$container" \
+    ss -ltnH 2>/dev/null || true)
+  platform_json=$(run_readiness_command docker exec "$container" \
     curl --silent --show-error --fail --max-time 2 \
     http://127.0.0.1:7445/lody/platform 2>/dev/null || true)
-  lody_health=$(docker exec "$container" \
+  lody_health=$(run_readiness_command docker exec "$container" \
     curl --silent --show-error --fail --max-time 2 \
     --unix-socket /var/lib/blitz/lody-bridge.sock \
     http://localhost/healthz 2>/dev/null || true)
+  lody_daemon_state=$(run_readiness_command docker exec "$container" \
+    /command/s6-svstat /run/service/lody-daemon 2>/dev/null || true)
+  lody_bridge_state=$(run_readiness_command docker exec "$container" \
+    /command/s6-svstat /run/service/lody-bridge 2>/dev/null || true)
   if grep -q '0.0.0.0:22' <<<"$listeners" \
     && grep -q '127.0.0.1:7443' <<<"$listeners" \
     && grep -q '127.0.0.1:7445' <<<"$listeners" \
     && grep -q '127.0.0.1:17445' <<<"$listeners" \
-    && docker exec "$container" /command/s6-svstat /run/service/lody-daemon 2>/dev/null | grep -q '^up' \
-    && docker exec "$container" /command/s6-svstat /run/service/lody-bridge 2>/dev/null | grep -q '^up' \
+    && grep -q '^up' <<<"$lody_daemon_state" \
+    && grep -q '^up' <<<"$lody_bridge_state" \
     && grep -q '"ok"[[:space:]]*:[[:space:]]*true' <<<"$lody_health" \
     && [ -n "$platform_json" ]; then
     ready=true
@@ -211,6 +257,7 @@ if [ "$boundary_expected" = no ]; then
   docker exec "$container" test ! -d /sys/fs/cgroup/blitz-system.slice \
     || fail "no memory controller here, yet a half-built system slice exists"
   echo "SKIP memory boundary layout (memory controller is not delegated here; CI and the Hetzner lab assert it)"
+  echo "session-sandbox: SKIP (no delegation)"
 else
 docker exec "$container" test -d /sys/fs/cgroup/blitz-system.slice \
   || fail "the system slice was not created"
@@ -273,9 +320,8 @@ owner=$(docker exec "$container" stat -c %u:%g /sys/fs/cgroup/blitz-system.slice
 # The Lody daemon's per-session leaves live BESIDE its own leaf, under a
 # parent that already hands them every controller the sandbox requires, and
 # that the Blitz identity owns — the daemon mkdirs and rmdirs the leaves
-# itself. cpu is asserted only where the host delegates it; the boundary does
-# not need it, the sandbox does, and blitz-cgroup enables it best-effort for
-# that reason.
+# itself. The memory boundary can operate without cpu, but the Lody sandbox
+# requires cpu.max and otherwise falls back to a noop sandbox.
 docker exec "$container" test -d /sys/fs/cgroup/blitz-user.slice/lody-sessions \
   || fail "the lody-sessions parent was not created"
 owner=$(docker exec "$container" stat -c %u:%g /sys/fs/cgroup/blitz-user.slice/lody-sessions/cgroup.procs)
@@ -286,15 +332,40 @@ for controller in memory pids; do
   grep -qw "$controller" <<<"$session_controllers" \
     || fail "lody-sessions does not hand $controller to its leaves: [$session_controllers]"
 done
-if docker exec "$container" grep -qw cpu /sys/fs/cgroup/cgroup.controllers; then
-  grep -qw cpu <<<"$session_controllers" \
-    || fail "cpu is delegated here, yet lody-sessions does not hand it to its leaves: [$session_controllers]"
-fi
 session_parent_pids=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/lody-sessions/pids.max)
 [ "$session_parent_pids" = max ] \
   || fail "lody-sessions parent pids.max is [$session_parent_pids], expected max beneath the 4096-process user ceiling"
 user_pids=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/pids.max)
 [ "$user_pids" = 4096 ] || fail "the user slice pids.max is [$user_pids], expected 4096"
+
+session_sandbox_delegated=yes
+if ! grep -qw cpu <<<"$session_controllers"; then
+  session_sandbox_delegated=no
+  if [ "${CI:-}" = true ]; then
+    fail "CI did not delegate cpu to lody-sessions; Lody requires cpu.max and would use the noop sandbox: [$session_controllers]"
+  fi
+fi
+if [ "$session_sandbox_delegated" = yes ]; then
+  if docker exec --user blitz "$container" sh -eu -c '
+    probe=/sys/fs/cgroup/blitz-user.slice/lody-sessions/.smoke-probe-$$
+    cleanup_probe() { rmdir "$probe" 2>/dev/null || true; }
+    trap cleanup_probe EXIT
+    mkdir "$probe"
+    for required in pids.max memory.max cpu.max; do
+      test -e "$probe/$required"
+    done
+    rmdir "$probe"
+    trap - EXIT
+  '; then
+    echo "PASS session-sandbox delegated child probe (pids.max, memory.max, cpu.max)"
+  elif [ "${CI:-}" = true ]; then
+    fail "the blitz user could not create and remove a fully controlled child under lody-sessions"
+  else
+    echo "session-sandbox: SKIP (no delegation)"
+  fi
+else
+  echo "session-sandbox: SKIP (no delegation)"
+fi
 echo "PASS memory boundary layout"
 fi
 

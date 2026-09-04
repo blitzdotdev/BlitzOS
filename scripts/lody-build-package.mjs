@@ -4,11 +4,13 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -41,7 +43,8 @@ Usage:
   node scripts/lody-build-package.mjs [options]
 
 Options:
-  --out <dir>       Write the tarball and BUILD.json here (default: ./lody-build).
+  --out <dir>       Write the tarball and BUILD.json to a nonexistent or empty
+                    directory (default: ./lody-build).
   --tree-ish <rev>  Export <rev>:vendor/lody and its adapter snapshots (default: HEAD).
   --source <dir>    Copy an already-materialized Lody tree instead of using Git.
   --scratch <dir>   Build in this new directory and preserve it for seam tests.
@@ -401,7 +404,52 @@ function parseCli(argv) {
   return options;
 }
 
-/** Publish one verified tarball and its stamp as a single directory swap. */
+function hasErrorCode(error, code) {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+function assertEmptyOutputDirectory(outputDirectory) {
+  if (!existsSync(outputDirectory)) return;
+  if (!lstatSync(outputDirectory).isDirectory()) {
+    throw new Error(
+      `--out must name a nonexistent or empty directory; ${outputDirectory} is not a directory`,
+    );
+  }
+  if (readdirSync(outputDirectory).length !== 0) {
+    throw new Error(
+      `--out must name a nonexistent or empty directory; refusing non-empty ${outputDirectory}`,
+    );
+  }
+}
+
+function reserveEmptyOutputDirectory(outputDirectory) {
+  assertEmptyOutputDirectory(outputDirectory);
+  if (!existsSync(outputDirectory)) {
+    try {
+      mkdirSync(outputDirectory);
+    } catch (error) {
+      if (!hasErrorCode(error, "EEXIST")) throw error;
+    }
+  }
+  assertEmptyOutputDirectory(outputDirectory);
+
+  const reservation = path.join(outputDirectory, ".lody-publish.lock");
+  let descriptor;
+  try {
+    descriptor = openSync(reservation, "wx", 0o600);
+  } catch (error) {
+    if (hasErrorCode(error, "EEXIST")) {
+      throw new Error(
+        `--out must name a nonexistent or empty directory; refusing non-empty ${outputDirectory}`,
+      );
+    }
+    throw error;
+  }
+  closeSync(descriptor);
+  return reservation;
+}
+
+/** Publish one verified tarball and its stamp into a fresh output directory. */
 export function publishPackageOutput(
   scratchTarball,
   stampJson,
@@ -410,12 +458,8 @@ export function publishPackageOutput(
   const parent = path.dirname(outputDirectory);
   const base = path.basename(outputDirectory);
   mkdirSync(parent, { recursive: true });
+  const reservation = reserveEmptyOutputDirectory(outputDirectory);
   const staging = mkdtempSync(path.join(parent, `.${base}.publish-`));
-  const backup = path.join(
-    parent,
-    `.${base}.backup-${process.pid}-${Date.now().toString(36)}`,
-  );
-  let movedExisting = false;
   try {
     const stagedTarball = path.join(staging, path.basename(scratchTarball));
     cpSync(scratchTarball, stagedTarball);
@@ -431,22 +475,18 @@ export function publishPackageOutput(
       );
     }
 
-    if (existsSync(outputDirectory)) {
-      renameSync(outputDirectory, backup);
-      movedExisting = true;
-    }
-    try {
-      renameSync(staging, outputDirectory);
-    } catch (error) {
-      if (movedExisting && !existsSync(outputDirectory)) {
-        renameSync(backup, outputDirectory);
-        movedExisting = false;
-      }
-      throw error;
-    }
-    if (movedExisting) {
-      rmSync(backup, { recursive: true, force: true });
-      movedExisting = false;
+    renameSync(
+      stagedTarball,
+      path.join(outputDirectory, path.basename(scratchTarball)),
+    );
+    renameSync(stagedStamp, path.join(outputDirectory, "BUILD.json"));
+    const publishedTarballs = readdirSync(outputDirectory).filter((entry) =>
+      /^lody-.+\.tgz$/u.test(entry),
+    );
+    if (publishedTarballs.length !== 1) {
+      throw new Error(
+        `published Lody output contains ${publishedTarballs.length} tarballs; expected exactly one`,
+      );
     }
     return {
       tarball: path.join(outputDirectory, path.basename(scratchTarball)),
@@ -454,9 +494,7 @@ export function publishPackageOutput(
     };
   } finally {
     rmSync(staging, { recursive: true, force: true });
-    if (movedExisting && !existsSync(outputDirectory) && existsSync(backup)) {
-      renameSync(backup, outputDirectory);
-    }
+    rmSync(reservation, { force: true });
   }
 }
 
@@ -526,6 +564,9 @@ export function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${usage()}\n`);
     return;
   }
+  // Refuse replacement before doing the expensive install and build. The
+  // publisher checks again and reserves the directory against another writer.
+  assertEmptyOutputDirectory(options.out);
   const started = Date.now();
   let scratch;
   if (options.scratch === null) {

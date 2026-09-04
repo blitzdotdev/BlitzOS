@@ -231,7 +231,14 @@ Do not edit its contents by hand.
 
 export function destinationHasLocalChanges(repository, name) {
   const relative = `vendor/lody-adapters/${name}`;
-  return gitText(repository, ["status", "--porcelain=v1", "--untracked-files=all", "--", relative]) !== "";
+  return gitText(repository, [
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "--ignored",
+    "--",
+    relative,
+  ]) !== "";
 }
 
 function fetchAdapter(scratch, repository, name) {
