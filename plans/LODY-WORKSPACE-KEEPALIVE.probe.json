@@ -6,103 +6,104 @@
   "cycles": 5,
   "coldB": {
     "target": "B",
-    "visible": 170.3847089999981,
-    "ready": 438.12483200000133,
-    "socketUsable": 191.65273799999704
+    "visible": 154.5938890000034,
+    "ready": 323.3741399999999,
+    "socketUsable": 172.0210969999971
   },
   "activations": [
     {
       "target": "B",
-      "visible": 158.28728899999987,
-      "ready": 158.28728899999987,
-      "socketUsable": 0.2360419999968144
+      "visible": 139.32996200000343,
+      "ready": 139.32996200000343,
+      "socketUsable": 0.26456400000461144
     },
     {
       "target": "A",
-      "visible": 181.43007300000318,
-      "ready": 181.43007300000318,
-      "socketUsable": 0.08488799999759067
+      "visible": 146.2431660000002,
+      "ready": 146.2431660000002,
+      "socketUsable": 0.03575599999749102
     },
     {
       "target": "B",
-      "visible": 177.06729600000108,
-      "ready": 177.06729600000108,
-      "socketUsable": 0.06864900000073249
+      "visible": 136.6469089999955,
+      "ready": 136.6469089999955,
+      "socketUsable": 0.03419399999984307
     },
     {
       "target": "A",
-      "visible": 238.41456599999947,
-      "ready": 238.41456599999947,
-      "socketUsable": 0.05579299999953946
+      "visible": 122.63858800000162,
+      "ready": 122.63858800000162,
+      "socketUsable": 0.03491600000415929
     },
     {
       "target": "B",
-      "visible": 148.92665499999566,
-      "ready": 148.92665499999566,
-      "socketUsable": 0.037721000000601634
+      "visible": 132.88298699999723,
+      "ready": 132.88298699999723,
+      "socketUsable": 0.03458400000090478
     },
     {
       "target": "A",
-      "visible": 170.13027399999555,
-      "ready": 170.13027399999555,
-      "socketUsable": 0.05157699999836041
+      "visible": 160.83116199999495,
+      "ready": 160.83116199999495,
+      "socketUsable": 0.060572999995201826
     },
     {
       "target": "B",
-      "visible": 149.4622359999994,
-      "ready": 149.4622359999994,
-      "socketUsable": 0.04479400000127498
+      "visible": 128.8102080000026,
+      "ready": 128.8102080000026,
+      "socketUsable": 0.03700000000389991
     },
     {
       "target": "A",
-      "visible": 127.34993799999938,
-      "ready": 127.34993799999938,
-      "socketUsable": 0.03976400000101421
+      "visible": 144.73058099999616,
+      "ready": 144.73058099999616,
+      "socketUsable": 0.05209699999977602
     },
     {
       "target": "B",
-      "visible": 116.60023800000636,
-      "ready": 116.60023800000636,
-      "socketUsable": 0.05187600000499515
+      "visible": 128.39680699999735,
+      "ready": 128.39680699999735,
+      "socketUsable": 0.039013000001432374
     },
     {
       "target": "A",
-      "visible": 100.02997499999765,
-      "ready": 100.02997499999765,
-      "socketUsable": 0.025899000000208616
+      "visible": 114.50247699999454,
+      "ready": 114.50247699999454,
+      "socketUsable": 0.06311699999787379
     }
   ],
   "activationP50": {
-    "visible": 149.4622359999994,
-    "ready": 149.4622359999994
+    "visible": 132.88298699999723,
+    "ready": 132.88298699999723
   },
   "activationP95": {
-    "visible": 238.41456599999947,
-    "ready": 238.41456599999947
+    "visible": 160.83116199999495,
+    "ready": 160.83116199999495
   },
-  "cycleP50": 319.0569289999912,
-  "cycleP95": 415.48186200000055,
+  "cycleP50": 273.54078899999877,
+  "cycleP95": 293.7141489999922,
   "memory": {
     "before": {
-      "rss": 731561984,
-      "heapUsed": 565565088,
-      "external": 12131170,
+      "rss": 730640384,
+      "heapUsed": 571752312,
+      "external": 12154459,
       "openSockets": 1,
       "gcExposed": false
     },
     "twoLive": {
-      "rss": 741654528,
-      "heapUsed": 580723640,
-      "external": 12146207,
+      "rss": 743878656,
+      "heapUsed": 574038952,
+      "external": 12165023,
       "openSockets": 2,
       "gcExposed": false
     },
     "afterEviction": {
-      "rss": 754585600,
-      "heapUsed": 576762064,
-      "external": 12073884,
+      "rss": 782675968,
+      "heapUsed": 615998768,
+      "external": 12288387,
       "openSockets": 1,
       "gcExposed": false
     }
-  }
+  },
+  "conditions": "quiet box: no other test run or build in progress (the earlier run in this file's history was taken beside two other agents)"
 }

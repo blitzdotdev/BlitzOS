@@ -281,14 +281,19 @@ element sizes. It does not measure browser layout, paint, tunnels, or product
 latency. The committed artifact is
 `plans/LODY-WORKSPACE-KEEPALIVE.probe.json`.
 
-The 2026-09-04 run produced these observable-boundary results:
+The 2026-09-04 run on a quiet box produced these observable-boundary results.
+"Visible" waits for the ownership handoff commit, so it includes every effect
+Activity re-runs on reveal and every re-render those effects schedule, all
+flushed by `act()`. A browser paints the revealed DOM before that work, so the
+number is an upper bound on first paint, not a layout-effect mark. An earlier
+run beside two other test jobs measured 149.5 / 238.4 ms for the same rows.
 
 | Measurement | Result |
 |---|---:|
-| Cold B visible / ready | 170.4 / 438.1 ms |
-| Retained visible p50 / p95 (10 samples) | 149.5 / 238.4 ms |
-| Retained ready p50 / p95 (10 samples) | 149.5 / 238.4 ms |
-| Full A to B to A cycle p50 / p95 | 319.1 / 415.5 ms |
+| Cold B visible / ready | 154.6 / 323.4 ms |
+| Retained visible p50 / p95 (10 samples) | 132.9 / 160.8 ms |
+| Retained ready p50 / p95 (10 samples) | 132.9 / 160.8 ms |
+| Full A to B to A cycle p50 / p95 | 273.5 / 293.7 ms |
 | Open sockets before B / with both / after A eviction | 1 / 2 / 1 |
 
 The exact command is stored in the artifact. It uses the source-built
