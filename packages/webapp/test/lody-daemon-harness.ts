@@ -20,15 +20,14 @@
  * this box is 75 bytes, and `<scratchpad>/lody-data/run/lody-oss-loro-data-plane.sock`
  * is 118. So the data dir is a short `os.tmpdir()` path, not the scratchpad.
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -41,9 +40,8 @@ import {
   type ServerResponse,
 } from "node:http";
 import { createConnection, createServer as createTcpServer } from "node:net";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { resolveAtomicBuildCache } from "./lody-build-cache.js";
 
 /**
  * Repo root, found by walking up from the working directory.
@@ -64,146 +62,41 @@ export function repoRoot(): string {
 }
 const INSTALLED_LODY_BUNDLE = "/opt/blitz/npm/lib/node_modules/lody";
 
-function upstreamSha(root: string): string {
-  const source = readFileSync(join(root, "vendor/lody/UPSTREAM.md"), "utf8");
-  const sha = /\| Pinned commit \| `([a-f0-9]{40})` \|/u.exec(source)?.[1];
-  if (sha === undefined)
-    throw new Error("vendor/lody/UPSTREAM.md has no pinned commit");
-  return sha;
-}
-
-function localBuildFingerprint(root: string): string {
-  const digest = createHash("sha256");
-  const addPath = (relative: string): void => {
-    const absolute = join(root, relative);
-    if (statSync(absolute).isDirectory()) {
-      for (const entry of readdirSync(absolute).sort()) {
-        addPath(join(relative, entry));
-      }
-      return;
-    }
-    digest
-      .update(relative)
-      .update("\0")
-      .update(readFileSync(absolute))
-      .update("\0");
-  };
-  for (const relative of [
-    "scripts/lody-build-package.mjs",
-    "scripts/lody-package-manifest.json",
-    "scripts/lody-sync-adapters.mjs",
-    "vendor/lody/UPSTREAM.md",
-    "vendor/lody/pnpm-lock.yaml",
-    "vendor/lody/apps/cli/src/lib/message-processor.ts",
-    "vendor/lody/apps/cli/src/agent/agent-client.ts",
-    "vendor/lody/apps/cli/src/mcp/lody-mcp-http-server.ts",
-    "vendor/lody/apps/cli/src/session/session-execution-helpers.ts",
-    "vendor/lody/apps/cli/src/session/session-manager.ts",
-    "vendor/lody/apps/cli/src/session/session-sandbox.ts",
-    "vendor/lody-adapters",
-  ]) {
-    addPath(relative);
-  }
-  return digest.digest("hex");
-}
-
-function runBuildStep(command: string, args: string[], cwd: string): void {
-  const result = spawnSync(command, args, {
-    cwd,
-    env: process.env,
-    stdio: "inherit",
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(" ")} exited ${result.status ?? "without status"}`,
-    );
-  }
-}
-
-function cacheEntryIsValid(cachePath: string, fingerprint: string): boolean {
-  const bundleStamp = join(
-    cachePath,
-    "install",
-    "lib",
-    "node_modules",
-    "lody",
-    "dist",
-    "BUILD.json",
-  );
-  const artifactStamp = join(cachePath, "artifact", "BUILD.json");
-  const fingerprintFile = join(cachePath, "SOURCE.sha256");
-  try {
-    return (
-      readFileSync(fingerprintFile, "utf8").trim() === fingerprint &&
-      readFileSync(bundleStamp, "utf8") === readFileSync(artifactStamp, "utf8")
-    );
-  } catch {
-    return false;
-  }
-}
-
-async function buildCachedLodyBundle(root: string): Promise<string> {
-  const sha = upstreamSha(root);
-  const fingerprint = localBuildFingerprint(root);
-  const cachePath = join(homedir(), ".cache", "blitz-lody-build", sha, fingerprint);
-  const winner = await resolveAtomicBuildCache({
-    cachePath,
-    validate: (candidate) => cacheEntryIsValid(candidate, fingerprint),
-    build: async (staging) => {
-      process.stderr.write(
-        `lody-daemon-harness: building vendored daemon in ${staging}\n`,
-      );
-      const artifact = join(staging, "artifact");
-      runBuildStep(
-        process.execPath,
-        [
-          join(root, "scripts/lody-build-package.mjs"),
-          "--source",
-          join(root, "vendor/lody"),
-          "--out",
-          artifact,
-        ],
-        root,
-      );
-      const tarballs = readdirSync(artifact).filter((entry) =>
-        /^lody-.+\.tgz$/u.test(entry),
-      );
-      if (tarballs.length !== 1) {
-        throw new Error(`tree build produced ${tarballs.length} Lody tarballs`);
-      }
-      runBuildStep(
-        "npm",
-        [
-          "install",
-          "--global",
-          "--prefix",
-          join(staging, "install"),
-          "--omit=dev",
-          join(artifact, tarballs[0]!),
-        ],
-        root,
-      );
-      writeFileSync(join(staging, "SOURCE.sha256"), `${fingerprint}\n`);
-    },
-  });
-  return join(winner, "install", "lib", "node_modules", "lody");
-}
-
 /**
  * A package directory, resolved in pair-by-construction order:
- * explicit CI artifact, stamped image install, then (when a legacy unstamped
- * package is installed) a cached build of this tree. A machine with no daemon
- * at all stays unavailable so daemon-free test jobs do not unexpectedly build.
+ * explicit CI artifact, then a stamped image install. A legacy unstamped
+ * package and a machine with no daemon both stay unavailable.
  */
-async function resolveLodyBundle(): Promise<string> {
-  if (process.env.LODY_BUNDLE !== undefined) return process.env.LODY_BUNDLE;
-  if (existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "BUILD.json"))) {
-    return INSTALLED_LODY_BUNDLE;
+function selectedLodyBundle(): string | null {
+  if (process.env.LODY_BUNDLE !== undefined) {
+    return existsSync(join(process.env.LODY_BUNDLE, "dist", "index.js"))
+      ? process.env.LODY_BUNDLE
+      : null;
   }
-  if (existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "index.js"))) {
-    return await buildCachedLodyBundle(repoRoot());
-  }
-  return INSTALLED_LODY_BUNDLE;
+  return existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "index.js")) &&
+    existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "BUILD.json"))
+    ? INSTALLED_LODY_BUNDLE
+    : null;
+}
+
+const BUNDLE_HINT =
+  "Run npm run lody:build -- --out \"$LODY_OUT\", install the tarball, then " +
+  "export LODY_BUNDLE=\"$LODY_OUT/install/lib/node_modules/lody\".";
+let reportedUnavailableBundle = false;
+
+function reportUnavailableBundle(): void {
+  if (reportedUnavailableBundle) return;
+  reportedUnavailableBundle = true;
+  process.stderr.write(
+    `LODY PAIR GATE: skipped for lack of a bundle; no stamped package is available. ${BUNDLE_HINT}\n`,
+  );
+}
+
+function resolveLodyBundle(): string {
+  const bundle = selectedLodyBundle();
+  if (bundle !== null) return bundle;
+  reportUnavailableBundle();
+  throw new Error("Lody daemon bundle is unavailable");
 }
 
 const BRIDGE_SCRIPT = join(repoRoot(), "packages/box/rootfs/usr/local/libexec/blitz-lody-bridge");
@@ -211,10 +104,12 @@ const REPO_NODE_MODULES = join(repoRoot(), "node_modules");
 
 /** `true` when an explicit or installed bundle makes a lazy resolution viable. */
 export function lodyDaemonAvailable(): boolean {
-  const candidate = process.env.LODY_BUNDLE ?? INSTALLED_LODY_BUNDLE;
-  const available = existsSync(join(candidate, "dist", "index.js"));
-  if (!available && process.env.LODY_REQUIRE_BUNDLE === "1") {
-    process.stderr.write(`LODY PAIR GATE: skipped for lack of a bundle at ${candidate}\n`);
+  const available = selectedLodyBundle() !== null;
+  if (!available) {
+    reportUnavailableBundle();
+    if (process.env.LODY_REQUIRE_BUNDLE === "1") {
+      throw new Error("Lody daemon bundle is required");
+    }
   }
   return available;
 }
@@ -584,7 +479,7 @@ async function acquireHarnessLock(): Promise<() => void> {
 
 /** Boots all three, and resolves once the daemon has written its catalog. */
 export async function startLodyHarness(): Promise<LodyHarness> {
-  const sourceBundle = await resolveLodyBundle();
+  const sourceBundle = resolveLodyBundle();
   const releaseLock = await acquireHarnessLock();
   const root = mkdtempSync(join(tmpdir(), "lp-"));
   const dataDir = join(root, "d");

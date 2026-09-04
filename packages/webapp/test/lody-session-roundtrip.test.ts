@@ -11,8 +11,8 @@
  *
  * ONE PAID-TURN GATE, DELIBERATELY:
  *
- * - The daemon artifact is supplied by the pair CI job and built into the local
- *   harness cache on demand, so the non-paid cases always exercise this tree.
+ * - The pair CI job supplies its daemon through `LODY_BUNDLE`. Local runs must
+ *   point that variable at an installed tree-built package.
  * - The DISPATCH is skipped unless `BLITZ_LODY_LIVE_TURN=1`, because a dispatch
  *   launches the ACP adapter and spends a turn of somebody's subscription. Run
  *   the exit test with:
