@@ -148,23 +148,6 @@ const NO_WORKSPACE_TABS: WorkspaceTab[] = [];
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
 const UPDATE_RELOAD_MARKER_PREFIX = 'blitzos:update-reloaded:';
 
-function isSameSidePanelState(
-  left: SessionSidePanelHostState,
-  right: SessionSidePanelHostState,
-): boolean {
-  return left.open === right.open
-    && left.activeTabId === right.activeTabId
-    && left.openedTabIds.length === right.openedTabIds.length
-    && left.openedTabIds.every((id, index) => id === right.openedTabIds[index])
-    && left.availableOptions.length === right.availableOptions.length
-    && left.availableOptions.every((option, index) => {
-      const other = right.availableOptions[index];
-      return other !== undefined
-        && option.id === other.id
-        && option.disabled === other.disabled;
-    });
-}
-
 function updateReloaded(hash: string): boolean {
   try {
     return window.sessionStorage.getItem(`${UPDATE_RELOAD_MARKER_PREFIX}${hash}`) === '1';
@@ -250,15 +233,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // and drives it through `sidePanelRequest`, one `seq` per press.
   const [sidePanelState, setSidePanelState] = useSidePanelHostState();
   const [sidePanelRequest, setSidePanelRequest] = useState<SessionSidePanelRequest | null>(null);
-  const handleSidePanelStateChange = useCallback((next: SessionSidePanelHostState | null) => {
-    setSidePanelState((previous) => {
-      // Equal reports describe the same panel and must not re-render the host.
-      if (previous !== null && next !== null && isSameSidePanelState(previous, next)) {
-        return previous;
-      }
-      return next;
-    });
-  }, []);
   // What the browser panel shows (`browser/BrowserPanel.tsx`): set by its
   // address bar and by the box's `blitz browser open`. Held here rather than
   // in the panel so the page survives the tab being switched away and back.
@@ -1631,10 +1605,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       ? {
           hostTabs,
           request: sidePanelRequest,
-          onStateChange: handleSidePanelStateChange,
+          onStateChange: setSidePanelState,
         }
       : undefined
-  ), [handleSidePanelStateChange, hostTabs, sidePanelRequest, surfaceTabsEnabled]);
+  ), [hostTabs, setSidePanelState, sidePanelRequest, surfaceTabsEnabled]);
   // One press of the right icon strip. With a session on screen every button
   // is a request to Lody's side panel — a second press on the tab in front
   // closes it, and Side Chat launches rather than toggles. Without one, only
