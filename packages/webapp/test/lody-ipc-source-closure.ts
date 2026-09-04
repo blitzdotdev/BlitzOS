@@ -258,19 +258,78 @@ function childScope(node: Node, scope: string): string {
   return scope;
 }
 
+function patternBindings(node: Node): string[] {
+  const own = identifierName(node);
+  if (own !== null) return [own];
+  const bindings: string[] = [];
+  for (const key of ["left", "argument", "value", "elements", "properties", "parameter"]) {
+    const value = Reflect.get(node, key);
+    if (Array.isArray(value)) {
+      for (const item of value) if (isNode(item)) bindings.push(...patternBindings(item));
+    } else if (isNode(value)) {
+      bindings.push(...patternBindings(value));
+    }
+  }
+  return bindings;
+}
+
+function isFunctionNode(node: Node): boolean {
+  return node.type === "ArrowFunctionExpression"
+    || node.type === "FunctionDeclaration"
+    || node.type === "FunctionExpression";
+}
+
+function clientOrigin(node: Node, bound: ReadonlySet<string>): boolean {
+  if (node.type === "Identifier") return bound.has(node.name);
+  if (node.type === "CallExpression") {
+    return node.callee.type === "Identifier" && node.callee.name === "useIpcClient";
+  }
+  if (node.type === "MemberExpression") return clientOrigin(node.object, bound);
+  if (node.type === "LogicalExpression" || node.type === "ConditionalExpression") {
+    return Object.values(node).some((value) => isNode(value) && clientOrigin(value, bound));
+  }
+  for (const key of ["expression", "argument", "right"]) {
+    const value = Reflect.get(node, key);
+    if (isNode(value) && clientOrigin(value, bound)) return true;
+  }
+  return false;
+}
+
 function visitNodes(
   node: Node,
-  visit: (candidate: Node, scope: string) => void,
+  visit: (candidate: Node, scope: string, boundClients: ReadonlySet<string>) => void,
   scope = "<module>",
+  inheritedClients: Set<string> = new Set(),
 ): void {
   const nestedScope = childScope(node, scope);
-  visit(node, nestedScope);
+  const boundClients = isFunctionNode(node) || node.type === "BlockStatement"
+    ? new Set(inheritedClients)
+    : inheritedClients;
+  if (isFunctionNode(node)) {
+    const params = Reflect.get(node, "params");
+    if (Array.isArray(params)) {
+      for (const param of params) {
+        if (!isNode(param)) continue;
+        for (const binding of patternBindings(param)) boundClients.add(binding);
+      }
+    }
+  }
+  if (node.type === "VariableDeclarator") {
+    const id = Reflect.get(node, "id");
+    const init = Reflect.get(node, "init");
+    if (isNode(id) && isNode(init) && clientOrigin(init, boundClients)) {
+      for (const binding of patternBindings(id)) boundClients.add(binding);
+    }
+  }
+  visit(node, nestedScope, boundClients);
   for (const [key, value] of Object.entries(node)) {
     if (key === "parent") continue;
     if (Array.isArray(value)) {
-      for (const item of value) if (isNode(item)) visitNodes(item, visit, nestedScope);
+      for (const item of value) {
+        if (isNode(item)) visitNodes(item, visit, nestedScope, boundClients);
+      }
     } else if (isNode(value)) {
-      visitNodes(value, visit, nestedScope);
+      visitNodes(value, visit, nestedScope, boundClients);
     }
   }
 }
@@ -290,11 +349,16 @@ export function findUnscopedIpcCalls(file: string, sourceOverride?: string): str
     lines.push({ line, scope });
     sites.set(helper, lines);
   };
-  visitNodes(source, (node, scope) => {
+  visitNodes(source, (node, scope, boundClients) => {
     if (node.type === "CallExpression" && node.callee.type === "Identifier") {
       const minimum = IPC_HELPER_MIN_ARGUMENTS.get(node.callee.name);
-      if (minimum !== undefined && node.arguments.length < minimum) {
-        add(node.callee.name, node, scope);
+      if (minimum !== undefined) {
+        const client = node.arguments[minimum - 1];
+        if (node.arguments.length < minimum
+          || !isNode(client)
+          || !clientOrigin(client, boundClients)) {
+          add(node.callee.name, node, scope);
+        }
       }
     }
     if (node.type === "MemberExpression"

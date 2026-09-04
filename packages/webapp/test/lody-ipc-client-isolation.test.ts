@@ -844,6 +844,29 @@ describe("mounted Lody IPC conversion inventory", () => {
     expect(failures.some((failure) => failure.includes("unguardedAmbientIpc"))).toBe(true);
   });
 
+  it("rejects a literal client placeholder and accepts a scoped client parameter", () => {
+    const file = resolve(
+      process.cwd(),
+      "../../vendor/lody/packages/components/src/providers/local-loro-data-plane-connection.ts",
+    );
+    const source = readFileSync(file, "utf8");
+    const mutated = source.replace(
+      "sendIpc('loro.send', message, ipcClient)",
+      "sendIpc('loro.send', message, undefined)",
+    );
+    expect(findUnscopedIpcCalls(file, mutated)).toContainEqual(
+      expect.stringContaining("sendIpc"),
+    );
+
+    const passing = [
+      "function sendBound(message: object, client: LodyIpcClient) {",
+      "  sendIpc('loro.send', message, client);",
+      "}",
+    ].join("\n");
+    expect(findUnscopedIpcCalls(resolve(process.cwd(), "test/scoped-client.ts"), passing))
+      .toEqual([]);
+  });
+
   it("binds and provides the client at both Blitz runtime entry points", () => {
     const sessionSurface = readFileSync(
       resolve(process.cwd(), "src/lody/SessionSurface.tsx"),
