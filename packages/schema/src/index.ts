@@ -8,6 +8,7 @@ export * from "./environment.js";
 export * from "./files.js";
 export * from "./json.js";
 export * from "./machine.js";
+export * from "./org-credential.js";
 export * from "./preview.js";
 export * from "./provider-name.js";
 export * from "./recipe.js";

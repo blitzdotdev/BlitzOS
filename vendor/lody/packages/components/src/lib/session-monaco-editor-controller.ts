@@ -52,6 +52,13 @@ export type SessionMonacoEditorControllerOptions = {
   readonly initialReadOnly: boolean;
   readonly initialWordWrap: boolean;
   readonly initialModelUri?: monaco.Uri;
+  /**
+   * Whether to register the two LSP entry-point actions at all. Off takes them
+   * out of the editor's context menu and unbinds F12 / Shift+F12, which is what
+   * a host with no language service behind the provider wants: an action whose
+   * callback is absent still sits in the menu and does nothing. Defaults to on.
+   */
+  readonly lspActions?: boolean;
   readonly callbacks: SessionMonacoEditorCallbacks;
 };
 
@@ -179,46 +186,48 @@ export class SessionMonacoEditorController {
       })
     );
 
-    // LSP entry-point editor actions. Cmd-F12 / F12 fires definition;
-    // Shift-F12 fires references. Both pass an LSP-shape `{line, character}`
-    // (0-indexed) so the consumer can hand off to provider RPC directly.
-    // No `!editorReadonly` precondition: read roles are allowed to
-    // request LSP RPC by spec, so read-only viewers also surface the
-    // actions in the context menu.
-    this.disposables.push(
-      this.editor.addAction({
-        id: 'lody.codeCollab.goToDefinition',
-        label: 'Go to Definition (Code Collab)',
-        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F12, monaco.KeyCode.F12],
-        contextMenuGroupId: 'navigation',
-        contextMenuOrder: 1.1,
-        run: (ed) => {
-          const position = ed.getPosition();
-          if (!position) return;
-          this.callbacks.onGoToDefinition?.({
-            line: position.lineNumber - 1,
-            character: position.column - 1,
-          });
-        },
-      })
-    );
-    this.disposables.push(
-      this.editor.addAction({
-        id: 'lody.codeCollab.findReferences',
-        label: 'Find References (Code Collab)',
-        keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.F12],
-        contextMenuGroupId: 'navigation',
-        contextMenuOrder: 1.2,
-        run: (ed) => {
-          const position = ed.getPosition();
-          if (!position) return;
-          this.callbacks.onFindReferences?.({
-            line: position.lineNumber - 1,
-            character: position.column - 1,
-          });
-        },
-      })
-    );
+    if (options.lspActions !== false) {
+      // LSP entry-point editor actions. Cmd-F12 / F12 fires definition;
+      // Shift-F12 fires references. Both pass an LSP-shape `{line, character}`
+      // (0-indexed) so the consumer can hand off to provider RPC directly.
+      // No `!editorReadonly` precondition: read roles are allowed to
+      // request LSP RPC by spec, so read-only viewers also surface the
+      // actions in the context menu.
+      this.disposables.push(
+        this.editor.addAction({
+          id: 'lody.codeCollab.goToDefinition',
+          label: 'Go to Definition (Code Collab)',
+          keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F12, monaco.KeyCode.F12],
+          contextMenuGroupId: 'navigation',
+          contextMenuOrder: 1.1,
+          run: (ed) => {
+            const position = ed.getPosition();
+            if (!position) return;
+            this.callbacks.onGoToDefinition?.({
+              line: position.lineNumber - 1,
+              character: position.column - 1,
+            });
+          },
+        })
+      );
+      this.disposables.push(
+        this.editor.addAction({
+          id: 'lody.codeCollab.findReferences',
+          label: 'Find References (Code Collab)',
+          keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.F12],
+          contextMenuGroupId: 'navigation',
+          contextMenuOrder: 1.2,
+          run: (ed) => {
+            const position = ed.getPosition();
+            if (!position) return;
+            this.callbacks.onFindReferences?.({
+              line: position.lineNumber - 1,
+              character: position.column - 1,
+            });
+          },
+        })
+      );
+    }
   }
 
   // Swap the callback bundle. Listeners read `this.callbacks` at fire

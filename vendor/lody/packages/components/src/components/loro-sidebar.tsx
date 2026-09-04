@@ -64,6 +64,19 @@ import { useStableNow } from '@/hooks/use-stable-now';
 
 export type LoroSidebarNavKey = 'home' | 'archive' | 'tasks';
 
+/** One utility in the footer rail. `filter` is the mobile-only organize/scope
+ * popover; the other three are the footer's icon buttons. */
+export type LoroSidebarFooterItem = 'settings' | 'help' | 'archive' | 'filter';
+
+/** Every footer utility, which is what the footer renders when a host says
+ * nothing. Declared once so the default cannot drift from the union. */
+export const LORO_SIDEBAR_FOOTER_ITEMS: readonly LoroSidebarFooterItem[] = [
+  'settings',
+  'help',
+  'archive',
+  'filter',
+];
+
 export type LoroSidebarChatScope = 'my' | 'team';
 export type LoroSidebarOrganizeMode = SidebarOrganizeMode;
 
@@ -181,6 +194,17 @@ export interface LoroSidebarProps {
    * footer owns the organize/scope controls too.
    */
   hideFooter?: boolean;
+  /**
+   * Which footer utilities render, when the footer renders at all.
+   *
+   * {@link hideFooter} is all-or-nothing, and a host that serves its own
+   * settings and its own help — but NOT its own archive — has no way to keep the
+   * one entry it wants. Listing the items is that way: the default is every
+   * item, so a host that says nothing renders exactly what it rendered before.
+   * Ignored while {@link hideFooter} is set, which stays the shorter spelling
+   * for "none of them".
+   */
+  footerItems?: readonly LoroSidebarFooterItem[];
 
   repoSections?: LoroSidebarRepoSection[];
   chats?: LoroSidebarChatItem[];
@@ -648,6 +672,7 @@ export const LoroSidebar = memo(function LoroSidebar({
   bottomFloatingContent,
   hideHeader = false,
   hideFooter = false,
+  footerItems = LORO_SIDEBAR_FOOTER_ITEMS,
   repoSections = defaultRepoSections,
   chats = defaultChats,
   sessionListProps,
@@ -1234,10 +1259,13 @@ export const LoroSidebar = memo(function LoroSidebar({
         {hideFooter ? null : (
           <div className={getLoroSidebarFooterClassName(isMobile)}>
             <div className="flex items-center gap-1">
+              {footerItems.includes('settings') ? (
               <IconButton label="Settings" onClick={onSettingsClicked}>
                 <Settings className="h-4 w-4" />
               </IconButton>
+              ) : null}
 
+              {footerItems.includes('help') ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <IconButton label="Help">
@@ -1263,13 +1291,16 @@ export const LoroSidebar = memo(function LoroSidebar({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              ) : null}
 
+              {footerItems.includes('archive') ? (
               <IconButton label="Archive" active={activeNav === 'archive'} onClick={onArchiveClicked}>
                 <Archive className="h-4 w-4" />
               </IconButton>
+              ) : null}
             </div>
 
-            {isMobile ? (
+            {isMobile && footerItems.includes('filter') ? (
               <SidebarFilterPopover
                 organize={organizeMode}
                 scope={chatScope}

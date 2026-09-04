@@ -551,50 +551,6 @@ describe("create workspace dialog", () => {
     await view.unmount();
   });
 
-  it("sends credential names and values once, and drops an incomplete row", async () => {
-    const submit = vi.fn();
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        admin
-        client={rulesClient()}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const addCredential = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Add credential")!;
-    await act(async () => addCredential.click());
-    await act(async () => addCredential.click());
-
-    const field = (label: string) =>
-      view.container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
-    await typeInto(field("Credential 1 name"), "STRIPE_API_KEY");
-    await typeInto(field("Credential 1 label"), "billing");
-    await typeInto(field("Credential 1 value"), "sk-live-x");
-    // Row two is named but has no value, so it is not a credential yet.
-    await typeInto(field("Credential 2 name"), "UNFINISHED");
-    expect(view.container.querySelector<HTMLInputElement>(
-      '[aria-label="Credential 1 value"]',
-    )?.type).toBe("password");
-
-    await act(async () => {
-      view.container.querySelector("form")?.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true }),
-      );
-    });
-    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
-      credentials: [{ name: "STRIPE_API_KEY", label: "billing", value: "sk-live-x" }],
-    }));
-    await view.unmount();
-  });
-
   it("tells a member that creating a workspace is an org-admin power", async () => {
     const view = await render(
       <CreateWorkspaceDialog

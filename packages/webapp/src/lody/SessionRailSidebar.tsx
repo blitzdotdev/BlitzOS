@@ -19,10 +19,13 @@
  *    the CRDT and the daemon never sees them — so they are ours, drawn with our
  *    `.shell-s` markup and `SessionTypeIcon` glyphs, under their section header
  *    so the three headings match.
- * 3. The SUPPRESSION. `hideHeader` and `hideFooter` are the props phase 4 added
- *    at declared seam #4 (`vendor/lody/BLITZ-PATCHES.md`); the header they hide
- *    is the workspace switcher `div.shell-rhead` already serves, and the footer
- *    is settings/help/archive, which BlitzOS serves from its own chrome.
+ * 3. The SUPPRESSION. `hideHeader` is the prop phase 4 added at declared seam #2
+ *    (`vendor/lody/BLITZ-PATCHES.md`); the header it hides is the workspace
+ *    switcher `div.shell-rhead` already serves. The footer used to go with it,
+ *    and seam #13 is why it no longer does: settings and help are BlitzOS's own
+ *    chrome, but the ARCHIVE entry beside them is upstream's only affordance
+ *    that leads to the archive page. `footerItems` keeps that one and drops the
+ *    rest, so nothing about the entry point is ours.
  *
  * SECTION ORDER IS UPSTREAM'S, NOT THE PLAN'S SKETCH. §8 draws Chats above
  * GitHub Worktrees; `LoroSidebar` renders `sessionListProps` before
@@ -56,6 +59,10 @@ import type { SharedSessionRow } from "./shared-sessions.js";
  * value for the drag sash's sake. Keep the two in step.
  */
 const RAIL_WIDTH = 252;
+
+/** The one footer utility this rail keeps (seam patch 13). A module constant, so
+ * the array identity does not change per render and re-memo the sidebar. */
+const FOOTER_ITEMS = ["archive"] as const;
 
 /** One row as `buildSessionListRows` returns it, narrowed to what this file
  * reads. Their `SessionListRow` cannot be imported as a type across the vendor
@@ -106,14 +113,24 @@ export interface SessionRailSidebarProps {
    * still means "the first one", which is what the panes themselves show.
    */
   activeTerminalId: string;
-  /** The chat session the surface is showing, or `null` on the landing. */
+  /** The chat session the surface is showing, or `null` on the landing and on
+   * the archive. */
   activeSessionId: string | null;
+  /** `true` while the archive page is the surface's address. It is a separate
+   * signal from `activeSessionId` because the archive names no session, so the
+   * two states would otherwise both read as "the landing". */
+  archiveActive?: boolean;
   /** `true` while the surface is the visible pane. */
   surfaceVisible: boolean;
   onSelectTerminal: (tabId: string) => void;
+  /** Close one terminal tab from its rail row. See `TerminalRows`: it is the
+   * deleted native strip's close, moved here so every layout has one. */
+  onCloseTerminal?: (tabId: string) => void;
   onSelectSession: (sessionId: string) => void;
   /** "+ New session": their `home` nav entry, relabelled. */
   onOpenLanding: () => void;
+  /** The footer's Archive entry, which is upstream's own (seam patch 13). */
+  onOpenArchive?: () => void;
   /** The `+ New tab` control, rendered in the Terminals section header so the
    * Claude / Codex / terminal entries keep a home in the rail. */
   terminalsAction?: ReactNode;
@@ -177,13 +194,28 @@ function orderedRepoFullNames(present: string[], order: readonly string[]): stri
   return ordered;
 }
 
-/** Today's rail rows, kept byte-for-byte: same classes, same glyphs, same
- * click. They are tabs, so they are drawn by us and not by `SessionList`. */
+/**
+ * Today's rail rows: same classes, same glyphs, same click.
+ *
+ * THE CLOSE BUTTON IS NEW, and it is the deleted strip's close moved rather
+ * than a second one added. `closeTtydSession` reached the UI through exactly one
+ * affordance — the `×` on the active cell of the native tab strip
+ * (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2") — so on a layout the session strip
+ * does not draw for (mobile, and a box with no session plane) deleting that
+ * strip would leave a member able to open a terminal and never close it, with
+ * its tmux session alive on the box for as long as the box is.
+ *
+ * It sits in the row's trailing slot, which the rail has always drawn and always
+ * left empty, so no row grows. A row is a `div` rather than a `button` because a
+ * button inside a button is not valid HTML; the label keeps its own `button`, so
+ * the click target and the keyboard path are unchanged.
+ */
 function TerminalRows(props: {
   terminals: DriveRailSession[];
   activeTerminalId: string;
   active: boolean;
   onSelect: (tabId: string) => void;
+  onClose?: (tabId: string) => void;
 }) {
   return (
     <>
@@ -193,22 +225,37 @@ function TerminalRows(props: {
           (session.id === props.activeTerminalId ||
             (props.activeTerminalId === "" && index === 0));
         return (
-          <button
+          <div
             className={`shell-s${selected ? " shell-s--on" : ""}`}
-            type="button"
             key={session.id}
+            data-session-id={session.id}
             aria-current={selected ? "page" : undefined}
-            onClick={() => props.onSelect(session.id)}
           >
-            <span className="shell-g">
-              <SessionTypeIcon
-                type={session.agent}
-                className="shell-g__glyph"
-              />
+            <button
+              className="shell-s__open"
+              type="button"
+              onClick={() => props.onSelect(session.id)}
+            >
+              <span className="shell-g">
+                <SessionTypeIcon
+                  type={session.agent}
+                  className="shell-g__glyph"
+                />
+              </span>
+              <span className="shell-s__t">{session.label}</span>
+            </button>
+            <span className="shell-s__a">
+              {props.onClose && (
+                <button
+                  className="shell-s__close"
+                  type="button"
+                  aria-label={`Close ${session.label}`}
+                  title={`Close ${session.label}`}
+                  onClick={() => props.onClose?.(session.id)}
+                >×</button>
+              )}
             </span>
-            <span className="shell-s__t">{session.label}</span>
-            <span className="shell-s__a" />
-          </button>
+          </div>
         );
       })}
     </>
@@ -227,21 +274,33 @@ function SharedSessionRows(props: {
     <>
       {props.rows.map((row) => {
         const selected = row.sessionId === props.activeSessionId;
+        const level = row.level === "rw" ? "read-write" : "read-only";
+        // A row whose owner's box is off stays on the rail — the grant exists —
+        // but does not open: there is no box to mount, and the surface's poller
+        // would wait for one that is not coming.
+        const off = !row.ownerMachineRunning;
         return (
           <button
-            className={`shell-s${selected ? " shell-s--on" : ""}`}
+            className={[
+              "shell-s",
+              selected ? "shell-s--on" : "",
+              off ? "session-rail-shared--off" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             type="button"
             key={`${row.ownerMembershipId}:${row.sessionId}`}
             aria-current={selected ? "page" : undefined}
-            title={`${row.ownerName} · ${row.level === "rw" ? "read-write" : "read-only"}`}
-            onClick={() => props.onSelect(row)}
+            aria-disabled={off || undefined}
+            title={off ? `${row.ownerName} · ${level} · their machine is off` : `${row.ownerName} · ${level}`}
+            onClick={off ? undefined : () => props.onSelect(row)}
           >
             <span className="shell-g">
               <SessionTypeIcon type="terminal" className="shell-g__glyph" />
             </span>
             <span className="shell-s__t">{row.title ?? row.sessionId.slice(0, 8)}</span>
             <span className="shell-s__a session-rail-shared__level">
-              {row.level === "rw" ? "RW" : "RO"}
+              {off ? "OFF" : row.level === "rw" ? "RW" : "RO"}
             </span>
           </button>
         );
@@ -305,7 +364,8 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
     [allActiveSessions, onlineMachineIds, sessions, user?.id, workspaceId],
   );
 
-  const { onSelectSession, onOpenLanding, onShareSession, onSelectSharedSession } = props;
+  const { onSelectSession, onOpenLanding, onOpenArchive, onShareSession, onSelectSharedSession } =
+    props;
   const sharedSessions = props.sharedSessions ?? [];
   // Every row is private and every row is the caller's own — the rail lists the
   // sessions on the caller's box, because that is the only daemon this runtime
@@ -383,6 +443,17 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
   const [sharedCollapsed, setSharedCollapsed] = useState(false);
 
   const selectedSessionId = props.surfaceVisible ? props.activeSessionId : null;
+  // THE ARCHIVE OUTRANKS "New session". Both are nav entries and the archive
+  // names no session, so without this the footer's Archive entry would be dark
+  // while the archive page is on screen and the "New session" row would be lit
+  // instead — the rail would name a page the member is not looking at.
+  const activeNav = !props.surfaceVisible
+    ? null
+    : props.archiveActive === true
+      ? "archive"
+      : props.activeSessionId === null
+        ? "home"
+        : null;
   // THE RAIL FOLLOWS THE ADDRESS (plans/LODY-TERMINAL-TABS.md wave 3, ADJ1).
   //
   // It used to follow `!surfaceVisible`, which is the pre-terminal-tabs rule:
@@ -520,6 +591,9 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
             activeTerminalId={props.activeTerminalId}
             active={terminalsHighlighted}
             onSelect={props.onSelectTerminal}
+            {...(props.onCloseTerminal === undefined
+              ? {}
+              : { onClose: props.onCloseTerminal })}
           />
         )}
       </div>
@@ -533,7 +607,11 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       // these override rather than stack.
       className="rounded-none border-x-0 shadow-none"
       hideHeader
-      hideFooter
+      // Seam patch 13. The footer's Settings and Help are surfaces BlitzOS
+      // serves from its own chrome, and its mobile filter popover controls
+      // organize modes this rail does not have. Archive is the one entry that
+      // stays, because it is the only way upstream offers into the archive page.
+      footerItems={FOOTER_ITEMS}
       workspaceName=""
       userEmail=""
       workspaces={[]}
@@ -545,8 +623,9 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       // literally the same action — go to the chat landing, which is the
       // create surface — and reusing it keeps the affordance theirs.
       labels={{ home: "New session" }}
-      activeNav={props.surfaceVisible && props.activeSessionId === null ? "home" : null}
+      activeNav={activeNav}
       onHomeClicked={onOpenLanding}
+      {...(onOpenArchive === undefined ? {} : { onArchiveClicked: onOpenArchive })}
       {...(topContent === null ? {} : { topContent })}
       sessionListProps={sessionListProps}
       afterSessionListContent={afterSessionListContent}

@@ -22,8 +22,8 @@ export type NewTabControlProps = {
  *
  * One component because the menu is one product control: Claude Code TUI, Codex
  * TUI, terminal, plus whatever preview ports and links the box is advertising.
- * The tab strip serves the same list through `WebAppHeader`; nothing here
- * changes what the entries are or what they spawn.
+ * Since the native tab strip was deleted (plans/LODY-TERMINAL-TABS.md §4.6) this
+ * is the ONLY spawn affordance the shell owns, in both of its shapes.
  */
 export function NewTabControl({
   livePorts,

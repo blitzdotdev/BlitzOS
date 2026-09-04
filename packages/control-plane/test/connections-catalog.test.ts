@@ -36,9 +36,9 @@ const CATALOG_SOURCES = import.meta.glob<string>("../core/connections/catalog/*.
   query: "?raw",
 });
 
-/** The box's Go decoder validates every environment name against this
- * pattern before it prints one, so a catalog entry that would fail a live
- * `blitz-cred env` fails in CI instead. */
+/** An agent exports these names into a shell from the token route's `env`,
+ * so a catalog entry whose name is not a shell variable name fails in CI
+ * instead of at the moment of use. */
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 
 function replayExchange(
@@ -216,9 +216,9 @@ describe("provider catalog conformance", () => {
         }
       });
 
-      /** `blitz-cred env` prints these names, and its first line names the
-       * header to send with the first one. A provider with no token variable
-       * would print a header line for a name that carries no credential. */
+      /** The token route answers these names as `env`, and `header` says how
+       * the first one travels. A provider with no token variable would name a
+       * header for a variable that carries no credential. */
       it("declares environment names the box can print", () => {
         const [first] = manifest.delivery.env;
         expect(first?.fill, "the first variable carries the token").toBe("token");

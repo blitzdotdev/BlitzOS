@@ -36,7 +36,7 @@ curl -s https://<origin>/version
 ```
 
 ```json
-{ "commit": "...", "boxImageRef": "ghcr.io/.../blitz-box@sha256:...", "migration": "0028_....sql" }
+{ "commit": "...", "boxImageRef": "ghcr.io/.../blitz-box@sha256:...", "boxImageTag": "", "migration": "0028_....sql" }
 ```
 
 That is the authoritative answer to "which commit does this run". With a
@@ -76,22 +76,21 @@ should hold one.
 
 ## How canary is deployed
 
-`.github/workflows/canary.yml` runs on every push to `main`. It writes the
-canary config from an environment secret, deploys, and verifies the result the
-same way.
+`.github/workflows/canary.yml` runs on every push to `main`. Its `gate` job
+checks that canary is configured. Its `image` job derives a release from every
+repository input copied by the box Dockerfile, reuses a valid archive already
+at that versioned R2 prefix or builds and publishes it, and passes the exact ref,
+tag, and digest to `deploy`. The deploy job pins those values and verifies both
+the merged commit and box-image tag through `/version`.
 
 It **queues** rather than cancels concurrent runs. A cancelled deploy can leave
 migrations applied while the old Worker still serves.
 
-Before deploying it asks the running canary for its commit and diffs the image
-paths since then. Canary images are built by hand, so a stale image gets a
-warning. That step is advisory and never fails the run.
-
 Canary serves its box image as an **R2 archive (mode B)**, out of its own
 account; client prod serves it from a registry (mode A), pushed by the tag
-workflow. That split is why a canary rebake reaches nothing in the customer's
-account, and why it needs no tag. The procedure, and the reason it exists, is
-[BOX-IMAGE.md](BOX-IMAGE.md#which-mode-each-hosted-deployment-uses).
+workflow. The automatic image job writes only canary's versioned R2 prefix and
+never touches the customer's account or GHCR. The full procedure and required
+R2 permission are in [BOX-IMAGE.md](BOX-IMAGE.md#automatic-canary-image-publish).
 
 Canary is one shared Worker and the last deploy wins. That is why it deploys
 from `main` and not from a laptop: a branch deployed by hand replaces whatever
@@ -154,7 +153,7 @@ Cloudflare. The deploy only checks that they exist, with `wrangler secret list`,
 and refuses to deploy when one is missing. It never sets them, so GitHub never
 sees them.
 
-## The four operator commands
+## The three operator commands
 
 Run from the repository root. Each is documented in
 [SELF-HOST.md](SELF-HOST.md#operating-the-deployment).
@@ -163,11 +162,12 @@ Run from the repository root. Each is documented in
 |---|---|
 | `npm run config:check -w packages/control-plane` | Does this deployment's config still match `wrangler.toml.example`? |
 | `npm run migrations:pending -w packages/control-plane` | What would a deploy apply? |
-| `npm run box-image:check -w packages/control-plane -- --url <origin>` | Do image changes need a rebuild? Exit 2 means yes. |
 | `npm run rollback -w packages/control-plane` | What is the previous version? Prints a plan; needs `--yes` to act. |
 
 `config:check` and the migration listing also run inside every deploy, before
-anything contacts Cloudflare.
+anything contacts Cloudflare. Hosted image planning is part of the workflows:
+canary's `image` job derives and publishes a content-addressed R2 release, while
+the client-prod tag workflow always builds and pins its GHCR image.
 
 `config:check` compares key paths and the entries of `triggers.crons`. It never
 reads a value out of the deployment config, so it can run against a real one and
@@ -243,8 +243,8 @@ There is no traffic ramp. A deploy goes to full traffic at once.
   `POST /v2/.../blobs/uploads/` with HTTP 403; the GitHub App token has no
   package access at all (403, `Resource not accessible by integration`). That
   is the boundary working, not a fault to route around: the same tag that
-  would push an image also ships client prod. Canary rebakes through R2
-  instead.
+  would push an image also ships client prod. Canary's automatic `image` job
+  publishes its content-addressed release through R2 instead.
 - **The `wrangler.toml` in a working checkout is client prod's.**
   `packages/control-plane/scripts/publish-box-image.mjs` always passes
   `--config packages/control-plane/wrangler.toml`, so publishing a canary image
@@ -272,13 +272,13 @@ that is said.
    check `/version` after deploying. For anything else a change shipped, fetch
    the live bundle and grep for a string the change introduced. A green deploy
    command proves upload, not content.
-6. **Check whether the box image needs rebuilding** with `box-image:check`
-   before assuming a Worker deploy is enough.
-7. **Rebake the box image through canary's R2 path, and never cut a `v*` tag to
-   refresh an image.** A tag ships client prod to real users. Partly enforced:
-   no workspace or agent credential can push to the registry, so mode A is out
-   of reach anyway (see the gotcha above); nothing blocks the tag itself, and
-   the `production` reviewer is all that stands between it and a customer. The
-   procedure is [BOX-IMAGE.md](BOX-IMAGE.md#rebaking-the-canary-image).
+6. **Let the canary workflow publish and pin its box image.** The `image` job
+   runs before deploy, reuses only a valid matching release, and fails the run
+   if planning, building, or publishing fails. See
+   [BOX-IMAGE.md](BOX-IMAGE.md#automatic-canary-image-publish).
+7. **Never cut a `v*` tag only to refresh canary.** A tag ships client prod to
+   real users. The automatic canary image job needs no registry access; no
+   workspace or agent credential can push there anyway. The `production`
+   reviewer remains the boundary between a tag and a customer deployment.
 8. **Say what you could not verify.** A gate that could not run is not a gate
    that passed.

@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  ClipboardCopy,
   Copy,
   Eye,
   EyeClosed,
@@ -159,6 +160,22 @@ export type SessionFileContentViewProps = {
    * context menu. Rendered Markdown opts into native selection as well.
    */
   preferNativeMarkdownSelection?: boolean;
+  /**
+   * Whether the host's machine serves a language service. With it off the two
+   * LSP entry points are not registered at all: Go to Definition and Find
+   * References leave the editor's context menu and stop answering F12 /
+   * Shift+F12, instead of answering every identifier with "Host language
+   * service does not support this file". Defaults to on.
+   */
+  lspAvailable?: boolean;
+  /**
+   * Whether the host reports connectivity itself. With it on, the status bar
+   * drops its machine-offline glyph and keeps every other item: `Saved`,
+   * `Unsaved`, `Save failed` and the live-sync states are feedback about an edit
+   * the member just made, not a report about the link to the machine. Defaults
+   * to off, so every upstream call site keeps the glyph.
+   */
+  hideConnectionStatus?: boolean;
   className?: string;
   active?: boolean;
   fileProvider?: SessionFileProvider | null;
@@ -211,6 +228,8 @@ function SessionFileContentViewImpl({
   saveRequestSeq,
   copyMarkdownRequestSeq,
   preferNativeMarkdownSelection = false,
+  lspAvailable = true,
+  hideConnectionStatus = false,
   className,
   active = true,
   fileProvider,
@@ -892,6 +911,17 @@ function SessionFileContentViewImpl({
       );
     }
   }, [data, normalizedPath, tRef]);
+  // SP28: the desktop viewer had no way to get at the path it is showing.
+  // `MobileFileViewerDrawer` has carried this action since it landed, under the
+  // same `sessions.fileViewer.copyPath` key.
+  const handleCopyFilePath = useCallback(async () => {
+    const copied = await writeTextToClipboard(normalizedPath);
+    if (copied) {
+      toast.success(tRef.current('sessions.fileViewer.pathCopied', 'File path copied'));
+    } else {
+      toast.error(tRef.current('sessions.fileViewer.pathCopyFailed', 'Failed to copy file path'));
+    }
+  }, [normalizedPath, tRef]);
   const lastCopyMarkdownRequestSeqRef = useRef(copyMarkdownRequestSeq ?? 0);
   useEffect(() => {
     if (
@@ -987,6 +1017,7 @@ function SessionFileContentViewImpl({
   // trip and exposes a small state machine the inline panel renders.
   const lspFileId = providerEntry?.fileId ?? fileId ?? null;
   const isLspEnabled =
+    lspAvailable &&
     isActiveSurface &&
     shouldUseProviderFileContent &&
     providerEntry?.kind === 'text' &&
@@ -1222,6 +1253,11 @@ function SessionFileContentViewImpl({
                 onSelectionChange={
                   liveFileId !== null ? handleProviderEditorSelectionChange : undefined
                 }
+                // `lspActions` and the two callbacks answer different
+                // questions. The callbacks are what an action DOES; this is
+                // whether the action exists. An action with no callback still
+                // sits in the context menu and does nothing at all.
+                lspActions={lspAvailable}
                 onGoToDefinition={isLspEnabled ? handleGoToDefinition : undefined}
                 onFindReferences={isLspEnabled ? handleFindReferences : undefined}
                 externalTextUpdate={externalTextUpdate}
@@ -1300,12 +1336,16 @@ function SessionFileContentViewImpl({
     isTextFileReady && !showSvgRendered && !showMarkdownRendered && !showHtmlRendered;
   const showSaveButton = isProviderFileEditable && isTextFileReady;
   const showRefreshButton = shouldUseProviderFileContent && isTextFileReady;
+  // The path is knowable for every file the viewer can show, binary previews
+  // included, so this control has no condition of its own.
+  const showCopyPathButton = normalizedPath.length > 0;
   const showViewerTopBar =
     showPreviewToggle ||
     isMarkdownTextFile ||
     showSearchButton ||
     showSaveButton ||
-    showRefreshButton;
+    showRefreshButton ||
+    showCopyPathButton;
 
   return (
     <div className={cn('flex h-full min-h-0 flex-col overflow-hidden', className)}>
@@ -1409,6 +1449,17 @@ function SessionFileContentViewImpl({
                 <WrapText className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
             ) : null}
+            {showCopyPathButton ? (
+              <button
+                type="button"
+                onClick={() => void handleCopyFilePath()}
+                title={t('sessions.fileViewer.copyPath', 'Copy file path')}
+                aria-label={t('sessions.fileViewer.copyPath', 'Copy file path')}
+                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <ClipboardCopy className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            ) : null}
             {showSearchButton ? (
               <button
                 type="button"
@@ -1489,7 +1540,9 @@ function SessionFileContentViewImpl({
           liveStatus={liveStatus}
           showSaveStatus={isProviderFileEditable}
           machineOffline={
-            showProviderConnecting || shouldUseProviderFileContent ? isSessionMachineOffline : false
+            !hideConnectionStatus &&
+            (showProviderConnecting || shouldUseProviderFileContent) &&
+            isSessionMachineOffline
           }
           t={t}
         />
@@ -2117,6 +2170,7 @@ type SessionTextMonacoViewerProps = {
     readonly line: number;
     readonly character: number;
   }) => void;
+  readonly lspActions?: boolean;
   readonly externalTextUpdate?: SessionMonacoExternalTextUpdate;
   readonly onExternalTextUpdateApplied?: (result: 'applied' | 'no-op') => void;
   readonly findRequestSeq?: number;

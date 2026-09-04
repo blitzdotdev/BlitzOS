@@ -2,6 +2,7 @@ import { INVITE_TTL_DAYS } from '@blitzos/schema';
 import type { OrgUsageResponse } from '@blitzos/schema';
 import { useCallback, useEffect, useState } from 'react';
 import { ApiRequestError, type ControlPlaneClient, type InviteView } from '../api';
+import { PanelHeader } from './primitives';
 
 /** A refusal that came with a way out. The seat gate is the only one, and it
  * is the only error here that must not be printed as a sentence. */
@@ -56,7 +57,7 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
 
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Invites">
-      <header className="settings-panel-header"><div><p>Organization</p><h1>Invite links</h1><span>Links expire after {INVITE_TTL_DAYS} days.</span></div></header>
+      <PanelHeader eyebrow="Organization" title="Invite links" detail={<>Links expire after {INVITE_TTL_DAYS} days.</>} />
       {seatLimit !== null && (
         <div className="settings-seats">
           <span><b>{seatsUsed}</b> of <b>{seatLimit}</b> {seatLimit === 1 ? 'seat' : 'seats'} used</span>

@@ -49,6 +49,20 @@ user_high=${BLITZ_CG_USER_HIGH:-}
 docker_max=${BLITZ_CG_DOCKER_MAX:-}
 headroom=${BLITZ_CG_HEADROOM:-256M}
 high_gap=${BLITZ_CG_HIGH_GAP:-500M}
+# init-state remaps the image's uid/gid to these values after the cgroup tree
+# is built. Delegation has to target that future identity, not the image's
+# baked-in 1000:1000, or a host whose uid differs cannot move user work out of
+# the protected system slice.
+delegate_uid=${BLITZ_UID:-1000}
+delegate_gid=${BLITZ_GID:-1000}
+
+valid_id() {
+  local value=$1
+  case "$value" in
+    "" | *[!0-9]*) return 1 ;;
+  esac
+  [ "$value" -ge 1 ] && [ "$value" -le 60000 ]
+}
 
 to_bytes() {
   local value=$1
@@ -170,6 +184,10 @@ cmd_init() {
     log "boundary disabled or cgroup2 is not writable; the box stays flat"
     return 0
   fi
+  if ! valid_id "$delegate_uid" || ! valid_id "$delegate_gid"; then
+    log "invalid BLITZ_UID:BLITZ_GID [$delegate_uid:$delegate_gid]; the box stays flat"
+    return 0
+  fi
   if ! size_defaults; then
     return 0
   fi
@@ -185,6 +203,11 @@ cmd_init() {
     rmdir "$SYSTEM_SLICE" 2>/dev/null || :
     return 0
   fi
+  # The cpu controller is enabled SEPARATELY and best-effort: nothing in the
+  # boundary itself needs it. The Lody daemon's per-session sandbox does — it
+  # refuses a leaf without cpu.max (see the session leaves below) — and a
+  # kernel that will not hand it over costs that sandbox, not the boundary.
+  write_knob "$ROOT/cgroup.subtree_control" "+cpu" || :
 
   # The reservation the kernel must not reclaim. memory.low is the softer
   # second line: reclaim may cross it, but only when nothing else is left.
@@ -206,20 +229,20 @@ cmd_init() {
   mkdir -p "$USER_SLICE" || { log "cannot create the user slice"; return 0; }
   # DELEGATION, AND WHY IT IS NARROW.
   #
-  # A terminal tab and an ssh session both run as uid 1000. Neither can migrate
-  # itself into a cgroup unless it can write the destination cgroup.procs AND
-  # the cgroup.procs of the common ancestor of source and destination. ttyd and
-  # sshd live in the system slice, so that common ancestor is the container
-  # root. Hence two chowns, and only two.
+  # A terminal tab and an ssh session both run as the configured Blitz uid.
+  # Neither can migrate itself into a cgroup unless it can write the destination
+  # cgroup.procs AND the cgroup.procs of the common ancestor of source and
+  # destination. ttyd and sshd live in the system slice, so that common ancestor
+  # is the container root. Hence two chowns, and only two.
   #
-  # Handing uid 1000 the root cgroup.procs does NOT let it reach the system
+  # Handing that uid the root cgroup.procs does NOT let it reach the system
   # slice: that destination stays root-owned, and the kernel checks the
   # destination as well. Nor can it park a process in the container root — a
   # root cgroup with controller-enabled children refuses processes outright.
-  # So the grant means exactly one thing: uid 1000 may move work between
+  # So the grant means exactly one thing: the Blitz user may move work between
   # cgroups it already owns.
-  chown 1000:1000 "$ROOT/cgroup.procs" 2>/dev/null || :
-  chown 1000:1000 "$USER_SLICE" "$USER_SLICE/cgroup.procs" \
+  chown "$delegate_uid:$delegate_gid" "$ROOT/cgroup.procs" 2>/dev/null || :
+  chown "$delegate_uid:$delegate_gid" "$USER_SLICE" "$USER_SLICE/cgroup.procs" \
     "$USER_SLICE/cgroup.subtree_control" 2>/dev/null || :
   # memory.high throttles; memory.max kills. The gap between them is the band
   # where a runaway slows down and can still be seen and stopped by hand.
@@ -228,6 +251,28 @@ cmd_init() {
   write_knob "$USER_SLICE/memory.swap.max" "$(to_bytes "$user_swap")" || :
   write_knob "$USER_SLICE/pids.max" "$user_pids" || :
   write_knob "$USER_SLICE/cgroup.subtree_control" "+memory +pids" || :
+  write_knob "$USER_SLICE/cgroup.subtree_control" "+cpu" || :
+
+  # THE SESSION LEAVES. The Lody daemon runs a per-session cgroup sandbox
+  # (vendor/lody/apps/cli/src/session/session-sandbox.ts): one leaf per
+  # session, the ACP agent spawned into it, and `cgroup.kill` on termination —
+  # which is what takes the setsid'd test runs and the MCP servers that the
+  # agent's own process group never contained. The daemon creates the leaves
+  # itself but never writes subtree_control, so their controllers must come
+  # from a parent that already carries them. That parent cannot be lody.scope:
+  # a cgroup holding a process (the daemon) may not distribute controllers to
+  # its children (cgroup v2's no-internal-process rule). So the parent is built
+  # HERE, beside the daemon's leaf, and packages/box/patches/
+  # lody-session-sandbox.mjs points the daemon at it. Owned by the Blitz
+  # identity like the slice above it, so the daemon can mkdir and rmdir leaves;
+  # the common ancestor of a move from lody.scope into a leaf is the user
+  # slice, whose cgroup.procs that identity already holds. The sandbox refuses a leaf without
+  # cpu.max, hence +cpu, again best-effort.
+  mkdir -p "$USER_SLICE/lody-sessions" || :
+  write_knob "$USER_SLICE/lody-sessions/cgroup.subtree_control" "+memory +pids" || :
+  write_knob "$USER_SLICE/lody-sessions/cgroup.subtree_control" "+cpu" || :
+  chown "$delegate_uid:$delegate_gid" "$USER_SLICE/lody-sessions" \
+    "$USER_SLICE/lody-sessions/cgroup.procs" 2>/dev/null || :
 
   # DinD creates container cgroups at the root of the mount unless it is told
   # otherwise. Without this slice and the daemon's --cgroup-parent, every inner

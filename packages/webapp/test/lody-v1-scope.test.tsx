@@ -52,6 +52,12 @@ function menuText(): string {
   return document.body.textContent ?? "";
 }
 
+function menuItemTexts(): string[] {
+  return [...document.body.querySelectorAll<HTMLElement>("[role='menuitem']")].map((item) =>
+    (item.textContent ?? "").trim(),
+  );
+}
+
 /** The platform the surface really mounts with: the empty LOCAL capability set,
  * so `useAppCapability('githubIntegration')` answers what it answers in a box. */
 function platformWith(capabilities: readonly string[]) {
@@ -203,7 +209,7 @@ describe("every GitHub surface reads one state, and the capability decides it", 
   });
 });
 
-describe("the project picker's Connect-GitHub entry", () => {
+describe("the project picker's GitHub entries", () => {
   const PICKER_PROPS: AnyProps = {
     value: { kind: "none" },
     onChange: vi.fn(),
@@ -213,12 +219,26 @@ describe("the project picker's Connect-GitHub entry", () => {
     onConnectGitRepo: vi.fn(),
   };
 
-  async function renderPicker(capabilities: readonly string[]) {
+  const CACHED_CLONE_PROPS: AnyProps = {
+    localProjects: [
+      {
+        machineId: "machine-1",
+        localProjectId: "local-project-1",
+        name: "BlitzOS",
+        rootPath: "/workspace/BlitzOS",
+      },
+    ],
+    repositories: [{ fullName: "blitzdotdev/BlitzOS" }],
+  };
+
+  async function renderPicker(capabilities: readonly string[], props: AnyProps = {}) {
     const i18n = initLodyI18n();
     const view = await render(
       <I18nextProvider i18n={i18n}>
         <PlatformContext.Provider value={platformWith(capabilities) as never}>
-          <UnifiedProjectSelectorView {...PICKER_PROPS} />
+          <TooltipProvider>
+            <UnifiedProjectSelectorView {...PICKER_PROPS} {...props} />
+          </TooltipProvider>
         </PlatformContext.Provider>
       </I18nextProvider>,
     );
@@ -240,6 +260,39 @@ describe("the project picker's Connect-GitHub entry", () => {
     const text = menuText();
     expect(text, "C65 is gone").not.toContain("Connect more GitHub projects");
     expect(text, "the picker itself still renders").toContain("Add a local project");
+    await view.unmount();
+  });
+
+  it("clears a stale GitHub selection without githubIntegration", async () => {
+    const onChange = vi.fn();
+    const view = await renderPicker([], {
+      ...CACHED_CLONE_PROPS,
+      value: { kind: "github", repoFullName: "blitzdotdev/BlitzOS" },
+      onChange,
+    });
+    expect(onChange, "a saved remote selection cannot reach submission").toHaveBeenCalledWith({
+      kind: "none",
+    });
+    await view.unmount();
+  });
+
+  it("offers repository projects only with githubIntegration", async () => {
+    const view = await renderPicker(["githubIntegration"], CACHED_CLONE_PROPS);
+    const items = menuItemTexts();
+    expect(items, "the local project remains selectable").toContain("BlitzOS");
+    expect(items, "the GitHub project is selectable with the integration").toContain(
+      "blitzdotdev/BlitzOS",
+    );
+    await view.unmount();
+  });
+
+  it("does not turn a cached local clone name into a GitHub project", async () => {
+    const view = await renderPicker([], CACHED_CLONE_PROPS);
+    const items = menuItemTexts();
+    expect(items, "the local project remains selectable").toContain("BlitzOS");
+    expect(items, "the cached clone is not offered as a remote project").not.toContain(
+      "blitzdotdev/BlitzOS",
+    );
     await view.unmount();
   });
 });

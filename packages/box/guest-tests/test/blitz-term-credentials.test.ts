@@ -7,12 +7,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 /**
  * blitz-term hands a tab's environment to tmux, which execs the agent without
- * a login shell. No secret rides that hand-off: every credential, the
- * workspace's own variables included, is pulled at the moment of use with
- * `blitz-cred get <name>`, so a tmux session environment can never outlive the
- * grant that authorized it. These drive the real script with stub tmux,
- * blitz-cred and timeout binaries, because the failures that matter here are
- * runtime ones `bash -n` cannot see.
+ * a login shell. No secret rides that hand-off: every credential is pulled at
+ * the moment of use — the agent's own curl against the control plane's
+ * /agent/* API, with a bearer from `blitz-cred api-token` — so a tmux session
+ * environment can never outlive the grant that authorized it. These drive the
+ * real script with stub tmux, blitz-cred and timeout binaries, because the
+ * failures that matter here are runtime ones `bash -n` cannot see.
  */
 
 const blitzTermPath = fileURLToPath(

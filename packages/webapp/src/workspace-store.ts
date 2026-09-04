@@ -1,7 +1,6 @@
 import type { TenantMe } from './api-adapter';
 import type {
   RetryAction,
-  WorkspaceCredentialView,
   WorkspaceMemberRole,
   WorkspaceMemberView,
 } from '@blitzos/schema';
@@ -32,7 +31,6 @@ export type CloudWorkspaceModel = {
   connections: string[];
   /** The member-machines view the details dialog administers (§1). */
   members: WorkspaceMemberView[];
-  credentials: WorkspaceCredentialView[];
   defaultMachineTypeId: string;
   autoProvision: boolean;
   agentRuleId: string | null;
@@ -58,10 +56,6 @@ export type WorkspaceAction =
   | { type: 'workspace_reordered'; sourceId: string; targetId: string };
 
 export const initialWorkspaceStore: WorkspaceStoreState = { workspaces: [], viewer: null };
-
-function isVisibleWorkspace(record: WorkspaceRecord): boolean {
-  return record.status !== 'destroying' && record.status !== 'destroyed';
-}
 
 /** The parts of a model the server does not own, and which therefore survive
  * a refresh: the local title, the chosen agent, and the last values of the
@@ -100,7 +94,6 @@ function applyRecord(
     updatedAt: Math.max(existing.updatedAt, record.updatedAt),
     connections: record.connections ?? existing.connections,
     members: record.members,
-    credentials: record.credentials,
     defaultMachineTypeId: record.defaultMachineTypeId,
     autoProvision: record.autoProvision,
     agentRuleId: record.agentRuleId,
@@ -140,8 +133,11 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
   switch (action.type) {
     case 'workspaces_loaded': {
       const oldById = new Map(state.workspaces.map((workspace) => [workspace.id, workspace]));
-      const visibleRecords = action.records.filter(isVisibleWorkspace);
-      const models = visibleRecords.map((record) => {
+      // Every record the poll returns is a live workspace. `status` is a
+      // projection of the member's MACHINE, so filtering `destroying` here
+      // hid the workspace for the length of a stop, a recreate or a
+      // machine-type change; deletion arrives as `workspace_deleted`.
+      const models = action.records.map((record) => {
         const existing = oldById.get(record.id);
         if (!existing || existing.canControl !== record.canControl) {
           return createWorkspaceModel(record, action.preferences);
@@ -172,7 +168,9 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         ...state,
         workspaces: state.workspaces.flatMap((workspace) => {
           const record = recordsById.get(workspace.id);
-          if (!record || !isVisibleWorkspace(record)) return [];
+          // Same rule as `workspaces_loaded`: a poll that catches the member's
+          // machine mid-replacement must not evict the workspace from the rail.
+          if (!record) return [];
           return [applyRecord(workspace, record)];
         }),
       };
@@ -189,7 +187,6 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         // A machine act shows up here: the details dialog reads the rows this
         // poll refreshes rather than tracking lifecycle of its own.
         members: action.record.members,
-        credentials: action.record.credentials,
         autoProvision: action.record.autoProvision,
       }));
     case 'workspace_resume_failed':

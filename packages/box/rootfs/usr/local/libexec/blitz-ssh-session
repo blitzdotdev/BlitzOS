@@ -10,8 +10,9 @@
 # WHY NOT PAM: the box runs `UsePAM no`, so pam_exec is not available. A
 # ForceCommand is the only per-session hook sshd offers here.
 #
-# The uid this runs as is 1000, which cannot migrate into the system slice —
-# that destination stays root-owned. It can only reach the leaves it owns.
+# This runs as the configured Blitz uid, which cannot migrate into the system
+# slice — that destination stays root-owned. It can only reach the leaves it
+# owns.
 set -euo pipefail
 
 login_shell=${SHELL:-}

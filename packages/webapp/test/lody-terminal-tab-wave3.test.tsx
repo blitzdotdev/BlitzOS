@@ -148,6 +148,9 @@ interface ShellOptions {
   activeId: number | null;
   sideActiveId?: number;
   mobile?: boolean;
+  /** The `/lody/platform` probe never answers, so the capability stays
+   * `probing` for the whole render — the boot window, held open. */
+  probePending?: boolean;
 }
 
 /** What the mocked surface was handed on its last render. */
@@ -172,11 +175,17 @@ async function mountShell(options: ShellOptions) {
   const focusMarker: { body: unknown } = { body: { focus: null } };
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) =>
-      String(input).includes("/connections-focus")
-        ? new Response(JSON.stringify(focusMarker.body), { status: 200 })
-        : new Response(CATALOG, { status: 200 }),
-    ),
+    vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/connections-focus")) {
+        return new Response(JSON.stringify(focusMarker.body), { status: 200 });
+      }
+      // A door that never answers holds the capability at `probing`, which is
+      // where every cold load starts and where the native strip used to show.
+      if (options.probePending === true && String(input).includes("/lody/platform")) {
+        return await new Promise<Response>(() => undefined);
+      }
+      return new Response(CATALOG, { status: 200 });
+    }),
   );
   vi.doMock("../src/TtydTerminal.js", () => ({
     TERMINAL_SUBMIT_EVENT: "blitz:terminal-submit",
@@ -251,23 +260,34 @@ const TERMINAL_TABS: WorkspaceTab[] = [
 ];
 
 describe("F2 — a workspace with tabs always has a tab strip", () => {
-  it("keeps the pane strip on /workspaces/:id, where the surface is hidden", async () => {
+  // F2's ANSWER CHANGED. It was "the panes draw their own strip when the
+  // surface is hidden"; the native strip is deleted (plans/LODY-TERMINAL-TABS.md
+  // §4.6, "PR 2"), so the answer is now that `/workspaces/:id` is not a place
+  // the surface is hidden at all — it resolves into the chat plane, where the
+  // one strip is. The invariant F2 was defending is unchanged: a workspace with
+  // tabs always has a tab strip.
+  it("resolves /workspaces/:id into the chat plane instead of the panes", async () => {
     const mounted = await mountShell({
       path: "/workspaces/ws-1",
       tabs: TERMINAL_TABS,
       activeId: 7,
     });
-    // The address is the panes, so the surface is mounted and hidden. §4.6
-    // gated the pane strips on AVAILABILITY — the strip exists — and that is
-    // true here, which is how a cold load with tabs (and every workspace
-    // switch, since `navigateToWorkspacePage` always sets `chat: null`) drew
-    // no strip at all.
-    expect(mounted.surface.hidden, "the surface is not on screen").toBe(true);
-    expect(paneStrips(mounted.view), "the panes draw their own strip").toBe(1);
+    // THIS IS THE REFRESH REPORT. A returning member with tabs used to stay
+    // here for good: the landing default only fired for a document with ZERO
+    // tabs, so every bookmark and every workspace switch landed on the native
+    // strip. The root address now normalises, and it REPLACES — the member
+    // never asked for the step, so the back button must not walk through it.
+    expect(window.location.pathname).toBe("/workspaces/ws-1/chat");
+    expect(mounted.surface.hidden, "the surface is on screen").toBe(false);
+    expect(paneStrips(mounted.view), "no native strip, ever").toBe(0);
+    expect(
+      mounted.view.container.querySelector(".webapp-tabstrip"),
+      "the deleted strip's markup is gone with it",
+    ).toBeNull();
     await mounted.view.unmount();
   });
 
-  it("takes it away again the moment the surface is on screen", async () => {
+  it("draws the one strip when the surface is on screen", async () => {
     const mounted = await mountShell({
       path: "/workspaces/ws-1/chat",
       tabs: TERMINAL_TABS,
@@ -283,19 +303,28 @@ describe("F2 — a workspace with tabs always has a tab strip", () => {
     await mounted.view.unmount();
   });
 
-  it("draws the tab bodies in exactly one host, either way", async () => {
-    // The one-mount invariant, which the fix must not trade away: two hosts
-    // painting one tmux session would be two ttyd sockets on one PTY.
-    const panes = await mountShell({
-      path: "/workspaces/ws-1",
+  it("shows a skeleton, not the old strip, while the probe is still out", async () => {
+    // THE OTHER HALF OF THE REFRESH REPORT. `lodySurfaceMounts` needs a box
+    // that answered `present`, and the probe starts at `probing` on every cold
+    // load — up to 7.5 s of retries. The panes filled that window with the
+    // native strip and then swapped it for the session strip; that swap is the
+    // flash the member saw. The window now has a state of its own.
+    const mounted = await mountShell({
+      path: "/workspaces/ws-1/chat",
       tabs: TERMINAL_TABS,
       activeId: 7,
+      probePending: true,
     });
-    expect(panes.surface.surfaceTabs?.tabs.every(({ content }) => content === null)).toBe(true);
-    expect(panes.view.container.querySelectorAll(".webapp-workspace-session").length)
-      .toBeGreaterThan(0);
-    await panes.view.unmount();
+    expect(paneStrips(mounted.view), "no native strip in the boot window").toBe(0);
+    expect(mounted.view.container.querySelector(".webapp-tabstrip")).toBeNull();
+    const skeleton = mounted.view.container.querySelector(".webapp-loading-tabstrip");
+    expect(skeleton, "the boot window draws a strip skeleton").not.toBeNull();
+    await mounted.view.unmount();
+  });
 
+  it("draws the tab bodies in exactly one host", async () => {
+    // The one-mount invariant, which the deletion must not trade away: two
+    // hosts painting one tmux session would be two ttyd sockets on one PTY.
     const strip = await mountShell({
       path: "/workspaces/ws-1/chat/terminal/7",
       tabs: TERMINAL_TABS,
@@ -448,13 +477,18 @@ describe("ADJ1 — the rail's terminal highlight follows the address", () => {
     expect(onLanding.surface.activeTerminalId).toBe("");
     await onLanding.view.unmount();
 
-    const onPanes = await mountShell({
+    // THE "WITH THE PANES UP" ARM IS GONE. It read the pane's own focused tab,
+    // and on a surface-capable desktop there is no pane address left to read it
+    // from: `/workspaces/ws-1` resolves into the chat plane, where a
+    // conversation owns the view and no terminal row is current.
+    const onRoot = await mountShell({
       path: "/workspaces/ws-1",
       tabs: TERMINAL_TABS,
       activeId: 9,
     });
-    expect(onPanes.surface.activeTerminalId).toBe("9");
-    await onPanes.view.unmount();
+    expect(window.location.pathname).toBe("/workspaces/ws-1/chat");
+    expect(onRoot.surface.activeTerminalId).toBe("");
+    await onRoot.view.unmount();
   });
 });
 
@@ -467,16 +501,37 @@ describe("F5 — the mobile breakpoint cannot strand a terminal address", () => 
       mobile: true,
     });
     // Below the breakpoint the vendored strip is not mounted (§5.5), so the
-    // chat covered the panes, the URL kept naming a terminal, and the native
-    // strip that could have reached it was drawn behind the surface.
+    // chat covered the panes and the URL kept naming a terminal nothing on this
+    // layout could draw. The panes take it back — and they take it back with NO
+    // strip, because the native one is deleted: on mobile the rail, in the
+    // drawer, is the tab list, and its rows carry the close.
     expect(window.location.pathname).toBe("/workspaces/ws-1");
     expect(mounted.surface.hidden).toBe(true);
-    expect(paneStrips(mounted.view)).toBe(1);
+    expect(paneStrips(mounted.view)).toBe(0);
     // And it is the terminal the address named that the panes show, not the
     // one the document happened to have active.
     await flushPersistence();
     const persisted = mounted.state.get("ws-1") as { tabs: { activeId: number } };
     expect(persisted.tabs.activeId).toBe(9);
+    await mounted.view.unmount();
+  });
+
+  it("keeps the navigation drawer reachable without the deleted header", async () => {
+    // The hamburger was a child of `WebAppHeader` and it is not a tab control:
+    // below the breakpoint the rail rides in an off-canvas drawer and this is
+    // the only thing that opens it on a loaded workspace page. It moved to
+    // `shell/PaneChrome.tsx` rather than going with the strip.
+    const mounted = await mountShell({
+      path: "/workspaces/ws-1",
+      tabs: TERMINAL_TABS,
+      activeId: 7,
+      mobile: true,
+    });
+    expect(
+      mounted.view.container.querySelector('button[aria-label="Open workspace navigation"]'),
+      "mobile keeps a way into the rail",
+    ).not.toBeNull();
+    expect(paneStrips(mounted.view)).toBe(0);
     await mounted.view.unmount();
   });
 
@@ -520,9 +575,9 @@ async function mountRail(path: string) {
   const seen: { rail: LodyRailState | null } = { rail: null };
   function Host() {
     const [route, setRoute] = useState<AppRoute>(() => parseAppRoute(window.location.pathname));
-    seen.rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, 1, {
+    seen.rail = useLodyRail(route, setRoute, route.workspaceId ?? "", true, {
       capability: "present",
-      onLegacyDefaultTabs: () => undefined,
+      surfaceHostsTabs: true,
     });
     return null;
   }
@@ -550,7 +605,6 @@ describe("F7 — a dead session with a live terminal keeps the strip", () => {
       "/workspaces/ws-1/chat/terminal/7",
       "/workspaces/ws-1/chat/s-1",
       "/workspaces/ws-1/chat",
-      "/workspaces/ws-1",
     ]) {
       const mounted = await mountRail(path);
       await act(async () => mounted.seen.rail?.openTerminalOnLanding());
@@ -558,6 +612,15 @@ describe("F7 — a dead session with a live terminal keeps the strip", () => {
       expect(window.location.pathname, path).toBe(path);
       await mounted.view.unmount();
     }
+    // The workspace ROOT is not in that list any more: it is not an address the
+    // shell rests on, because the strip that would draw its tabs is deleted.
+    // `openTerminalOnLanding` is still inert there — what moves the address is
+    // the normalisation, and it moves it exactly once.
+    const root = await mountRail("/workspaces/ws-1");
+    await act(async () => root.seen.rail?.openTerminalOnLanding());
+    await settle();
+    expect(window.location.pathname).toBe("/workspaces/ws-1/chat");
+    await root.view.unmount();
   });
 
   it("replaces the address it refused", async () => {

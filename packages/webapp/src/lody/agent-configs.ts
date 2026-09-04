@@ -9,10 +9,11 @@
  *
  * WHY EVERY BUILTIN CONFIG MUST CARRY AN OVERRIDE. Without one the daemon
  * resolves its MANAGED runtime and downloads a second, unpinned agent binary
- * from Lody's R2 channel (`packages/platform/src/runtime-artifacts.ts`) — the
- * exact thing the image's `DISABLE_AUTOUPDATER` pin exists to prevent
- * everywhere else. With one, `apps/cli/src/agent/setting.ts:441` short-circuits
- * that path entirely and spawns our binary.
+ * from Lody's R2 channel (`packages/platform/src/runtime-artifacts.ts`) — a
+ * binary nothing on the box authenticates, updates or can reason about. With
+ * one, `apps/cli/src/agent/setting.ts:441` short-circuits that path entirely
+ * and spawns our binary: the box's own `claude`, which keeps itself current and
+ * so decides which models this composer can offer (docs/LODY-MODELS.md).
  *
  * AND WHICH BINARY. `/usr/local/bin/claude` is the box's PATH SHIM, not the
  * vendor CLI: it mints a fresh OAuth token through `blitz-cred-claude` and execs

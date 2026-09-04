@@ -55,6 +55,14 @@ export function useChatLandingImageDraft(args: {
   projectKind: 'github' | 'local' | null;
   sessionId: SessionId | null;
   ensureSessionId: () => SessionId;
+  /**
+   * Stages files on the landing's sibling FILE draft, which owns a local
+   * transport that needs no cloud token. Supplied only while that transport is
+   * available; an image that cannot be uploaded is handed to it as a file
+   * attachment, the same degrade `session-chat-input-area.tsx` performs when
+   * both state machines live in one component.
+   */
+  degradeToFileAttachments?: (files: File[]) => void;
 }) {
   const { t } = useTranslation();
   const {
@@ -64,6 +72,7 @@ export function useChatLandingImageDraft(args: {
     projectKind,
     sessionId: draftSessionId,
     ensureSessionId,
+    degradeToFileAttachments,
   } = args;
   const postHog = usePostHog();
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
@@ -80,6 +89,10 @@ export function useChatLandingImageDraft(args: {
   const imageSelectionSkippedLabel = t(
     'sessions.imageSelectionSkipped',
     'Some images were not added'
+  );
+  const imageStoredAsLocalFileLabel = t(
+    'sessions.imageStoredAsLocalFile',
+    'Image upload is offline; added as a pending file attachment.'
   );
 
   const showImageSelectionIssues = useCallback(
@@ -135,6 +148,42 @@ export function useChatLandingImageDraft(args: {
 
   const startUpload = useCallback(
     async (localId: string, file: File, sessionId: SessionId) => {
+      // Offline degrade-to-file: with no cloud token there is no image upload to
+      // attempt, but the sibling FILE draft can still hand the bytes to the
+      // machine over its local transport. So the image becomes a pending file
+      // attachment there, exactly as `session-chat-input-area.tsx` degrades one
+      // it could not upload (toast `sessions.imageStoredAsLocalFile`) — the two
+      // state machines are two hooks here rather than one component, so the
+      // move across them is a call instead of a `setState`.
+      //
+      // It runs BEFORE the cloud-credential guard, because that transport needs
+      // no cloud token: a local-only composition has none, and would otherwise
+      // fail every landing image at a check for credentials it never uses.
+      if (!authToken && workspaceId && degradeToFileAttachments) {
+        setPendingImages((prev) => {
+          const removed = prev.find((image) => image.localId === localId);
+          if (removed) {
+            URL.revokeObjectURL(removed.previewUrl);
+          }
+          return prev.filter((image) => image.localId !== localId);
+        });
+        degradeToFileAttachments([file]);
+        toast.info(imageStoredAsLocalFileLabel);
+        capturePostHogEvent(postHog, 'session/image_upload_failed', {
+          channel: 'web',
+          entrypoint: 'chat_landing',
+          actor: 'user',
+          workspace_id: workspaceId,
+          session_id: sessionId,
+          image_count: 1,
+          total_size_bytes: file.size,
+          project_kind: projectKind,
+          failure_reason: 'missing_auth',
+          local_file_fallback: true,
+        });
+        return;
+      }
+
       if (!workspaceId || !authToken) {
         capturePostHogEvent(postHog, 'session/image_upload_failed', {
           channel: 'web',
@@ -225,6 +274,8 @@ export function useChatLandingImageDraft(args: {
     },
     [
       authToken,
+      degradeToFileAttachments,
+      imageStoredAsLocalFileLabel,
       imageUploadFailedLabel,
       imageUploadMissingAuthLabel,
       postHog,

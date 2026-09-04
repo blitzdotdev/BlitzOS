@@ -272,7 +272,7 @@ curl -s https://<your-origin>/version
 ```
 
 ```json
-{ "commit": "0bd4a8b...", "boxImageRef": "ghcr.io/...@sha256:...", "migration": "0028_drop_generic_connections.sql" }
+{ "commit": "0bd4a8b...", "boxImageRef": "ghcr.io/...@sha256:...", "boxImageTag": "", "migration": "0028_drop_generic_connections.sql" }
 ```
 
 The deploy records the commit it shipped, so you never have to guess. Do not
@@ -305,9 +305,10 @@ The deploy applies migrations automatically and now prints this list first.
 npm run box-image:check -w packages/control-plane -- --url https://<your-origin>
 ```
 
-Box and broker changes ride the image, and a box never upgrades in place, so
-they reach new workspaces only. Everything else rides the Worker. Exit code 2
-means a rebuild is due.
+The Dockerfile's repository inputs ride the image, and a box never upgrades in
+place, so those changes reach new workspaces only. Everything else rides the
+Worker. Exit code 2 means a rebuild is due. This remains a self-host operator
+check; the hosted canary performs content-derived image planning automatically.
 
 ### Roll back
 

@@ -1,7 +1,7 @@
 # Upstream PR: a host-resolved viewer URL for the Browser panel
 
 Drafted 2026-09-02 for `LodyAI/Lody`, against the vendored pin `f3474894`.
-It is the contribution that lets BlitzOS drop seam patch 11 in
+It is the contribution that lets BlitzOS drop seam patch 20 in
 `vendor/lody/BLITZ-PATCHES.md`.
 
 ## Before it is opened
@@ -188,6 +188,6 @@ already serving.
 
 ## When it merges
 
-Delete seam patch 11 from `vendor/lody/BLITZ-PATCHES.md`, drop the fifteen
+Delete seam patch 20 from `vendor/lody/BLITZ-PATCHES.md`, drop the fifteen
 hunks at the next `git subtree pull`, and keep passing the same resolver from
 `packages/webapp/src/lody/` unchanged.

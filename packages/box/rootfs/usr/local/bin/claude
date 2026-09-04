@@ -19,13 +19,12 @@
 # it is signed out — a workspace a member can fix — rather than a dead command.
 #
 # An already-set token is left alone, so a caller can override.
-
-# A self-updating vendor CLI drops a second copy into the member's own npm
-# prefix, which then wins the PATH and shadows this shim: a terminal signed out
-# while the same box holds a valid credential. A fresh box has no user-local
-# copy, so the first run comes through here and never acquires one.
-DISABLE_AUTOUPDATER=1
-export DISABLE_AUTOUPDATER
+#
+# THE AUTO-UPDATER IS LEFT ON, deliberately. claude's version is what decides
+# which models the Lody composer can offer (docs/LODY-MODELS.md), so holding it
+# held the model list too. An update rewrites /opt/blitz/npm in place, and
+# /usr/local/bin sits ahead of that prefix on PATH, so the updated binary is
+# what this shim execs — not something that shadows it.
 
 if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -x /usr/local/bin/blitz-cred-claude ]; then
 	token="$(/usr/local/bin/blitz-cred-claude 2>/dev/null || true)"

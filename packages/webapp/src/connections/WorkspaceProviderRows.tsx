@@ -39,16 +39,11 @@ type ProviderRow = {
 };
 
 /** A credential already stands behind this provider, so Connect is a mint and
- * not a form: either this member authorized it on their own account, or an
- * admin stored one org credential for everybody. */
-function isBacked(
-  row: ProviderRow,
-  orgConnections: readonly ConnectionView[],
-): boolean {
-  if (row.grant !== null) return true;
-  return orgConnections.some((connection) => connection.name === row.name
-    && connection.status === 'active'
-    && connection.orgCredential);
+ * not a form: this member authorized it on their own account. Nothing else
+ * backs a connection — an org-shared static is an org credential, not a
+ * connection, and never makes a provider row read as connected. */
+function isBacked(row: ProviderRow): boolean {
+  return row.grant !== null;
 }
 
 /** "you signed in Aug 21". A template stipulates providers at create time, so a
@@ -262,7 +257,7 @@ export function WorkspaceProviderRows({
       {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
       <div className="wsc-list">
         {rows.map((row) => {
-          const backed = isBacked(row, orgConnections);
+          const backed = isBacked(row);
           const isOpen = expanded === row.name;
           const showForm = replacing === row.name || (!backed && row.entry !== null);
           const oauthHref = row.entry?.oauthConfigured === true

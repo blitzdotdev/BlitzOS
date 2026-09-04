@@ -6,18 +6,19 @@ import { describe, expect, it } from "vitest";
  * `/usr/local/bin/claude` and `/usr/local/bin/codex` are PATH shims. The image
  * puts /usr/local/bin ahead of /opt/blitz/npm/bin, so every terminal `claude`
  * or `codex` enters here first and the shim decides what the vendor CLI is
- * allowed to do before execing the pinned binary.
+ * allowed to do before execing the vendor binary.
  *
- * What they hold is the version pin. Both CLIs offer to update themselves, and
- * NPM_CONFIG_PREFIX is /opt/blitz/npm, owned by uid 1000 — so taking the offer
- * overwrites the pinned copy in place and the box quietly stops running the
- * version it was built with. Nothing at runtime reports that.
+ * BOTH CLIs UPDATE THEMSELVES, and that is intended: claude's version is what
+ * decides which models the Lody composer can offer (docs/LODY-MODELS.md), so a
+ * held version held the model list too. An update runs `npm install -g` into
+ * NPM_CONFIG_PREFIX — /opt/blitz/npm, owned by uid 1000 — which rewrites the
+ * copy the shim execs IN PLACE. The PATH order is what makes that safe rather
+ * than shadowing, and it is asserted below.
  *
- * The two guards are different because the vendors are different. claude reads
- * `DISABLE_AUTOUPDATER`. codex has no environment variable at all: checked
- * against @openai/codex@0.147.0, the pinned version, `codex doctor --json`
- * reports `"check for update on startup": "true"` by default and `"false"`
- * only with `-c check_for_update_on_startup=false`.
+ * codex has no environment variable for the check: checked against
+ * @openai/codex@0.147.0, `codex doctor --json` reports
+ * `"check for update on startup": "true"` by default, and honours either value
+ * passed as `-c check_for_update_on_startup=…`.
  *
  * packages/box/test/syntax.sh parses these same files, but it runs behind
  * smoke.sh and needs docker. These run everywhere.
@@ -41,15 +42,18 @@ describe("vendor CLI PATH shims", () => {
     expect(statSync(shimPath(name)).mode & 0o755).toBe(0o755);
   });
 
-  it("keeps claude's auto-updater off", () => {
-    expect(shim("claude")).toContain("DISABLE_AUTOUPDATER=1");
-    expect(shim("claude")).toContain("export DISABLE_AUTOUPDATER");
+  it("leaves claude's auto-updater on", () => {
+    // The flag used to be exported here and in three other places. It is gone:
+    // holding the CLI version held the model list with it. Assert the absence,
+    // so re-adding it anywhere in this shim is a test failure and not a quiet
+    // regression back to a stale model picker.
+    expect(shim("claude")).not.toContain("DISABLE_AUTOUPDATER");
   });
 
-  it("keeps codex's startup update check off", () => {
-    // Without the flag, codex's first screen offers "Update available!" and
-    // the update path runs `npm install -g @openai/codex` over the pin.
-    expect(shim("codex")).toContain("-c check_for_update_on_startup=false");
+  it("leaves codex's startup update check on", () => {
+    // Stated explicitly rather than left to codex's default, so a vendor
+    // default flip cannot silently reverse the intent.
+    expect(shim("codex")).toContain("-c check_for_update_on_startup=true");
   });
 
   it("puts codex's flag before the caller's arguments", () => {
@@ -58,7 +62,7 @@ describe("vendor CLI PATH shims", () => {
     // its own `-c model_reasoning_effort=…` after it.
     const line = shim("codex").split("\n").find((row) => row.startsWith("exec "));
     expect(line).toBe(
-      'exec /opt/blitz/npm/bin/codex -c check_for_update_on_startup=false "$@"',
+      'exec /opt/blitz/npm/bin/codex -c check_for_update_on_startup=true "$@"',
     );
   });
 });

@@ -375,6 +375,9 @@ export function useChatLandingFileDraft(args: {
     hasBlockingFiles,
     hasUploadedFiles,
     canAddMoreFiles: pendingFiles.length < SESSION_FILE_MAX_COUNT,
+    /** Whether this draft can stage bytes with no cloud token. The image draft
+     * beside it asks before degrading an image it cannot upload into a file. */
+    canSendFileLocally,
     addFiles: handleAddFiles,
     handleRemoveFile,
     handleRetryFile,

@@ -1,8 +1,0 @@
-{
-  "connection": "github",
-  "mode": "inject",
-  "token": "ghu_first\nghu_second",
-  "env": [{ "name": "GH_TOKEN", "value": "ghu_first" }],
-  "header": { "name": "Authorization", "prefix": "Bearer " },
-  "expiresAt": 1756000000000
-}

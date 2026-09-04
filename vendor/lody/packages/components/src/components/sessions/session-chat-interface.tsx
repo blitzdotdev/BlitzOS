@@ -1772,6 +1772,17 @@ interface SessionChatInterfaceProps {
    * editor whose save has nowhere to land — rather than disappearing.
    */
   hideAgentRoles?: boolean;
+  /**
+   * Drop every surface that narrates the connection: the composer status chip's
+   * browser-offline and machine-offline states, the ambient catch-up spinner in
+   * the info bar and the page header, and the header's offline-cloud glyph.
+   *
+   * For a host that reports connectivity itself — an embedding shell with its own
+   * status line, say. Two surfaces describing one outage in different words tell
+   * the member which to believe and nothing else. The status chip's
+   * `machine-removed` state is NOT dropped: see `resolveSessionStatusStripState`.
+   */
+  hideConnectionStatus?: boolean;
   /** When false, keep the local doc mounted without holding the remote room subscription. */
   syncEnabled?: boolean;
   /**
@@ -1945,6 +1956,7 @@ export const SessionChatInterface = memo(
       hideCloudMenuItems = false,
       hideNotificationPrompt = false,
       hideAgentRoles = false,
+      hideConnectionStatus = false,
       syncEnabled = !hideMessageArea,
       isVisible = true,
       isExternalHistoryRefreshing = false,
@@ -2505,8 +2517,15 @@ export const SessionChatInterface = memo(
           machineRemoved: isMachineRemoved,
           machineOnlineStatus: sessionMachineOnlineStatus,
           machineName: sessionMachine?.name ?? null,
+          connectionStatusHidden: hideConnectionStatus,
         }),
-      [browserOnline, isMachineRemoved, sessionMachineOnlineStatus, sessionMachine?.name]
+      [
+        browserOnline,
+        isMachineRemoved,
+        sessionMachineOnlineStatus,
+        sessionMachine?.name,
+        hideConnectionStatus,
+      ]
     );
 
     // Keyboard cyclers (⇧Tab mode + rebindable model / thinking). The agent provider is
@@ -5674,8 +5693,10 @@ export const SessionChatInterface = memo(
                     <SessionProjectInfo
                       session={session}
                       isLoading={shouldShowTitleLoading}
-                      isSyncing={effectiveTitleSyncing}
-                      isMachineOffline={sessionMachineOnlineStatus === 'offline'}
+                      isSyncing={!hideConnectionStatus && effectiveTitleSyncing}
+                      isMachineOffline={
+                        !hideConnectionStatus && sessionMachineOnlineStatus === 'offline'
+                      }
                       t={t}
                       localProjectMeta={resolvedLocalProjectMeta}
                     />
@@ -5910,7 +5931,7 @@ export const SessionChatInterface = memo(
                     }
                     diffStat={changesDiffStat}
                     // Desktop only: mobile already shows catch-up in its header.
-                    syncing={!isMobile && effectiveTitleSyncing}
+                    syncing={!isMobile && !hideConnectionStatus && effectiveTitleSyncing}
                     // Mobile keeps the bar above the session drawer's z-30
                     // edge-back strip so its leading chip stays tappable.
                     protectFromEdgeBackZone={isMobile}

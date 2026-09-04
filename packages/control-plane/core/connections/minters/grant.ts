@@ -41,8 +41,8 @@ function leaseExpiry(input: GrantMintInput): number {
 }
 
 /** The environment names this provider answers to, filled. Nothing writes
- * them: `blitz-cred env` prints them so an agent can scope a secret to one
- * command. A `proxy-url` entry carries the root the token is good against,
+ * them: the token route answers them as `env` so an agent can scope a secret
+ * to one command. A `proxy-url` entry carries the root the token is good against,
  * which is the lease URL under proxy custody and the vendor's own root
  * otherwise. */
 function connectionEnv(

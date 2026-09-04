@@ -114,7 +114,7 @@ export function ProviderConnectSurface({
           <InfoGlyph />
           <span>
             {entry.adminForm !== null
-              ? `An admin stores one ${entry.title} key for everyone, on the template page.`
+              ? `An admin stores one ${entry.title} key for everyone, as an organization credential.`
               : `${entry.title} issues no personal token. Connecting requires OAuth.`}
           </span>
         </p>

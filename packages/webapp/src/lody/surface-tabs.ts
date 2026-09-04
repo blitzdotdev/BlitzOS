@@ -18,8 +18,7 @@
  * passing `any` through.
  */
 import { createContext, createElement, useContext, type ReactNode } from "react";
-import { SessionTypeIcon } from "../SessionTypeIcon.js";
-import type { WebAppTabModel } from "../WebAppHeader.js";
+import { SessionTypeIcon, type WebAppTabModel } from "../SessionTypeIcon.js";
 
 /** One tab a HOST contributes to the session tab strip. Mirrors
  * `SessionSurfaceTab` in the vendored `session-detail.tsx` (seam patch 5). */

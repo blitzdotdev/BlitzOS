@@ -11,8 +11,8 @@ export const WORKSPACE_REQUEST_MAX_BYTES = 128 * 1024;
 /**
  * The legacy workspace-environment route.
  *
- * The feature is gone: values live in `workspace_credentials` and only
- * `blitz-cred` reads them, and the startup script has no runner left. The
+ * The feature is gone: static secrets live in `org_credentials` and only the
+ * agent API serves them, and the startup script has no runner left. The
  * route stays because DEPLOYED broker binaries poll it every second at boot
  * and wait for a 200 carrying all three fields with `filesReady: true`. A 404
  * or a missing field makes every already-deployed box poll forever, so this

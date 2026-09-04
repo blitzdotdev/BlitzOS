@@ -18,6 +18,7 @@ import { useFireOnKeyChange, useFireOncePerCycle } from '@/hooks/use-fire-once';
 import { FileIcon, FolderIcon } from '@/components/icons/file-icons';
 import { AgentRoleDetailPane } from '@/components/sessions/agent-role-detail-pane';
 import { MentionContent, MentionItem, useMentionContext } from '@/ui/mention';
+import { getMentionDrillDownParent } from '@/ui/mention/mention-trigger';
 import { useIsMentionMobile } from '@/ui/mention/mention-mobile-content';
 import {
   getCategoryNavigateText,
@@ -494,13 +495,16 @@ export function MentionTwoLevelMenu({
     });
   }, [getEnabledItems, highlightKey, onHighlightedItemChange, shouldHighlightFirst]);
 
-  // The click equivalent of the primitive's Backspace/ArrowLeft contract; mobile
-  // has no Backspace habit, so the second level always carries a visible way
-  // out. Focus stays in the composer — the menu closes the moment it blurs.
+  // The click equivalent of the primitive's ArrowLeft contract, by the same
+  // helper: ONE level, so a path drill-down walks back a directory at a time
+  // rather than losing every level at once. Mobile has no Backspace habit, so
+  // the second level always carries a visible way out; a level with nothing
+  // above it falls back to the bare trigger. Focus stays in the composer — the
+  // menu closes the moment it blurs.
   const { onNavigateBack, inputRef } = context;
   const handleBack = React.useCallback(() => {
-    if (onNavigateBack()) inputRef.current?.focus();
-  }, [inputRef, onNavigateBack]);
+    if (onNavigateBack(getMentionDrillDownParent(search) ?? '')) inputRef.current?.focus();
+  }, [inputRef, onNavigateBack, search]);
 
   // Side panel follows the highlight. Falls back to the first candidate so the
   // pane is populated before the highlight effect lands, and stays off mobile

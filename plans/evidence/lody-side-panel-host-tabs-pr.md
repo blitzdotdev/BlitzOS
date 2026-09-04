@@ -1,7 +1,7 @@
 # Upstream PR: host-contributed side-panel tabs, driven and reported from outside
 
 Drafted 2026-09-02 for `LodyAI/Lody`, against the vendored pin `f3474894`.
-It is the contribution that lets BlitzOS drop seam patch 10 in
+It is the contribution that lets BlitzOS drop seam patch 19 in
 `vendor/lody/BLITZ-PATCHES.md`.
 
 ## Before it is opened
@@ -210,6 +210,6 @@ changed.
 
 ## When it merges
 
-Delete seam patch 10 from `vendor/lody/BLITZ-PATCHES.md`, drop the twelve hunks
+Delete seam patch 19 from `vendor/lody/BLITZ-PATCHES.md`, drop the twelve hunks
 at the next `git subtree pull`, and keep passing the same three props from
 `packages/webapp/src/lody/` unchanged.

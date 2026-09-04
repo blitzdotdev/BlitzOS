@@ -37,13 +37,18 @@ const read = (path: string): string => readFileSync(path, "utf8");
 const ourSource = (file: string): string => read(join(lodySrc, file));
 
 describe("the v1 scope constant", () => {
-  it("still cuts all four groups", () => {
+  it("still cuts every group", () => {
     // A flip is a product decision, not a refactor. It fails here first.
+    // `connectionStatus` is seam patch 15's, and it is an ownership boundary
+    // rather than a "not in v1" cut — see `v1-scope.ts`. Mounting the mobile
+    // branch is what gave it a phone to answer on.
     expect(LODY_V1_SCOPE).toEqual({
       gitHubIntegration: false,
       agentRolesAndMcp: false,
       keyboardShortcuts: false,
       cloudSurfaces: false,
+      languageService: false,
+      connectionStatus: false,
     });
   });
 
@@ -58,31 +63,62 @@ describe("the v1 scope constant", () => {
       hideProductHints: true,
       hideAgentRoles: true,
       keyboardShortcutsAvailable: false,
+      hideLanguageServiceActions: true,
+      hideTeamScope: true,
+      // Seam patch 16's one. `hideSettingsEntry` reads `cloudSurfaces`, the
+      // flag that already covers the hint band's Go-to-settings button.
+      hideSettingsEntry: true,
+      hideConnectionStatus: true,
     });
   });
 });
 
-describe("router.tsx hands the suppression to both mounted components", () => {
+describe("the two mounts hand the suppression to all four mounted components", () => {
   const router = ourSource("router.tsx");
+  const stack = ourSource("MobileSessionStack.tsx");
 
   it("passes every prop `lodyV1SuppressionProps` returns", () => {
-    // Read from the returned object rather than restated, so adding a fifth
+    // Read from the returned object rather than restated, so adding a
     // suppression and forgetting to pass it fails here.
+    //
+    // TWO MOUNTS, ONE OBJECT. `router.tsx` mounts the desktop pages and the
+    // archive; `MobileSessionStack.tsx` mounts the phone's. A prop may live in
+    // either — `hideSettingsEntry` has no desktop surface at all — but it must
+    // live in ONE of them, or the flag reaches nothing.
     for (const prop of Object.keys(lodyV1SuppressionProps())) {
-      expect(router, `router.tsx passes ${prop}`).toContain(`${prop}={V1.${prop}}`);
+      const passed = `${prop}={V1.${prop}}`;
+      expect(
+        router.includes(passed) || stack.includes(passed),
+        `${prop} is passed by router.tsx or MobileSessionStack.tsx`,
+      ).toBe(true);
     }
   });
 
   it("builds them from the scope constant and nothing else", () => {
-    expect(router).toContain('from "./v1-scope.js"');
-    expect(router).toContain("const V1 = lodyV1SuppressionProps();");
+    for (const [name, source] of [["router.tsx", router], ["MobileSessionStack.tsx", stack]] as const) {
+      expect(source, `${name} reads the scope constant`).toContain('from "./v1-scope.js"');
+      expect(source, `${name} builds the props once`).toContain(
+        "const V1 = lodyV1SuppressionProps();",
+      );
+    }
   });
 
-  it("gives ChatLanding the hint and Role suppressions", () => {
+  it("gives ChatLanding the hint, Role and connection suppressions", () => {
     const start = router.indexOf("<ChatLanding");
     const landing = router.slice(start, router.indexOf("<SessionDetail"));
     expect(landing).toContain("hideProductHints={V1.hideProductHints}");
     expect(landing).toContain("hideAgentRoles={V1.hideAgentRoles}");
+    expect(landing).toContain("hideConnectionStatus={V1.hideConnectionStatus}");
+  });
+
+  it("gives ArchiveView the team-scope suppression, and no prop for the PR badge", () => {
+    const start = router.indexOf("<ArchiveView");
+    expect(start, "router.tsx mounts ArchiveView").toBeGreaterThan(-1);
+    const archive = router.slice(start, router.indexOf("</AppThemeShell>", start));
+    expect(archive).toContain("hideTeamScope={V1.hideTeamScope}");
+    // The badge is upstream's own capability gate, so there is deliberately no
+    // second prop here. A prop appearing would mean the gate was re-invented.
+    expect(archive).not.toContain("hidePullRequest");
   });
 
   it("gives SessionDetail the menu, prompt, Role and keyboard suppressions", () => {
@@ -92,6 +128,10 @@ describe("router.tsx hands the suppression to both mounted components", () => {
       "hideNotificationPrompt",
       "hideAgentRoles",
       "keyboardShortcutsAvailable",
+      // Seam patch 10's one suppression, wired the same way.
+      "hideLanguageServiceActions",
+      // Seam patch 15's, likewise.
+      "hideConnectionStatus",
     ]) {
       expect(detail, `SessionDetail receives ${prop}`).toContain(`${prop}={V1.${prop}}`);
     }
@@ -177,23 +217,39 @@ describe("the command palette and the keyboard dispatcher stay unmounted", () =>
   });
 });
 
-describe("the mobile branch is not mounted", () => {
-  it("has no mobile route component and no vendored mobile import", () => {
-    // C110, SP62, T28, X13, X14. Both real routes are the desktop ones; seam
-    // patch 5 leaves `mobile-session-tab-sheet.tsx` unpatched on purpose.
+describe("the mobile branch IS mounted, and the routes stand down for it", () => {
+  /* THIS DESCRIBE USED TO SAY THE OPPOSITE, and the inversion is the amendment
+     rather than a weakening. Area 23 was KILL because both real routes dropped
+     the mobile branch, so no v1 flag had to reach a phone. The user approved
+     mounting it (`plans/LODY-V1-SCOPE.md` §5), and what this suite must now
+     hold is the OTHER side of the same claim: exactly one thing draws the
+     phone's landing and session, and every flag reaches it. */
+
+  it("mounts the stack above both leaves, and both leaves return null on a phone", () => {
     const router = ourSource("router.tsx");
-    expect(router).toContain("Their `routes/$workspaceName/_auth/chat.tsx`, minus the mobile branch.");
-    expect(router).toContain(
-      "Their `routes/$workspaceName/_auth/sessions/$sessionId.tsx`, minus mobile.",
-    );
-    // An IMPORT, not a mention: `router.tsx`'s own doc comment cites
+    // The stack outlives the chat -> session route change, so it hangs off the
+    // route both leaves share. On a leaf it would be torn down by the very
+    // navigation it exists to animate.
+    expect(router).toContain("component: authRouteComponent(options.readOnly === true)");
+    expect(router).toContain("<MobileSessionStack workspaceName={workspaceName}");
+    // Two returns, one per leaf. A third would mean something else stood down.
+    expect(router.match(/if \(isMobile\) return null;/gu)?.length).toBe(2);
+    // The chat leaf still runs: its effect publishes the base context the stack
+    // reads to keep the right page beneath an open session.
+    expect(router).toContain("setMobileBaseContext({");
+  });
+
+  it("imports a vendored mobile screen from exactly one file", () => {
+    // An IMPORT, not a mention: `router.tsx`'s doc comment cites
     // `components/mobile/mobile-workspace-stack.tsx` as the file whose route ids
-    // ours reproduce, and that citation is the reason the ids match.
-    for (const file of readdirSync(lodySrc).filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))) {
-      expect(ourSource(file), `${file} mounts no vendored mobile screen`).not.toMatch(
-        /^import .*components\/mobile\//mu,
-      );
-    }
+    // ours reproduce, and that citation is why the ids match.
+    //
+    // ONE importer is the point. Two would mean two things draw the phone's
+    // session, and the second would be a duplicate mount rather than a feature.
+    const importers = readdirSync(lodySrc)
+      .filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))
+      .filter((f) => /^import .*components\/mobile\//mu.test(ourSource(f)));
+    expect(importers).toEqual(["MobileSessionStack.tsx"]);
   });
 });
 
@@ -232,6 +288,7 @@ describe("seam patch 7 is declared where a merge agent reads it", () => {
       "hideNotificationPrompt?: boolean;",
       "hideAgentRoles?: boolean;",
       "keyboardShortcutsAvailable?: boolean;",
+      "hideLanguageServiceActions?: boolean;",
     ]) {
       expect(detail, `session-detail.tsx declares ${prop}`).toContain(prop);
     }
@@ -254,6 +311,117 @@ describe("seam patch 7 is declared where a merge agent reads it", () => {
     ]) {
       expect(read(join(vendorSrc, file)), `${file} asks for the capability`).toContain(
         "useAppCapability('githubIntegration')",
+      );
+    }
+  });
+});
+
+describe("seam patches 13 and 14 are declared where a merge agent reads them", () => {
+  const patches = read(join(repoRoot, "vendor/lody/BLITZ-PATCHES.md"));
+
+  it("names the footer seam and the file it touches", () => {
+    expect(patches).toContain("### 13. `LoroSidebar`'s footer, one entry at a time");
+    expect(patches).toContain("components/loro-sidebar.tsx");
+    // The prop the vendored file must carry, and the value our rail passes.
+    expect(read(join(vendorSrc, "components/loro-sidebar.tsx"))).toContain(
+      "footerItems?: readonly LoroSidebarFooterItem[];",
+    );
+    const rail = ourSource("SessionRailSidebar.tsx");
+    expect(rail, "the rail keeps exactly the Archive entry").toContain(
+      'const FOOTER_ITEMS = ["archive"] as const;',
+    );
+    expect(rail, "the rail no longer hides the whole footer").not.toContain("hideFooter");
+  });
+
+  it("names the archive seam and both files it touches", () => {
+    expect(patches).toContain("### 14. The archive page's v1 scope cuts");
+    for (const file of [
+      "components/archive/archive-view.tsx",
+      "components/archive/web-archive-screen.tsx",
+    ]) {
+      expect(patches, `seam patch 14 declares ${file}`).toContain(file);
+      expect(read(join(vendorSrc, file)), `${file} declares hideTeamScope`).toContain(
+        "hideTeamScope?: boolean;",
+      );
+    }
+  });
+
+  it("gates the archive row's PR badge on the capability upstream already has", () => {
+    // Same mechanism as seam patch 7's GitHub half, and the same reason: the
+    // capability exists, the local set is empty, and this row never asked.
+    expect(read(join(vendorSrc, "components/archive/archive-view.tsx"))).toContain(
+      "useAppCapability('githubIntegration')",
+    );
+  });
+});
+
+describe("seam patch 15 is declared where a merge agent reads it", () => {
+  const patches = read(join(repoRoot, "vendor/lody/BLITZ-PATCHES.md"));
+
+  it("names the seam and every file it touches", () => {
+    expect(patches).toContain("### 15. The host owns connectivity");
+    for (const file of [
+      "components/sessions/session-status-strip.tsx",
+      "components/sessions/session-chat-interface.tsx",
+      "components/sessions/session-detail.tsx",
+      "components/sessions/session-file-content-view.tsx",
+      "components/chat/chat-landing.tsx",
+    ]) {
+      expect(patches, `seam patch 15 declares ${file}`).toContain(file);
+    }
+  });
+
+  it("declares the one prop on every level that carries it", () => {
+    for (const file of [
+      "components/sessions/session-chat-interface.tsx",
+      "components/sessions/session-detail.tsx",
+      "components/sessions/session-file-content-view.tsx",
+      "components/chat/chat-landing.tsx",
+    ]) {
+      expect(read(join(vendorSrc, file)), `${file} declares hideConnectionStatus`).toContain(
+        "hideConnectionStatus?: boolean;",
+      );
+    }
+    // The resolver takes the flag by its own name, because it is the one place
+    // that has to distinguish a connection state from `machine-removed`.
+    expect(read(join(vendorSrc, "components/sessions/session-status-strip.tsx"))).toContain(
+      "connectionStatusHidden?: boolean;",
+    );
+  });
+
+  it("leaves the rail's ConnectionPill to seam patch 2's header suppression", () => {
+    // The pill lives inside `LoroSidebar`'s workspace-identity header. If a
+    // future rail stops hiding that header, the pill comes back and this seam
+    // has no prop for it — which is what this assertion is here to catch.
+    const rail = ourSource("SessionRailSidebar.tsx");
+    expect(rail, "the rail still hides the header the pill renders in").toContain("hideHeader");
+    expect(rail, "the rail gives the pill no state either").not.toContain("connectionUiState");
+    expect(rail, "the rail gives the pill no state either").not.toContain("workspaceSyncing");
+  });
+
+  it("mounts no upstream layout, so the stuck-connection banner has no host", () => {
+    // `StuckConnectionBannerContainer` mounts once, in `MainLayout`. We mount
+    // pages, never upstream's roots — the same reason seam patch 15 declares no
+    // hunk for it.
+    //
+    // A MOUNT, NOT A MENTION. The check was a bare substring until the mobile
+    // stack imported `getMobileMainLayoutRootClassName` — two CLASS-NAME
+    // helpers that `MainLayout` also calls, and that seam patch 16's mount
+    // reproduces precisely BECAUSE it does not mount the layout that would
+    // supply them. A mount is an import of the component or an element, so
+    // that is what this looks for; the old spelling would have been satisfied
+    // by deleting a doc comment.
+    expect(read(join(vendorSrc, "components/main-layout.tsx"))).toContain(
+      "StuckConnectionBannerContainer",
+    );
+    for (const file of readdirSync(lodySrc).filter((f) => f.endsWith(".ts") || f.endsWith(".tsx"))) {
+      const source = ourSource(file);
+      expect(source, `${file} renders no MainLayout`).not.toMatch(/<MainLayout[\s/>]/u);
+      expect(source, `${file} imports no MainLayout`).not.toMatch(
+        /^import \{[^}]*\bMainLayout\b/mu,
+      );
+      expect(source, `${file} imports no WorkspaceRuntimeShell`).not.toMatch(
+        /^import \{[^}]*\bWorkspaceRuntimeShell\b/mu,
       );
     }
   });

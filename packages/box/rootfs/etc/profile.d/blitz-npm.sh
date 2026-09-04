@@ -17,8 +17,9 @@ case ":$PATH:" in
 	*) PATH="/usr/local/bin:$PATH" ;;
 esac
 
-# The vendor CLIs must not update themselves out of the image pin, and an
-# update also drops a second copy into the writable npm prefix above, which
-# would then shadow the shim.
-export DISABLE_AUTOUPDATER=1
+# NOTE: the PATH order above is what keeps a self-updated copy from shadowing
+# the shims, and it is the only thing that does. The vendor CLIs update
+# themselves on purpose — claude's version decides which models the Lody
+# composer can offer (docs/LODY-MODELS.md) — and an update rewrites
+# /opt/blitz/npm in place, which /usr/local/bin already sits ahead of.
 export PATH

@@ -55,9 +55,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     recreateMachine: vi.fn(async () => { throw new Error("unused"); }),
     setMachineType: vi.fn(async () => { throw new Error("unused"); }),
     destroyMachine: vi.fn(async () => { throw new Error("unused"); }),
-    putWorkspaceCredential: vi.fn(async () => undefined),
-    importWorkspaceCredentials: vi.fn(async () => { throw new Error('unused'); }),
-    revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error("unused"); }),
     deleteFolder: vi.fn(async () => undefined),
@@ -119,14 +116,19 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
     listConnections: vi.fn(async () => ({ connections: [] })),
-    putConnection: vi.fn(async () => undefined),
-    deleteConnection: vi.fn(async () => undefined),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
     mintWorkspaceConnection: vi.fn(async () => { throw new Error("unused"); }),
     disconnectWorkspaceConnection: vi.fn(async () => undefined),
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
     denyCredentialRequest: vi.fn(async () => undefined),
+    listOrgCredentials: vi.fn(async () => ({ credentials: [] })),
+    putOrgCredential: vi.fn(async () => { throw new Error('unused'); }),
+    revokeOrgCredential: vi.fn(async () => undefined),
+    replaceOrgCredentialGrants: vi.fn(async () => { throw new Error('unused'); }),
+    importOrgCredentials: vi.fn(async () => ({ results: [], linesRead: 0 })),
+    listGrantProposals: vi.fn(async () => ({ proposals: [] })),
+    resolveGrantProposal: vi.fn(async () => { throw new Error('unused'); }),
     listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
     listConnectionGrants: vi.fn(async () => ({ grants: [] })),
     listGithubInstallations: vi.fn(async () => ({ installations: [] })),
@@ -147,7 +149,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
 }
 
 describe("webapp API adapter", () => {
-  it("maps blitz phases and filters terminal phases", () => {
+  it("maps blitz phases and keeps a workspace whose machine is mid-lifecycle", () => {
     expect(workspaceFromWire(workspace("ready", null))).toMatchObject({
       status: "running",
       canControl: true,
@@ -164,8 +166,18 @@ describe("webapp API adapter", () => {
       errorDetail: "provider failed",
       retryAction: "destroy",
     });
-    expect(workspaceFromWire(workspace("destroying", "poll"))).toBeNull();
-    expect(workspaceFromWire(workspace("destroyed", "create"))).toBeNull();
+    // `phase` is the REQUESTING member's machine state, not the workspace's
+    // own. A machine-type change, a stop and a recreate all pass through
+    // `destroying` with the workspace row untouched, so the record has to
+    // survive: dropping it took the workspace out of the rail mid-operation
+    // and read as a deletion.
+    expect(workspaceFromWire(workspace("destroying", "poll"))).toMatchObject({
+      id: "workspace-destroying",
+      status: "destroying",
+    });
+    expect(workspaceFromWire(workspace("destroyed", "create"))).toMatchObject({
+      status: "destroyed",
+    });
   });
 
   it("uses real identity data and sends a keyless create body unchanged", async () => {

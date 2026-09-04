@@ -7,7 +7,6 @@ import type {
   MachineView,
   Phase,
   RetryAction,
-  WorkspaceCredentialView,
   WorkspaceMemberRole,
   WorkspaceMemberView,
   WorkspaceView,
@@ -25,8 +24,9 @@ import type { ComputeCredentialSource } from "./compute/types.js";
 export type CreatedByPlane = "session" | "machine";
 
 /** The workspace row after MEMBER-MACHINES: configuration only. Every VM
- * column moved to `machines`, the sharing ACL moved to `workspace_members`,
- * and the plaintext environment moved to `workspace_credentials`. */
+ * column moved to `machines` and the sharing ACL moved to
+ * `workspace_members`. The workspace credential store is gone with it —
+ * static secrets are org-scoped now (plans/ORG-CREDENTIALS.md §3). */
 export interface WorkspaceRow {
   id: string;
   name: string | null;
@@ -75,6 +75,11 @@ export interface MachineRow {
   /** The plane that asked for this machine: a person's session, or an agent's
    * box credential. An agent may destroy only what the agent plane made. */
   created_by_plane: CreatedByPlane;
+  /** 1 while a teardown that KEEPS this machine is in flight — a stop, a
+   * recreate, a machine-type change. `destroying` alone cannot say whether the
+   * row is coming back, so whoever finalises the teardown reads it here rather
+   * than assuming a destroy (migration 0047). */
+  destroy_keeps_row: number;
   error: string | null;
   created_at: number;
   updated_at: number;
@@ -153,7 +158,6 @@ export interface WorkspaceProjection {
   workspace: WorkspaceRow;
   members: WorkspaceMemberRow[];
   machines: MachineRow[];
-  credentials: WorkspaceCredentialView[];
   /** The membership asking. Null for an unauthenticated or membership-less
    * caller; the legacy fields then fall back to the workspace default. */
   membershipId: string | null;
@@ -222,9 +226,6 @@ export function workspaceView(projection: WorkspaceProjection): WorkspaceView {
     autoProvision: row.auto_provision === 1,
     myRole: projection.myRole,
     members: canOpen ? members : [],
-    // Names only, and only for somebody who may use them. A viewer holds no
-    // machine and may not use a credential (§3), so they read an empty list.
-    credentials: canOpen && projection.myRole !== "viewer" ? projection.credentials : [],
   };
   if (row.recipe_id !== null) view.recipeId = row.recipe_id;
   return view;

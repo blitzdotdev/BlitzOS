@@ -1,3 +1,4 @@
+import type { GrantProposalView } from '@blitzos/schema';
 import type { ReactNode } from 'react';
 import type { ControlPlaneClient } from '../api';
 import type { TenantMe } from '../api-adapter';
@@ -30,6 +31,7 @@ export type SecondaryRoutesProps = {
   loaded: boolean;
   /** The shell's own navigation columns, drawn on every page. */
   rail: ReactNode;
+  pendingGrantProposals: readonly GrantProposalView[];
   dialogs: ReactNode;
   updateNotice: ReactNode;
   error: string | null;
@@ -38,9 +40,15 @@ export type SecondaryRoutesProps = {
   onOpenRail: () => void;
   onNavigateToSettings: (section: SettingsSection) => void;
   onOpenWorkspace: (workspaceId: string) => void;
+  /** Reopens a pending grant proposal the person closed without deciding. */
+  onReviewProposal: (proposalId: string) => void;
   onLeaveSettings: () => void;
   onSignOut: () => Promise<void>;
   onLeftOrg: () => void;
+  /** Org switching lives on Settings → Profile since the strip lost its org
+   * mark; the switch rebinds the session, so the caller reloads. */
+  onSwitchOrg: (orgId: string) => void;
+  onCreateOrg: () => void;
   activeWorkspaceTitle: string | undefined;
 };
 
@@ -69,6 +77,7 @@ export function SecondaryRoutes({
   viewer,
   loaded,
   rail,
+  pendingGrantProposals,
   dialogs,
   updateNotice,
   error,
@@ -77,9 +86,12 @@ export function SecondaryRoutes({
   onOpenRail,
   onNavigateToSettings,
   onOpenWorkspace,
+  onReviewProposal,
   onLeaveSettings,
   onSignOut,
   onLeftOrg,
+  onSwitchOrg,
+  onCreateOrg,
   activeWorkspaceTitle,
 }: SecondaryRoutesProps) {
   const notice = error === null
@@ -91,13 +103,17 @@ export function SecondaryRoutes({
         <SettingsHeader workspaceLabel={activeWorkspaceTitle} onBack={onLeaveSettings} />
         {loaded && viewer ? (
           <SettingsPage
+            pendingGrantProposals={pendingGrantProposals}
             client={client}
             viewer={viewer}
             section={route.settingsSection}
             onNavigate={onNavigateToSettings}
             onOpenWorkspace={onOpenWorkspace}
+            onReviewProposal={onReviewProposal}
             onSignOut={onSignOut}
             onLeftOrg={onLeftOrg}
+            onSwitchOrg={onSwitchOrg}
+            onCreateOrg={onCreateOrg}
           />
         ) : (
           <div className="settings-page-state settings-page-state--loading" role="status">
@@ -106,6 +122,9 @@ export function SecondaryRoutes({
         )}
         {notice}
         {updateNotice}
+        {/* The create-org dialog opens from Profile now, so the shared dialog
+          * layer must exist on this branch too, not only beside the rail. */}
+        {dialogs}
       </main>
     );
   }

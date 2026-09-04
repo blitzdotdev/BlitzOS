@@ -14,10 +14,10 @@ Part of the [self-host guide](SELF-HOST.md) (step 9).
 | Mode | `BOX_IMAGE_REF` | `BOX_IMAGE_TAG` | `BOX_IMAGE_SHA256` | Choose when |
 |---|---|---|---|---|
 | **A — registry** (recommended) | immutable image reference, e.g. `ghcr.io/<owner>/blitz-box@sha256:<digest>` | `""` | `""` | You can publish the image publicly. Simplest, multi-arch, no R2 plumbing. |
-| **B — R2 archive** | `<your-worker-origin>/box-image/manifest.json` | the manifest's `imageTag` | the concatenated-archive digest (equals `totalSha256`) | The image must stay out of a registry. The archive is split into parts, so its size does not matter. |
+| **B — R2 archive** | `<your-worker-origin>/<key-prefix>/manifest.json` — canary uses `box-image/<releaseId>`; a manual publish defaults to the legacy `box-image` | the manifest's `imageTag` | the concatenated-archive digest (equals `totalSha256`) | The image must stay out of a registry. A prefix per release lets old and new archives coexist, and the archive is split into parts so its size does not matter. |
 
 In mode B the archive lives in your `blitz-box-images` R2 bucket and is served
-by your own Worker. **Both image routes are intentionally public** — the
+by your own Worker. **Every box-image route is intentionally public** — the
 VM bootstrap fetches them with no credential, so anyone with your Worker URL
 can download the archive. The same is true of mode A: the bootstrap runs
 `docker pull` with no registry login, so **the registry image must be publicly
@@ -28,10 +28,9 @@ pullable**. Treat the box image as public in every mode.
 | Deployment | Mode | Why |
 |---|---|---|
 | **client prod** | A — GHCR | `release.yml` builds and pushes the image on a `v*` tag, then pins the digest it just built. |
-| **canary** | B — R2 archive | Nothing but `release.yml` may push to GHCR, and that workflow also deploys client prod. Canary needs to rebake without touching a paying client. |
+| **canary** | B — R2 archive | The `image` job in `canary.yml` automatically publishes changed image inputs under a versioned R2 prefix, then the deploy pins that release. |
 
-This split is deliberate, and it is the answer to "the canary box image is
-stale, rebuild it". **Pushing to `ghcr.io/blitzdotdev/blitz-box` requires
+This split is deliberate. **Pushing to `ghcr.io/blitzdotdev/blitz-box` requires
 `write:packages`, and the only credential that holds it is the
 `GITHUB_TOKEN` inside `release.yml`, which runs only on a `v*` tag push.**
 A workspace credential cannot push: measured 2026-08-30, `GH_PAT` reads the
@@ -42,53 +41,60 @@ not a fault to route around.
 
 Cutting a `v*` tag to refresh the canary image is the wrong instrument: it
 ships the platform to client prod, and that decision belongs to a human. So
-canary carries its own image in its own account's R2 bucket, and rebaking it
-touches nothing outside `minjunesv0`.
+canary carries its own image in its own account's R2 bucket, without touching
+client prod.
 
-### Rebaking the canary image
+### Automatic canary image publish
 
-Run this whenever `git diff --stat <deployed-sha>..HEAD -- packages/box
-packages/broker` is non-empty — box and broker changes reach new workspaces
-only through the image.
+On every push to `main`, the `image` job in `canary.yml` runs after the
+configuration gate and under the `canary` environment:
 
-1. Build from a clean worktree at `origin/main` (the build context is the
-   repository root):
+1. It checks out the merged tree, sets up Node, runs `npm ci`, writes the
+   canary `wrangler.toml` from
+   `CANARY_WRANGLER_TOML`, and reads `APP_URL` from that config.
+2. It computes a release id from the git object ids of `packages/box`,
+   `packages/broker`, `packages/schema/fixtures`, and `env.defaults`. The full
+   64-character SHA-256 becomes `<releaseId>`, the image tag is
+   `blitz-box:<releaseId>`, and the R2 prefix is `box-image/<releaseId>`.
+3. It requests
+   `<APP_URL>/box-image/<releaseId>/manifest.json`. A valid manifest with the
+   expected image tag means that exact release is already published, so the
+   job reuses its `totalSha256`. A 404 means it must publish. An invalid
+   manifest, a mismatched tag, any other HTTP status, or a network error fails
+   the job instead of pretending the release is absent.
+4. For an absent release, it runs
+   `docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 -f packages/box/Dockerfile -t <imageTag> .`.
+   The build argument turns Lody on for canary while the committed
+   `env.defaults` stays off for self-hosters; the Dockerfile rejects any
+   non-empty value other than `0` or `1`.
+5. It runs
+   `node packages/control-plane/scripts/publish-box-image.mjs --image <imageTag> --prefix <prefix> --app-url <APP_URL> --json publish.json`.
+   The publisher uploads every part before `manifest.json`, so a release is
+   not visible until all its parts exist.
+6. It exposes the release ref, tag, SHA-256, release id, and whether it built
+   anything to the deploy job. The deploy pins those values and verifies that
+   `/version` reports both the merged commit and the expected box-image tag.
 
-   ```sh
-   git -C /workspace/BlitzOS worktree add -b box-image /workspace/BlitzOS-box-image origin/main
-   cd /workspace/BlitzOS-box-image
-   docker build --platform linux/amd64 -f packages/box/Dockerfile -t blitz-box:<sha> .
-   ```
+The `canary` environment's `CLOUDFLARE_API_TOKEN` must be able to write the
+`blitz-box-images` bucket. A token that can deploy the Worker but cannot write
+that R2 bucket makes the image job fail.
 
-2. Give the worktree a **canary-scoped** `packages/control-plane/wrangler.toml`.
-   The publish script always passes `--config` to wrangler, and the copy in the
-   main checkout is **client prod's** (`account_id = "d25a778b…"`,
-   `APP_URL = "https://blitzos.com"`). Publishing with that config uploads the
-   canary image into the client's bucket. Start from `wrangler.toml.example`
-   and set `account_id` to the canary account and `APP_URL` to the canary
-   origin. The file is gitignored, so it never lands in a commit.
+A canary release occupies these keys:
 
-3. Publish to R2 with the canary token (`CF_CLAUDE_TOKEN_STAGING`; never print
-   it). Add `--dry-run` first to see the values without uploading:
+- `box-image/<releaseId>/manifest.json`
+- `box-image/<releaseId>/part-NNN` for every archive part
 
-   ```sh
-   CLOUDFLARE_API_TOKEN="$CF_CLAUDE_TOKEN_STAGING" \
-   CLOUDFLARE_ACCOUNT_ID=53a144fad4e15ca51c32da9b9fe25d4a \
-     node packages/control-plane/scripts/publish-box-image.mjs --image blitz-box:<sha>
-   ```
+Old and new releases must coexist. Existing boxes and older deployed Worker
+versions retain the full `BOX_IMAGE_REF` they received, so publishing a new
+release must not change or remove the bytes at an older URL. The legacy
+`box-image/manifest.json` and `box-image/part-NNN` routes remain served for
+boxes already in the field; the automatic job never writes that slot.
 
-4. Pin the three values it prints in `.github/workflows/canary.yml` as
-   `BLITZ_DEPLOY_VAR_BOX_IMAGE_REF`, `BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG` and
-   `BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256`, beside the `HETZNER_SERVER_IMAGES`
-   line that already works this way. A deploy var becomes `wrangler deploy
-   --var NAME:VALUE`, which overrides that one key and leaves every other var
-   from `CANARY_WRANGLER_TOML` in place — so the pin lives in a reviewable
-   commit rather than inside a secret nobody can read back. None of the three
-   is a secret: the archive is public by design, because the VM bootstrap
-   fetches it with no credential.
-
-5. Merge to `main`. Canary redeploys and **new** boxes boot the new image.
-   Existing boxes never upgrade in place.
+A human does nothing to publish or pin the canary image now: merging to `main`
+is sufficient. For an intentional manual R2 slot, pass
+`--prefix <key-prefix>` to `publish-box-image.mjs`; pass
+`--prefix box-image` explicitly only when replacing the legacy unversioned
+slot.
 
 **Single-arch.** A `docker save` archive carries one architecture, so the
 canary archive is amd64. That matches the canary catalog, which offers x86
@@ -161,14 +167,16 @@ computes the per-part and total SHA-256 digests, writes the `manifest.json`,
 uploads everything to the `blitz-box-images` bucket with `wrangler r2 object
 put`, and prints the exact `BOX_IMAGE_*` values to set. Copy them into
 `wrangler.toml` and redeploy. Add `--dry-run` to build and verify the release
-without uploading. The remaining options (`--archive`, `--out`, `--bucket`,
-`--app-url`, `--part-size-mb`) are listed by `--help`.
+without uploading. Use `--prefix <key-prefix>` for a named manual slot; it
+defaults to the legacy `box-image` layout. The remaining options (`--archive`,
+`--out`, `--bucket`, `--app-url`, `--part-size-mb`, `--json`) are listed by
+`--help`.
 
-What lands in R2:
+What lands in R2 under the chosen prefix:
 
-- `box-image/manifest.json` —
+- `<key-prefix>/manifest.json` —
   `{"parts":[{"name":"part-000","sha256":"<64 hex>"}, …],"totalSha256":"<64 hex>","imageTag":"blitz-box:<tag>"}`
-- `box-image/<part-name>` for every part.
+- `<key-prefix>/<part-name>` for every part.
 
 A single-part archive is just a manifest with one part, so there is no
 separate "small archive" mode to choose. The Worker still serves an

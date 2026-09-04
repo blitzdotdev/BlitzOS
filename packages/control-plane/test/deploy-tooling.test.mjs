@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -392,23 +392,46 @@ test("a broker change requires a rebuild", () => {
   assert.equal(boxImageDecision("abc", ["packages/broker/main.go"]).rebuild, true);
 });
 
+test("schema fixtures and env.defaults changes require a rebuild", () => {
+  assert.equal(
+    boxImageDecision("abc", ["packages/schema/fixtures/example.json"]).rebuild,
+    true,
+  );
+  assert.equal(boxImageDecision("abc", ["env.defaults"]).rebuild, true);
+});
+
 test("a path that merely starts with an image path prefix does not count", () => {
   // "packages/boxes/..." is not "packages/box/...".
   assert.equal(boxImageDecision("abc", ["packages/boxes/thing.ts"]).rebuild, false);
 });
 
-test("IMAGE_PATHS names both image sources", () => {
-  assert.deepEqual([...IMAGE_PATHS], ["packages/box", "packages/broker"]);
+test("IMAGE_PATHS names every Dockerfile repository input in build order", () => {
+  assert.deepEqual([...IMAGE_PATHS], [
+    "packages/box",
+    "packages/broker",
+    "packages/schema/fixtures",
+    "env.defaults",
+  ]);
 });
 
 // --- the /version contract, consumer side -----------------------------------
 
-test("every version fixture carries the fields the consumer reads", () => {
-  for (const name of ["deployed.json", "unknown-commit.json", "fresh-database.json"]) {
+test("every version fixture carries the fields deploy tooling reads", () => {
+  const fixtureNames = readdirSync(fixturesDirectory)
+    .filter((name) => name.endsWith(".json"))
+    .sort();
+  assert.deepEqual(fixtureNames, [
+    "deployed-r2.json",
+    "deployed.json",
+    "fresh-database.json",
+    "unknown-commit.json",
+  ]);
+  for (const name of fixtureNames) {
     const body = JSON.parse(readFileSync(path.join(fixturesDirectory, name), "utf8"));
     assert.equal(typeof body.commit, "string", name);
     assert.notEqual(body.commit, "", name);
     assert.equal(typeof body.boxImageRef, "string", name);
+    assert.equal(typeof body.boxImageTag, "string", name);
     assert.ok(body.migration === null || typeof body.migration === "string", name);
   }
 });

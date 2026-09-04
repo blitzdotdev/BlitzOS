@@ -69,8 +69,22 @@ export function TerminalTabsStrip({ surfaceTabs }: TerminalTabsStripProps) {
 export function TerminalTabsHost(props: {
   surfaceTabs: SurfaceTabsBinding;
   landing: ReactNode;
+  /**
+   * Draw the strip above the landing. TRUE on desktop, FALSE on a phone.
+   *
+   * The strip is the DESKTOP tab affordance. Lody's phone layout carries its
+   * own — a bottom tab bar on the landing, a tab sheet inside a session — and a
+   * strip above them would be a second tab system on one screen, which is the
+   * thing `plans/LODY-TERMINAL-TABS.md` exists to prevent. A phone reaches a
+   * terminal from the BlitzOS drawer rail and from the mobile tab sheet
+   * (seam patch 16), so nothing is lost with the strip off.
+   *
+   * The CONTENT half is unchanged either way: a selected host tab still covers
+   * the landing, and every tab stays mounted.
+   */
+  showStrip?: boolean;
 }) {
-  const { surfaceTabs, landing } = props;
+  const { surfaceTabs, landing, showStrip = true } = props;
   const activeTabId =
     surfaceTabs.activeTabId !== null
     && surfaceTabs.tabs.some((tab) => tab.id === surfaceTabs.activeTabId)
@@ -78,7 +92,7 @@ export function TerminalTabsHost(props: {
       : null;
   return (
     <div className="lody-terminal-tabs-host flex h-full min-h-0 flex-col">
-      <TerminalTabsStrip surfaceTabs={surfaceTabs} />
+      {showStrip ? <TerminalTabsStrip surfaceTabs={surfaceTabs} /> : null}
       <div className="relative min-h-0 flex-1">
         <div
           className={activeTabId === null ? "absolute inset-0" : "absolute inset-0 hidden"}

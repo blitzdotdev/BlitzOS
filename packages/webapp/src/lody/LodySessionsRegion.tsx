@@ -65,11 +65,18 @@ export interface LodySessionsRegionProps {
   terminals: DriveRailSession[];
   activeTerminalId: string;
   onSelectTerminal: (tabId: string) => void;
+  /** Close a terminal from its rail row. The native strip carried the only
+   * close until it was deleted (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"), and
+   * the rail is the one list every layout has. */
+  onCloseTerminal?: (tabId: string) => void;
   /** What a session row and "+ New session" do: move the shell's ADDRESS, which
    * is the only thing that can take the view back from the panes. See
    * `LodyRailBinding` in `SessionSurface.tsx`. */
   onOpenSession?: (sessionId: string) => void;
   onOpenLanding?: () => void;
+  /** The rail footer's Archive entry: the archived-session list, with its
+   * restore and its permanent delete. */
+  onOpenArchive?: () => void;
   /** The `+ New tab` control for the Terminals section header. */
   terminalsAction?: ReactNode;
   /** Right-click Share on a session row (plans/LODY-SHARING.md §8). */
@@ -92,6 +99,16 @@ export interface LodySessionsRegionProps {
   sharedOpen?: SharedSurfaceTarget | null;
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
   onActiveSessionChange?: (sessionId: string | null) => void;
+  /**
+   * The session the shell's address names on the member's OWN box, restored
+   * across a workspace switch (`CloudApp.navigateToWorkspacePage` →
+   * `recallWorkspaceChatPath`). Handed to the surface so its memory router OPENS
+   * on that session instead of the landing: the own-box router otherwise starts
+   * at `/chat` and its first resolved address — `null` — is mirrored back and
+   * turned into `openLanding()`, erasing the restored selection. Reaches only
+   * the owned surface; a shared surface's address is `sharedOpen.sessionId`.
+   */
+  initialSessionId?: string;
 }
 
 /** One open shared session: whose box, which session, at what level. */
@@ -148,8 +165,10 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     onSelectTerminal: props.onSelectTerminal,
     activeSharedSessionId: sharedOpen === null ? null : sharedOpen.sessionId,
   };
+  if (props.onCloseTerminal !== undefined) rail.onCloseTerminal = props.onCloseTerminal;
   if (props.onOpenSession !== undefined) rail.onOpenSession = props.onOpenSession;
   if (props.onOpenLanding !== undefined) rail.onOpenLanding = props.onOpenLanding;
+  if (props.onOpenArchive !== undefined) rail.onOpenArchive = props.onOpenArchive;
   if (props.terminalsAction !== undefined) rail.terminalsAction = props.terminalsAction;
   if (props.onShareSession !== undefined) rail.onShareSession = props.onShareSession;
   if (props.sharedSessions !== undefined) rail.sharedSessions = props.sharedSessions;
@@ -157,12 +176,17 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     rail.onSelectSharedSession = props.onSelectSharedSession;
   }
 
-  // Mounted on the FIRST request and never unmounted afterwards: the runtime
-  // owns a WebSocket, an IndexedDB repo and a WASM instance, so a hide has to
-  // stay a hide. Not mounted before the first request either, so a member who
-  // never opens sessions never fetches the chunk. The rail's vendored zone is
-  // part of the surface, so the rail is what raises the first request in
+  // Mounted on the FIRST request, and never unmounted BY A HIDE afterwards: the
+  // runtime owns a WebSocket, an IndexedDB repo and a WASM instance, so a hide
+  // has to stay a hide. Not mounted before the first request either, so a member
+  // who never opens sessions never fetches the chunk. The rail's vendored zone
+  // is part of the surface, so the rail is what raises the first request in
   // practice — see `useLodyRail`.
+  //
+  // A CHANGE OF BOX IS NOT A HIDE. The key below carries the box, so switching
+  // workspaces does unmount and rebuild — that is the point of it, and the
+  // `window.ipc` singleton documented further down means it could not be any
+  // other way while only one bridge can exist at a time.
   const [everRequested, setEverRequested] = useState(false);
   const wanted = props.visible || props.railHost !== null;
   useEffect(() => {
@@ -203,7 +227,32 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const surfaceProps =
     sharedOpen === null
       ? {
-          key: "own",
+          // KEYED BY THE BOX, exactly as the shared branch below is.
+          //
+          // This was the constant `"own"` — one instance covering EVERY
+          // workspace the member owns — and that is a stale-address bug, not a
+          // style choice. `SessionSurface` builds its bridge once per instance
+          // (`useLodyLocalBridge`: `held.current ??= createLodyLocalBridge(...)`)
+          // and that bridge CLOSES OVER the endpoints it was built with: sync,
+          // rpc, control, project, platform, files. With one instance shared
+          // across workspaces, a switch handed the surface new props and left
+          // `window.ipc` pointing at the PREVIOUS box.
+          //
+          // What the member saw: the snapshot poller and the capability probe
+          // both key on `platformUrl`, so they moved to box B and the runtime
+          // rebuilt for workspace B — while its data plane still dialled box A,
+          // which has no rooms for B. Not an error, just a surface that never
+          // populated, until a full page reload rebuilt the ref.
+          //
+          // The ref-once is CORRECT; the key was wrong. One instance per box
+          // makes "build the bridge once" mean what it says, so nothing in
+          // `local-bridge.ts` has to become mutable to fix this.
+          //
+          // Still exactly one surface mounted at a time — a key change unmounts
+          // the old one — which is what the `window.ipc` singleton above
+          // requires. `lodySyncUrl` names the box and cannot drift from the
+          // thing that went stale, because it IS the thing that went stale.
+          key: `own:${endpoints.lodySyncUrl}`,
           endpoints: lodyEndpoints(endpoints),
           shared: undefined,
           readOnly: false,
@@ -228,6 +277,13 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const sidePanel = sharedOpen !== null || props.sidePanel === undefined
     ? {}
     : { sidePanel: props.sidePanel };
+  // The restored own-box selection rides ONLY the owned surface. A shared
+  // surface opens on `sharedOpen.sessionId` through the branch above, so passing
+  // it here too would fight that.
+  const ownInitial =
+    sharedOpen === null && props.initialSessionId !== undefined
+      ? { initialSessionId: props.initialSessionId }
+      : {};
   // THE BOUNDARY IS OUTSIDE THE SUSPENSE, so it catches the import's rejection
   // as well as anything the surface throws once it has mounted. Without it a
   // rejected chunk propagates past the whole tree and React unmounts the
@@ -246,6 +302,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
           readOnly={surfaceProps.readOnly}
           {...hostTabs}
           {...sidePanel}
+          {...ownInitial}
           {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
           {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
           {...(props.onActiveSessionChange === undefined

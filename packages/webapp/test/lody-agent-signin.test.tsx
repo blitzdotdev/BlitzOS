@@ -37,7 +37,11 @@ import { useMachineAcpAuthentication } from "@lody/components/hooks/use-machine-
 import type { JsonValue } from "@blitzos/schema";
 import { AUTH_NOTICE_POLL_MS, LodyAgentAuthNotice } from "../src/lody/agent-auth-notice";
 import { sessionNeedsAgentSignIn } from "../src/lody/session-auth-recovery";
-import { LodyAgentConfigGate, SURFACE_BOOT_DEADLINE_MS } from "../src/lody/agent-config-gate";
+import {
+  LodyAgentConfigGate,
+  SURFACE_BOOT_DEADLINE_MS,
+  resetAgentConfigGateMemoForTests,
+} from "../src/lody/agent-config-gate";
 import { BLITZ_CLAUDE_CONFIG_ID, bootstrapLodyAgentConfigs } from "../src/lody/agent-configs";
 import { initLodyI18n } from "../src/lody/i18n";
 import type { LodyAtomStore, LodyWorkspaceRuntime } from "../src/lody/runtime";
@@ -59,6 +63,14 @@ beforeAll(async () => {
   installLodyDomStubs();
   ({ createLodySessionRouter } = await import("../src/lody/router"));
 }, 120_000);
+
+// Every test here is a FIRST VISIT. The gate remembers a successful bootstrap
+// per box identity for the page lifetime, this file never resets modules, and
+// its cases share one machine id — so without this, an early success would open
+// the gate the later hang-shaped cases exist to see shut.
+beforeEach(() => {
+  resetAgentConfigGateMemoForTests();
+});
 
 const WORKSPACE_ID = "lw_11111111111111111111111111111111";
 const WORKSPACE_SLUG = "local";
@@ -141,14 +153,23 @@ function AuthenticationProbe(props: {
 describe("the Lody surface seeds the workspace context its sign-in panel reads", () => {
   /** Mounts the route tree at an address whose leaf renders nothing, so the
    * `$workspaceName` route runs — and with it `useWorkspaceContextAtoms` — with
-   * none of the vendored chat pages loaded. */
+   * none of the vendored pages loaded.
+   *
+   * A SETTINGS STUB, and it used to be the archive. The archive stopped being a
+   * stub when it got its page (`router.tsx`, `ArchiveRoute`), and a leaf that
+   * renders the real `ArchiveView` would need the whole provider stack this
+   * group deliberately does not build. Every settings address is still
+   * `EmptyRoute`, which is the property this helper wants. */
   async function mountRoute(
     store: LodyAtomStore,
     options: { workspaceId?: string },
   ): Promise<{ unmount: () => Promise<void> }> {
     const router = createLodySessionRouter(WORKSPACE_SLUG, options);
     await act(async () => {
-      await router.navigate({ to: "/$workspaceName/archive", params: { workspaceName: WORKSPACE_SLUG } });
+      await router.navigate({
+        to: "/$workspaceName/settings/about",
+        params: { workspaceName: WORKSPACE_SLUG },
+      });
     });
     const mounted = await render(
       <JotaiProvider store={store}>
@@ -206,7 +227,10 @@ describe("the Lody surface seeds the workspace context its sign-in panel reads",
     store.set(runtimeAtom, runtime);
     const router = createLodySessionRouter(WORKSPACE_SLUG, { workspaceId: WORKSPACE_ID });
     await act(async () => {
-      await router.navigate({ to: "/$workspaceName/archive", params: { workspaceName: WORKSPACE_SLUG } });
+      await router.navigate({
+        to: "/$workspaceName/settings/about",
+        params: { workspaceName: WORKSPACE_SLUG },
+      });
     });
     const results: { error: string | null }[] = [];
     const i18n = initLodyI18n();

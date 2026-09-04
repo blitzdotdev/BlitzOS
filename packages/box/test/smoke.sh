@@ -9,6 +9,7 @@ set -euo pipefail
 script_dir=$(realpath "$(dirname "$0")")
 repo_root=$(realpath "$script_dir/../../..")
 image="${IMAGE:-blitz-box:smoke}"
+lody_sessions_image="blitz-box:smoke-lody-sessions-on-$$"
 container="blitz-box-smoke-$$"
 state_volume="blitz-box-smoke-state-$$"
 unprivileged_container="blitz-box-smoke-unprivileged-$$"
@@ -26,11 +27,15 @@ cleanup() {
   docker rm -f "$unprivileged_container" >/dev/null 2>&1 || true
   docker volume rm "$state_volume" >/dev/null 2>&1 || true
   docker volume rm "$unprivileged_volume" >/dev/null 2>&1 || true
+  docker image rm "$lody_sessions_image" >/dev/null 2>&1 || true
   if [ "$preserve_test_dir" != true ]; then
     rm -rf "$test_dir"
   fi
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fail() {
   echo "FAIL: $*" >&2
@@ -61,6 +66,15 @@ if [ -z "${IMAGE:-}" ]; then
     --file "$repo_root/packages/box/Dockerfile" \
     --tag "$image" \
     "$repo_root"
+  docker run --rm --entrypoint grep "$image" \
+    -x 'BLITZ_LODY_SESSIONS=0' /etc/blitz/env.defaults
+  docker build --progress=plain \
+    --build-arg BLITZ_LODY_SESSIONS=1 \
+    --file "$repo_root/packages/box/Dockerfile" \
+    --tag "$lody_sessions_image" \
+    "$repo_root"
+  docker run --rm --entrypoint grep "$lody_sessions_image" \
+    -x 'BLITZ_LODY_SESSIONS=1' /etc/blitz/env.defaults
 fi
 
 install -d -m 0755 "$test_dir/workspace"
@@ -192,12 +206,42 @@ user_high=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/memory.
 pid1_adj=$(docker exec "$container" cat /proc/1/oom_score_adj)
 [ "$pid1_adj" -lt 0 ] || fail "PID 1 is a normal OOM candidate (oom_score_adj=$pid1_adj)"
 
-# Delegation, and its containment. uid 1000 must be able to move its own work
-# between leaves it owns, and must NOT be able to park work in the reservation.
-owner=$(docker exec "$container" stat -c %u /sys/fs/cgroup/blitz-user.slice/cgroup.procs)
-[ "$owner" = 1000 ] || fail "the user slice is not delegated to uid 1000 (owner $owner)"
-owner=$(docker exec "$container" stat -c %u /sys/fs/cgroup/blitz-system.slice/cgroup.procs)
-[ "$owner" = 0 ] || fail "the system slice is writable by uid $owner; it must stay root-owned"
+# Delegation, and its containment. The configured Blitz identity must be able
+# to move its own work between leaves it owns, even when the host uid/gid is not
+# the image's baked-in 1000:1000. It must NOT be able to enter the reservation.
+blitz_identity=$(docker exec "$container" sh -c \
+  'printf "%s:%s" "$(id -u blitz)" "$(id -g blitz)"')
+for delegated_path in \
+  /sys/fs/cgroup/cgroup.procs \
+  /sys/fs/cgroup/blitz-user.slice/cgroup.procs \
+  /sys/fs/cgroup/blitz-user.slice/cgroup.subtree_control; do
+  owner=$(docker exec "$container" stat -c %u:%g "$delegated_path")
+  [ "$owner" = "$blitz_identity" ] \
+    || fail "$delegated_path belongs to $owner, not the Blitz identity $blitz_identity"
+done
+owner=$(docker exec "$container" stat -c %u:%g /sys/fs/cgroup/blitz-system.slice/cgroup.procs)
+[ "$owner" = 0:0 ] || fail "the system slice is writable by $owner; it must stay root-owned"
+
+# The Lody daemon's per-session leaves live BESIDE its own leaf, under a
+# parent that already hands them every controller the sandbox requires, and
+# that the Blitz identity owns — the daemon mkdirs and rmdirs the leaves
+# itself. cpu is asserted only where the host delegates it; the boundary does
+# not need it, the sandbox does, and blitz-cgroup enables it best-effort for
+# that reason.
+docker exec "$container" test -d /sys/fs/cgroup/blitz-user.slice/lody-sessions \
+  || fail "the lody-sessions parent was not created"
+owner=$(docker exec "$container" stat -c %u:%g /sys/fs/cgroup/blitz-user.slice/lody-sessions/cgroup.procs)
+[ "$owner" = "$blitz_identity" ] \
+  || fail "lody-sessions belongs to $owner, not the Blitz identity $blitz_identity"
+session_controllers=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/lody-sessions/cgroup.subtree_control)
+for controller in memory pids; do
+  grep -qw "$controller" <<<"$session_controllers" \
+    || fail "lody-sessions does not hand $controller to its leaves: [$session_controllers]"
+done
+if docker exec "$container" grep -qw cpu /sys/fs/cgroup/cgroup.controllers; then
+  grep -qw cpu <<<"$session_controllers" \
+    || fail "cpu is delegated here, yet lody-sessions does not hand it to its leaves: [$session_controllers]"
+fi
 echo "PASS memory boundary layout"
 fi
 
@@ -223,7 +267,7 @@ docker exec "$container" test ! -e /etc/claude-code/managed-settings.json ||
   fail "managed settings exist; a managed apiKeyHelper hangs claude when a token is also set"
 # Signed out is fine; a dead command is not. With no broker the shim must still
 # reach the real binary.
-docker exec "$container" /bin/sh -lc 'DISABLE_AUTOUPDATER=1 claude --version' >/dev/null ||
+docker exec "$container" /bin/sh -lc 'claude --version' >/dev/null ||
   fail "the claude shim does not run with no broker configured"
 echo "PASS terminal delivery shim"
 
@@ -385,13 +429,18 @@ import { openWebSocket } from "/tmp/ws-client.mjs";
 
 const result = await new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error("preview WebSocket timeout")), 5000);
+  let client;
   openWebSocket("ws://127.0.0.1:7445/preview/31234/socket?probe=1", {
     origin: "http://127.0.0.1",
     onMessage: (message) => {
       clearTimeout(timer);
+      client?.close();
       resolve(message.toString());
     },
-  }).then((socket) => socket.send("hello"), reject);
+  }).then((socket) => {
+    client = socket;
+    socket.send("hello");
+  }, reject);
 });
 if (result !== "preview-ws:/socket?probe=1:hello") throw new Error(`bad preview WebSocket response: ${result}`);
 NODE

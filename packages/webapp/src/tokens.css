@@ -18,6 +18,21 @@
    * turns this colour when a session is running. */
   --live: #7fd39b;
 
+  /* Settings surface ladder: chrome and the nav rail sit on surface-1, the
+   * content pane one step lighter, and cards a step lighter again. The kit
+   * drew cards as darker inset wells; owner ruling 2026-09-01 flipped them —
+   * without shadows a darker card reads as a hole, so raised means lighter.
+   * Only the toast floats; nothing on the ladder gets a shadow. */
+  --surface-0: color-mix(in oklab, var(--ink) 7%, var(--paper));
+  --surface-1: var(--paper);
+  --surface-2: color-mix(in oklab, var(--ink) 3%, var(--paper));
+  /* One neutral, four alphas: every settings hover, separator and tinted fill
+   * comes off --ink at these steps, so both themes get them for free. */
+  --mod-8: color-mix(in oklab, var(--ink) 8%, transparent);
+  --mod-12: color-mix(in oklab, var(--ink) 12%, transparent);
+  --mod-16: color-mix(in oklab, var(--ink) 16%, transparent);
+  --mod-20: color-mix(in oklab, var(--ink) 20%, transparent);
+
   /* Drive shape scale (plans/mockups/folders-v1-library.html). */
   --r-card: 12px;
   --r-control: 10px;
@@ -89,6 +104,10 @@
     --selected: color-mix(in oklab, var(--accent) 16%, var(--paper));
     --live: #3f8156;
     --lift: 0 10px 30px color-mix(in oklab, #000 16%, transparent);
+    /* Light ladder: the pane goes a step lighter than paper and cards go
+     * lighter still — the classic white card on a grey page. */
+    --surface-0: #fff;
+    --surface-2: color-mix(in oklab, #fff 55%, var(--paper));
     color-scheme: light;
   }
 }
@@ -120,6 +139,9 @@
   --ansi-bright-magenta: #bc9bca;
   --ansi-bright-cyan: #8ebbc0;
   --ansi-bright-white: #e7e9ee;
+  /* Forced dark on a light system: restore the dark surface ladder. */
+  --surface-0: color-mix(in oklab, var(--ink) 7%, var(--paper));
+  --surface-2: color-mix(in oklab, var(--ink) 3%, var(--paper));
   color-scheme: dark;
 }
 
@@ -150,5 +172,7 @@
   --selected: color-mix(in oklab, var(--accent) 16%, var(--paper));
   --live: #3f8156;
   --lift: 0 10px 30px color-mix(in oklab, #000 16%, transparent);
+  --surface-0: #fff;
+  --surface-2: color-mix(in oklab, #fff 55%, var(--paper));
   color-scheme: light;
 }

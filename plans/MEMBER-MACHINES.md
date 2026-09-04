@@ -338,7 +338,9 @@ This replaces today's owner-resolution (`mint.ts:243`) — the machine's
 member IS the identity, so nothing is borrowed and no disclosure banner is
 needed.
 
-**Workspace plane.** The workspace box only *adds* the workspace
+**Workspace plane.** *Superseded 2026-09-02: the workspace credential store
+is deleted; the static plane is org-scoped — see plans/ORG-CREDENTIALS.md.*
+The workspace box only *adds* the workspace
 credentials from §1. Every member's machine in the workspace can use them
 (viewer excepted — no machine). Audit rows name the machine and its member.
 
@@ -395,7 +397,7 @@ port those values into `tokens.css` rather than restyle by taste.
 editor panes, or the mobile drawer semantics. *(2026-09-02: the right icon
 strip has since become a quick-action bar over Lody's side panel — Side Chat,
 Files, All Changes, Browser, Connections — and the native Files and teenyapps
-panels are gone; see `vendor/lody/BLITZ-PATCHES.md` seam patches 10 and 11 and
+panels are gone; see `vendor/lody/BLITZ-PATCHES.md` seam patches 19 and 20 and
 `packages/webapp/src/lody/side-panel.tsx`. The "Files, Ports, Connections"
 surface icons in the row below are superseded by that bar.)* **No sessions yet** — the
 rail lists the managed tab types that already exist under a workspace

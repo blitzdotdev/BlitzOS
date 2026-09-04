@@ -32,25 +32,29 @@ npm test              # control-plane, box guest tests, ui, guest node:test,
 
 ## Known debt (as of 2026-08-18)
 
-- 74 anti-slop findings remain, all Tier C: external-boundary code that
-  needs real parsers (31 no-unknown-parameters, 27 no-runtime-typeof in
+- 66 anti-slop findings remain, all Tier C: external-boundary code that
+  needs real parsers (23 no-unknown-parameters, 27 no-runtime-typeof in
   plain JS, 12 no-unsafe-dictionary-type, 4 no-unknown-returns). The counts
-  fell from 102 (47/27/22/6) on 2026-08-29 when the native-chat surface and
-  the box actor were deleted; the baseline moved with them. Fixing one
+  fell from 74 (31/27/12/4) on 2026-09-02 when the box credential wire and
+  the workspace credential store were deleted (plans/ORG-CREDENTIALS.md),
+  and before that from 102 (47/27/22/6) on 2026-08-29 when the native-chat
+  surface and the box actor were deleted; the baseline moved with them. Fixing one
   requires characterization tests FIRST — these fixes can change accepted
   inputs. Plan and history: GitHub issue #1.
-- 16 `TODO(deslop-tier-c):` markers flag type assertions whose invariant is
+- 6 `TODO(deslop-tier-c):` markers flag type assertions whose invariant is
   not actually enforced today (latent-bug candidates). Grep for the marker.
 - `TODO(house-canon):` markers flag direct fetch/console sites awaiting
   migration to the canon helpers.
-- 7 files exceed the 700-line warn: `core/bootstrap.ts`, `core/compute/aws.ts`,
-  `core/workspaces.ts`,
+- 8 files exceed the 700-line warn: `core/bootstrap.ts`, `core/compute/aws.ts`,
+  `core/machines.ts`, `core/workspaces.ts`,
   `control-plane/scripts/lib/worker-source.mjs`, `webapp/src/CloudApp.tsx`,
   `webapp/src/api.ts`, `webapp/src/terminal-touch-controller.ts`. Split on
   touch, never big-bang. (`core/files/sync.ts` left the list 2026-08-21 when
   its transfer plumbing split into `core/files/dav.ts`. `core/bootstrap.ts`
   and `webapp/src/api.ts` were already over the line when this list said four;
-  the count is corrected here, not grown.)
+  `core/machines.ts` was over it when the list said seven. The count is
+  corrected here, not grown — `lint:gate` on an untouched `main` prints all
+  eight.)
 
 ## Cross-runtime contracts (fixtures are the source of truth)
 
@@ -61,6 +65,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | Contract | Sides | Fixtures | Conformance tests |
 |---|---|---|---|
 | box-image manifest | `scripts/lib/worker-source.mjs` producer ↔ Python inside `core/bootstrap.ts` | `fixtures/box-image-manifest/` | `test/box-image-files.test.ts`, `test/bootstrap-python.test.mjs` (runs real `python3`) |
+| version report | `core/version.ts` producer ↔ `scripts/check-box-image.mjs` (reads `commit`) and the verify step of `.github/workflows/canary.yml` (reads `commit` and `boxImageTag` with jq) | `fixtures/version/` | `test/version.test.ts` + `test/deploy-tooling.test.mjs` |
 | phone-home v1 | bash in `core/bootstrap.ts` + `microvm-host/guest/blitz-microvm-enroll.js` ↔ `core/workspaces.ts` | `fixtures/phone-home/` | `test/phone-home-conformance.test.ts`, `guest/blitz-microvm-enroll.test.js` |
 | MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/compute/microvm-hosts.js` imported by both |
 | dufs WebDAV listing | `core/files/sync.ts` parser ↔ dufs in the box image | `fixtures/dav-listing/` | `test/dav-listing-fixtures.test.ts` (TS side; guest side revalidates at box-image rebuild) |
@@ -72,9 +77,6 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | microVM agent protocol | `microvm-host/types.go` ↔ `core/compute/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 | webApp box surface | `core/webapp-surface.ts` ↔ `schema/src/webapp-surface.ts` (webApp resolver) | n/a | `test/webapp-surface-drift.test.ts`, `webapp/test/webapp-surface.test.ts` |
 | agent rules | CP `core/agent-rules.ts` producer (`GET /workspaces/self/agent-rules`) ↔ box `blitz-rules sync` consumer (`box/rootfs/usr/local/bin/blitz-rules`); `AGENT_RULES_DOC` mirrors the canonical `box/rootfs/opt/blitz/skel/agent-rules.md` | `fixtures/agent-rules/` | `test/agent-rules-conformance.test.ts` + `test/agent-rules-drift.test.ts` (CP), `box/guest-tests/test/agent-rules-conformance.test.ts` (box) |
-| connection pull v1 | CP producer `core/connections/pull-wire.ts`, routes in `core/connections/pull-routes.ts` (`GET /workspaces/self/connections`, `POST /workspaces/self/connections/:name/token`) ↔ Go consumer `broker/internal/workspace/connections.go`, printed by `blitz-cred list\|get\|env`. Carries BOTH credential planes: the member's own connection grant and the workspace credential store (plans/MEMBER-MACHINES.md §4) | `fixtures/connection-pull/` | `test/connection-pull-conformance.test.ts` + `test/pull-credentials.test.ts` + `test/member-machines.test.ts` (CP), `broker/internal/workspace/connections_test.go` + `broker/cmd/blitz-cred/main_test.go` (box) |
-| credential import v1 | CP `core/workspace-credential-import.ts` producer (`POST /workspaces/self/credentials/dotenv`; the session twin `/workspaces/:id/credentials/dotenv` carries the same body) ↔ Go consumer `broker/internal/workspace/credimport.go`, printed by `blitz-cred import` | `fixtures/credential-import/` | `test/credential-import.test.ts` (CP producer + routes), `broker/internal/workspace/credimport_test.go` (box consumer) |
-| credential list v1 | CP `core/connections/pull-routes.ts` producer (`GET /workspaces/self/credentials`: names and comments, never values; `PUT /workspaces/self/credentials` is the box-plane single-key write beside it) ↔ Go consumer `broker/internal/workspace/credentials.go`, printed by `blitz-cred list` (comment after a `#`) and written by `blitz-cred put` | `fixtures/credential-list/` | `test/credential-comments.test.ts` (CP producer + routes), `broker/internal/workspace/credentials_test.go` (box consumer) |
 | entitlements | CP `core/entitlements.ts` (`PUT /orgs/:id/entitlements` writer, `GET /orgs/:id/usage`, the 402 seat-limit refusal and its HS256 handoff token) ↔ the PRIVATE billing service, which owns plans, writes the integers, and verifies the token — core never learns a plan name | `fixtures/entitlements/` | `test/entitlements-fixtures.test.ts` (CP); the billing service copies the corpus and pins it on its side |
 | recipe invocation files | `core/bootstrap.ts` writer (recipe launches emit `/var/lib/blitz/recipe/prompt.txt` + `invocation.env`) ↔ the guest reader `blitz-term`, through the shared parser `box/rootfs/usr/local/libexec/blitz-recipe-invocation` | `fixtures/recipe-invocation/` | `test/recipe-invocation-fixtures.test.ts` (CP), `box/guest-tests/test/recipe-invocation-guest.test.ts` (guest: shared parser vs corpus + blitz-term delivery semantics) |
 | machine-stats | guest producer `box/rootfs/usr/local/bin/blitz-machine-stats` (s6 longrun `machine-stats`, one report every 10 min) ↔ CP consumer `core/machine-stats.ts` (`POST /workspaces/self/machine-stats`), which fills `machines.disk_used_percent` and surfaces as `MachineView.volumeUsedPercent` | `fixtures/machine-stats/` | `test/machine-stats-conformance.test.ts` (CP), `box/guest-tests/test/machine-stats-conformance.test.ts` (guest: the real script against a local origin) |
@@ -83,6 +85,16 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | lody session-control stream | browser `webapp/src/lody/rpc-client.ts` (`sendSessionControl`) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` ↔ the `lody` daemon's `/session-control` (not in this tree). The daemon picks NDJSON-per-response or one buffered envelope from the request's `Accept`; ours is the browser that negotiates and reads it frame by frame, and the bridge decision that carries the negotiation upstream. The FRAME UNION stays Lody's (`vendor/lody/packages/shared/src/node/local-ipc.ts:80`, `{kind:'response'\|'complete'\|'error'}`) — it is not exported and its module is node-only, so `rpc-client.ts` re-states it and the corpus keeps the copy honest | `fixtures/lody-session-control-stream/` (bodies captured from a real `lody@0.88.1` through the real bridge) | `webapp/test/lody-session-control-stream.test.ts` (browser consumer: frames emitted before the promise settles, at adversarial chunk boundaries), `box/guest-tests/test/lody-bridge-control-stream.test.ts` (runs the real bridge against a stand-in daemon that holds its stream open), `webapp/test/lody-acp-authentication.test.ts` (whole chain against a real daemon; skips without the bundle) |
 | lody share claim | Go gateway `box/gateway/main.go` (verifies the webApp ticket's `share` claim and forwards it on `X-Blitz-Lody-Share`, stripping any inbound copy) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` (room ACL on `/sync`, session scoping on `/rpc` and `/project`, `/control` refused, `/platform` narrowed). The claim's OWN wire format is pinned by the webApp-ticket corpus on three runtimes; what this pins is the hand-off and the decisions the bridge makes from it | `fixtures/lody-share-claim/` | `gateway/main_test.go` (producer: the header bytes + the path allowlist), `box/guest-tests/test/lody-bridge-share.test.ts` (consumer: runs the real bridge against a stand-in daemon over the whole decision table) |
 | box config v1 | CP `core/box-config.ts` producer (`GET /workspaces/self/box-config`) and consumer (`POST /workspaces/self/box-update-result`) ↔ host updater bash/python emitted by `core/bootstrap.ts` (`blitz-box-update`; cloud-VM path only — the microVM provider has its own guest lifecycle and no update path yet) | `fixtures/box-config/` | `test/box-config-conformance.test.ts` (CP), `test/box-update-conformance.test.mjs` (runs real `python3` over the emitted parser/producer, `bash -n` over the emitted scripts), `test/box-update-host.test.mjs` (runs the emitted updater in real bash against a live CP over real curl) |
+| agent API doc | schema types (`packages/schema/src`) + route manifest `core/agent-api-manifest.ts` → generator `control-plane/scripts/generate-agent-api.mjs` (`npm run openapi:generate`; ts-json-schema-generator, no hand-written JSON Schema) → the generated OpenAPI 3.1 document, served verbatim by `core/agent-api.ts` (`GET /agent/api`, box-authed) ↔ agents reading it from a box | `packages/schema/openapi/agent-api.json` (the checked-in artifact IS the fixture) | `test/agent-api-coverage.test.ts` (router ↔ manifest ↔ document, both directions), `test/agent-api-conformance.test.ts` (every `/agent/*` happy-path body against the document's schemas; the served bytes equal the artifact), `test/agent-api-generate.test.mjs` (regenerates in plain Node and demands identical bytes) |
+
+Retired 2026-09-02: the `connection pull v1`, `credential import v1` and
+`credential list v1` contracts — box credential wire deleted with the
+workspace credential store (plans/ORG-CREDENTIALS.md). Corpora
+(`fixtures/connection-pull/`, `fixtures/credential-import/`,
+`fixtures/credential-list/`), both sides' conformance tests, and the five
+`/workspaces/self/*` credential routes are gone with no shim; the agent plane
+is plain HTTP under `/agent/*` (`core/agent-routes.ts`, session twin
+`core/org-credentials.ts`).
 
 Retired 2026-08-29: the `ACP` contract (box actor ↔ ui chat reducer,
 `fixtures/acp/`). The native-chat surface, the box actor on port 7444, its
@@ -115,7 +127,10 @@ one verified pair, both pinned in `vendor/lody/UPSTREAM.md`: bump them together.
   vendor edit there first, or do not make it.
 - The daemon patches in `packages/box/patches/` (`lody-local-platform.mjs`,
   cloud→local platform; `lody-acp-auth-queue.mjs`, the ACP-auth queue chain;
-  `lody-code-collab-worktree-root.mjs`, Code Collab's worktree root) are
+  `lody-code-collab-worktree-root.mjs`, Code Collab's worktree root;
+  `lody-builtin-mcp-off.mjs`, no per-session `lody-mcp-server` child;
+  `lody-session-sandbox.mjs`, per-session cgroup leaves beside `lody.scope`
+  with no capacity split) are
   guarded against the published bundle (sha256; version + anchor count) and must
   be re-verified on every daemon bump.
 - Upstream merges follow the runbook `docs/LODY-MERGE.md`. Where Lody upstream
@@ -212,8 +227,10 @@ The four rules a change must not break:
 - `write:packages` lives only inside that workflow, so no workspace or agent
   credential can push to GHCR. Never cut a tag to refresh an image: the same tag
   ships client prod.
-- Rebake canary with the procedure in `docs/BOX-IMAGE.md`. The pin lands in
-  `.github/workflows/canary.yml` as `BLITZ_DEPLOY_VAR_BOX_IMAGE_*`.
+- Every push to `main` makes the `image` job in `.github/workflows/canary.yml`
+  derive a release from the Dockerfile inputs, reuse its valid versioned R2
+  archive or build it with Lody on and publish it, then pass the exact pin to
+  the deploy job. A human does not rebake or edit canary pins.
 
 ## Hetzner: one project behind both deployments
 
@@ -261,8 +278,11 @@ deployment credential alone (`plans/SUBSCRIPTION-COMPUTE.md`).
    and both conformance tests present and passing. A new cross-runtime
    payload without fixtures is a finding.
 6. Max-lines: the warn list printed by `lint:gate` should not grow.
-7. Reference counts for comparison (2026-08-29): anti-slop 74
-   (31/27/12/4), blitz-house 0, max-lines warnings 7. These are the numbers
+6a. `/agent/api` coverage + conformance tests green (`test/agent-api-coverage.test.ts`,
+   `test/agent-api-conformance.test.ts`, `npm run test:openapi -w @blitzos/control-plane`);
+   `npm run openapi:generate` must leave `packages/schema/openapi/agent-api.json` unchanged.
+7. Reference counts for comparison (2026-09-02): anti-slop 66
+   (23/27/12/4), blitz-house 0, max-lines warnings 8. These are the numbers
    a sweep compares against, so lower them in the same change that removes
    findings — a stale reference hides the next regression.
 

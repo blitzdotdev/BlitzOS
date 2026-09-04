@@ -1,2 +1,2 @@
 [credential "https://github.com"]
-	helper = "!blitz-cred git-helper"
+	helper = "!/usr/local/libexec/blitz-git-credential"

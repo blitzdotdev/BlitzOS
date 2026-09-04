@@ -1,5 +1,5 @@
 /**
- * The shell side of seam patches 10 and 11 (`src/lody/side-panel.tsx`): the
+ * The shell side of seam patches 19 and 20 (`src/lody/side-panel.tsx`): the
  * gateway URL a loopback address in Lody's Browser panel resolves to, and the
  * strip's fixed vocabulary of panels.
  */
