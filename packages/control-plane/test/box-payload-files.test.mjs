@@ -24,6 +24,13 @@ import {
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const rootfs = path.join(repoRoot, "packages/box/rootfs");
 const temporaryDirectories = [];
+// These two files are the recovery mechanism, not content it manages. Pin the
+// exception just as explicitly as the payload inventory so a new box script
+// cannot accidentally escape ownership by joining an open-ended allowlist.
+const BASE_OWNED_ROOTFS_PATHS = [
+  "etc/s6-overlay/s6-rc.d/payload/run",
+  "usr/local/libexec/blitz-payload",
+];
 
 function temporaryDirectory(prefix) {
   const directory = mkdtempSync(path.join(tmpdir(), prefix));
@@ -57,8 +64,12 @@ test("the checked-in inventory owns every eligible rootfs file", () => {
     ...filesBelow(path.join(rootfs, "opt/blitz/skel")),
     ...filesBelow(path.join(rootfs, "etc/s6-overlay/s6-rc.d"))
       .filter((relativePath) => /\/(?:run|up)$/u.test(relativePath)),
-  ].sort();
+  ].filter((relativePath) => !BASE_OWNED_ROOTFS_PATHS.includes(relativePath)).sort();
   assert.deepEqual(PAYLOAD_ROOTFS_PATHS, discovered);
+  for (const basePath of BASE_OWNED_ROOTFS_PATHS) {
+    assert.ok(!PAYLOAD_FILES.includes(`rootfs/${basePath}`));
+    assert.ok(statSync(path.join(rootfs, basePath)).isFile());
+  }
   assert.deepEqual(PAYLOAD_GENERATED_PATHS, [
     "rootfs/usr/local/bin/blitz-box-gateway",
     "rootfs/usr/local/bin/blitz-cred",

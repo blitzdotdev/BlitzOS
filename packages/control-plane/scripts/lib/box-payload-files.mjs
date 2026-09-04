@@ -25,7 +25,6 @@ export const PAYLOAD_ROOTFS_PATHS = Object.freeze([
   "etc/s6-overlay/s6-rc.d/lody-projects/run",
   "etc/s6-overlay/s6-rc.d/lody-watchdog/run",
   "etc/s6-overlay/s6-rc.d/machine-stats/run",
-  "etc/s6-overlay/s6-rc.d/payload/run",
   "etc/s6-overlay/s6-rc.d/register/up",
   "etc/s6-overlay/s6-rc.d/remote-control/run",
   "etc/s6-overlay/s6-rc.d/rules/up",

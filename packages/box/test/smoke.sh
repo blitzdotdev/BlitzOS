@@ -244,6 +244,11 @@ docker exec "$container" grep -qx \
   'exec /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/gateway/run "$@"' \
   /etc/s6-overlay/s6-rc.d/gateway/run \
   || fail "the gateway service does not delegate to the current payload"
+docker exec "$container" test ! -L /usr/local/libexec/blitz-payload \
+  || fail "the base-owned payload updater is indirected through the payload"
+docker exec "$container" grep -qx 'exec /usr/local/libexec/blitz-payload' \
+  /etc/s6-overlay/s6-rc.d/payload/run \
+  || fail "the payload service does not run the base-owned updater"
 docker exec "$container" sh -c \
   'test "$(readlink /usr/local/bin/lody)" = /opt/blitz/lody/current/bin/lody' \
   || fail "the lody PATH entry does not follow the current daemon"

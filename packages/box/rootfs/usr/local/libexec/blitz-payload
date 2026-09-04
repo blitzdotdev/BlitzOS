@@ -1,0 +1,1202 @@
+#!/usr/bin/env node
+'use strict';
+
+// The payload updater is deliberately part of the base image. It is the one
+// box-side component that must still work when a downloaded payload is bad,
+// so it has no package dependencies and never resolves code through `current`.
+
+const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const http = require('node:http');
+const path = require('node:path');
+
+const UPDATER_VERSION = 1;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const MODE_PATTERN = /^[0-7]{4}$/u;
+const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
+const HTTP_URL_PATTERN = /^https?:\/\/[^/\s?#]+(?:[/?][^\s#]*)?$/u;
+const RESTART_SERVICES = new Set([
+  'cgroups',
+  'cloudflared',
+  'dockerd',
+  'dufs',
+  'enroll',
+  'gateway',
+  'init-state',
+  'lody-bridge',
+  'lody-daemon',
+  'lody-projects',
+  'lody-watchdog',
+  'machine-stats',
+  'payload',
+  'register',
+  'remote-control',
+  'rules',
+  'sshd',
+  'ttyd',
+  'user',
+  'watch',
+]);
+const RESULT_OUTCOMES = new Set([
+  'applied',
+  'rolled-back',
+  'unsupported',
+  'fetch-failed',
+  'verify-failed',
+  'start-failed',
+  'up-to-date',
+]);
+
+class FetchFailure extends Error {}
+class VerifyFailure extends Error {}
+
+function log(message) {
+  process.stderr.write(`blitz-payload: ${message}\n`);
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function record(value, field) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new VerifyFailure(`box-payload ${field} must be an object`);
+  }
+  return value;
+}
+
+function requiredArray(value, field) {
+  if (!Array.isArray(value)) throw new VerifyFailure(`box-payload ${field} must be an array`);
+  return value;
+}
+
+function requiredString(value, field) {
+  if (typeof value !== 'string') throw new VerifyFailure(`box-payload ${field} must be a string`);
+  return value;
+}
+
+function positiveInteger(value, field) {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new VerifyFailure(`box-payload ${field} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function version(value, field) {
+  const parsed = requiredString(value, field);
+  if (!VERSION_PATTERN.test(parsed)) {
+    throw new VerifyFailure(`box-payload ${field} must be a version token`);
+  }
+  return parsed;
+}
+
+function digest(value, field) {
+  const parsed = requiredString(value, field);
+  if (!SHA256_PATTERN.test(parsed)) {
+    throw new VerifyFailure(
+      `box-payload ${field} must be 64 lowercase hexadecimal characters`,
+    );
+  }
+  return parsed;
+}
+
+function httpUrl(value, field) {
+  const parsed = requiredString(value, field);
+  if (!HTTP_URL_PATTERN.test(parsed)) {
+    throw new VerifyFailure(`box-payload ${field} must be an absolute http(s) URL`);
+  }
+  return parsed;
+}
+
+function payloadPath(value, field) {
+  const parsed = requiredString(value, field);
+  const segments = parsed.split('/');
+  if (
+    !parsed.startsWith('rootfs/')
+    || segments.length < 2
+    || segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    throw new VerifyFailure(
+      `box-payload ${field} must be a relative path under rootfs/ without dot segments`,
+    );
+  }
+  return parsed;
+}
+
+function archive(value, field) {
+  const parsed = record(value, field);
+  return {
+    url: httpUrl(parsed.url, `${field}.url`),
+    sha256: digest(parsed.sha256, `${field}.sha256`),
+    bytes: positiveInteger(parsed.bytes, `${field}.bytes`),
+  };
+}
+
+function parseManifest(value) {
+  const parsed = record(value, 'manifest');
+  const filesValue = requiredArray(parsed.files, 'manifest.files');
+  if (filesValue.length === 0) {
+    throw new VerifyFailure('box-payload manifest.files must not be empty');
+  }
+  const files = filesValue.map((entryValue, index) => {
+    const field = `manifest.files[${index}]`;
+    const entry = record(entryValue, field);
+    const mode = requiredString(entry.mode, `${field}.mode`);
+    if (!MODE_PATTERN.test(mode)) {
+      throw new VerifyFailure(
+        `box-payload ${field}.mode must be a four-character octal string`,
+      );
+    }
+    return {
+      path: payloadPath(entry.path, `${field}.path`),
+      sha256: digest(entry.sha256, `${field}.sha256`),
+      mode,
+    };
+  });
+  const restartObject = record(parsed.restart, 'manifest.restart');
+  const restart = {};
+  for (const [service, dependenciesValue] of Object.entries(restartObject)) {
+    if (!RESTART_SERVICES.has(service)) {
+      throw new VerifyFailure(`box-payload manifest.restart service is unknown: ${service}`);
+    }
+    restart[service] = requiredArray(
+      dependenciesValue,
+      `manifest.restart.${service}`,
+    ).map((dependency, index) => payloadPath(
+      dependency,
+      `manifest.restart.${service}[${index}]`,
+    ));
+  }
+  const result = {
+    version: version(parsed.version, 'manifest.version'),
+    createdAt: positiveInteger(parsed.createdAt, 'manifest.createdAt'),
+    minUpdater: positiveInteger(parsed.minUpdater, 'manifest.minUpdater'),
+    files,
+    archive: archive(parsed.archive, 'manifest.archive'),
+    restart,
+  };
+  if (parsed.daemon !== undefined) {
+    const daemonObject = record(parsed.daemon, 'manifest.daemon');
+    result.daemon = {
+      ...archive(daemonObject, 'manifest.daemon'),
+      version: version(daemonObject.version, 'manifest.daemon.version'),
+      protocolVersion: positiveInteger(
+        daemonObject.protocolVersion,
+        'manifest.daemon.protocolVersion',
+      ),
+    };
+  }
+  return result;
+}
+
+function parseResult(value) {
+  const parsed = record(value, 'payload-result');
+  const outcome = requiredString(parsed.outcome, 'payload-result.outcome');
+  if (!RESULT_OUTCOMES.has(outcome)) {
+    throw new VerifyFailure(
+      `box-payload payload-result.outcome must be one of ${[...RESULT_OUTCOMES].join(', ')}`,
+    );
+  }
+  return {
+    version: version(parsed.version, 'payload-result.version'),
+    daemonVersion: version(parsed.daemonVersion, 'payload-result.daemonVersion'),
+    outcome,
+    detail: requiredString(parsed.detail, 'payload-result.detail'),
+  };
+}
+
+function parsePayloadConfig(value) {
+  const envelope = record(value, 'box-config');
+  if (envelope.payload === undefined || envelope.payload === null) return null;
+  const payload = record(envelope.payload, 'box-config.payload');
+  return {
+    version: version(payload.version, 'box-config.payload.version'),
+    manifestUrl: httpUrl(payload.manifestUrl, 'box-config.payload.manifestUrl'),
+  };
+}
+
+function positiveSeconds(name, fallback) {
+  const source = process.env[name];
+  if (source === undefined) return fallback * 1000;
+  const parsed = Number(source);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    log(`ignoring invalid ${name}`);
+    return fallback * 1000;
+  }
+  return Math.max(1, Math.round(parsed * 1000));
+}
+
+function safeAbsolutePath(name, fallback) {
+  const candidate = path.resolve(process.env[name] || fallback);
+  if (candidate === path.parse(candidate).root) {
+    log(`ignoring unsafe ${name}`);
+    return fallback;
+  }
+  return candidate;
+}
+
+function settings() {
+  const stateRoot = safeAbsolutePath('BLITZ_STATE_DIR', '/var/lib/blitz');
+  const lodyData = safeAbsolutePath('LODY_DATA_DIR', path.join(stateRoot, 'lody'));
+  return {
+    payloadRoot: safeAbsolutePath('BLITZ_PAYLOAD_ROOT', '/opt/blitz/payload'),
+    payloadState: safeAbsolutePath('BLITZ_PAYLOAD_STATE', '/var/lib/blitz/payload'),
+    lodyRoot: safeAbsolutePath('BLITZ_PAYLOAD_LODY_ROOT', '/opt/blitz/lody'),
+    originFile: safeAbsolutePath(
+      'BLITZ_PAYLOAD_ORIGIN_FILE',
+      path.join(stateRoot, 'origin'),
+    ),
+    serviceRoot: safeAbsolutePath('BLITZ_PAYLOAD_SERVICE_ROOT', '/run/service'),
+    s6Svc: process.env.BLITZ_PAYLOAD_S6_SVC || '/command/s6-svc',
+    gatewayHealthUrl:
+      process.env.BLITZ_PAYLOAD_GATEWAY_HEALTH_URL || 'http://127.0.0.1:7445/healthz',
+    daemonSocket:
+      process.env.BLITZ_PAYLOAD_DAEMON_SOCKET
+      || path.join(lodyData, 'run/lody-oss-probe.sock'),
+    intervalMs: positiveSeconds('BLITZ_PAYLOAD_INTERVAL', 300),
+    firstDelayMs: positiveSeconds('BLITZ_PAYLOAD_FIRST_DELAY', 60),
+    healthTimeoutMs: positiveSeconds('BLITZ_PAYLOAD_HEALTH_TIMEOUT', 60),
+    healthIntervalMs: positiveSeconds('BLITZ_PAYLOAD_HEALTH_INTERVAL', 1),
+    requestTimeoutMs: positiveSeconds('BLITZ_PAYLOAD_REQUEST_TIMEOUT', 30),
+  };
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function runCommand(command, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(
+      command,
+      args,
+      { encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: timeoutMs },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve(stdout);
+          return;
+        }
+        const lastLine = String(stderr).trim().split('\n').at(-1) || error.message;
+        reject(new Error(`${path.basename(command)} failed: ${lastLine}`));
+      },
+    );
+  });
+}
+
+async function accessToken(config) {
+  const output = await runCommand('blitz-cred', ['api-token'], config.requestTimeoutMs);
+  const token = output.trim();
+  if (token === '') throw new FetchFailure('blitz-cred returned an empty bearer');
+  return token;
+}
+
+async function readOrigin(config) {
+  let source;
+  try {
+    source = await fsp.readFile(config.originFile, 'utf8');
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && error.code === 'ENOENT') return null;
+    throw new FetchFailure(`origin is unreadable: ${errorMessage(error)}`);
+  }
+  const firstLine = source.split('\n', 1)[0].trim().replace(/\/+$/u, '');
+  if (firstLine === '') return null;
+  let parsed;
+  try {
+    parsed = new URL(firstLine);
+  } catch {
+    throw new FetchFailure('origin is not an HTTP(S) origin');
+  }
+  if (
+    (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+    || parsed.origin !== firstLine
+  ) {
+    throw new FetchFailure('origin is not an HTTP(S) origin');
+  }
+  return firstLine;
+}
+
+async function fetchJson(url, options, label, timeoutMs) {
+  let response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new FetchFailure(`${label} fetch failed: ${errorMessage(error)}`);
+  }
+  if (!response.ok) throw new FetchFailure(`${label} returned HTTP ${response.status}`);
+  let source;
+  try {
+    source = await response.text();
+  } catch (error) {
+    throw new FetchFailure(`${label} body failed: ${errorMessage(error)}`);
+  }
+  if (Buffer.byteLength(source) > 1024 * 1024) {
+    throw new VerifyFailure(`${label} body is too large`);
+  }
+  try {
+    return JSON.parse(source);
+  } catch {
+    throw new VerifyFailure(`${label} is not JSON`);
+  }
+}
+
+async function postResult(origin, token, result, config) {
+  try {
+    const response = await fetch(`${origin}/workspaces/self/payload-result`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(parseResult(result)),
+      signal: AbortSignal.timeout(config.requestTimeoutMs),
+    });
+    if (!response.ok) log(`result report returned HTTP ${response.status}`);
+  } catch (error) {
+    log(`result report failed (${errorMessage(error)})`);
+  }
+}
+
+async function linkInfo(linkPath) {
+  try {
+    const target = await fsp.readlink(linkPath);
+    const resolved = path.resolve(path.dirname(linkPath), target);
+    const targetStat = await fsp.stat(resolved).catch(() => null);
+    return { target: resolved, exists: targetStat !== null && targetStat.isDirectory() };
+  } catch {
+    return { target: null, exists: false };
+  }
+}
+
+function inferredVersion(target) {
+  return target === null ? 'baked' : path.basename(target);
+}
+
+async function atomicLink(linkPath, target) {
+  await fsp.mkdir(path.dirname(linkPath), { recursive: true });
+  const temporary = `${linkPath}.new-${process.pid}`;
+  await fsp.rm(temporary, { force: true });
+  await fsp.symlink(target, temporary);
+  await fsp.rename(temporary, linkPath);
+}
+
+function statePath(config) {
+  return path.join(config.payloadState, 'state.json');
+}
+
+async function readState(config) {
+  try {
+    const parsed = JSON.parse(await fsp.readFile(statePath(config), 'utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+async function writeState(config, state) {
+  await fsp.mkdir(config.payloadState, { recursive: true });
+  const target = statePath(config);
+  const temporary = `${target}.new-${process.pid}`;
+  await fsp.writeFile(temporary, `${JSON.stringify(state)}\n`, { mode: 0o644 });
+  await fsp.rename(temporary, target);
+}
+
+async function removeStaging(config) {
+  const roots = [path.join(config.payloadState, 'versions'), config.lodyRoot];
+  for (const root of roots) {
+    await fsp.mkdir(root, { recursive: true });
+    const entries = await fsp.readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.endsWith('.staging')) {
+        await fsp.rm(path.join(root, entry.name), { recursive: true, force: true });
+      }
+    }
+  }
+}
+
+async function recoverPending(config, state) {
+  if (state.pending === null || typeof state.pending !== 'object') return state;
+  const pending = state.pending;
+  const nextPayload = pending.payload;
+  const nextDaemon = pending.daemon;
+  const currentLink = path.join(config.payloadRoot, 'current');
+  const daemonLink = path.join(config.lodyRoot, 'current');
+  const actualPayload = await linkInfo(currentLink);
+  const canComplete = nextPayload !== null
+    && typeof nextPayload === 'object'
+    && typeof nextPayload.target === 'string'
+    && typeof nextPayload.version === 'string'
+    && actualPayload.target === nextPayload.target
+    && actualPayload.exists;
+  if (canComplete) {
+    if (
+      nextDaemon !== null
+      && typeof nextDaemon === 'object'
+      && typeof nextDaemon.target === 'string'
+    ) {
+      await atomicLink(daemonLink, nextDaemon.target);
+    }
+    const completed = {
+      ...state,
+      current: nextPayload.version,
+      currentTarget: nextPayload.target,
+      previous: state.current,
+      previousTarget: state.currentTarget,
+      daemonVersion: nextDaemon.version,
+      daemonTarget: nextDaemon.target,
+      previousDaemonVersion: state.daemonVersion,
+      previousDaemonTarget: state.daemonTarget,
+    };
+    delete completed.pending;
+    await writeState(config, completed);
+    return completed;
+  }
+  if (typeof state.currentTarget === 'string') {
+    await atomicLink(currentLink, state.currentTarget);
+  }
+  if (typeof state.daemonTarget === 'string') {
+    await atomicLink(daemonLink, state.daemonTarget);
+  }
+  const restored = { ...state };
+  delete restored.pending;
+  await writeState(config, restored);
+  return restored;
+}
+
+async function initialiseState(config) {
+  await fsp.mkdir(path.join(config.payloadState, 'versions'), { recursive: true });
+  await fsp.mkdir(config.payloadRoot, { recursive: true });
+  await fsp.mkdir(config.lodyRoot, { recursive: true });
+  await removeStaging(config);
+
+  let state = await recoverPending(config, await readState(config));
+  const payloadLink = path.join(config.payloadRoot, 'current');
+  const daemonLink = path.join(config.lodyRoot, 'current');
+  let payload = await linkInfo(payloadLink);
+  if (!payload.exists) {
+    const previous = typeof state.previousTarget === 'string'
+      ? state.previousTarget
+      : path.join(config.payloadRoot, 'baked');
+    const fallback = await fsp.stat(previous).catch(() => null);
+    if (fallback === null || !fallback.isDirectory()) {
+      throw new Error('neither current nor baked payload exists');
+    }
+    await atomicLink(payloadLink, previous);
+    payload = await linkInfo(payloadLink);
+    state = {
+      ...state,
+      current: typeof state.previous === 'string' ? state.previous : inferredVersion(previous),
+      currentTarget: previous,
+      previous: null,
+      previousTarget: null,
+    };
+  }
+  let daemon = await linkInfo(daemonLink);
+  if (!daemon.exists) {
+    const previous = typeof state.previousDaemonTarget === 'string'
+      ? state.previousDaemonTarget
+      : path.join(config.lodyRoot, 'baked');
+    const fallback = await fsp.stat(previous).catch(() => null);
+    if (fallback === null || !fallback.isDirectory()) {
+      throw new Error('neither current nor baked daemon exists');
+    }
+    await atomicLink(daemonLink, previous);
+    daemon = await linkInfo(daemonLink);
+    state = {
+      ...state,
+      daemonVersion: typeof state.previousDaemonVersion === 'string'
+        ? state.previousDaemonVersion
+        : inferredVersion(previous),
+      daemonTarget: previous,
+      previousDaemonVersion: null,
+      previousDaemonTarget: null,
+    };
+  }
+  if (state.currentTarget !== payload.target) {
+    state = {
+      ...state,
+      previous: typeof state.current === 'string' ? state.current : null,
+      previousTarget: typeof state.currentTarget === 'string' ? state.currentTarget : null,
+      current: inferredVersion(payload.target),
+      currentTarget: payload.target,
+    };
+  }
+  if (state.daemonTarget !== daemon.target) {
+    state = {
+      ...state,
+      previousDaemonVersion:
+        typeof state.daemonVersion === 'string' ? state.daemonVersion : null,
+      previousDaemonTarget: typeof state.daemonTarget === 'string' ? state.daemonTarget : null,
+      daemonVersion: inferredVersion(daemon.target),
+      daemonTarget: daemon.target,
+    };
+  }
+  await writeState(config, state);
+  return state;
+}
+
+async function downloadArchive(archiveSpec, destination, label, config) {
+  let response;
+  try {
+    response = await fetch(archiveSpec.url, {
+      signal: AbortSignal.timeout(config.requestTimeoutMs),
+    });
+  } catch (error) {
+    throw new FetchFailure(`${label} fetch failed: ${errorMessage(error)}`);
+  }
+  if (!response.ok) throw new FetchFailure(`${label} returned HTTP ${response.status}`);
+  if (response.body === null) throw new FetchFailure(`${label} returned no body`);
+  const hash = crypto.createHash('sha256');
+  const file = await fsp.open(destination, 'wx', 0o600);
+  let bytes = 0;
+  try {
+    for await (const piece of response.body) {
+      const chunk = Buffer.from(piece);
+      bytes += chunk.length;
+      if (bytes > archiveSpec.bytes) {
+        throw new VerifyFailure(`${label} byte length mismatch`);
+      }
+      hash.update(chunk);
+      await file.write(chunk);
+    }
+  } catch (error) {
+    if (error instanceof VerifyFailure) throw error;
+    throw new FetchFailure(`${label} body failed: ${errorMessage(error)}`);
+  } finally {
+    await file.close();
+  }
+  if (bytes !== archiveSpec.bytes) throw new VerifyFailure(`${label} byte length mismatch`);
+  if (hash.digest('hex') !== archiveSpec.sha256) {
+    throw new VerifyFailure(`${label} sha256 mismatch`);
+  }
+}
+
+function archiveAncestors(files) {
+  const allowed = new Set();
+  for (const file of files) {
+    const segments = file.path.split('/');
+    for (let index = 1; index < segments.length; index += 1) {
+      allowed.add(segments.slice(0, index).join('/'));
+    }
+  }
+  return allowed;
+}
+
+async function inspectPayloadArchive(archivePath, manifest, config) {
+  const listing = await runCommand(
+    'tar',
+    ['-tzf', archivePath],
+    config.requestTimeoutMs,
+  ).catch((error) => {
+    throw new VerifyFailure(`payload archive cannot be listed: ${errorMessage(error)}`);
+  });
+  const files = new Set(manifest.files.map((entry) => entry.path));
+  const directories = archiveAncestors(manifest.files);
+  for (const rawEntry of listing.split('\n').filter((entry) => entry !== '')) {
+    const isDirectory = rawEntry.endsWith('/');
+    const entry = isDirectory ? rawEntry.slice(0, -1) : rawEntry;
+    if ((isDirectory && directories.has(entry)) || (!isDirectory && files.has(entry))) continue;
+    throw new VerifyFailure(`payload archive contains unexpected path ${rawEntry}`);
+  }
+}
+
+async function walkTree(root, relative = '') {
+  const result = [];
+  const entries = await fsp.readdir(path.join(root, relative), { withFileTypes: true });
+  for (const entry of entries) {
+    const child = relative === '' ? entry.name : `${relative}/${entry.name}`;
+    const childPath = path.join(root, child);
+    const metadata = await fsp.lstat(childPath);
+    result.push({ relative: child, metadata });
+    if (metadata.isDirectory()) result.push(...await walkTree(root, child));
+  }
+  return result;
+}
+
+async function hashFile(filePath) {
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+async function verifyPayloadTree(root, manifest) {
+  const rootfs = path.join(root, 'rootfs');
+  const entries = await walkTree(rootfs).catch((error) => {
+    throw new VerifyFailure(`payload rootfs is unreadable: ${errorMessage(error)}`);
+  });
+  const expected = new Map(manifest.files.map((entry) => [entry.path, entry]));
+  const actualFiles = [];
+  for (const entry of entries) {
+    const archivePath = `rootfs/${entry.relative}`;
+    if (entry.metadata.isDirectory()) continue;
+    if (!entry.metadata.isFile()) {
+      throw new VerifyFailure(`payload path is not a regular file: ${archivePath}`);
+    }
+    actualFiles.push(archivePath);
+  }
+  if (
+    actualFiles.length !== expected.size
+    || actualFiles.some((archivePath) => !expected.has(archivePath))
+  ) {
+    throw new VerifyFailure('payload extracted file list does not match manifest.files');
+  }
+  for (const [archivePath, specification] of expected) {
+    const filePath = path.join(root, archivePath);
+    const metadata = await fsp.stat(filePath);
+    if (await hashFile(filePath) !== specification.sha256) {
+      throw new VerifyFailure(`${archivePath} sha256 mismatch`);
+    }
+    const actualMode = (metadata.mode & 0o7777).toString(8).padStart(4, '0');
+    if (actualMode !== specification.mode) {
+      throw new VerifyFailure(`${archivePath} mode mismatch`);
+    }
+  }
+}
+
+async function extractPayload(manifest, config) {
+  const versionsRoot = path.join(config.payloadState, 'versions');
+  const final = path.join(versionsRoot, manifest.version);
+  const existing = await fsp.stat(final).catch(() => null);
+  if (existing !== null) {
+    try {
+      await verifyPayloadTree(final, manifest);
+      return final;
+    } catch {
+      await fsp.rm(final, { recursive: true, force: true });
+    }
+  }
+  const staging = `${final}.staging`;
+  await fsp.rm(staging, { recursive: true, force: true });
+  await fsp.mkdir(staging, { recursive: true });
+  const archivePath = path.join(staging, '.payload.tar.gz');
+  try {
+    await downloadArchive(manifest.archive, archivePath, 'payload archive', config);
+    await inspectPayloadArchive(archivePath, manifest, config);
+    await runCommand(
+      'tar',
+      ['-xzf', archivePath, '-C', staging, '--no-same-owner', '--same-permissions'],
+      config.requestTimeoutMs,
+    ).catch((error) => {
+      throw new VerifyFailure(`payload archive extraction failed: ${errorMessage(error)}`);
+    });
+    await fsp.rm(archivePath, { force: true });
+    await verifyPayloadTree(staging, manifest);
+    await fsp.writeFile(
+      path.join(staging, '.manifest.json'),
+      `${JSON.stringify(manifest)}\n`,
+      { mode: 0o644 },
+    );
+    await fsp.rename(staging, final);
+    return final;
+  } catch (error) {
+    await fsp.rm(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function safeArchiveEntry(entry) {
+  const normalized = entry.endsWith('/') ? entry.slice(0, -1) : entry;
+  const segments = normalized.split('/');
+  return normalized !== ''
+    && !path.isAbsolute(normalized)
+    && !segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+    && (segments[0] === 'bin' || segments[0] === 'lib');
+}
+
+async function verifyDaemonTree(root) {
+  const entries = await walkTree(root);
+  let hasBinary = false;
+  let hasPackage = false;
+  for (const entry of entries) {
+    if (entry.relative === 'bin/lody') hasBinary = true;
+    if (entry.relative.startsWith('lib/node_modules/lody/')) hasPackage = true;
+    if (entry.metadata.isSymbolicLink()) {
+      const target = await fsp.readlink(path.join(root, entry.relative));
+      const resolved = path.resolve(root, path.dirname(entry.relative), target);
+      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+        throw new VerifyFailure(`daemon symlink escapes its prefix: ${entry.relative}`);
+      }
+      continue;
+    }
+    if (!entry.metadata.isDirectory() && !entry.metadata.isFile()) {
+      throw new VerifyFailure(`daemon archive has a special file: ${entry.relative}`);
+    }
+  }
+  if (!hasBinary || !hasPackage) {
+    throw new VerifyFailure('daemon archive is missing the lody package or binary');
+  }
+}
+
+async function extractDaemon(daemon, config) {
+  const final = path.join(config.lodyRoot, daemon.version);
+  const existing = await fsp.stat(final).catch(() => null);
+  if (existing !== null) {
+    try {
+      await verifyDaemonTree(final);
+      return final;
+    } catch {
+      await fsp.rm(final, { recursive: true, force: true });
+    }
+  }
+  const staging = `${final}.staging`;
+  await fsp.rm(staging, { recursive: true, force: true });
+  await fsp.mkdir(staging, { recursive: true });
+  const archivePath = path.join(staging, '.daemon.tar.gz');
+  try {
+    await downloadArchive(daemon, archivePath, 'daemon archive', config);
+    const listing = await runCommand('tar', ['-tzf', archivePath], config.requestTimeoutMs)
+      .catch((error) => {
+        throw new VerifyFailure(`daemon archive cannot be listed: ${errorMessage(error)}`);
+      });
+    for (const entry of listing.split('\n').filter((item) => item !== '')) {
+      if (!safeArchiveEntry(entry)) {
+        throw new VerifyFailure(`daemon archive contains unexpected path ${entry}`);
+      }
+    }
+    await runCommand(
+      'tar',
+      ['-xzf', archivePath, '-C', staging, '--no-same-owner', '--same-permissions'],
+      config.requestTimeoutMs,
+    ).catch((error) => {
+      throw new VerifyFailure(`daemon archive extraction failed: ${errorMessage(error)}`);
+    });
+    await fsp.rm(archivePath, { force: true });
+    await verifyDaemonTree(staging);
+    await fsp.rename(staging, final);
+    return final;
+  } catch (error) {
+    await fsp.rm(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function changedPayloadPaths(state, manifest) {
+  const changed = new Set();
+  for (const entry of manifest.files) {
+    const currentPath = path.join(state.currentTarget, entry.path);
+    let metadata;
+    try {
+      metadata = await fsp.stat(currentPath);
+    } catch {
+      changed.add(entry.path);
+      continue;
+    }
+    const actualMode = (metadata.mode & 0o7777).toString(8).padStart(4, '0');
+    if (
+      !metadata.isFile()
+      || actualMode !== entry.mode
+      || await hashFile(currentPath) !== entry.sha256
+    ) {
+      changed.add(entry.path);
+    }
+  }
+  return changed;
+}
+
+function servicesToRestart(manifest, changed, daemonChanged) {
+  const services = new Set();
+  for (const [service, dependencies] of Object.entries(manifest.restart)) {
+    if (dependencies.some((dependency) => changed.has(dependency))) services.add(service);
+  }
+  if (daemonChanged) services.add('lody-daemon');
+  // The updater's launcher is base-owned and has no payload dependency. A
+  // self-restart here would kill the transaction before health and reporting.
+  services.delete('payload');
+  return [...services].sort();
+}
+
+async function switchRelease(config, state, nextPayload, nextDaemon) {
+  const pending = {
+    payload: nextPayload,
+    daemon: nextDaemon,
+  };
+  await writeState(config, { ...state, pending });
+  if (nextDaemon.target !== state.daemonTarget) {
+    await atomicLink(path.join(config.lodyRoot, 'current'), nextDaemon.target);
+  }
+  await atomicLink(path.join(config.payloadRoot, 'current'), nextPayload.target);
+  const committed = {
+    ...state,
+    current: nextPayload.version,
+    currentTarget: nextPayload.target,
+    previous: state.current,
+    previousTarget: state.currentTarget,
+    daemonVersion: nextDaemon.version,
+    daemonTarget: nextDaemon.target,
+    previousDaemonVersion: state.daemonVersion,
+    previousDaemonTarget: state.daemonTarget,
+  };
+  delete committed.pending;
+  await writeState(config, committed);
+  return committed;
+}
+
+async function restartOrdinaryService(service, config) {
+  await runCommand(
+    config.s6Svc,
+    ['-r', path.join(config.serviceRoot, service)],
+    config.requestTimeoutMs,
+  );
+}
+
+// Step 5 replaces the body of this clearly named seam with the daemon idle
+// wait. Until then the daemon obeys the same manifest-driven restart rule as
+// every other longrun, exactly as §7 step 3 specifies.
+async function restartLodyDaemonWithoutIdleWait(config) {
+  await restartOrdinaryService('lody-daemon', config);
+}
+
+async function restartServices(services, config) {
+  for (const service of services) {
+    if (service === 'lody-daemon') await restartLodyDaemonWithoutIdleWait(config);
+    else await restartOrdinaryService(service, config);
+  }
+}
+
+function probeDaemon(socketPath, timeoutMs) {
+  return new Promise((resolve) => {
+    const request = http.request({
+      socketPath,
+      path: '/healthz',
+      method: 'GET',
+      timeout: timeoutMs,
+    }, (response) => {
+      response.resume();
+      resolve(response.statusCode !== undefined
+        && response.statusCode >= 200
+        && response.statusCode < 300);
+    });
+    request.once('timeout', () => request.destroy());
+    request.once('error', () => resolve(false));
+    request.end();
+  });
+}
+
+async function probeGateway(config, timeoutMs) {
+  try {
+    const response = await fetch(config.gatewayHealthUrl, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    await response.body?.cancel();
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForHealth(checkDaemon, config) {
+  const deadline = Date.now() + config.healthTimeoutMs;
+  do {
+    const remaining = Math.max(1, deadline - Date.now());
+    const probeTimeout = Math.min(2000, remaining);
+    const [gatewayHealthy, daemonHealthy] = await Promise.all([
+      probeGateway(config, probeTimeout),
+      checkDaemon ? probeDaemon(config.daemonSocket, probeTimeout) : Promise.resolve(true),
+    ]);
+    if (gatewayHealthy && daemonHealthy) return true;
+    if (Date.now() >= deadline) break;
+    await sleep(Math.min(config.healthIntervalMs, Math.max(1, deadline - Date.now())));
+  } while (Date.now() < deadline);
+  return false;
+}
+
+async function recordOutcome(config, state, outcome, detail) {
+  const reportVersion = typeof state.reportVersion === 'string'
+    ? state.reportVersion
+    : state.current;
+  const persistent = { ...state };
+  delete persistent.reportVersion;
+  const next = {
+    ...persistent,
+    lastOutcome: outcome,
+    lastAttemptAt: Date.now(),
+  };
+  await writeState(config, next);
+  return { state: next, result: {
+    version: reportVersion,
+    daemonVersion: next.daemonVersion,
+    outcome,
+    detail,
+  } };
+}
+
+async function applyPayload(pin, manifest, config, initialState) {
+  let state = { ...initialState, reportVersion: pin.version };
+  if (manifest.version !== pin.version) {
+    return recordOutcome(config, state, 'verify-failed', 'manifest version does not match pin');
+  }
+  if (manifest.minUpdater > UPDATER_VERSION) {
+    return recordOutcome(
+      config,
+      state,
+      'unsupported',
+      `manifest requires updater protocol ${manifest.minUpdater}`,
+    );
+  }
+  let payloadTarget;
+  let daemonTarget = state.daemonTarget;
+  const daemonChanged = manifest.daemon !== undefined
+    && manifest.daemon.version !== state.daemonVersion;
+  try {
+    payloadTarget = await extractPayload(manifest, config);
+    if (daemonChanged) daemonTarget = await extractDaemon(manifest.daemon, config);
+  } catch (error) {
+    const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
+    return recordOutcome(config, state, outcome, errorMessage(error));
+  }
+
+  const changed = await changedPayloadPaths(state, manifest);
+  const services = servicesToRestart(manifest, changed, daemonChanged);
+  const previous = {
+    version: state.current,
+    target: state.currentTarget,
+    daemonVersion: state.daemonVersion,
+    daemonTarget: state.daemonTarget,
+  };
+  try {
+    state = await switchRelease(
+      config,
+      state,
+      { version: manifest.version, target: payloadTarget },
+      {
+        version: daemonChanged ? manifest.daemon.version : state.daemonVersion,
+        target: daemonTarget,
+      },
+    );
+  } catch (error) {
+    state = await initialiseState(config);
+    state.reportVersion = pin.version;
+    return recordOutcome(config, state, 'start-failed', `atomic switch failed: ${errorMessage(error)}`);
+  }
+
+  let activationFailure = null;
+  try {
+    await restartServices(services, config);
+  } catch (error) {
+    activationFailure = `service restart failed: ${errorMessage(error)}`;
+  }
+  if (activationFailure === null && !await waitForHealth(daemonChanged, config)) {
+    activationFailure = 'health check failed';
+  }
+  if (activationFailure === null) {
+    state.reportVersion = pin.version;
+    return recordOutcome(
+      config,
+      state,
+      'applied',
+      services.length === 0 ? 'healthy; no service restart required' : `healthy; restarted ${services.join(', ')}`,
+    );
+  }
+
+  try {
+    state = await switchRelease(
+      config,
+      state,
+      { version: previous.version, target: previous.target },
+      { version: previous.daemonVersion, target: previous.daemonTarget },
+    );
+    await restartServices(services, config);
+    if (!await waitForHealth(daemonChanged, config)) {
+      throw new Error('previous release health check failed');
+    }
+  } catch (error) {
+    state.reportVersion = pin.version;
+    return recordOutcome(
+      config,
+      state,
+      'start-failed',
+      `${activationFailure}; rollback failed: ${errorMessage(error)}`,
+    );
+  }
+  state.reportVersion = pin.version;
+  return recordOutcome(
+    config,
+    state,
+    'rolled-back',
+    `${activationFailure}; previous payload restored`,
+  );
+}
+
+async function garbageCollect(config, state) {
+  const payloadKeep = new Set([state.current, state.previous].filter((item) =>
+    typeof item === 'string'));
+  const versionsRoot = path.join(config.payloadState, 'versions');
+  for (const entry of await fsp.readdir(versionsRoot, { withFileTypes: true })) {
+    if (!payloadKeep.has(entry.name)) {
+      await fsp.rm(path.join(versionsRoot, entry.name), { recursive: true, force: true });
+    }
+  }
+  const daemonKeep = new Set([
+    'baked',
+    'current',
+    state.daemonVersion,
+    state.previousDaemonVersion,
+  ].filter((item) => typeof item === 'string'));
+  for (const entry of await fsp.readdir(config.lodyRoot, { withFileTypes: true })) {
+    if (!daemonKeep.has(entry.name)) {
+      await fsp.rm(path.join(config.lodyRoot, entry.name), { recursive: true, force: true });
+    }
+  }
+}
+
+let bootReportPending = true;
+
+async function tick(config) {
+  let state = await initialiseState(config);
+  let origin;
+  try {
+    origin = await readOrigin(config);
+  } catch (error) {
+    log(errorMessage(error));
+    return;
+  }
+  if (origin === null) {
+    log('idle (no control-plane origin)');
+    return;
+  }
+  let token;
+  try {
+    token = await accessToken(config);
+  } catch (error) {
+    log(`idle (bearer unavailable: ${errorMessage(error)})`);
+    return;
+  }
+
+  let pin;
+  try {
+    const response = await fetchJson(
+      `${origin}/workspaces/self/box-config`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      'box-config',
+      config.requestTimeoutMs,
+    );
+    pin = parsePayloadConfig(response);
+  } catch (error) {
+    const failure = await recordOutcome(
+      config,
+      { ...state, reportVersion: state.current },
+      'fetch-failed',
+      errorMessage(error),
+    );
+    state = failure.state;
+    await postResult(origin, token, failure.result, config);
+    await garbageCollect(config, state);
+    return;
+  }
+
+  if (pin === null) {
+    if (bootReportPending) {
+      const boot = await recordOutcome(
+        config,
+        { ...state, reportVersion: state.current },
+        'up-to-date',
+        'boot report; no payload pin',
+      );
+      state = boot.state;
+      await postResult(origin, token, boot.result, config);
+      bootReportPending = false;
+    }
+    await garbageCollect(config, state);
+    return;
+  }
+  if (pin.version === state.current) {
+    const current = await recordOutcome(
+      config,
+      { ...state, reportVersion: pin.version },
+      'up-to-date',
+      bootReportPending ? 'boot report; payload is current' : '',
+    );
+    state = current.state;
+    await postResult(origin, token, current.result, config);
+    bootReportPending = false;
+    await garbageCollect(config, state);
+    return;
+  }
+
+  let applied;
+  try {
+    const manifestValue = await fetchJson(
+      pin.manifestUrl,
+      {},
+      'payload manifest',
+      config.requestTimeoutMs,
+    );
+    applied = await applyPayload(pin, parseManifest(manifestValue), config, state);
+  } catch (error) {
+    const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
+    applied = await recordOutcome(
+      config,
+      { ...state, reportVersion: pin.version },
+      outcome,
+      errorMessage(error),
+    );
+  }
+  state = applied.state;
+  await postResult(origin, token, applied.result, config);
+  bootReportPending = false;
+  await garbageCollect(config, state);
+}
+
+async function runLoop() {
+  const config = settings();
+  if (process.env.BLITZ_PAYLOAD_ONCE === '1') {
+    try {
+      await tick(config);
+    } catch (error) {
+      // A one-shot test has the same fail-open semantics as the supervised
+      // loop: errors are observations, never a reason for s6 to spin.
+      log(`tick failed (${errorMessage(error)})`);
+    }
+    return;
+  }
+  await sleep(config.firstDelayMs);
+  while (true) {
+    try {
+      await tick(config);
+    } catch (error) {
+      log(`tick failed (${errorMessage(error)})`);
+    }
+    await sleep(config.intervalMs);
+  }
+}
+
+async function validatorMain(kind, fixturePath) {
+  const source = fixturePath === '-'
+    ? await new Promise((resolve, reject) => {
+        let input = '';
+        process.stdin.setEncoding('utf8');
+        process.stdin.on('data', (chunk) => { input += chunk; });
+        process.stdin.once('end', () => resolve(input));
+        process.stdin.once('error', reject);
+      })
+    : await fsp.readFile(fixturePath, 'utf8');
+  const parsed = JSON.parse(source);
+  if (kind === 'validate-manifest') parseManifest(parsed);
+  else parseResult(parsed);
+}
+
+const [command, fixturePath] = process.argv.slice(2);
+if (
+  (command === 'validate-manifest' || command === 'validate-result')
+  && fixturePath !== undefined
+  && process.argv.length === 4
+) {
+  validatorMain(command, fixturePath).catch((error) => {
+    process.stderr.write(`${errorMessage(error)}\n`);
+    process.exitCode = 1;
+  });
+} else if (command === undefined) {
+  void runLoop();
+} else {
+  process.stderr.write(
+    'usage: blitz-payload [validate-manifest|validate-result <file|->]\n',
+  );
+  process.exitCode = 2;
+}
+
+module.exports = { parseManifest, parseResult };
