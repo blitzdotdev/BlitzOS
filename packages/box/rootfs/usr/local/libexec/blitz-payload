@@ -1089,31 +1089,27 @@ async function tick(config) {
     return;
   }
 
+  if (bootReportPending) {
+    const bootDetail = pin === null
+      ? 'boot report; no payload pin'
+      : pin.version === state.current
+        ? 'boot report; payload is current'
+        : 'boot report; payload update pending';
+    const boot = await recordOutcome(
+      config,
+      { ...state, reportVersion: state.current },
+      'up-to-date',
+      bootDetail,
+    );
+    state = boot.state;
+    await postResult(origin, token, boot.result, config);
+    bootReportPending = false;
+  }
   if (pin === null) {
-    if (bootReportPending) {
-      const boot = await recordOutcome(
-        config,
-        { ...state, reportVersion: state.current },
-        'up-to-date',
-        'boot report; no payload pin',
-      );
-      state = boot.state;
-      await postResult(origin, token, boot.result, config);
-      bootReportPending = false;
-    }
     await garbageCollect(config, state);
     return;
   }
   if (pin.version === state.current) {
-    const current = await recordOutcome(
-      config,
-      { ...state, reportVersion: pin.version },
-      'up-to-date',
-      bootReportPending ? 'boot report; payload is current' : '',
-    );
-    state = current.state;
-    await postResult(origin, token, current.result, config);
-    bootReportPending = false;
     await garbageCollect(config, state);
     return;
   }
@@ -1138,7 +1134,6 @@ async function tick(config) {
   }
   state = applied.state;
   await postResult(origin, token, applied.result, config);
-  bootReportPending = false;
   await garbageCollect(config, state);
 }
 
