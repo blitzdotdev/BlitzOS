@@ -46,6 +46,9 @@ esac
 assert_payload_state_consistent "$WORKSPACE_ID" \
   || experiment_fail "memory pressure left state inconsistent"
 outcome=$(machine_json "$MACHINE_ID" "$WORKSPACE_ID" | jq -r '.payloadOutcome // "null"')
+reported_version=$(machine_json "$MACHINE_ID" "$WORKSPACE_ID" | jq -r '.payloadVersion // "null"')
+assert_equal "$reported_version" "$PUBLISHED_VERSION" \
+  "control plane did not receive the pressure-run payload result"
 case "$outcome" in
   applied | rolled-back | start-failed | verify-failed | fetch-failed) ;;
   *) experiment_fail "updater did not report a bounded terminal outcome ($outcome)" ;;

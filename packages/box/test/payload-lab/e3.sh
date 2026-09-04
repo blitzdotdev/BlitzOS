@@ -23,7 +23,6 @@ target_daemon=$(jq -er .daemon.version "$PUBLISHED_RELEASE_DIR/manifest.json") \
 pin_payload "$PUBLISHED_VERSION"
 payload_tick "$WORKSPACE_ID" >"$LAB_TEMP_ROOT/tick.log" 2>&1 &
 tick_pid=$!
-LAB_BACKGROUND_PIDS+=("$tick_pid")
 
 deadline=$(( $(date +%s) + LAB_OUTCOME_TIMEOUT ))
 switch_ms=0

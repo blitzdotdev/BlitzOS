@@ -21,7 +21,6 @@ target_daemon=$(jq -er .daemon.version "$PUBLISHED_RELEASE_DIR/manifest.json") \
 pin_payload "$PUBLISHED_VERSION"
 payload_tick "$WORKSPACE_ID" >"$LAB_TEMP_ROOT/tick.log" 2>&1 &
 tick_pid=$!
-LAB_BACKGROUND_PIDS+=("$tick_pid")
 
 deadline=$(( $(date +%s) + LAB_OUTCOME_TIMEOUT ))
 switch_ms=0
@@ -63,7 +62,8 @@ wait_payload_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" applied "$LAB_OUTCOME_TI
   || experiment_fail "control plane did not record applied"
 
 daemon_log_since "$WORKSPACE_ID" "$log_offset" >"$LAB_TEMP_ROOT/daemon.log"
-dispatch_stamp=$(grep -i -m1 'dispatch' "$LAB_TEMP_ROOT/daemon.log" | cut -d' ' -f1 || true)
+dispatch_stamp=$(grep -m1 'Session chat received:' "$LAB_TEMP_ROOT/daemon.log" \
+  | cut -d' ' -f1 || true)
 [ -n "$dispatch_stamp" ] || experiment_fail "daemon log has no redispatch record"
 before_ms=$(iso_epoch_ms "$before_stamp") || experiment_fail "could not parse pre-restart daemon timestamp"
 dispatch_ms=$(iso_epoch_ms "$dispatch_stamp") || experiment_fail "could not parse redispatch daemon timestamp"

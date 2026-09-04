@@ -14,6 +14,7 @@ fi
 require_workspace
 session_running "$WORKSPACE_ID" || experiment_fail "no turn is in flight"
 before_tmux=$(tmux_catalog "$WORKSPACE_ID")
+[ -n "$before_tmux" ] || experiment_fail "no tmux sessions exist to preserve"
 before_daemon=$(daemon_pid "$WORKSPACE_ID")
 wait_gateway_health "$WORKSPACE_ID" 10 \
   || experiment_fail "gateway health was not 2xx before the update"
@@ -27,10 +28,10 @@ payload_tick "$WORKSPACE_ID" >/dev/null 2>&1 \
   || experiment_fail "updater tick failed"
 wait_payload_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" applied "$LAB_OUTCOME_TIMEOUT" \
   || experiment_fail "control plane did not record applied"
-sleep 1
-stop_health_poll "$HEALTH_POLL_PID"
 wait_gateway_health "$WORKSPACE_ID" 10 \
   || experiment_fail "gateway health did not recover after the update"
+sleep 1
+stop_health_poll "$HEALTH_POLL_PID"
 
 gap=$(health_gap_ms "$health_log")
 [ "$gap" -lt 10000 ] || experiment_fail "gateway reconnect gap was ${gap}ms (limit 9999ms)"
@@ -39,6 +40,8 @@ assert_equal "$after_tmux" "$before_tmux" "tmux sessions changed across gateway 
 after_daemon=$(daemon_pid "$WORKSPACE_ID")
 assert_equal "$after_daemon" "$before_daemon" "daemon restarted for a gateway-only payload"
 session_running "$WORKSPACE_ID" || experiment_fail "the in-flight turn was interrupted"
+wait_session_idle "$WORKSPACE_ID" "${LAB_TURN_TIMEOUT:-900}" \
+  || experiment_fail "the in-flight turn did not complete after the gateway restart"
 wait_payload_current "$WORKSPACE_ID" "$PUBLISHED_VERSION" 30 \
   || experiment_fail "new gateway payload is not current"
 assert_no_orphans "$WORKSPACE_ID"

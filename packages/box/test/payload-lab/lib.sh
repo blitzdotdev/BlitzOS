@@ -25,7 +25,6 @@ WORKSPACE_ID=
 MACHINE_ID=
 LAB_FINAL_LINE=false
 LAB_TEMP_ROOT=
-LAB_BACKGROUND_PIDS=()
 LAB_RESTORE_ORIGIN_WORKSPACE=
 LAB_RESTORE_ORIGIN_VALUE=
 LAB_REMOTE_CLEANUP_WORKSPACE=
@@ -50,10 +49,10 @@ dry_command() {
 
 _payload_lab_cleanup() {
   local pid
-  for pid in "${LAB_BACKGROUND_PIDS[@]:-}"; do
+  while IFS= read -r pid; do
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
-  done
+  done < <(jobs -pr)
   if [ -n "$LAB_RESTORE_ORIGIN_WORKSPACE" ] && [ -n "$LAB_RESTORE_ORIGIN_VALUE" ]; then
     _write_box_origin "$LAB_RESTORE_ORIGIN_WORKSPACE" "$LAB_RESTORE_ORIGIN_VALUE" \
       >/dev/null 2>&1 || true
@@ -232,7 +231,7 @@ payload_tick() {
   local workspace_id=$1
   payload_lab_trace "running one supervised updater transaction on $workspace_id"
   host_ssh "$workspace_id" \
-    "docker exec --env BLITZ_PAYLOAD_ONCE=1 blitz-box /usr/local/libexec/blitz-payload"
+    "docker exec blitz-box bash -c 'set -e; printf \"%s\\n\" \"\$\$\" > /sys/fs/cgroup/blitz-system.slice/cgroup.procs; exec env BLITZ_PAYLOAD_ONCE=1 /usr/local/libexec/blitz-payload'"
 }
 
 wait_payload_outcome() {
@@ -545,11 +544,13 @@ pin_payload() {
 
 gateway_health_code() {
   local workspace_id=$1 token=${THINLAB_PROXY_TOKEN:-${THINLAB_TOKEN:-}}
+  local code
   [ -n "$token" ] || return 1
-  curl --silent --output /dev/null --max-time 3 --write-out '%{http_code}' \
+  code=$(curl --silent --output /dev/null --max-time 3 --write-out '%{http_code}' \
     --header "Authorization: Bearer $token" \
     "$THINLAB_ORIGIN/workspaces/$workspace_id/webapp/7445$LAB_HEALTH_PATH" \
-    2>/dev/null || printf '000'
+    2>/dev/null || true)
+  printf '%s\n' "${code:-000}"
 }
 
 wait_gateway_health() {
@@ -575,7 +576,6 @@ start_health_poll() {
     done
   ) &
   HEALTH_POLL_PID=$!
-  LAB_BACKGROUND_PIDS+=("$HEALTH_POLL_PID")
 }
 
 stop_health_poll() {

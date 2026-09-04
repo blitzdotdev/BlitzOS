@@ -25,7 +25,6 @@ box_ssh "$WORKSPACE_ID" 'blitz box update' >/dev/null \
 host_ssh "$WORKSPACE_ID" 'systemctl start blitz-box-update.service' \
   >"$LAB_TEMP_ROOT/image-update.log" 2>&1 &
 update_pid=$!
-LAB_BACKGROUND_PIDS+=("$update_pid")
 wait_box_ssh "$WORKSPACE_ID" false 180 \
   || experiment_fail "container replacement never interrupted SSH"
 wait_box_ssh "$WORKSPACE_ID" true 300 \

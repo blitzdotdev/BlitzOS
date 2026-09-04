@@ -19,7 +19,6 @@ publish_variant daemon-e7-reset
 pin_payload "$PUBLISHED_VERSION"
 payload_tick "$WORKSPACE_ID" >"$LAB_TEMP_ROOT/tick.log" 2>&1 &
 tick_pid=$!
-LAB_BACKGROUND_PIDS+=("$tick_pid")
 
 deadline=$(( $(date +%s) + LAB_OUTCOME_TIMEOUT ))
 mid_apply=false

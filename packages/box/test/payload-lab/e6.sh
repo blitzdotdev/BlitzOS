@@ -14,6 +14,7 @@ fi
 require_workspace
 previous=$(payload_current "$WORKSPACE_ID")
 before_tmux=$(tmux_catalog "$WORKSPACE_ID")
+[ -n "$before_tmux" ] || experiment_fail "no terminal sessions exist to reconnect"
 wait_gateway_health "$WORKSPACE_ID" 10 \
   || experiment_fail "previous gateway health was not 2xx before the update"
 publish_variant e6-crash-gateway
@@ -26,6 +27,8 @@ payload_tick "$WORKSPACE_ID" >"$LAB_TEMP_ROOT/tick.log" 2>&1 \
   || experiment_fail "updater tick failed"
 wait_payload_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" rolled-back "$LAB_OUTCOME_TIMEOUT" \
   || experiment_fail "control plane did not record rolled-back"
+wait_gateway_health "$WORKSPACE_ID" 10 \
+  || experiment_fail "previous gateway health did not recover after rollback"
 sleep 1
 stop_health_poll "$HEALTH_POLL_PID"
 

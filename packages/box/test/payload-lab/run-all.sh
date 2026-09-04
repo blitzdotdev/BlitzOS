@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -Eeuo pipefail
 
 script_dir=$(realpath "$(dirname "$0")")
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
