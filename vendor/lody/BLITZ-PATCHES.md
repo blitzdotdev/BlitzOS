@@ -8,36 +8,44 @@ migration are in `plans/LODY-DAEMON-FROM-TREE.md`.
 **The rule: nothing in `vendor/lody` is edited except at a declared seam.**
 Everything BlitzOS-specific lives in `packages/webapp/src/lody/`. If a vendored
 component cannot render without a change, stub around it from there or record a
-blocker — do not patch the vendor tree.
+blocker. Do not patch the vendor tree.
 
-The runbook classifies every touched seam consistently: class A means upstream
-now supplies the behavior and the seam is deleted; class B means the same
-behavior is re-anchored with the drill below; class C means the mechanism or
-product meaning changed and a human must decide.
+The runbook classifies every touched seam consistently. Class A means upstream
+now supplies the behavior, so the seam is deleted. Class B means the same
+behavior is re-anchored with the drill below. Class C means the mechanism or
+product meaning changed, so a human must decide.
 
 ## Seam patches
 
 ### 1. The local-bridge predicate (phase 2, 2026-08-30)
 
 **One idea, six hunks in three files, all the same shape.** BlitzOS reaches the
-Lody daemon from a browser, not from Electron, so it installs `window.ipc`
+Lody daemon from a browser, not from Electron. It installs `window.ipc`
 (`packages/webapp/src/lody/local-bridge.ts`) and sets
 `window.__LODY_LOCAL_BRIDGE__` instead of `window.__LODY_ELECTRON__`. Setting the
-Electron flag is not an option: 44 sites read it — window controls in
-`routes/__root.tsx`, `electron-menu-handler`, `use-electron-updater-state`, the
-native theme bridge (`theme-provider.tsx:87`), OneSignal,
-`loro-app-sidebar.tsx:510` — and a browser satisfies none of them.
+Electron flag is not an option. The pinned upstream source has 43 lexical
+occurrences under `packages/components/src`. This command counts declarations
+and assignments as well as reads:
 
-The DATA plane needs no patch at all: `createLocalLoroDataPlaneConnection`
+```sh
+git grep -o '__LODY_ELECTRON__' f4b1ba259eb754cd954da776d8e7384a8c30f1c9 \
+  -- packages/components/src | wc -l
+```
+
+The affected code includes window controls in `routes/__root.tsx`,
+`electron-menu-handler`, `use-electron-updater-state`, the native theme bridge,
+OneSignal, and `loro-app-sidebar.tsx`. A browser satisfies none of them.
+
+The DATA plane needs no patch. `createLocalLoroDataPlaneConnection`
 (`providers/local-loro-data-plane-connection.ts:8`) gates only on
-`getIpcServices()`, which is a generic proxy over `window.ipc`. Five guards on
-the LOCAL RPC and session-control planes additionally require the Electron flag,
-and in `syncMode: 'local'` the cloud fallback behind each of them throws by
-design (`create-workspace-runtime.ts:1943`, `:2342`), so each is a hard failure
-rather than a degraded path.
+`getIpcServices()`. That function is a generic proxy over `window.ipc`. Five
+LOCAL RPC and session-control guards also require the Electron flag. In
+`syncMode: 'local'`, each cloud fallback throws by design
+(`create-workspace-runtime.ts:1943`, `:2342`). Each guard therefore causes a
+hard failure rather than a degraded path.
 
-Every hunk is strictly additive — the predicate can only become true where it
-was false — so upstream Electron behaviour is unchanged. Open upstream as
+Every hunk is strictly additive. The predicate can only become true where it
+was false, so upstream Electron behaviour is unchanged. Open upstream as
 "allow a non-Electron local bridge".
 
 | # | File | Line (at `f4b1ba25`) | Upstream anchor | What it gates |
@@ -46,7 +54,7 @@ was false — so upstream Electron behaviour is unchanged. Open upstream as
 | 2 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 182 | `const isElectron = typeof window !== 'undefined' && window.__LODY_ELECTRON__;` | `file/preview-local`; without it a local path is sent to Streams |
 | 3 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 999 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectGitState` | the sidebar's branch/worktree state |
 | 4 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 1055 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectControl` | every `local-project/*` and `worktree/*` call |
-| 5 | `packages/components/src/providers/create-workspace-runtime.ts` | 2074 | `if (!window.__LODY_ELECTRON__) {` in `canUseLocalSessionControl` | `session/create`, `session/chat`, `machine/*` |
+| 5 | `packages/components/src/providers/create-workspace-runtime.ts` | 2077 | `if (!window.__LODY_ELECTRON__) {` in `canUseLocalSessionControl` | `session/create`, `session/chat`, `machine/*` |
 | 6 | `packages/components/src/window-globals.d.ts` | 30 | `__LODY_ELECTRON__?: true;` | declares `__LODY_LOCAL_BRIDGE__?: true;` so the five above typecheck |
 
 Hunks 1, 3 and 4 read:
@@ -57,8 +65,8 @@ Hunks 1, 3 and 4 read:
 ```
 
 Hunk 2 is the same predicate re-wrapped across three lines to stay inside the
-line budget; the variable keeps the name `isElectron` deliberately, because
-renaming it would grow the diff past the one idea being carried. Hunk 5 reads
+line budget. The variable keeps the name `isElectron` deliberately. Renaming it
+would grow the diff past the one idea being carried. Hunk 5 reads
 `if (!window.__LODY_ELECTRON__ && !window.__LODY_LOCAL_BRIDGE__) {`. Hunk 6 adds
 one declaration line.
 
@@ -76,43 +84,46 @@ mechanical: the new predicate keeps its meaning and gains
 `|| window.__LODY_LOCAL_BRIDGE__`. If the flag itself is replaced by a
 capability check, drop these hunks and satisfy the new check instead.
 
-Verify this divergence by diffing OUR subtree against the upstream commit it was
-imported from. Not against the squash commit — that commit holds the upstream
-tree at its own root, so diffing a merged branch against it reports the entire
-vendored tree as added (measured, and it is the first thing that goes wrong):
+Verify this divergence by diffing OUR subtree against its upstream commit. Do
+not diff against the squash commit. That commit holds the upstream tree at its
+own root. Diffing a merged branch against it reports the entire vendored tree as
+added. This is measured, and it is the first thing that goes wrong:
 
 ```sh
 git diff --stat <upstream-sha> $(git rev-parse HEAD:vendor/lody) -- . \
   ':!UPSTREAM.md' ':!BLITZ-PATCHES.md'
 ```
 
-Expected after seam patch 8: exactly FOURTEEN files (seam patch 9 raises it to
-FIFTEEN and seam patch 10 to TWENTY; see their own entries) — the three above with six
-added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2,
-`lib/electron-session-file-sender.ts` from seam patch 3,
-`components/sessions/session-chat-interface.tsx` +
-`components/sessions/session-detail.tsx` from seam patch 4,
-`components/sessions/session-tab-bar.tsx` from seam patch 5, which also adds
-hunks to `session-detail.tsx`, seam patch 7's five new ones:
-`lib/session-github-state.ts`, `components/chat/chat-landing.tsx`,
-`components/chat/unified-project-selector.tsx`,
-`components/sessions/session-chat-input-area.tsx` and
-`components/sessions/session-conversation-diff-panel.tsx`, and seam patch 8's
-one new one: `hooks/use-chat-landing-file-draft.ts`, which also adds hunks to
-`session-chat-input-area.tsx`.
+Expected after seam patch 8: exactly FOURTEEN files. Seam patch 9 raises this to
+FIFTEEN. Seam patch 10 raises it to TWENTY. The fourteen files are:
+
+- the three files above, with six added or changed lines;
+- `components/loro-sidebar.tsx` from seam patch 2;
+- `lib/electron-session-file-sender.ts` from seam patch 3;
+- `components/sessions/session-chat-interface.tsx` and
+  `components/sessions/session-detail.tsx` from seam patch 4;
+- `components/sessions/session-tab-bar.tsx` from seam patch 5, with more hunks in
+  `session-detail.tsx`;
+- seam patch 7's five files: `lib/session-github-state.ts`,
+  `components/chat/chat-landing.tsx`,
+  `components/chat/unified-project-selector.tsx`,
+  `components/sessions/session-chat-input-area.tsx`, and
+  `components/sessions/session-conversation-diff-panel.tsx`; and
+- `hooks/use-chat-landing-file-draft.ts` from seam patch 8, with more hunks in
+  `session-chat-input-area.tsx`.
 
 ### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
 
 **Two optional props, four hunks, one file.** §0.3 of `plans/LODY-SESSIONS.md`
-puts Lody's sidebar BODY inside the BlitzOS rail while `div.shell-rhead` — the
-workspace title, Members, My machine, Details — stays native above it. Their
+puts Lody's sidebar BODY inside the BlitzOS rail. `div.shell-rhead` stays native
+above it with the workspace title, Members, My machine, and Details. Their
 sidebar draws its own workspace-identity header and its own settings / help /
-archive footer, and BlitzOS serves both from its own chrome, so mounted as-is
-the rail carries two workspace headers and two settings entries.
+archive footer. BlitzOS serves both from its own chrome. Mounted as-is, the rail
+carries two workspace headers and two settings entries.
 
 The plan says "suppressed via props, not source edits". Upstream at `966623d0`
-has no such prop — `afterSessionListContent` is the only slot — so phase 4 added
-them, as the smallest additive change that could be upstreamed unchanged. The
+has no such prop. `afterSessionListContent` is the only slot. Phase 4 therefore
+added the smallest additive change that could be upstreamed unchanged. The
 upstream PR is drafted in `plans/evidence/lody-sidebar-props-pr.md`; **drop this
 patch when it merges.**
 
@@ -123,8 +134,8 @@ patch when it merges.**
 | 3 | same | 880 | the `group/sidebar-header` `<div>` | wraps it in `{hideHeader ? null : ( … )}` |
 | 4 | same | 1224 | the `getLoroSidebarFooterClassName(isMobile)` `<div>` | wraps it in `{hideFooter ? null : ( … )}` |
 
-Hunks 3 and 4 are a guard plus a re-indent of the block they wrap, which is why
-the raw diff is ~170 lines and the meaningful one is four:
+Hunks 3 and 4 add a guard and re-indent the wrapped block. The raw diff is about
+170 lines, but only four are meaningful:
 
 ```sh
 git diff -w <upstream-sha> $(git rev-parse HEAD:vendor/lody) -- \
@@ -133,27 +144,27 @@ git diff -w <upstream-sha> $(git rev-parse HEAD:vendor/lody) -- \
 
 Expected: 23 changed lines, of which 15 are the two doc comments.
 
-Every hunk is strictly additive: with both props absent the component renders
-byte-for-byte what it rendered before, and no upstream call site passes either.
+Every hunk is strictly additive. With both props absent, the component renders
+byte-for-byte what it rendered before. No upstream call site passes either.
 
 **What a host that hides the footer takes on.** The footer is the only place the
-filter popover renders on MOBILE (`:1260`); the desktop trigger lives in the
-first section header instead. So a mobile host that hides the footer owns the
-organize/scope control. BlitzOS does not offer one in phase 4 — the rail has
-exactly three sections and no organize modes — and the prop's doc comment says
+filter popover renders on MOBILE (`:1260`). The desktop trigger lives in the
+first section header instead. A mobile host that hides the footer therefore
+owns the organize/scope control. BlitzOS did not offer one in phase 4. The rail
+had exactly three sections and no organize modes. The prop's doc comment says
 so.
 
-**Merge conflict drill.** If the header or the footer block is restructured
-upstream, re-apply by wrapping whatever renders in its place; the guard is one
-line on each side and carries no logic. If upstream adds its own suppression
-(the PR, or anything equivalent), delete these hunks and pass the new prop from
+**Merge conflict drill.** If the header or footer block changes upstream, wrap
+whatever renders in its place. The guard is one line on each side and carries
+no logic. If upstream adds its own suppression, delete these hunks. Pass the new
+prop from
 `packages/webapp/src/lody/SessionRailSidebar.tsx`.
 
 ### 3. The attachment-sender predicate (phase 6, 2026-08-30)
 
-**One hunk, one file, and it is seam patch 1's idea in a third place.** `+`
-attachments have a local fast path — hand the bytes to the machine that runs the
-session instead of uploading them to Lody cloud — and it is gated on the one
+**One hunk, one file, and seam patch 1's idea in a third place.** `+`
+attachments have a local fast path. It hands bytes to the machine running the
+session instead of uploading them to Lody cloud. The path is gated on the one
 global BlitzOS must never set:
 
 ```diff
@@ -168,44 +179,44 @@ global BlitzOS must never set:
 |---|---|---|---|---|
 | 1 | `packages/components/src/lib/electron-session-file-sender.ts` | 19 | `isElectronRenderer() && Boolean(getIpcServices());` | `localProjects.sendSessionFileLocal`, read by `use-chat-landing-file-draft.ts:104` and `session-chat-input-area.tsx:524` |
 
-The `typeof window` guard is not decoration: `isElectronRenderer()` carries one
-(`lib/electron.ts:5`), and dropping it would make this module throw where it
-previously returned `false`. The declaration this hunk depends on —
-`__LODY_LOCAL_BRIDGE__?: true` in `window-globals.d.ts` — is seam patch 1's
-hunk 6 and is already applied.
+The `typeof window` guard is not decoration. `isElectronRenderer()` carries one
+(`lib/electron.ts:5`). Dropping it would make this module throw where it
+previously returned `false`. Seam patch 1's hunk 6 declares
+`__LODY_LOCAL_BRIDGE__?: true` in `window-globals.d.ts`.
 
 Phase 5 recorded this as a BLOCKER rather than applying it
-(`plans/LODY-RUNTIME-DESIGN.md` §10.4), because that phase's brief allowed no new
-hunks. Phase 6 applies it, and the BlitzOS half behind it is
-`packages/webapp/src/lody/session-attachments.ts`: the bytes are staged on the
-box over the existing dufs WebDAV surface at
-`/workspace/.blitz-attachments/<sessionId>/`, the daemon is handed those absolute
-paths, and the staging files are deleted once it has copied them into its blob
-store. No new gateway path, no `webapp-surface.ts` entry, no Go change.
+(`plans/LODY-RUNTIME-DESIGN.md` §10.4). That phase's brief allowed no new hunks.
+Phase 6 applies it. The BlitzOS half is
+`packages/webapp/src/lody/session-attachments.ts`. Bytes are staged on the box
+through its existing dufs WebDAV surface at
+`/workspace/.blitz-attachments/<sessionId>/`. The daemon receives those absolute
+paths. The staging files are deleted after the daemon copies them into its blob
+store. This requires no new gateway path, `webapp-surface.ts` entry, or Go
+change.
 
-Strictly additive, like seam patch 1: the predicate can only become true where it
-was false, and no upstream build sets the flag. Upstream PR drafted at
-`plans/evidence/lody-attachment-seam-pr.md`; **drop this patch when it merges.**
+This is strictly additive, like seam patch 1. The predicate can only become true
+where it was false. No upstream build sets the flag. The upstream PR is drafted
+at `plans/evidence/lody-attachment-seam-pr.md`. **Drop this patch when it
+merges.**
 
-**Merge conflict drill.** Identical to seam patch 1's: if the guard is reworded,
-the new predicate keeps its meaning and gains the `__LODY_LOCAL_BRIDGE__` arm. If
-upstream replaces the flag with a capability probe over `window.ipc` — the
-alternative the PR sketch names and rejects — drop this hunk and let the probe
-answer, because the BlitzOS bridge does serve the channel.
+**Merge conflict drill.** This matches seam patch 1. If the guard is reworded,
+keep its meaning and add the `__LODY_LOCAL_BRIDGE__` arm. If upstream adopts a
+`window.ipc` capability probe, drop this hunk. The BlitzOS bridge serves the
+channel, so the probe can answer.
 
 ### 4. The read-only session surface (phase 7, 2026-08-30)
 
 **Two optional props, four hunks, two files.** BlitzOS grants a member read-only
-access to another member's session (`plans/LODY-SESSIONS.md` §0.1), and mounts
-that session in their own browser against the owner's box
-(`plans/LODY-SHARING.md` §10). Upstream has no read-only mode at all: every
-member of a Lody workspace may drive every session they can see, so
-`SessionChatInterface` has no notion of a viewer.
+access to another member's session (`plans/LODY-SESSIONS.md` §0.1). It mounts
+that session in the member's browser against the owner's box
+(`plans/LODY-SHARING.md` §10). Upstream has no read-only mode. Every Lody
+workspace member may drive every visible session. `SessionChatInterface`
+therefore has no viewer concept.
 
-The two suppressions it DOES have — `isArchivedSession` and `isMachineRemoved` —
-were considered and rejected. Borrowing either would put a false statement on the
-screen: the session is neither archived nor on a removed machine, and both change
-the header copy as well as the composer.
+The two existing suppressions are `isArchivedSession` and `isMachineRemoved`.
+Both were considered and rejected. Borrowing either would put a false statement
+on the screen. The session is neither archived nor on a removed machine. Both
+also change the header copy.
 
 | # | File | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|---|
@@ -216,43 +227,41 @@ the header copy as well as the composer.
 | 5 | `packages/components/src/components/sessions/session-detail.tsx` | 692, 698 | the inline props type and destructuring of `SessionDetail` | declares and defaults `readOnly` |
 | 6 | same | 5769, 5844 | the `<SessionChatInterface>` that renders a session tab | passes `readOnly={readOnly}` |
 
-The `headerVariant="toolbar"` instance at `:5622` is deliberately NOT passed the
-prop: it carries `hideMessageArea`, so it renders no composer and no permission
-card, and passing a prop that selects nothing would suggest it did.
+The `headerVariant="toolbar"` instance at `:5622` deliberately omits the prop. It
+carries `hideMessageArea`, so it renders no composer or permission card. Passing
+a prop that selects nothing would suggest otherwise.
 
-Strictly additive: with the prop absent every call site renders byte-for-byte
-what it rendered before, and no upstream call site passes it. Upstream PR drafted
-at `plans/evidence/lody-readonly-prop-pr.md`; **drop this patch when it merges.**
+This is strictly additive. With the prop absent, every call site renders
+byte-for-byte what it rendered before. No upstream call site passes it. The
+upstream PR is drafted at `plans/evidence/lody-readonly-prop-pr.md`. **Drop this
+patch when it merges.**
 
 **What the prop does NOT do, and what that leaves.** It suppresses two controls.
-The header's "…" menu still offers archive, delete, rename and fork to a
-read-only viewer, and every one of those fails at the BlitzOS relay rather than
-in the UI. Widening the prop to the menu is a bigger diff through
-`headerVariant="toolbar"`'s own call site and is the follow-up if upstream wants
-it; the enforcement does not depend on it.
+The header's "…" menu still offers archive, delete, rename, and fork. Each action
+fails at the BlitzOS relay rather than in the UI. Widening the prop to the menu
+requires a bigger diff through `headerVariant="toolbar"`'s call site. It is a
+follow-up if upstream wants it. Enforcement does not depend on it.
 
-**Merge conflict drill.** If the composer's render guard is restructured,
-re-apply by adding `readOnly ||` to whatever decides it renders. If upstream
-grows its own viewer concept (a role on the session, a capability), drop these
-hunks and pass that instead — the BlitzOS half is one boolean on
+**Merge conflict drill.** If the composer's render guard changes, add
+`readOnly ||` to its new form. If upstream adds a viewer role or capability,
+drop these hunks and pass that instead. The BlitzOS half is one boolean on
 `packages/webapp/src/lody/SessionSurface.tsx`.
 
 ### 5. Pluggable surface tabs (2026-08-31; hunks 19-20 added in wave 3)
 
-**One idea, two files.** A host that embeds the session viewer may contribute
-tabs of its own to the ONE tab strip `SessionTabBar` draws, and supply their
-content. BlitzOS uses it to put workspace terminals — ttyd over tmux, which is
-`webapp_state` and never a session — inside Lody's strip, so a member sees one
-tab system rather than two (`plans/LODY-TERMINAL-TABS.md`).
+**One idea, two files.** A host embedding the session viewer may contribute tabs
+and content to the ONE tab strip `SessionTabBar` draws. BlitzOS uses this for
+workspace terminals inside Lody's strip. These terminals use ttyd over tmux.
+They are `webapp_state`, never sessions. A member therefore sees one tab system
+instead of two (`plans/LODY-TERMINAL-TABS.md`).
 
 The patch fills a hole that already exists rather than cutting a new one.
 `SessionTabBar` already carries a non-session tab channel that production does
-not use: `viewerTabs`, `activeViewerTabId`, `onViewerTabSelect`,
-`onViewerTabClose` are all declared, the `viewer` arm of `SortableItemData` is
-implemented, and the one production call site (`session-detail.tsx`) passes
-`variant="session"` and no viewer tabs at all. `variant="viewer"` is declared
-too — and cannot be used, because `parentSession` is required by a strip that
-variant tells not to draw.
+not use. It declares `viewerTabs`, `activeViewerTabId`, `onViewerTabSelect`, and
+`onViewerTabClose`. The `viewer` arm of `SortableItemData` is implemented. The
+one production call site, `session-detail.tsx`, passes `variant="session"` and no
+viewer tabs. `variant="viewer"` is also declared but unusable. `parentSession`
+is required by a strip that this variant tells not to draw.
 
 `packages/components/src/components/sessions/session-tab-bar.tsx`
 
@@ -265,9 +274,9 @@ variant tells not to draw.
 | 5 | 725 | `[parentSession.id, ...sortableIds]` | reads the id only when `showSessionTabs` AND a session was given |
 | 6 | 770 | `<AdaptiveTabStripItem itemId={parentSession.id}>` | the existing `showSessionTabs &&` guard gains `parentSession &&` |
 
-Hunks 4–6 are the "a strip need not be rooted in a session" half, and they are
-what `packages/webapp/src/lody/TerminalTabsStrip.tsx` mounts: the same component,
-`variant="viewer"`, on the chat landing where there is no session to root it in.
+Hunks 4–6 let a strip exist without a session root. They support the component
+mounted by `packages/webapp/src/lody/TerminalTabsStrip.tsx`. The chat landing
+uses `variant="viewer"` because no session exists there.
 
 `packages/components/src/components/sessions/session-detail.tsx`
 
@@ -289,27 +298,26 @@ what `packages/webapp/src/lody/TerminalTabsStrip.tsx` mounts: the same component
 | 20 | 4455 | inside upstream's `sessionPresenceState === 'not-found'` effect, above `fireDetailNotFoundOnce` | calls `onSessionMissing?.(sessionId)` |
 
 **Hunks 19–20 are the OTHER thing the host cannot see: the strip is gone.**
-`SessionDetail` returns above the tab strip on two branches — loading and
-not-found — and the not-found one is terminal. Every host tab goes with that
-return, the member's terminal included, and its tmux session is still attached
-on the box. BlitzOS moves the selection to the strip's OTHER host, the chat
-landing, whose strip needs no session to be rooted in
-(`plans/LODY-TERMINAL-TABS.md` §3.4). With no host tab in the address the card
-stays, which is the honest answer to a dead session on its own.
+`SessionDetail` returns above the tab strip on its loading and not-found
+branches. The not-found branch is terminal. Every host tab disappears with that
+return, including the member's terminal. Its tmux session remains attached on
+the box. BlitzOS moves selection to the strip's OTHER host, the chat landing
+(`plans/LODY-TERMINAL-TABS.md` §3.4). That strip needs no session root. Without
+a host tab in the address, the card remains. This honestly represents a dead
+session on its own.
 
-The call sits ABOVE upstream's `fireDetailNotFoundOnce` gate deliberately: that
-gate is a once-per-session-id analytics guard, and what the host does with this
-is move an address, which can come back. It reads the callback from a ref, so a
-fresh host closure does not re-run an upstream effect whose dependency list is
-upstream's.
+The call deliberately sits ABOVE upstream's `fireDetailNotFoundOnce` gate. That
+gate is a once-per-session-id analytics guard. The host moves an address, which
+can return. The call reads its callback from a ref. A fresh host closure therefore
+does not re-run an upstream effect with upstream's dependency list.
 
-**Hunks 16–18 are the seam's only OUTWARD edge, and they exist because hunk 13
-has no way back.** An active host tab hides every conversation surface, so the
-host's selection has to end when the page selects a conversation tab. Upstream
-now derives that selection from `?tab` and funnels explicit selections through
-`navigateToSessionTab`; hunk 17 announces from that single URL writer. Without
-the notification the host tab stays selected, hunk 15 keeps drawing it, and
-clicking a session tab in the strip does nothing a member can see.
+**Hunks 16–18 are the seam's only OUTWARD edge. Hunk 13 has no way back.** An
+active host tab hides every conversation surface. The host's selection must end
+when the page selects a conversation tab. Upstream derives that selection from
+`?tab`. It funnels explicit selections through `navigateToSessionTab`. Hunk 17
+announces from that single URL writer. Without notification, the host tab stays
+selected and hunk 15 keeps drawing it. Clicking a session tab then has no visible
+effect.
 
 **Why the URL writer and not `handleSessionTabSelect`.** The strip is not the
 only caller: draft creation, promotion, close fallback and browser-panel opening
@@ -317,32 +325,32 @@ also select a conversation. `navigateToSessionTab` is upstream's chokepoint for
 all explicit `?tab` writes, so one notification covers the current callers and
 the next one.
 
-**Why the writer and not an effect on the value.** An effect fires on a CHANGE,
-and the click that most needs the call changes nothing: the parent tab is
-already `activeTabSessionId` while a host tab covers it, so the one transition
-the field report was about is exactly the one a change check swallows.
+**Why the writer and not an effect on the value.** An effect fires on a CHANGE.
+The important click changes nothing because the parent tab is already
+`activeTabSessionId` beneath a host tab. A change check would swallow the exact
+transition from the field report.
 
 Hunk 18 no longer carries code. The upstream URL migration removed the old
-render-time reset and URL-to-local-state correction writers; the parsed URL is
-the state. The guard now pins that no second local selection store returns and
-that explicit URL selection has exactly one announcing writer.
+render-time reset and URL-to-local-state correction writers. The parsed URL is
+the state. The guard pins two facts. No second local selection store may return,
+and explicit URL selection has exactly one announcing writer.
 
 **Hunk 10's position is load-bearing, and it is not where the design put it.**
-`SessionDetail` returns early below `:3527` (the loading and missing-session
-branches), so a `useMemo` beside the `tabBar` element runs on some renders and
-not others — React reports "Rendered more hooks than during the previous
-render", the page dies into `CatchBoundary`, and the session never draws. It
-sits beside `viewerTabItems` for that reason: the hook must be above every
-early return, next to the other list the strip is built from. Measured, not
-reasoned about — `packages/webapp/test/lody-shared-surface.test.tsx` caught it
-against a real daemon.
+`SessionDetail` returns early below `:3527` on the loading and missing-session
+branches. A `useMemo` beside `tabBar` would therefore run on only some renders.
+React reports "Rendered more hooks than during the previous render". The page
+dies into `CatchBoundary`, and the session never draws. The hook sits beside
+`viewerTabItems` so it remains above every early return. It also stays beside
+the other list used to build the strip. This was measured, not inferred.
+`packages/webapp/test/lody-shared-surface.test.tsx` caught it against a real
+daemon.
 
-The API is six props, one idea. The host owns the list, the selection and both
-verbs; the viewer owns the drawing and the layout, and tells the host when its
-own selection has taken the view back. There is no registry, no atom
-and no context — grepping `registerTab|tabRegistry|registerPanel|panelRegistry`
-across `packages/components/src` returns nothing, so there is no extension
-mechanism to hook into and this is the smallest thing that could be one.
+The API is six props with one purpose. The host owns the list, selection, and
+both verbs. The viewer owns drawing and layout. It tells the host when its own
+selection takes the view back. No registry, atom, or context exists. Grepping
+`registerTab|tabRegistry|registerPanel|panelRegistry` across
+`packages/components/src` returns nothing. This is therefore the smallest
+possible extension mechanism.
 
 ```ts
 export interface SessionSurfaceTab {
@@ -364,61 +372,59 @@ onSessionMissing?: (sessionId: string) => void;
 ```
 
 **`content: ReactNode`, not a portal host.** A ref-callback host element was the
-first design, on the rail-portal precedent. It was rejected: React remounts a
-portal whose container identity changes, so the container swap it was meant to
-avoid happens anyway, and the prop is a fifth member of the seam that buys
-nothing. Mounted inline and hidden-not-unmounted, a host tab survives every tab
-switch inside one session.
+first design, following the rail-portal precedent. It was rejected. React
+remounts a portal when its container identity changes. The unwanted container
+swap therefore happens anyway. The prop also adds a fifth seam member without
+benefit. Mounted inline and hidden rather than unmounted, a host tab survives
+every tab switch within one session.
 
 **The mobile branch is deliberately NOT patched.** `MobileSessionTabSheet` keeps
 a fourth, hand-maintained kind enum (`mobile/mobile-session-tab-sheet.tsx:67`);
 the props are inert there and the mobile drawer keeps today's behaviour.
 
-Strictly additive: with every new prop absent, `SessionDetail` and
-`SessionTabBar` render byte-for-byte what they rendered before, and no upstream
-call site passes one. `packages/webapp/test/lody-surface-tabs.test.tsx` pins
-that — it diffs this file against the upstream commit and refuses any changed
-line that is not one of the anchors above, and it renders the real
-`SessionTabBar` with today's production prop set. Upstream PR drafted at
-`plans/evidence/lody-surface-tabs-pr.md`; **drop this patch when it merges.**
+This is strictly additive. With every new prop absent, `SessionDetail` and
+`SessionTabBar` render byte-for-byte as before. No upstream call site passes a
+new prop. `packages/webapp/test/lody-surface-tabs.test.tsx` pins this behavior.
+It diffs this file against upstream and rejects changes outside the listed
+anchors. It also renders the real `SessionTabBar` with today's production props.
+The upstream PR is drafted at `plans/evidence/lody-surface-tabs-pr.md`. **Drop
+this patch when it merges.**
 
 **Merge conflict drill.**
 
-- If `SortableItemData` grows a real fourth arm upstream — a host/custom kind of
-  its own — DROP hunks 2 and 3 and use theirs; the BlitzOS half is the same four
-  props either way.
-- If `variant` is removed, or `variant="viewer"` goes with it, hunks 4–6 go with
-  it too, and `TerminalTabsStrip` needs whatever replaces the variant.
-- If `desktopChatSurfaces` is restructured, re-apply hunks 13–15 by giving the
-  new structure the same rule: a host tab, when active, hides the conversation
-  surfaces and shows its own. Hunk 17 goes with them: the rule and its way back
-  are one idea, and keeping 13 without 17 is the defect this patch fixed.
-- If the conversation selection stops being one `useState` — an atom, a reducer,
-  a URL field — hunks 17 and 18 follow it to whatever the new single writer is.
+- If `SortableItemData` gains an upstream host or custom arm, DROP hunks 2 and
+  3. Use upstream's arm. The BlitzOS half remains the same four props.
+- If `variant` is removed, hunks 4–6 go too. This also applies if
+  `variant="viewer"` disappears. `TerminalTabsStrip` then needs the replacement.
+- If `desktopChatSurfaces` changes, give its replacement the same rule. An active
+  host tab hides conversation surfaces and shows its own. Hunk 17 follows because
+  the rule and its return path are one idea. Keeping 13 without 17 restores the
+  defect this patch fixed.
+- If conversation selection stops using one `useState`, hunks 17 and 18 follow
+  its new single writer. This includes an atom, reducer, or URL field.
   What must not happen is a return to notifying per call site.
-- If the not-found branch moves, or `sessionPresenceState` is replaced, hunk 20
-  follows it to wherever the page decides it has no session to draw. Hunk 19
-  without a call site is the shape of the defect it fixes: the host keeps a
-  selection in a strip that is not on screen.
-- If upstream grows its own host-tab concept, delete all twenty hunks and pass
-  that instead — the BlitzOS half is one binding on
+- If the not-found branch moves, hunk 20 follows its replacement. This also
+  applies if `sessionPresenceState` is replaced. Hunk 19 without a call site
+  restores the defect it fixes. The host would keep a selection in a hidden
+  strip.
+- If upstream gains its own host-tab concept, delete all twenty hunks. Pass that
+  concept instead. The BlitzOS half is one binding on
   `packages/webapp/src/lody/surface-tabs.ts`.
 
 ### 6. The Side Chat launcher needs an assistant turn (wave 4, 2026-08-31)
 
-**One idea, four hunks in one file, and it is inert without one prop.** In a
-session the agent has not answered yet, the side panel's Side Chat entry accepts
-a click and nothing visible happens. The launcher forks the active conversation
-(`handleCreateSideSession` → `forkActiveConversation`), a fork needs a completed
-assistant turn, and with none `forkActiveConversation` returns after a
-`toast.error`. BlitzOS mounted no `<Toaster/>` until wave 4's C1, so that refusal
-was swallowed and the entry read as dead rather than as refused.
+**One idea, four hunks in one file, and inert without one prop.** Before the agent
+answers, the side panel's Side Chat entry accepts a click without visible effect.
+The launcher forks the active conversation through `handleCreateSideSession`
+and `forkActiveConversation`. A fork needs a completed assistant turn. Without
+one, `forkActiveConversation` returns after `toast.error`. BlitzOS mounted no
+`<Toaster/>` until wave 4's C1. The refusal was swallowed, so the entry appeared
+dead rather than refused.
 
-C1 puts the message on screen. This patch makes the entry say so BEFORE the
-click, and it says it the way the same launcher already says it for an offline
-machine: `disabled`. Hiding the entry was the alternative and is worse — a
-session that has not answered yet would look like one where Side Chat does not
-exist, and the option comes back a second later.
+C1 puts the message on screen. This patch communicates the restriction BEFORE
+the click. It uses the launcher's existing offline state: `disabled`. Hiding the
+entry was rejected. A session awaiting its first answer would appear to lack
+Side Chat entirely. The option may return a second later.
 
 `packages/components/src/components/sessions/session-detail.tsx`
 
@@ -429,70 +435,66 @@ exist, and the option comes back a second later.
 | 23 | 1760 | `chatRefsMap.current.set(tabId, ref);` inside `setChatTabRef` | mirrors `getLastAssistantTurnId()` into that state on ATTACH |
 | 24 | 3495 | `disabled: launcherState === 'disabled' \|\| isCreatingSideSession,` in `sideChatOption` | adds the third term, gated on the prop |
 
-Hunk 24 is the only one that replaces an upstream line, so it is the only one
-named in `lody-surface-tabs.test.tsx`'s anchor table; the other three add lines
-and are covered by that file's subsequence check.
+Hunk 24 alone replaces an upstream line. It is therefore the only hunk named in
+`lody-surface-tabs.test.tsx`'s anchor table. The other three add lines and are
+covered by that file's subsequence check.
 
-**Why a mirror and not a read.** `chatRefsMap` is a ref: `getLastAssistantTurnId()`
-answers when somebody asks, which is right for a click and useless for a rendered
-state — nothing re-renders when a turn lands. Hunk 23 turns the ref write into a
-state write, and `useImperativeHandle` is what makes it current: the handle's own
-dependency list carries `lastCompletedAssistantMessageId`
-(`session-chat-interface.tsx:4842`), so React re-attaches the ref on the commit
-that first has a turn. No new subscription, no second document read.
+**Why a mirror and not a read.** `chatRefsMap` is a ref.
+`getLastAssistantTurnId()` answers only when called. That works for a click, not
+rendered state. A completed turn does not cause a ref consumer to re-render.
+Hunk 23 mirrors the ref write into state. `useImperativeHandle` keeps it current.
+The handle depends on `lastCompletedAssistantMessageId`
+(`session-chat-interface.tsx:4842`). React therefore re-attaches the ref on the
+first commit containing a turn. This needs no new subscription or second
+document read.
 
-**Hunk 23 IGNORES THE DETACH, and that is the whole of the loop safety.** Every
-render of the page hands each chat surface a fresh `ref={(el) => setChatTabRef(…)}`
-arrow, so React calls it with `null` and then with the handle inside one commit.
-Taking the `null` would queue a state change on every commit — `null`, then the
-value — and React cannot bail out of the pair, so the page would re-render for
-ever. Taking only the attach settles on one value, which `Object.is` bails out on
-when it has not changed.
+**Hunk 23 IGNORES THE DETACH. This provides the loop safety.** Every page render
+gives each chat surface a fresh `ref={(el) => setChatTabRef(…)}` arrow. React
+calls it with `null`, then the handle, within one commit. Accepting `null` would
+queue two state changes per commit. React cannot bail out of that pair, so the
+page would render forever. Accepting only the attachment settles on one value.
+`Object.is` then stops unchanged updates.
 
-**What it costs, measured against what it fixes.** The mirror is empty until the
-active surface has attached its handle AND its message list has reported a
-completed turn, so a session that HAS answered shows the launcher disabled for
-the moment its history takes to paint. That is a control nobody is looking at
-during a page load; the alternative it replaces is a control a member clicks and
-which answers with an error.
+**What it costs, measured against what it fixes.** The mirror remains empty until
+the active surface attaches its handle and reports a completed turn. A session
+that HAS answered briefly shows a disabled launcher while history paints. That
+control is not visible during page load. The alternative let a member click a
+control that answered with an error.
 
 **The active tab arrives through a ref, not a dependency**, so `setChatTabRef`
-keeps its empty dependency list. A dependency would change the callback's
-identity on every tab switch, and that callback is what every chat surface is
-attached by.
+keeps an empty dependency list. A dependency would change the callback identity
+on every tab switch. Every chat surface attaches through that callback.
 
 **Fork semantics are untouched.** `forkActiveConversation`, `handleForkAssistant`
 and the `sessions.forkNoAssistant` toast are exactly upstream's; what changes is
-whether the entry OFFERS the click. A host that does not pass the prop gets
-today's behaviour to the byte, and no upstream call site passes it —
-`packages/webapp/test/lody-surface-tabs.test.tsx` pins that with the same
-baseline subsequence check seam patch 5 uses, and
-`packages/webapp/test/lody-side-chat-guard.test.tsx` names each part.
+whether the entry OFFERS the click. A host omitting the prop gets today's exact
+behaviour. No upstream call site passes it.
+`packages/webapp/test/lody-surface-tabs.test.tsx` pins that with seam patch 5's
+baseline subsequence check. `packages/webapp/test/lody-side-chat-guard.test.tsx`
+names each part.
 
-Upstream would probably rather have this unconditional — "disable Side Chat when
-there is nothing to fork" is not a BlitzOS opinion — and the prop exists only
-because the inertness rule above is what makes this tree's vendor edits safe to
-carry. Open it upstream as the unconditional version and **drop the prop when it
-merges.**
+Upstream would probably prefer this unconditionally. "Disable Side Chat when
+there is nothing to fork" is not a BlitzOS opinion. The prop exists only to
+preserve this tree's inert vendor-edit rule. Open the unconditional version
+upstream. **Drop the prop when it merges.**
 
 **Merge conflict drill.**
 
 - If `sideChatOption` stops being built from `getSideChatLauncherState`, hunk 24
   follows the `disabled` field to wherever the launcher's state is decided.
-- If the chat surfaces stop being attached through `setChatTabRef`, hunk 23 goes
-  to whatever replaces it — and the detach rule goes with it, or the page loops.
+- If chat surfaces stop attaching through `setChatTabRef`, hunk 23 follows its
+  replacement. The detach rule follows too, or the page loops.
 - If upstream disables the launcher itself, DROP all four hunks and the
   `sideChatRequiresAssistantTurn` line in `packages/webapp/src/lody/router.tsx`.
 
 ### 7. Host suppression of surfaces BlitzOS does not serve (v1 scope cuts, 2026-09-01)
 
-**One idea, 42 hunks in seven files, and every one of them is inert by default.**
-The 463-row support matrix (`plans/LODY-SESSIONS.md`, the scope decision) found
-four groups of controls that RENDER in a BlitzOS browser and cannot work there.
-Each one is a control a member can click, and the failure is never at the button:
-it is a toast that lies, a settings screen that never opens, a PR call with no
-GitHub App behind it, or a keyboard chord no dispatcher answers. This patch lets
-the host say so BEFORE the click.
+**One idea, 42 hunks in seven files, all inert by default.** The 463-row support
+matrix found four groups of unusable controls that RENDER in a BlitzOS browser.
+The matrix and scope decision are in `plans/LODY-SESSIONS.md`. Each control is
+clickable, but its failure happens elsewhere. Failures include a misleading
+toast, unreachable settings, unsupported PR calls, and unanswered keyboard
+shortcuts. This patch lets the host communicate that BEFORE the click.
 
 The four groups, and what each is:
 
@@ -506,16 +508,16 @@ The four groups, and what each is:
 **TWO MECHANISMS, AND THE CHOICE IS NOT A PREFERENCE.**
 
 1. **GitHub reuses upstream's own gate.** `PLATFORM_CAPABILITIES` already names
-   `githubIntegration` — "GitHub App integration (repo registry, brokered
-   tokens, PR status)" — and `LOCAL_PLATFORM_CAPABILITIES` is empty, so the
-   answer is already `false` in every local build, upstream's included. Seven
+   `githubIntegration`: "GitHub App integration (repo registry, brokered
+   tokens, PR status)". `LOCAL_PLATFORM_CAPABILITIES` is empty. The answer is
+   therefore already `false` in every local build, including upstream's. Seven
    places just never asked. `auto-archive-pr-watcher.tsx:22`,
    `general-setting.tsx:110` and `integrations-setting.tsx:270` are the same
    check, already written. **This half is a bug fix, not a BlitzOS opinion: open
-   it upstream as-is and drop nothing when it merges — there is no prop to drop.**
-2. **The other three are new optional props**, because upstream has no gate for
-   them and inventing a capability for each would be a bigger claim than the
-   suppression. Every one defaults to today's behaviour and no upstream call
+   it upstream as-is. Drop nothing when it merges because no prop exists.**
+2. **The other three are new optional props.** Upstream has no gate for them.
+   Inventing separate capabilities would make a broader claim than suppression.
+   Every prop defaults to today's behaviour, and no upstream call
    site passes any of them.
 
 Our side is one constant, `packages/webapp/src/lody/v1-scope.ts`, read by
@@ -525,12 +527,13 @@ field there.
 
 #### The hunks
 
-Line numbers are the vendored tree's BEFORE this patch. For `session-detail.tsx`
-they are the `f4b1ba25` baseline's own numbers (that file is pinned by
-`packages/webapp/test/upstream-baseline/`); for `session-chat-interface.tsx`
-seam patch 4 shifted everything below its line 1910 by five.
+Line numbers are from the vendored tree BEFORE this patch. The
+`session-detail.tsx` numbers come from the `f4b1ba25` baseline. That file is
+pinned by `packages/webapp/test/upstream-baseline/`. In
+`session-chat-interface.tsx`, seam patch 4 shifted everything below line 1910 by
+five.
 
-`packages/components/src/lib/session-github-state.ts` — the single point every
+`packages/components/src/lib/session-github-state.ts` is the single point every
 GitHub surface reads through
 
 | # | Line | Upstream anchor | What it does |
@@ -538,13 +541,13 @@ GitHub surface reads through
 | 1 | 78 | `export const getSessionGitHubState = (` | adds a third parameter, `gitHubIntegrationAvailable = true`, and the doc comment that says when to pass it |
 | 2 | 81, 83 | `const repoFullName = (resolveProjectGitHubRepo(...))` and `const latestPr = getLatestPullRequest(sourceSession);` | both answer the flag: `''` and `null` with it off |
 
-Hunk 2 is why the rest is small. `canShowGitHubActions` is `!!repoFullName`,
-`hasExistingPr` is `!!repoFullName && !!latestPr`, and every consumer named in
-the matrix — the info bar (`session-info-action-state.ts:43`), the PR tab in
-`session-detail.tsx`, the PR badge (`session-chat-interface.tsx:5325`), and the
-diff panel's `commentsEnabled` and `prLinked`
-(`session-conversation-diff-panel.tsx:668`, `:671`) — is downstream
-of those two values.
+Hunk 2 keeps the rest small. `canShowGitHubActions` is `!!repoFullName`, and
+`hasExistingPr` is `!!repoFullName && !!latestPr`. Every matrix consumer is
+downstream of those values. Consumers include the info bar
+(`session-info-action-state.ts:43`) and the PR tab in `session-detail.tsx`. They
+also include the PR badge (`session-chat-interface.tsx:5325`). The diff panel's
+`commentsEnabled` and `prLinked` are included too
+(`session-conversation-diff-panel.tsx:668`, `:671`).
 
 `packages/components/src/components/sessions/session-chat-interface.tsx`
 
@@ -576,8 +579,8 @@ of those two values.
 | 21 | 3876 | the `});` that closes the `session.focusInput` registration | passes `keyboardShortcutsAvailable` as `useCommand`'s second argument — C100 |
 | 22 | 5723 | `readOnly,` in the shared chat-surface props builder | forwards the three `hide*` props to every chat surface the page mounts |
 
-Hunks 20 and 21 are the only three lines this patch removes from the baseline,
-and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
+Hunks 20 and 21 remove this patch's only three baseline lines. All three appear
+in `lody-surface-tabs.test.tsx`'s anchor table.
 
 `packages/components/src/components/sessions/session-chat-input-area.tsx`
 
@@ -613,8 +616,9 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
 | 40 | 635 | the `repos.connectMore` `<DropdownMenuItem>` | renders it only with the capability — C65 |
 
 `packages/components/src/components/sessions/session-conversation-diff-panel.tsx`
-— the same two-line shape as hunks 11-12, and what takes SP43 and SP44 with it:
-`commentsEnabled` and `prLinked` are both `Boolean(latestPrNumber && repoFullName)`.
+uses the same two-line shape as hunks 11–12. This also handles SP43 and SP44.
+`commentsEnabled` and `prLinked` both use
+`Boolean(latestPrNumber && repoFullName)`.
 
 | # | Line | Upstream anchor | What it does |
 |---|---|---|---|
@@ -632,9 +636,9 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
   `packages/webapp/test/lody-terminal-tab-wave3.test.tsx:815-827` already pins
   from both sides. C100 is the one visible consequence, and hunk 21 is it.
 - **The other 15 `useCommand` registrations in `session-detail.tsx` keep their
-  bindings.** None of them draws anything — X4 says no command is reachable —
-  and gating all sixteen would be fifteen anchors in a pinned file for no
-  member-visible change. If one of them ever grows a rendered affordance the way
+  bindings.** None draws anything. X4 says no command is reachable. Gating all
+  sixteen would add fifteen anchors to a pinned file without a member-visible
+  change. If one ever gains a rendered affordance the way
   `session.focusInput` did, it takes the same second argument.
 - **Nothing is deleted.** Two of the four groups are HIDDEN in v1, not
   abandoned, and a deletion could not carry that distinction.
@@ -644,38 +648,36 @@ and all three are named in `lody-surface-tabs.test.tsx`'s anchor table.
 - The capability half re-applies mechanically: whatever computes `repoFullName`
   or offers a GitHub entry gains `useAppCapability('githubIntegration')`. If
   upstream adds its own check, **drop that hunk and keep the rest.**
-- If upstream grows a settings surface gate, a notification gate or a
-  host-hints prop, drop the matching prop and pass upstream's instead — the
-  BlitzOS half is one field in `packages/webapp/src/lody/v1-scope.ts`.
+- If upstream gains a settings, notification, or host-hints gate, drop the
+  matching prop. Pass upstream's gate instead. The BlitzOS half is one field in
+  `packages/webapp/src/lody/v1-scope.ts`.
 - If `useCommand`'s second argument goes away, hunk 21 becomes a conditional
   registration around the same call.
-- The four groups and their row ids are restated in `v1-scope.ts`, so a merge
-  that drops a hunk fails `packages/webapp/test/lody-v1-scope.test.tsx` with the
-  surface it let back in.
+- The four groups and row ids are restated in `v1-scope.ts`. A merge dropping a
+  hunk fails `packages/webapp/test/lody-v1-scope.test.tsx`. The failure names the
+  surface restored by mistake.
 
 ### 8. The cloud-token guard must not preempt the local transport (COMPB-1, 2026-09-01)
 
-**One idea, five hunks in two files, and it is a bug in upstream's own local
-build.** Seam patch 3 opened the local fast path to a non-Electron bridge, and
-`packages/webapp/test/lody-attachments.test.ts` proves the channel behind it
-carries bytes. It still never runs: at all three attachment entry points a
-`if (!workspaceId || !authToken)` bail stands IN FRONT of the local handoff, and
-that handoff needs no cloud token at all. A BlitzOS box holds none, so every `+`
-attachment fails with "Missing workspace or auth token" before a single MKCOL or
-PUT is issued.
+**One idea, five hunks in two files, fixing an upstream local-build bug.** Seam
+patch 3 opened the local fast path to a non-Electron bridge.
+`packages/webapp/test/lody-attachments.test.ts` proves its channel carries bytes.
+The path still never runs. At all three entry points,
+`if (!workspaceId || !authToken)` precedes the local handoff. That handoff needs
+no cloud token. A BlitzOS box holds none. Every `+` attachment therefore fails
+with "Missing workspace or auth token" before any MKCOL or PUT request.
 
 The field report is the canary QA sweep's COMPB-1, reproduced twice in a real
-browser, with BUG-CA-01 (no MKCOL or PUT ever issued) and
-BUG-CA-02 ("Retry upload" is inert, because retry re-enters the same guard)
-downstream of it. The verifier proved the far end works by calling
-`localProjects.sendSessionFileLocal` by hand on the same page: dufs answered
-MKCOL 201 and PUT 201.
+browser. BUG-CA-01 records that no MKCOL or PUT was issued. BUG-CA-02 records an
+inert "Retry upload" because retry re-enters the same guard. The verifier called
+`localProjects.sendSessionFileLocal` by hand on the same page. Dufs answered
+MKCOL 201 and PUT 201, proving the far end works.
 
 **This is not a BlitzOS opinion.** `apps/electron` composes `local` explicitly
 and the root `AGENTS.md` says the OSS desktop entry "must not make authenticated
-product-cloud requests". A local-only Electron build therefore has no
-`authToken` either, and loses the one control the local transport was written to
-serve. Open upstream as "a missing cloud token disables the local file
+product-cloud requests". A local-only Electron build therefore also lacks
+`authToken`. It loses the control that the local transport was written to serve.
+Open upstream as "a missing cloud token disables the local file
 handoff"; the sketch is `plans/evidence/lody-attachment-guard-pr.md`. **Drop
 this patch when it merges.**
 
@@ -703,66 +705,65 @@ below `f4b1ba25` for that file.
 **Hunk 4 is why the image path needed no new fallback.** Upstream already
 degrades a failed image upload to a pending FILE attachment over the local
 transport (`session-chat-input-area.tsx:1007-1072`, toast
-`sessions.imageStoredAsLocalFile`). A missing token is exactly "there is no
-cloud upload to attempt", so hunks 3 and 4 route it into that same `catch`
-rather than write a second fallback beside it. The one behaviour change inside
-it: `reason_code` reads `upload_error` instead of `missing_auth` on that path,
-and renderer telemetry is hard-disabled in a local build anyway.
+`sessions.imageStoredAsLocalFile`). A missing token means no cloud upload can be
+attempted. Hunks 3 and 4 route this case into the same `catch`. They avoid adding
+a second fallback. One internal value changes. `reason_code` reads
+`upload_error` instead of `missing_auth` on that path. Renderer telemetry is
+hard-disabled in a local build.
 
-**One entry point is deliberately NOT patched here, and it was the remaining
-gap.** `hooks/use-chat-landing-image-draft.ts:138` carries the same guard, and
-there is nothing to MOVE in front of it: that hook has no `canSendFileLocally`,
-no handoff and no degrade-to-file fallback — an image on the LANDING has only
-the cloud path upstream. Giving it one means adding a fallback upstream does not
-have, across two sibling hooks, which is a product opinion rather than this
-patch's one idea. So this patch left it, and an image staged on the landing
-still failed on a box while the same image staged inside a session became a file
-attachment (hunks 3-4). **Seam patch 12 is that follow-up** and closes the gap;
-read the two together, but keep them separable — 12 drops on its own if upstream
-grows the fallback, and this one drops on its own if upstream fixes the order.
+**One entry point is deliberately NOT patched here. It was the remaining gap.**
+`hooks/use-chat-landing-image-draft.ts:138` carries the same guard. Nothing can
+move before it because that hook has no `canSendFileLocally`. It also has no
+handoff or degrade-to-file fallback. An upstream LANDING image has only the
+cloud path. Adding a fallback across two sibling hooks would introduce a product
+opinion. This patch therefore left it. A landing image still failed on a box,
+while an in-session image became a file attachment through hunks 3–4. **Seam
+patch 12 is that follow-up** and closes the gap. Read both patches together, but
+keep them separable. Patch 12 drops if upstream adds the fallback. This patch
+drops if upstream fixes the ordering.
 
-**Upstream behaviour with a token present is unchanged, and that is checkable
-rather than asserted.** Hunks 1 and 5 move a block whose only reachable
-predecessor was the guard, so with `authToken` set the order of operations is
-byte-identical: guard passes, local path runs first, cloud path second. Hunk 3
-adds a disjunct that is `false` whenever `authToken` is set, so the guard's
-condition is unchanged there. Hunk 4's throw is unreachable with a token, since
-the guard above it already returned when `authToken` was absent AND no local
-transport was available. Every hunk can only make the local path reachable where
-it was not; none of them can make the cloud path unreachable.
+**Upstream behaviour with a token is unchanged. This is checkable, not merely
+asserted.** Hunks 1 and 5 move a block whose only reachable predecessor was the
+guard. With `authToken`, the operation order remains byte-identical. The guard
+passes, then the local path runs before the cloud path. Hunk 3 adds a disjunct
+that is `false` when `authToken` exists. Its condition is unchanged in that
+case. Hunk 4's throw is unreachable with a token. The preceding guard already
+returned when both the token and local transport were absent. Every hunk can
+make only the local path newly reachable. None can make the cloud path
+unreachable.
 
 `packages/webapp/test/lody-attachment-guard.test.tsx` drives the real vendored
-landing hook over a stub `window.ipc` for all three cases — no token with the
-bridge, no token without it, and a token WITH the bridge — and pins the composer
-half at the source, because `SessionChatInputArea` needs a runtime and a daemon.
+landing hook over a stub `window.ipc`. It covers three cases: no token with the
+bridge, no token without it, and a token WITH the bridge. It pins the composer
+half at the source. `SessionChatInputArea` needs a runtime and daemon.
 
 #### Merge conflict drill
 
 - If upstream reorders or rewords either guard, re-apply by putting the local
   handoff in front of it. The rule is one sentence: **nothing that needs a cloud
   token may run before a path that does not.**
-- If upstream widens the guard to name the local transport itself — a
-  `canSendFileLocally ||` arm, or a capability — drop these hunks and keep
-  upstream's.
+- If upstream's guard names the local transport, drop these hunks. This might be
+  a `canSendFileLocally ||` arm or capability. Keep upstream's version.
 - If the image degrade-to-file fallback is removed upstream, hunks 3 and 4 go
   with it; the file hunks stand alone.
 
 ### 9. `SessionList` rows lost the worktree glyph (WT-TERM-2, 2026-09-01)
 
 **One idea, four hunks in one file, all additive.** `SessionRowWorktreeIndicator`
-(`sidebar-row-shared.tsx:269`) exists, is exported, and is rendered by exactly
-two callers: `loro-app-sidebar.tsx:719`, which draws upstream's own Local
-Projects rows, and `sidebar-updated-session-list.tsx:922`. `SessionList` — the
-component that draws the Chats and GitHub Worktrees rows, and the ONLY session
-row a BlitzOS rail has — never renders it, although its rows already carry
-`isWorktree` (`session-list-rows.ts:339` sets it from the session meta). So on a
-box the glyph can never appear: the QA sweep found 0 `[aria-label="Worktree"]`
-nodes on every load, hovered and unhovered, over three worktree-backed sessions.
+(`sidebar-row-shared.tsx:269`) exists and is exported. Exactly two callers render
+it. `loro-app-sidebar.tsx:719` draws upstream's Local Projects rows, and
+`sidebar-updated-session-list.tsx:922` is the other caller. `SessionList` draws
+the Chats and GitHub Worktrees rows. It supplies the ONLY session row in a
+BlitzOS rail but never renders the indicator. Its rows already carry
+`isWorktree`, set from session metadata by `session-list-rows.ts:339`. The glyph
+therefore cannot appear on a box. The QA sweep found zero
+`[aria-label="Worktree"]` nodes across three worktree-backed sessions. This held
+on every load, both hovered and unhovered.
 
-The data is upstream's, the placement is upstream's, and the omission reads as an
-oversight rather than a decision: upstream's own comment on the indicator says
-"only LOCAL-project rows pass a truthy `isWorktree`", which is exactly what a
-BlitzOS session is. Open upstream as "the worktree glyph is missing from
+The data and placement both come from upstream. The omission appears accidental.
+Upstream's indicator comment says "only LOCAL-project rows pass a truthy
+`isWorktree`". That description matches a BlitzOS session. Open upstream as "the
+worktree glyph is missing from
 `SessionList` rows". **Drop this patch when it merges.**
 
 #### The hunks
@@ -779,36 +780,35 @@ Line numbers are the vendored tree's BEFORE this patch.
 | 4 | 1009 | `{hasPr ? (` inside that cluster | renders `<SessionRowWorktreeIndicator isWorktree={showWorktreeIcon} />` immediately before the PR icon |
 
 **Placement is copied, not chosen.** `loro-app-sidebar.tsx:717-721` puts the
-glyph to the LEFT of the PR icon and to the RIGHT of the line diff, so a
-worktree row reads `[diff][worktree][PR]`; hunk 4 lands it in the same position
-inside `SessionList`'s cluster. The component itself renders `null` for a falsy
-`isWorktree`, so hunk 4 alone changes nothing for a non-worktree row and hunk 3
-is what makes the cluster reachable for the rows that were previously empty.
+glyph between the line diff and PR icon. A worktree row therefore reads
+`[diff][worktree][PR]`. Hunk 4 uses the same position inside `SessionList`'s
+cluster. The component renders `null` when `isWorktree` is falsy. Hunk 4 alone
+therefore changes nothing for a non-worktree row. Hunk 3 makes the cluster
+reachable for previously empty rows.
 
 **The chat branch is deliberately NOT patched.** A `group.kind === 'chat'` row
 takes the time-only branch above (`:997`) and keeps it. A BlitzOS worktree
-session belongs under its repository heading, not under Chats, and the seam that
-puts it there is `packages/webapp/src/lody/workdir-default.ts` §2b — patching
-both would paper over that grouping bug instead of showing it.
+session belongs under its repository heading, not under Chats. The grouping seam
+is `packages/webapp/src/lody/workdir-default.ts` §2b. Patching both would conceal
+that grouping bug.
 
 `packages/webapp/test/lody-rail-groups.test.tsx` drives the real vendored
-`SessionList`, through the real `SessionRailSidebar`, over a worktree row and a
-plain row — and pins this section by name, so deleting the hunks without
-retiring the declaration fails.
+`SessionList` through the real `SessionRailSidebar`. It covers a worktree row and
+a plain row. The test pins this section by name. Deleting the hunks without
+retiring the declaration therefore fails.
 
 #### Merge conflict drill
 
 - If upstream adds the glyph itself, drop all four hunks and keep upstream's.
-- If the end slot's rest cluster is restructured, re-apply by the one rule: a
-  row whose `isWorktree` is true renders `SessionRowWorktreeIndicator`, next to
-  the PR icon.
+- If the end-slot cluster changes, re-apply one rule. A row with true
+  `isWorktree` renders `SessionRowWorktreeIndicator` beside the PR icon.
 ### 10. The side panel's file surfaces (panels-a sweep, 2026-09-01)
 
-**Four defects, eleven hunks in six files, and three of the four are bugs in
-upstream's own desktop branch.** The panels-a QA lane drove the side panel on a
-real box and confirmed four rows. Each one is a control that renders, or fails
-to render, on DESKTOP only — the mobile branch already models every one of them
-correctly, which is why the fixes are small and upstreamable as they stand.
+**Four defects and eleven hunks in six files. Three defects are upstream desktop
+bugs.** The panels-a QA lane exercised the side panel on a real box. It confirmed
+four rows. Each concerns a DESKTOP-only control that renders incorrectly or not
+at all. The mobile branch already models every row correctly. The fixes are
+therefore small and upstreamable as written.
 
 | Row | Severity | What a member meets today |
 |---|---|---|
@@ -817,20 +817,20 @@ correctly, which is why the fixes are small and upstreamable as they stand.
 | SP28 | minor | The desktop file viewer has no "Copy file path". `MobileFileViewerDrawer` has carried one since it landed (`sessions.fileViewer.copyPath`, already in `locales/en.json`), and `ui/diff-viewer/diff-file-header-actions.tsx` draws the same button with the same key. |
 | SP26 | minor | `Go to Definition` / `Find References` answer "Host language service does not support this file" on every identifier, because a BlitzOS box runs no language service. The two Monaco actions are registered unconditionally, so the entries are in the editor's context menu and on F12 / Shift+F12 whatever the host can answer. |
 
-**Which hunks are inert, and which are a fix.** BUG-1, BUG-2 and SP28 change
-upstream behaviour on purpose — they are the fix, and each is one upstream PR.
-SP26 is the only BlitzOS opinion here, so it rides the seam-patch-7 shape: one
-optional prop per level, defaulting to today's behaviour, and no upstream call
-site passes any of them. Our side is one field in
+**Which hunks are inert, and which are a fix.** BUG-1, BUG-2, and SP28 change
+upstream behaviour intentionally. They are fixes, each intended for one upstream
+PR. SP26 is the only BlitzOS opinion. It follows seam patch 7's shape, with one
+optional prop per level. Each prop defaults to today's behaviour, and no upstream
+call site passes one. Our side is one field in
 `packages/webapp/src/lody/v1-scope.ts` (`languageService`).
 
 #### The hunks
 
-Line numbers for `session-detail.tsx` are the `f4b1ba25` baseline's own
-(`packages/webapp/test/upstream-baseline/`); every other file is numbered at the
-vendored tree BEFORE this patch. **Every hunk in the pinned file is purely
-ADDITIVE** — this patch removes no upstream line, so it declares no new anchor
-in `lody-surface-tabs.test.tsx`.
+Line numbers for `session-detail.tsx` come from the `f4b1ba25` baseline
+(`packages/webapp/test/upstream-baseline/`). Every other file uses the vendored
+tree BEFORE this patch. **Every hunk in the pinned file is purely ADDITIVE.**
+This patch removes no upstream line. It therefore declares no new anchor in
+`lody-surface-tabs.test.tsx`.
 
 `packages/components/src/components/sessions/session-detail.tsx` (pinned)
 
@@ -842,7 +842,7 @@ in `lody-surface-tabs.test.tsx`.
 | 4 | 698 | `onMobileBack?: () => void;` in the inline props type | declares `hideLanguageServiceActions?: boolean` |
 | 5 | 4693 | `preferNativeMarkdownSelection={isMobile}` on `<SessionFileContentView>` | passes `lspAvailable={!hideLanguageServiceActions}` — SP26, and `renderViewerTabContent` is shared by both branches, so one line covers desktop and mobile |
 
-`packages/components/src/hooks/use-code-collab-session-file-provider.ts` — BUG-2's
+`packages/components/src/hooks/use-code-collab-session-file-provider.ts` holds BUG-2's
 mechanism
 
 | # | Line | Upstream anchor | What it does |
@@ -850,10 +850,10 @@ mechanism
 | 6 | 188 | `readonly prepareTarget?: () => Promise<FileIndexTargetPlane>;` in `useCodeCollabFileIndexLoadState`'s argument type | adds `readonly reloadNonce?: number;`, joined into the existing `requestKey` memo so bumping it re-runs the acquisition effect exactly as a changed cache or doc id would |
 | 7 | 497 | the closing `useMemo` that builds the hook's result | wraps it so the result also carries `reload`, and re-arms automatically on an offline → online transition of the owning machine (`useMachineOnlineStatus`, upstream's own presence hook) |
 
-Hunk 7 re-arms on a TRANSITION, never on a status. A "retry while the status is
-error" effect loops forever against a machine that is online and answering
-errors; an offline → online edge can fire at most once per outage, and the
-`Try again` button covers every other cause.
+Hunk 7 re-arms on a TRANSITION, never on a status. A retry while status is error
+would loop forever against an online machine returning errors. An offline to
+online edge fires at most once per outage. The `Try again` button covers every
+other cause.
 
 `packages/components/src/components/sessions/components/file-tree-view.tsx`
 
@@ -870,56 +870,54 @@ errors; an offline → online edge can fire at most once per outage, and the
 | 11 | 989 | `const isLspEnabled =` | declares `lspAvailable?: boolean` (default `true`), answers it in `isLspEnabled`, and passes `lspActions={lspAvailable}` to `<SessionMonacoTextViewer>` — SP26 |
 
 `packages/components/src/components/sessions/session-monaco-text-viewer.tsx` and
-`packages/components/src/lib/session-monaco-editor-controller.ts` — SP26's last
-two levels: `lspActions?: boolean` (default `true`) on the viewer, joined to the
-mount-time `initialPropsRef` snapshot, and `lspActions` on
-`SessionMonacoEditorControllerOptions`, which gates the two `addAction` calls.
-Gating the ACTIONS rather than the callbacks is the point: an action whose
-callback is `undefined` still sits in the context menu and does nothing at all,
-which is worse than the message it replaces.
+`packages/components/src/lib/session-monaco-editor-controller.ts` hold SP26's
+last two levels. The viewer adds `lspActions?: boolean`, defaulting to `true`.
+The mount-time `initialPropsRef` snapshot includes it. The controller adds
+`lspActions` to `SessionMonacoEditorControllerOptions`. It gates both `addAction`
+calls. Gating the ACTIONS matters. An action with an `undefined` callback remains
+in the context menu but does nothing. That is worse than the replaced message.
 
-Verify this divergence by diffing OUR subtree against the upstream commit it was
-imported from, exactly as seam patch 1 describes. **Expected after seam patch 10:
-TWENTY files** — the fourteen seam patch 8 left, plus `components/session-list.tsx`
-from seam patch 9, plus this patch's five new
+Verify this divergence using the diff from seam patch 1. **Expect TWENTY files
+after seam patch 10.** Seam patch 8 left fourteen. Seam patch 9 added
+`components/session-list.tsx`. This patch adds five:
 ones (`hooks/use-code-collab-session-file-provider.ts`,
 `components/sessions/components/file-tree-view.tsx`,
 `components/sessions/session-file-content-view.tsx`,
 `components/sessions/session-monaco-text-viewer.tsx`,
-`lib/session-monaco-editor-controller.ts`), which also adds hunks to
+`lib/session-monaco-editor-controller.ts`. It also adds hunks to
 `components/sessions/session-detail.tsx`.
 
 #### What this patch does NOT do, and why
 
-- **BUG-3, the collapsed strip's off-screen controls, needed no hunk.** With the
-  side panel collapsed the panel is 0 wide, so `SessionSidePanelTabBar`'s two
-  `shrink-0` controls overflow to the RIGHT of the window — measured at cx=1911
-  and cx=1943 in a 1920 viewport. One declaration in
-  `packages/webapp/src/lody/blitz-skin.css` sends that overflow the other way,
-  and it cannot move anything while the strip has room, because the scroll area
-  beside those controls is `flex-1` and leaves no free space to distribute.
+- **BUG-3, the collapsed strip's off-screen controls, needed no hunk.** A
+  collapsed side panel is zero pixels wide. `SessionSidePanelTabBar`'s two
+  `shrink-0` controls therefore overflow to the window's RIGHT. Measurements
+  placed them at cx=1911 and cx=1943 in a 1920-pixel viewport. One declaration
+  in `packages/webapp/src/lody/blitz-skin.css` reverses that overflow. It cannot
+  move anything while the strip has room. The adjacent `flex-1` scroll area
+  leaves no free space to distribute.
 - **Nothing is deleted.** SP26 is HIDDEN for v1: a box that grows a language
   service flips one field.
 
 #### Merge conflict drill
 
-- Hunks 1, 2, 8, 9 and 10 are additions at a named JSX site. If upstream moves
-  the site, re-apply at wherever it went; if upstream mounts the quick-open
-  dialog on desktop itself, or grows its own provider retry or copy-path button,
-  **drop that hunk and keep upstream's.**
+- Hunks 1, 2, 8, 9, and 10 add content at named JSX sites. If upstream moves a
+  site, re-apply the addition there. Drop any hunk when upstream supplies its
+  quick-open dialog, provider retry, or copy-path button. Keep upstream's
+  version.
 - Hunks 6 and 7 depend only on `requestKey` still being the effect's identity.
-  If upstream replaces the effect with its own invalidation (a query client, a
-  resource key), drop them and drive that instead.
-- If upstream gates the LSP actions on a capability of its own, drop hunks
-  3, 4, 5, 11 and the two viewer/controller hunks with them, and answer the new
-  gate from `v1-scope.ts`.
+  If upstream replaces the effect with its own invalidation, drop both hunks.
+  Drive the query client or resource key instead.
+- If upstream gates LSP actions itself, drop hunks 3, 4, 5, and 11. Drop the two
+  viewer and controller hunks too. Answer upstream's new gate from
+  `v1-scope.ts`.
 
 ### 11. The composer's mention chips and the file drill-down (composer-a sweep, 2026-09-01)
 
-**Two defects, eight hunks in five files, none of them BlitzOS-specific.** The
-composer-a QA lane drove the `@` composer on a real box and confirmed both rows.
-Every hunk here is an upstream bug fix — no host flag, no BlitzOS prop — so this
-whole section is one upstream PR and **drops when it merges.**
+**Two defects and eight hunks in five files. None are BlitzOS-specific.** The
+composer-a QA lane exercised the `@` composer on a real box. It confirmed both
+rows. Every hunk fixes an upstream bug without a host flag or BlitzOS prop. This
+section forms one upstream PR and **drops when it merges.**
 
 | Row | Severity | What a member meets today |
 |---|---|---|
@@ -928,31 +926,30 @@ whole section is one upstream PR and **drops when it merges.**
 
 **One rule fixes the listing, and it belongs to the product layer.** A bare
 search that carries a `/` is a path, and only the file source can answer a path.
-`MentionCategory` gains `ownsBareSearch`, the file category is the one caller,
-and the selector stays neutral — it asks the categories rather than naming one.
+`MentionCategory` gains `ownsBareSearch`, and the file category calls it. The
+selector remains neutral by asking categories instead of naming one.
 
-**"Up one level" is one helper, shared by three callers.** `mention-trigger.ts`
-already owns the `<ns>:` grammar; it gains
-`getMentionDrillDownParent`, which answers `<ns>:` → bare trigger and
-`src/components/` → `src/` → bare trigger, and answers `null` for anything that
-is not a completed drill-down level. `MentionRoot.onNavigateBack` takes the
-destination search instead of always writing the bare trigger, so ArrowLeft and
-the menu's own Back button move by the same rule.
+**"Up one level" is one helper shared by three callers.** `mention-trigger.ts`
+already owns the `<ns>:` grammar. It gains `getMentionDrillDownParent`. The
+helper maps `<ns>:` to the bare trigger. It maps `src/components/` to `src/`, then
+to the bare trigger. Other incomplete drill-down levels return `null`.
+`MentionRoot.onNavigateBack` accepts the destination search. ArrowLeft and the
+menu's Back button therefore use the same rule.
 
-**Backspace is deliberately unchanged.** `isMentionNavigationPrefix` stays what
-it is, so inside a path Backspace still deletes one character at a time — the
-behaviour `ui/mention/AGENTS.md` states and `mention-navigation.test.tsx`
-("leaves Backspace alone inside a path drill-down") pins. This patch therefore
-supersedes ONE sentence of that vendor doc: ArrowLeft no longer shares
+**Backspace is deliberately unchanged.** `isMentionNavigationPrefix` remains as
+written. Inside a path, Backspace still deletes one character at a time. The
+behavior comes from `ui/mention/AGENTS.md` and is pinned by
+`mention-navigation.test.tsx`. This patch supersedes ONE sentence of that vendor
+doc. ArrowLeft no longer shares
 Backspace's namespace-only rule. The doc file itself is left untouched so the
 merge surface stays at five source files.
 
 #### The hunks
 
-Line numbers are the vendored tree's BEFORE this patch. Hunks 5-8 are purely
-additive; hunks 1-4 rewrite a line each, and none of the five files is covered by
-`packages/webapp/test/upstream-baseline/`, so this patch declares no new anchor
-in `lody-surface-tabs.test.tsx`.
+Line numbers are from the vendored tree BEFORE this patch. Hunks 5–8 are purely
+additive. Hunks 1–4 each rewrite one line. The upstream baseline covers none of
+these five files. This patch therefore declares no new
+`lody-surface-tabs.test.tsx` anchor.
 
 `packages/components/src/ui/mention/mention-trigger.ts`
 
@@ -991,63 +988,61 @@ in `lody-surface-tabs.test.tsx`.
 | 8d | 502 | `    if (onNavigateBack()) inputRef.current?.focus();` | pops ONE level, by the same helper ArrowLeft uses, and falls back to the bare trigger when there is no level above |
 
 **Why selecting the range is the right answer for BUG-CA-05.** A committed
-mention is already atomic to every other input path: `onBeforeInput` deletes the
-whole range on Backspace, and horizontal arrows step OVER it rather than into it.
+mention is already atomic for every other input path. `onBeforeInput` deletes
+the whole range on Backspace. Horizontal arrows step OVER rather than into it.
 A caret dropped in the middle of a chip is therefore a position no edit can use.
-The chip mirror also already paints a selected range
-(`CHIP_SELECTED_CLASS_NAME`, `mention-highlighter.tsx:123`) — an affordance a
-click could not reach until now, only a drag. Text editing is untouched: the
-range is selected only when the click point is inside a painted chip rect, and a
-click that lands anywhere else, or that ends a drag-selection, returns exactly
-where it did before.
+The chip mirror already paints a selected range with `CHIP_SELECTED_CLASS_NAME`
+(`mention-highlighter.tsx:123`). Previously, only a drag could reach that state.
+Text editing is untouched. Selection occurs only when the click point falls
+inside a painted chip rectangle. Other clicks and completed drag selections
+behave exactly as before.
 
-**What this patch does NOT do.** It does not open the referenced file or session
-(feature-matrix row C38 asserts that, and no such callback exists at any level
-between the session surface and `CombinedMentionTextarea`). Chip click stays a
-composer-local gesture, and `chat-composer.tsx`'s `handleMentionClick` keeps
+**What this patch does NOT do.** It does not open the referenced file or session.
+Feature-matrix row C38 asserts that boundary. No callback exists between the
+session surface and `CombinedMentionTextarea`. Chip click stays a composer-local
+gesture. `chat-composer.tsx`'s `handleMentionClick` keeps
 answering `pasted_text` alone.
 
 `packages/webapp/test/lody-composer-mentions.test.tsx` drives the real vendored
-`Mention` primitive and the real registry over both rows, and pins this section
-by name, so deleting the hunks without retiring the declaration fails.
+`Mention` primitive and registry over both rows. It pins this section by name.
+Deleting the hunks without retiring the declaration therefore fails.
 
-Verify this divergence by diffing OUR subtree against the upstream commit it was
-imported from, exactly as seam patch 1 describes. **Expected after seam patch 11:
-five more files than seam patch 10's twenty — TWENTY-FIVE.** The five new ones
+Verify this divergence using the diff from seam patch 1. **Expect TWENTY-FIVE
+files after seam patch 11.** This is five more than seam patch 10. The new files
 are `ui/mention/mention-trigger.ts`, `ui/mention/mention-root.tsx`,
 `ui/mention/mention-input.tsx`, `components/mentions/mention-registry.ts` and
 `components/mentions/mention-two-level-menu.tsx`.
 
 #### Merge conflict drill
 
-- If upstream scopes a path drill-down to the file source itself, drop hunks 8a,
-  8b and 8c and keep upstream's rule.
-- If upstream gives `onNavigateBack` a destination of its own, or generalises the
-  drill-down grammar past `<ns>:`, drop hunks 1, 2, 5, 6 and 8d and re-express
-  ArrowLeft against the new grammar. The one invariant to keep: Backspace walks a
-  path one character at a time; ArrowLeft moves a level.
-- If upstream gives a chip click an action of its own, drop hunk 7 rather than
-  merge the two — two things happening on one click is not the fix.
+- If upstream scopes path drill-down to the file source, drop hunks 8a, 8b, and
+  8c. Keep upstream's rule.
+- If upstream gives `onNavigateBack` a destination, re-express ArrowLeft using
+  it. Do the same if upstream generalises the `<ns>:` grammar. Drop hunks 1, 2,
+  5, 6, and 8d. Preserve one invariant. Backspace walks a path character by
+  character, while ArrowLeft moves one level.
+- If upstream gives chip clicks their own action, drop hunk 7. Do not combine
+  two actions on one click.
 
 ### 12. A landing image has no offline fallback (COMPB-1 remainder, 2026-09-01)
 
-**One idea, five hunks in three files, and it finishes seam patch 8.** Patch 8
-put the local transport in front of the cloud-token guard everywhere a local
-handoff already existed, and named the one place none did: the landing image
-draft. So on a box a file attaches from the landing, an image attaches from
-inside a session (it degrades to a file), and an image on the LANDING is the
-single combination that still fails with "Missing workspace or auth token".
+**One idea, five hunks in three files, finishing seam patch 8.** Patch 8 moved the
+local transport before cloud-token guards when a local handoff already existed.
+It identified one missing handoff: the landing image draft. A box can attach a
+file from the landing. It can attach an in-session image by degrading it to a
+file. A LANDING image was the only remaining combination that failed with
+"Missing workspace or auth token".
 
-The behaviour that closes it is upstream's own, and it already ships one surface
-away. `session-chat-input-area.tsx:1007-1072` turns an image it cannot upload
-into a pending FILE attachment over the local transport, with the toast
-`sessions.imageStoredAsLocalFile`. In-session that is one component holding both
-state machines, so the image moves from `pendingImages` into `pendingFiles` in
-place. On the landing the same two state machines are two sibling hooks
-(`use-chat-landing-image-draft.ts`, `use-chat-landing-file-draft.ts`), both
-mounted by `chat-landing.tsx` and already sharing one draft session id. So the
-degrade is the same move across that seam: the image hook hands the raw `File`
-to the file hook's own entry point. Open upstream as "an image staged on the
+The closing behavior already ships in an adjacent upstream surface.
+`session-chat-input-area.tsx:1007-1072` converts an unuploadable image into a
+pending FILE attachment over local transport. It shows
+`sessions.imageStoredAsLocalFile`. In-session, one component holds both state
+machines. The image moves from `pendingImages` to `pendingFiles` in place. On the
+landing, sibling hooks hold those state machines:
+`use-chat-landing-image-draft.ts` and `use-chat-landing-file-draft.ts`.
+`chat-landing.tsx` mounts both with one shared draft session id. The image hook
+therefore hands the raw `File` to the file hook's entry point. Open upstream as
+"an image staged on the
 chat landing has no offline fallback"; the sketch is
 `plans/evidence/lody-landing-image-degrade-pr.md`. **Drop this patch when it
 merges.**
@@ -1076,73 +1071,65 @@ Line numbers are the vendored tree's BEFORE this patch.
 |---|---|---|---|
 | 5 | 1313 | the `useChatLandingImageDraft({…})` / `useChatLandingFileDraft({…})` pair | swaps their order (the file draft has never read anything from the image draft) and passes `degradeToFileAttachments: canSendFileLocally ? addFileAttachments : undefined` |
 
-**The image hook re-uses the file hook rather than copying its transport.** The
-degrade calls `addFiles` on the file draft, which is `handleAddFiles` — the same
-entry point the composer's `+` uses. So the bytes take seam patch 8's hunk 5,
-under the file draft's own size and count limits, with its own chip, its own
-status and its own Retry. Nothing about `sendSessionFileToLocalRuntime` is
-restated in the image hook, and there is exactly one place on the landing that
-knows how to hand a file to a box. The two hooks already share `sessionId` and
-`ensureSessionId`, so the degraded file lands on the same reserved session id
-the image would have.
+**The image hook reuses the file hook instead of copying its transport.** The
+degrade calls the file draft's `addFiles`, which is `handleAddFiles`. The
+composer `+` uses the same entry point. Bytes therefore follow seam patch 8's
+hunk 5. The file draft applies its own size and count limits. It also supplies
+the chip, status, and Retry action. The image hook does not restate
+`sendSessionFileToLocalRuntime`. Exactly one landing path knows how to hand a
+file to a box. Both hooks already share `sessionId` and `ensureSessionId`. The
+degraded file therefore uses the image's reserved session id.
 
 **Availability is asked, not re-derived.** Hunk 4 returns the file draft's
-existing `canSendFileLocally` instead of computing a third copy of
-`localMachineId === machineId && canUseElectronLocalFileSend()` (it already
-exists twice, at `use-chat-landing-file-draft.ts:100` and
-`session-chat-input-area.tsx:530`). The draft that would carry the bytes is the
-right authority on whether it can. With no bridge the callback is `undefined`,
-the inserted block is skipped, and the unchanged guard fails the image with the
-unchanged message — a browser with no token and no bridge still has nowhere to
-put an image, and must still say so.
+existing `canSendFileLocally`. It avoids a third copy of
+`localMachineId === machineId && canUseElectronLocalFileSend()`. Copies already
+exist at `use-chat-landing-file-draft.ts:100` and
+`session-chat-input-area.tsx:530`. The draft carrying bytes is the correct
+authority on availability. Without a bridge, the callback is `undefined`, and
+the inserted block is skipped. The unchanged guard fails with the same message.
+A browser lacking both token and bridge still has nowhere to put an image.
 
-**Upstream behaviour with a cloud token present is unchanged, and that is
-checkable rather than asserted.** The inserted block's condition leads with
-`!authToken`, so with a token it is `false` and `startUpload` runs the same
-statements in the same order as before. Hunks 1, 2 and 4 add a parameter, a
-label and a returned field, and change no existing expression. Hunk 5 reorders
-two independent hook calls and adds one argument. The degrade is also NOT
-extended to a genuine upload failure: upstream degrades on any failed image
-upload in-session, but doing that here would change what a token holder sees,
-and this patch's one idea is the tokenless case alone.
+**Upstream behavior with a cloud token is unchanged. This is checkable, not
+merely asserted.** The inserted condition begins with `!authToken`. With a token,
+it is false, and `startUpload` preserves its statement order. Hunks 1, 2, and 4
+add a parameter, label, and returned field. They change no existing expression.
+Hunk 5 reorders independent hook calls and adds one argument. The degrade does
+NOT cover a genuine upload failure. Upstream degrades every failed in-session
+image upload. Doing that here would change a token holder's experience. This
+patch covers only the tokenless case.
 
 `packages/webapp/test/lody-attachment-guard.test.tsx` drives the REAL vendored
-image hook over a stub `window.ipc` for the same three cases seam patch 8 pinned
-— no token with the bridge, no token without it, and a token WITH the bridge —
-and pins this section by name.
+image hook over a stub `window.ipc`. It covers seam patch 8's three cases. Those
+are no token with the bridge, no token without it, and a token WITH it. It also
+pins this section by name.
 
-Verify this divergence by diffing OUR subtree against the upstream commit it was
-imported from, exactly as seam patch 1 describes. **Expected after seam patch 12:
-one more file than seam patch 11's twenty-five — TWENTY-SIX.** The new one is
-`hooks/use-chat-landing-image-draft.ts`; the other two files this patch touches
+Verify this divergence using the diff from seam patch 1. **Expect TWENTY-SIX
+files after seam patch 12.** That is one more than seam patch 11. The new file is
+`hooks/use-chat-landing-image-draft.ts`. The other two files
 were already diverged by seam patches 7 and 8.
 
 #### Merge conflict drill
 
-- If upstream gives the landing image draft a fallback of its own — a local
-  handoff, or a degrade to the file draft — drop all five hunks and keep
-  upstream's.
-- If upstream deletes the in-session degrade, drop this patch with it: the
-  behaviour it mirrors would no longer exist, and keeping it would make the
-  landing do something no other surface does.
-- If the two landing drafts are merged into one hook, re-apply by the one rule:
-  **with no cloud token and a local transport available, a staged image becomes
-  a pending file attachment instead of an error.**
-- Hunk 5's reorder is not the idea; if upstream moves those calls, keep whatever
-  order it chooses and pass the argument from wherever the predicate is legible.
+- If upstream adds a landing-image fallback, drop all five hunks. The fallback
+  may be a local handoff or degradation to the file draft. Keep upstream's.
+- If upstream deletes the in-session degrade, drop this patch too. Its mirrored
+  behavior would no longer exist. Keeping it would make the landing unique.
+- If the two landing drafts merge, re-apply one rule. **Without a cloud token,
+  local transport turns a staged image into a pending file attachment.**
+- Hunk 5's reordering is not essential. If upstream moves those calls, retain
+  its order. Pass the argument wherever the predicate remains legible.
 
 ### 13. `LoroSidebar`'s footer, one entry at a time (archive page, 2026-09-01)
 
-**One optional prop, four guards, one file — and it is seam patch 2 admitting it
-was too coarse.** Seam patch 2 gave the sidebar `hideFooter`, because BlitzOS
-serves settings and help from its own chrome. The footer also carries the
-ARCHIVE entry, which is upstream's only affordance that leads to the archive
-page, so hiding the footer hid the one thing the host wanted to keep. The rail
-had a page it could not reach.
+**One optional prop and four guards in one file. Seam patch 2 was too coarse.**
+Seam patch 2 gave the sidebar `hideFooter` because BlitzOS serves settings and
+help from its own chrome. The footer also carries the ARCHIVE entry. It is
+upstream's only affordance leading to the archive page. Hiding the footer hid
+the one item the host needed. The rail had an unreachable page.
 
-`hideFooter` cannot express "keep one of them": it is a boolean over the whole
-rail. So the item list becomes the prop, and `hideFooter` keeps its meaning as
-the shorter spelling for "none of them".
+`hideFooter` cannot express "keep one of them" because it covers the whole rail.
+The item list therefore becomes the prop. `hideFooter` remains shorthand for
+"none of them".
 
 | # | File | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|---|
@@ -1154,25 +1141,24 @@ the shorter spelling for "none of them".
 | 6 | same | 1256 | the `Archive` `IconButton` | the same term for `'archive'` |
 | 7 | same | 1260 | `{isMobile ? (` on `SidebarFilterPopover` | adds `&& footerItems.includes('filter')` |
 
-Strictly additive: with the prop absent every item is in the list and the footer
-renders byte-for-byte what it rendered before. No upstream call site passes it.
+This is strictly additive. With the prop absent, every item remains in the list.
+The footer renders byte-for-byte as before. No upstream call site passes it.
 
 **What BlitzOS passes.** `packages/webapp/src/lody/SessionRailSidebar.tsx` drops
-`hideFooter` and passes `footerItems={["archive"]}`, so the rail shows the
-Archive entry and nothing else. The mobile filter popover stays hidden, which is
-what seam patch 2's own note already said the host owns.
+`hideFooter` and passes `footerItems={["archive"]}`. The rail shows only the
+Archive entry. The mobile filter popover stays hidden, matching seam patch 2's
+host-ownership note.
 
-**Merge conflict drill.** If the footer block is restructured, re-apply by
-wrapping whatever renders in each item's place; every guard is one term and
-carries no logic. If upstream grows its own per-item suppression, delete these
-hunks and pass the new prop from `SessionRailSidebar.tsx`.
+**Merge conflict drill.** If the footer block changes, wrap each replacement
+item. Every guard is one term without logic. If upstream adds per-item
+suppression, delete these hunks. Pass its new prop from
+`SessionRailSidebar.tsx`.
 
 ### 14. The archive page's v1 scope cuts (archive page, 2026-09-01)
 
-**Seam patch 7's two mechanisms, applied to the page seam patch 13 made
-reachable.** The archive page ships two surfaces the v1 scope hides everywhere
-else, and both are the same defect they are on the session page: a control that
-renders and cannot work.
+**Seam patch 7's two mechanisms apply to the page exposed by seam patch 13.** The
+archive page ships two surfaces hidden elsewhere by v1 scope. Both repeat the
+session page's defect: a rendered control that cannot work.
 
 | Surface | Row area | What renders without this patch |
 |---|---|---|
@@ -1181,13 +1167,13 @@ renders and cannot work.
 
 **TWO MECHANISMS, THE SAME CHOICE SEAM PATCH 7 MADE.**
 
-1. **The PR badge reuses upstream's own gate.** `useAppCapability('githubIntegration')`
-   is the check `session-detail.tsx` and five other files already make; the
-   archive row simply never asked. **This half is a bug fix, not a BlitzOS
-   opinion: open it upstream as-is, and there is no prop to drop when it merges.**
-2. **The scope control is a new optional prop**, because upstream has no
-   capability for "this workspace has one member" and inventing one would be a
-   bigger claim than the suppression.
+1. **The PR badge reuses upstream's own gate.** `session-detail.tsx` and five
+   other files already call `useAppCapability('githubIntegration')`. The archive
+   row simply never asked. **This half fixes a bug, not a BlitzOS opinion. Open
+   it upstream as-is. There is no prop to drop after merge.**
+2. **The scope control is a new optional prop.** Upstream has no capability for
+   "this workspace has one member". Inventing one would exceed the suppression's
+   claim.
 
 | # | File | Line (at `f4b1ba25`) | Upstream anchor | What it does |
 |---|---|---|---|---|
@@ -1204,23 +1190,22 @@ renders and cannot work.
 | 11 | same | 38 | `archiveScope,` in the destructuring | defaults it to `false` |
 | 12 | same | 131 | the `div.ml-2` that holds the scope `DropdownMenu` | wraps it in `{hideTeamScope ? null : ( … )}` |
 
-Hunk 3 is why the rest is small, and it is hunk 2 of seam patch 7 in a second
-place: every PR value the row draws is downstream of that one list.
+Hunk 3 keeps the rest small. It repeats seam patch 7's hunk 2 in another place.
+Every drawn PR value is downstream of that list.
 
-Our side is the same constant seam patch 7 reads,
-`packages/webapp/src/lody/v1-scope.ts`: `hideTeamScope` joins
-`lodyV1SuppressionProps()` under the `cloudSurfaces` flag, and `router.tsx`
-passes it to `<ArchiveView>` exactly as it passes the other five.
+Our side uses seam patch 7's constant in
+`packages/webapp/src/lody/v1-scope.ts`. `hideTeamScope` joins
+`lodyV1SuppressionProps()` under `cloudSurfaces`. `router.tsx` passes it to
+`<ArchiveView>` like the other five props.
 
-`packages/webapp/test/lody-archive-page.test.tsx` asserts both cuts from both
-sides — dark with the suppression, present without it — and
+`packages/webapp/test/lody-archive-page.test.tsx` asserts both sides of each cut.
+Surfaces are dark with suppression and present without it.
 `packages/webapp/test/lody-v1-scope-sources.test.ts` pins this section by name.
 
-Verify this divergence by diffing OUR subtree against the upstream commit it was
-imported from, exactly as seam patch 1 describes. **Expected after seam patches
-13 and 14: two more files than seam patch 12's twenty-six — TWENTY-EIGHT.** Seam
-patch 13 adds NO file, because `components/loro-sidebar.tsx` is already seam
-patch 2's. The two new ones are seam patch 14's:
+Verify this divergence using the diff from seam patch 1. **Expect TWENTY-EIGHT
+files after seam patches 13 and 14.** That is two more than seam patch 12. Seam
+patch 13 adds NO file because `components/loro-sidebar.tsx` already diverged.
+Seam patch 14 adds:
 `components/archive/archive-view.tsx` and
 `components/archive/web-archive-screen.tsx`.
 
@@ -1230,21 +1215,20 @@ single-member answer of its own, drop hunks 6-12 and pass nothing.
 
 ### 15. The host owns connectivity, so Lody must not narrate it (2026-09-02)
 
-**One optional prop, eighteen hunks in five files, and it is a boundary rather
-than a scope cut.** BlitzOS surfaces connectivity itself. The shell footer's left slot
-carries one sentence built by `packages/webapp/src/shell/workspace-status-line.ts`
-— `workspace running · box unreachable` when the machine runs and the browser
-cannot reach its gateway, the lifecycle word otherwise — and
-`packages/webapp/src/box-gateway-health.ts` is the probe behind it. That sentence
-is true about the WHOLE workspace: the terminal, the files, the previews and the
-Lody surface all go through the same gateway.
+**One optional prop and eighteen hunks in five files. This is a boundary, not a
+scope cut.** BlitzOS surfaces connectivity itself. The shell footer's left slot
+uses `packages/webapp/src/shell/workspace-status-line.ts`. It reads `workspace
+running · box unreachable` when the browser cannot reach a running machine's
+gateway. Otherwise, it shows the lifecycle word.
+`packages/webapp/src/box-gateway-health.ts` supplies the probe. This sentence
+describes the WHOLE workspace. The terminal, files, previews, and Lody surface
+all use the same gateway.
 
-Lody, mounted inside that shell, tells the same story again from a narrower
-vantage and in different words. The two do not agree, because they cannot: a
-member reading `You are offline. Reconnect to sync.` beside `workspace running`
-learns nothing about which one to believe, and a spinner that says the session
-document is catching up is a fact about a room, not about the box. The ruling is
-that the host says it and the vendored surface says nothing.
+Lody tells the same story again from a narrower vantage inside that shell. It
+uses different words. These accounts cannot always agree. A member reading `You
+are offline. Reconnect to sync.` beside `workspace running` cannot choose an
+authority. A session-document spinner describes one room, not the box. The host
+therefore owns the message, and the vendored surface stays silent.
 
 | Surface | Where | What renders without this patch |
 |---|---|---|
@@ -1259,28 +1243,31 @@ that the host says it and the vendored surface says nothing.
 **WHAT THIS PATCH DELIBERATELY LEAVES ALONE**, and each one is a decision:
 
 - **`machine-removed` keeps its chip.** `This machine was removed from the
-  workspace. Messages can no longer be sent.` is not connection state — it is a
-  membership fact, and it BLOCKS SENDING. Suppressing it would leave a member
-  with a dead composer and no sentence anywhere explaining why; the footer says
-  nothing about it, because the footer is about reachability.
+  workspace. Messages can no longer be sent.` describes membership, not
+  connectivity. It BLOCKS SENDING. Suppression would leave a dead composer
+  without an explanation. The footer covers reachability, so it says nothing
+  about membership.
 - **The file viewer's save and live-sync items stay.** `Saved` / `Unsaved` /
   `Save failed` / `Live sync delayed` are per-file operation feedback about an
   edit the member just made, not ambient connectivity. Only the `machine-offline`
   item of that bar answers the prop.
-- **Every message that REPLACES content stays.** `sessions.codeSession.connecting`
-  — "Connecting to code session…" in both `session-file-content-view.tsx` and
-  `session-file-quick-open.tsx` — `sessions.changes.syncing` ("Syncing changes…",
-  `session-changes-sidebar.tsx`) and `session-file-error-state.tsx`'s
+- **Every message that REPLACES content stays.**
+  `sessions.codeSession.connecting` says "Connecting to code session…" in two
+  file surfaces. They are `session-file-content-view.tsx` and
+  `session-file-quick-open.tsx`. `sessions.changes.syncing` says "Syncing
+  changes…" in `session-changes-sidebar.tsx`. The
+  `session-file-error-state.tsx`
   `temporarily-unavailable` panel are what a panel draws INSTEAD of its data.
   Each explains one thing the member asked for, at the place they asked for it.
   Suppressing them leaves a blank panel, and the footer sentence cannot fill it.
-- **`sessions.externalHistorySyncing`** ("Syncing {{provider}} history") is an
-  agent-history import, not transport, and **`sessions.activity.codexRetrying`**
-  ("Connection interrupted, Codex is retrying", `ai-gui/view.tsx`) is turn data
-  the agent published. Neither is the browser's link to the box.
-- **`chat.localGitStateMachineOffline`** — "Target machine is offline. Start the
-  CLI on that machine to load branches." — stays, for the same reason as the
-  panels: it is why one branch list failed to load. Its second sentence is wrong
+- **`sessions.externalHistorySyncing`** says "Syncing {{provider}} history". It
+  describes an agent-history import, not transport.
+  **`sessions.activity.codexRetrying`** says "Connection interrupted, Codex is
+  retrying" in `ai-gui/view.tsx`. This is turn data published by the agent.
+  Neither message describes the browser's link to the box.
+- **`chat.localGitStateMachineOffline`** says "Target machine is offline. Start
+  the CLI on that machine to load branches." It remains for the panels' reason.
+  It explains why a branch list failed to load. Its second sentence is wrong
   for a box and belongs to a wrong-product sweep, not to this one.
 - **The mobile chat filter's `Offline` bucket**
   (`chat.mobileHome.filters.running.offline`) is a filter category over sessions,
@@ -1294,25 +1281,24 @@ that the host says it and the vendored surface says nothing.
   `MainLayout`, and BlitzOS mounts `ChatLanding`, `SessionDetail` and
   `ArchiveView` directly. Pinned rather than patched.
 - **Two more render nothing here, and are pinned rather than patched.**
-  `SessionListRow.isOffline` (`session-list.tsx:146`) is a field of the row type
-  that no renderer in that file reads, and our rail never sets it; and every
-  settings screen that prints Online / Offline sits behind the twenty stubbed
-  settings routes in `packages/webapp/src/lody/router.tsx`.
+  `SessionListRow.isOffline` (`session-list.tsx:146`) is an unread row field.
+  Our rail never sets it. Every settings screen printing Online or Offline sits
+  behind twenty stubbed settings routes in
+  `packages/webapp/src/lody/router.tsx`.
 
-**ONE PROP, FRAMED FOR ANY EMBEDDING HOST.** `hideConnectionStatus` says "this
-surface is embedded in a host that reports connectivity itself"; it is not
-BlitzOS-shaped and needs no capability. Every hunk defaults to today's behaviour
-and no upstream call site passes it. Upstream has no gate to reuse here: unlike
-`githubIntegration`, there is no capability that means "somebody else draws the
-status bar".
+**ONE PROP, FRAMED FOR ANY EMBEDDING HOST.** `hideConnectionStatus` means the
+embedding host reports connectivity. It is not BlitzOS-specific and needs no
+capability. Every hunk defaults to today's behavior. No upstream call site passes
+the prop. Upstream has no reusable gate. Unlike `githubIntegration`, no
+capability means "somebody else draws the status bar".
 
 #### The hunks
 
-Line numbers are the vendored tree's BEFORE this patch, except for
-`session-detail.tsx`, which is pinned by `packages/webapp/test/upstream-baseline/`
-and is numbered against that baseline.
+Line numbers come from the vendored tree BEFORE this patch. The exception is
+`session-detail.tsx`, pinned by `packages/webapp/test/upstream-baseline/`. Its
+numbers come from that baseline.
 
-`packages/components/src/components/sessions/session-status-strip.tsx` — the
+`packages/components/src/components/sessions/session-status-strip.tsx` is the
 single point every one of these states resolves through
 
 | # | Line | Upstream anchor | What it does |
@@ -1320,9 +1306,9 @@ single point every one of these states resolves through
 | 1 | 38 | `export function resolveSessionStatusStripState(args: {` | adds `connectionStatusHidden?: boolean` to the argument type, with the doc comment that says when a host passes it |
 | 2 | 40, 42 | `if (!args.browserOnline) return { kind: 'browser-offline' };` and `if (args.machineOnlineStatus === 'offline') {` | both answer the flag. The `machine-removed` branch between them does NOT |
 
-Hunk 2 is why the rest of the chip is untouched: `StatusChip` renders `null` for
-a `null` state, so gating the resolver takes the cluster chip and the stage chip
-together, on desktop and on mobile.
+Hunk 2 leaves the rest of the chip untouched. `StatusChip` renders `null` for a
+`null` state. Gating the resolver removes both cluster and stage chips. This
+works on desktop and mobile.
 
 `packages/components/src/components/sessions/session-chat-interface.tsx`
 
@@ -1345,9 +1331,9 @@ together, on desktop and on mobile.
 | 12 | 4693 | `preferNativeMarkdownSelection={isMobile}` on `<SessionFileContentView>` (seam patch 10's own anchor) | passes `hideConnectionStatus` |
 | 13 | 5723 | `hideHeader: true,` in the shared chat-surface props builder | forwards `hideConnectionStatus` to every chat surface the page mounts |
 
-Hunk 11 is the ONE line this patch removes from the baseline, and it is declared
-in `packages/webapp/test/lody-surface-tabs.test.tsx`'s anchor table with the
-others. Hunks 9, 10, 12 and 13 add lines and remove none.
+Hunk 11 is the ONE baseline line this patch removes. It appears with the other
+anchors in `packages/webapp/test/lody-surface-tabs.test.tsx`. Hunks 9, 10, 12,
+and 13 only add lines.
 
 `packages/components/src/components/sessions/session-file-content-view.tsx`
 
@@ -1364,79 +1350,75 @@ others. Hunks 9, 10, 12 and 13 add lines and remove none.
 | 17 | 561 | `hideProductHints = false,` in the destructuring | defaults it to `false` |
 | 18 | 6260 | `connectionUiState={mobileHomeConnectionUiState}` on `<MobileHomeScreen>` | passes `undefined` when hidden |
 
-Hunk 18 needs no change in `mobile-home-screen.tsx`: that prop is already
-optional there and already defaults to `'online'`, the one state at which the
-banner does not render. The atom keeps its value, so flipping the prop back
+Hunk 18 needs no `mobile-home-screen.tsx` change. Its prop is already optional
+and defaults to `'online'`. The banner does not render in that state. The atom
+keeps its value, so flipping the prop back
 restores the banner with no other edit.
 
-Our side is the same constant seam patches 7, 10 and 14 read,
-`packages/webapp/src/lody/v1-scope.ts`: a sixth flag, `connectionStatus`, turns
-into `hideConnectionStatus` in `lodyV1SuppressionProps()`, and `router.tsx`
-passes it to `<SessionDetail>` and `<ChatLanding>`. The flag is not a "not in v1"
-decision like the other five — it is an ownership boundary — so its row in that
-file says so, and flipping it is what a host that stops reporting connectivity
-would do.
+Our side uses the constant read by seam patches 7, 10, and 14:
+`packages/webapp/src/lody/v1-scope.ts`. Its sixth flag, `connectionStatus`, maps
+to `hideConnectionStatus` in `lodyV1SuppressionProps()`. `router.tsx` passes it to
+`<SessionDetail>` and `<ChatLanding>`. Unlike the other five, this is not a v1
+scope decision. It defines an ownership boundary, as its row states. A host that
+stops reporting connectivity would flip it.
 
-`packages/webapp/test/lody-connection-status.test.tsx` asserts every surface from
-both sides: dark with the suppression while the underlying state is ACTIVE, and
-present without it. The same file pins the BlitzOS footer sentence, so a change
-that took Lody's status away and dropped ours too fails there.
+`packages/webapp/test/lody-connection-status.test.tsx` asserts both sides of
+every surface. They stay dark under suppression while the state remains ACTIVE.
+Without suppression, they are present. The same file pins the BlitzOS footer
+sentence. Removing both Lody's status and ours therefore fails.
 
-Verify this divergence by diffing OUR subtree against the upstream commit it was
-imported from, exactly as seam patch 1 describes. **Expected after seam patch 15:
-one more file than seam patch 14's twenty-eight — TWENTY-NINE.** The new one is
-`components/sessions/session-status-strip.tsx`; the other four were already
+Verify this divergence using the diff from seam patch 1. **Expect TWENTY-NINE
+files after seam patch 15.** That is one more than seam patch 14. The new file is
+`components/sessions/session-status-strip.tsx`. The other four already
 diverged by seam patches 7 and 10.
 
-**Merge conflict drill.** Every hunk is one term added to a boolean, or one
-optional field added to a props type. If upstream restructures a call site,
-re-apply at wherever it went. If upstream grows its own way for an embedding host
-to own connectivity — a capability, a provider, a prop of its own — drop all
-eighteen hunks and answer that instead from `v1-scope.ts`. If the status strip
-gains a FOURTH state, decide it explicitly: connectivity answers the flag,
-anything about membership or a blocked action does not.
+**Merge conflict drill.** Every hunk adds one boolean term or optional prop
+field. If upstream changes a call site, re-apply at its replacement. If upstream
+lets an embedding host own connectivity, drop all eighteen hunks. Answer its
+capability, provider, or prop from `v1-scope.ts`. If the status strip gains a
+FOURTH state, decide it explicitly. Connectivity answers the flag. Membership
+or blocked actions do not.
 
 ### 16. The mobile branch: host tabs and the v1 scope cuts (mobile mount, 2026-09-02)
 
-**One idea in two halves, 24 hunks in four files.** BlitzOS now mounts Lody's
-real phone experience (`packages/webapp/src/lody/MobileSessionStack.tsx`), so
-two things that were true only on a desktop have to become true on a phone: a
-host tab must be reachable, and the v1 scope cuts must fire.
+**One idea in two halves, with 24 hunks in four files.** BlitzOS now mounts Lody's
+real phone experience (`packages/webapp/src/lody/MobileSessionStack.tsx`). Two
+desktop guarantees must therefore reach phones. Host tabs must be reachable,
+and v1 scope cuts must fire.
 
 Seam patch 5 said this in writing — *"The mobile branch is deliberately NOT
 patched. `MobileSessionTabSheet` keeps a fourth, hand-maintained kind enum; the
 props are inert there and the mobile drawer keeps today's behaviour."* That was
 correct while both routes dropped the mobile branch. It is the gap now.
 
-**THE STRUCTURAL CAUSE, AND IT IS ONE SENTENCE.** `session-detail.tsx` returns
-for mobile above `:5432`, and `getSharedChatSurfaceProps` — the builder that
-forwards `hideCloudMenuItems`, `hideNotificationPrompt`, `hideAgentRoles` and
-seam patch 15's `hideConnectionStatus` to every chat surface — is defined at
-`:5710`, below it. The mobile branch hand-writes its own
-`SessionChatInterface` props and carried `readOnly` alone. So **props are lost
-at the mobile fork and capabilities are not**: every
-`useAppCapability('githubIntegration')` call sits above the return and answers
-on both branches, which is why seam patch 7's GitHub half needs nothing here and
-its other groups need everything.
+**THE STRUCTURAL CAUSE.** `session-detail.tsx` returns for mobile above `:5432`.
+`getSharedChatSurfaceProps` is defined below it at `:5710`. That builder forwards
+`hideCloudMenuItems`, `hideNotificationPrompt`, and `hideAgentRoles`. It also
+forwards seam patch 15's `hideConnectionStatus` to every chat surface. The mobile
+branch writes its own `SessionChatInterface` props and carried only `readOnly`.
+**Props are lost at the mobile fork, but capabilities are not.** Every
+`useAppCapability('githubIntegration')` call sits above the return. It answers on
+both branches. Seam patch 7's GitHub half therefore needs no work here. Its other
+groups do.
 
 The same fork explains the landing. `hideProductHints` is read at
 `chat-landing.tsx:6545`, and the mobile branch returns above `:6260`/`:6416`.
 
-**WHAT SEAM PATCH 15 ALREADY DOES, SO THIS PATCH DOES NOT.** Connectivity is
-that patch's subject and it reaches the mobile branch on its own in two of the
-three places it matters:
+**WHAT SEAM PATCH 15 ALREADY DOES, SO THIS PATCH DOES NOT.** That patch owns
+connectivity. It independently reaches two of the three relevant mobile
+surfaces:
 
 - The mobile home's connection banner is its hunk 18, on the one call site.
-- The mobile session header's catch-up spinner is its hunk 11, which gates
-  `activeSessionDocIsSyncing` at the source rather than at the header.
+- Its hunk 11 handles the mobile session header's catch-up spinner. It gates
+  `activeSessionDocIsSyncing` at the source, not the header.
 - The composer status chip is the exception, and it is hunk 12 below. Its hunk
   13 forwards `hideConnectionStatus` through the shared builder, which the
-  mobile branch never reaches — the same sentence again.
+  mobile branch never reaches.
 
 `hideConnectionStatus` is therefore DECLARED by seam patch 15 and merely
 forwarded here. One flag, one prop, one gate story.
 
-#### Half A — a host tab in the mobile tab sheet
+#### Half A: a host tab in the mobile tab sheet
 
 `packages/components/src/components/mobile/mobile-session-tab-sheet.tsx`
 
@@ -1453,12 +1435,12 @@ to `'file' | 'diff' | 'custom'`. The mobile enum did not follow, so that
 assignment has been unsound since wave 3. It is unreachable today only because
 nothing on the mobile path reads `surfaceTabItems`.
 
-**THE SHEET GETS NO CLOSE VERB, AND THAT IS UPSTREAM'S DESIGN.** `ViewerRow` is
-one `<button>` whose whole body is the row, and its doc comment says "no
-close" — the sheet has no close affordance for any tab kind. Adding one would
-mean a sibling button and a restructured row, for a verb the phone already has:
-a terminal closes from its BlitzOS rail row (`SessionRailSidebar`'s
-`onCloseTerminal`). §0's bias rule applies — copy Lody's behaviour.
+**THE SHEET GETS NO CLOSE VERB. THIS IS UPSTREAM'S DESIGN.** `ViewerRow` is one
+`<button>` covering the whole row. Its doc comment says "no close". The sheet
+offers no close affordance for any tab kind. Adding one requires a sibling
+button and restructured row. The phone already supplies that verb. A terminal
+closes from its BlitzOS rail row through `SessionRailSidebar.onCloseTerminal`.
+Section 0's bias rule applies: copy Lody's behaviour.
 
 `packages/components/src/components/sessions/session-detail.tsx` (pinned)
 
@@ -1470,11 +1452,11 @@ a terminal closes from its BlitzOS rail row (`SessionRailSidebar`'s
 | 8 | 5077, 5144 | the two `const isActive = !hasActiveViewerTab && …` | an active host tab hides the conversations and the drafts, the rule seam patch 5 hunk 13 gives the desktop |
 | 9 | 5181 | after the non-file viewer surfaces, inside `div[role="main"]` | mounts every host tab's `content`, hidden unless active — the mobile mirror of seam patch 5 hunk 15 |
 
-Hunks 5-9 need no new prop: `surfaceTabs`, `activeSurfaceTabId` and
-`onSurfaceTabSelect` are seam patch 5's, declared at `:748` and already inert by
-default. `onSurfaceTabClose` stays desktop-only for the reason above.
+Hunks 5–9 need no new prop. Seam patch 5 declares `surfaceTabs`,
+`activeSurfaceTabId`, and `onSurfaceTabSelect` at `:748`. They are already inert
+by default. `onSurfaceTabClose` stays desktop-only for the reason above.
 
-#### Half B — the v1 scope cuts, on the mobile path
+#### Half B: the v1 scope cuts on the mobile path
 
 `packages/components/src/components/sessions/session-detail.tsx` (pinned)
 
@@ -1489,13 +1471,12 @@ default. `onSurfaceTabClose` stays desktop-only for the reason above.
 | 16 | 593-594, 607 | `MobileProjectInfo`'s `repoFullName` / `isGitHub` | takes a `gitHubAvailable` prop, so the header stops drawing the octocat and the repo slug for a local clone that merely has a GitHub remote |
 | 17 | 5015-5018 | the `<MobileProjectInfo>` element | passes the capability |
 
-**Hunk 16 is a CAPABILITY bug, not a prop one, and it is the only one of its
-kind on this page.** `MobileProjectInfo` re-derives `repoFullName` from the
-session instead of taking the value `getSessionGitHubState` already nulls
-(seam patch 7 hunk 2). Every other GitHub surface on the mobile path — the PR
-entry in the tab sheet, the PR drawer, the diff panel's comments, the composer's
-`@issue`/`@pr` — reads the gated value and is already dark. **Open this half
-upstream as a bug fix; there is no prop to drop when it merges.**
+**Hunk 16 is a CAPABILITY bug, not a prop bug. It is unique on this page.**
+`MobileProjectInfo` re-derives `repoFullName` from the session. It ignores the
+value already cleared by `getSessionGitHubState` in seam patch 7 hunk 2. Every
+other mobile GitHub surface reads the gated value and is already dark. These
+include the PR tab, PR drawer, diff comments, and composer `@issue` or `@pr`.
+**Open this half upstream as a bug fix. No prop remains to drop after merge.**
 
 `packages/components/src/components/chat/chat-landing.tsx`
 
@@ -1514,14 +1495,13 @@ upstream as a bug fix; there is no prop to drop when it merges.**
 | 23 | 1334-1341 | `const showChatOnboarding =` | adds `!hideOnboarding` — the "Lody runs on your computer / Download Lody" takeover is the mobile twin of the desktop hint band's `download-client` (S7), and `hideProductHints` never reached it |
 | 24 | 1105-1141, 1850-1930, 1654 | `ProjectsSubTabSelector`, `ProjectsTabView` and its call site | take `showGitHub`, drop the GitHub segment without it, and pin the rendered sub-tab to `local` so a stale `'github'` choice cannot reach an empty list |
 
-The numbering counts anchors, not source lines: hunks 22 and 24 are several
-anchors each in one file with two new props.
+The numbering counts anchors, not source lines. Hunks 22 and 24 each contain
+several anchors in one file with two new props.
 
 #### What this patch does NOT do
 
-- **Connectivity is seam patch 15's, and only hunk 11 above is new.** See the
-  note near the top: two of the three mobile connection surfaces are already
-  gated by that patch's own hunks.
+- **Connectivity belongs to seam patch 15, and only hunk 11 above is new.** Two
+  of the three mobile connection surfaces already use that patch's hunks.
 - **The workspace switcher and the create-workspace sheet need no hunk.** Both
   mount only under `multiWorkspaceAvailable`, and the local platform declines
   `multiWorkspace`, so the header falls through to a static nameplate.
@@ -1535,17 +1515,16 @@ anchors each in one file with two new props.
   opens the workspace rail. Two different verbs, one navigation story.
 - **Nothing is deleted.** Every hunk is a term, a default or a forwarded prop.
 
-Strictly additive: with every new prop absent and `surfaceTabs` empty, all four
-files render byte-for-byte what they rendered before, and no upstream call site
-passes one. Upstream PR sketch: half A and hunk 16 go up as bug fixes; half B
-goes up as the same optional-prop shape seam patch 7 uses.
+This is strictly additive. Without new props and with empty `surfaceTabs`, all
+four files render byte-for-byte as before. No upstream call site passes a new
+prop. The upstream PR should present half A and hunk 16 as bug fixes. Half B
+uses seam patch 7's optional-prop shape.
 
-Verify this divergence by diffing OUR subtree against the upstream commit it was
-imported from, exactly as seam patch 1 describes. **Expected after seam patch
-16: one more file than seam patch 15's twenty-nine — THIRTY.** Only
+Verify this divergence using the diff from seam patch 1. **Expect THIRTY files
+after seam patch 16.** That is one more than seam patch 15. Only
 `components/mobile/mobile-session-tab-sheet.tsx` and
-`components/mobile/mobile-home-screen.tsx` are new here, and the second of those
-is the thirtieth; `session-detail.tsx` and `chat/chat-landing.tsx` are already
+`components/mobile/mobile-home-screen.tsx` are new here. The second is the
+thirtieth. `session-detail.tsx` and `chat/chat-landing.tsx` already belong to
 seam patches 5, 7 and 15's.
 
 `packages/webapp/test/lody-mobile-mount.test.tsx` pins both halves, and
@@ -1553,53 +1532,51 @@ seam patches 5, 7 and 15's.
 
 **Merge conflict drill.**
 
-- If upstream hoists `getSharedChatSurfaceProps` above the mobile return, or
-  otherwise makes one builder serve both branches, **drop hunks 10-15** and pass
-  the props once. That single change would also retire seam patch 15's hunk 13
-  distinction, which is the clearest sign the fork is the real defect.
+- If upstream hoists `getSharedChatSurfaceProps`, **drop hunks 10–15** and pass
+  the props once. Do the same if one builder otherwise serves both branches.
+  This would also retire seam patch 15's hunk 13 distinction. That result
+  confirms the fork was the defect.
 - If `ViewerTabEntry` grows a host arm of its own, drop hunks 1-4 and use it.
-- If the mobile branch gains a surface block of its own, hunks 8 and 9 follow it
-  to wherever it decides which tab is on screen.
+- If the mobile branch gains a surface block, hunks 8 and 9 follow. Place them
+  where the new block decides which tab is visible.
 - If `MobileProjectInfo` starts reading `getSessionGitHubState`, drop hunk 16.
-- If upstream gives the mobile home its own settings or GitHub gate, drop the
-  matching hunk and pass upstream's — the BlitzOS half is one field in
+- If upstream gives mobile home its own settings or GitHub gate, drop the
+  matching hunk. Pass upstream's gate. The BlitzOS half is one field in
   `packages/webapp/src/lody/v1-scope.ts`.
 
 ### 17. The local-platform snapshot must forget the previous box (superseded by seam 18, 2026-09-02)
 
-**Superseded.** Seam 18's client-keyed provider state replaces the sequential
-singleton reset described below. The additive reset remains in the subtree for
-standalone compatibility and its historical regression test, but Blitz's
-keep-alive composition does not use it to switch surfaces. Drop it when seam 18
+**Superseded.** Seam 18's client-keyed provider state replaces this sequential
+singleton reset. The additive reset remains for standalone compatibility and
+its historical regression test. Blitz's keep-alive composition does not use it
+to switch surfaces. Drop it when seam 18
 lands upstream.
 
-**One idea, one file, and it is additive.** BlitzOS drives MANY box daemons from
-one browser tab — one per workspace — where Electron drives exactly one local
-daemon per renderer. `local-platform-provider.ts` is written for Electron's
-world: `cachedProvider` / `cachedSessionStore` / `cachedWorkspacesStore` /
-`snapshotPollingStarted` are module-scope singletons, and the poll settles on
-the FIRST `localPlatform.getSnapshot` and never reads again for the life of the
-page. So the second workspace a member visits gets `useImplicitLocalWorkspace()`
-= the FIRST box's `lw_<uuid>`, and `RuntimeProvider` (`runtime-provider.tsx:239`,
-the local branch) builds its runtime from it: it opens `lody-loro-repo-db-<A>`
-and subscribes to box A's rooms while the data plane dials box B. Nothing syncs,
-no error is raised, and the rail stays empty until a full reload — the one thing
-that reset the module. That reload is the observed "cure" in the field report.
+**One idea, one file, and additive.** BlitzOS drives MANY box daemons from one
+browser tab, one per workspace. Electron drives one local daemon per renderer.
+`local-platform-provider.ts` assumes Electron's model. Its provider, stores, and
+`snapshotPollingStarted` are module-scope singletons. The poll settles on the
+FIRST `localPlatform.getSnapshot`. It never reads again during the page's life.
+A second workspace therefore gets the first box's `lw_<uuid>` from
+`useImplicitLocalWorkspace()`. The local `RuntimeProvider` at
+`runtime-provider.tsx:239` builds from that value. It opens box A's database and
+subscribes to box A's rooms. Meanwhile, the data plane dials box B. Nothing
+syncs, no error appears, and the rail stays empty until reload. Reload is the
+only action that reset the module. It was the observed field-report cure.
 
-The fix adds `resetLocalPlatformSnapshotState()`, which clears those singletons
-and stops the running poll interval, so the next read re-polls
-`localPlatform.getSnapshot` against whatever `window.ipc` is installed now.
-BlitzOS calls it from the INCOMING surface's render
-(`packages/webapp/src/lody/SessionSurface.tsx`, `useLodyLocalBridge`, gated on a
-new bridge so it fires once per box) — before that surface's child
-`RuntimeProvider` re-reads the snapshot, and the departing surface (keyed by box
-in `LodySessionsRegion`) does not re-render, so there is no teardown race.
+The fix adds `resetLocalPlatformSnapshotState()`. It clears the singletons and
+stops the running poll. The next read polls `localPlatform.getSnapshot` against
+the currently installed `window.ipc`. BlitzOS calls it while rendering the
+INCOMING surface in `SessionSurface.tsx`. `useLodyLocalBridge` gates it on a new
+bridge, so it fires once per box. It runs before the child `RuntimeProvider`
+reads the snapshot. The departing surface is keyed by box in
+`LodySessionsRegion` and does not re-render. No teardown race follows.
 
-Strictly additive: nothing upstream changes behaviour, because Electron never
-calls the reset and the poll it guards still settles exactly once. The interval
-was a local `let intervalId` in `startLocalPlatformSnapshotPolling`; it is
-promoted to the module-scope `snapshotPollInterval` (renamed in place, same
-three uses) only so the reset can clear a poll that has not settled yet.
+This is strictly additive. Electron never calls the reset, so upstream behavior
+does not change. Its guarded poll still settles exactly once. The interval was a
+local `intervalId` in `startLocalPlatformSnapshotPolling`. It moves to the
+module-scope `snapshotPollInterval` so reset can clear an unsettled poll. The
+rename happens in place across the same three uses.
 
 | # | File | Line | Upstream anchor | What it does |
 |---|---|---|---|---|
@@ -1610,44 +1587,45 @@ three uses) only so the reset can clear a poll that has not settled yet.
 Guard: `packages/webapp/test/lody-local-platform-reset.test.tsx` drives the real
 vendored hook across a box switch and fails without hunk 3.
 
-**Candidate upstream PR:** key the local-platform snapshot by the installed IPC
-bridge (or expose this reset) so a host driving more than one daemon can move
-between them. Until then this is the smallest seam that closes it.
+**Candidate upstream PR:** key the local-platform snapshot by its installed IPC
+bridge. Exposing this reset is another option. Either lets a multi-daemon host
+move between daemons. Until then, this is the smallest closing seam.
 ### 18. A renderer surface owns its IPC client (Tier 2 keep-alive, declared 2026-09-02)
 
-Seam 17 makes sequential hand-off correct but cannot make two surfaces correct
-at once. The renderer helpers formerly rediscovered page-global `window.ipc`,
-so an asynchronous operation could leave through another surface's bridge. The
-fix adds a structural `LodyIpcClient`: omitted arguments retain Electron's lazy
-window-backed default, while an embedding host captures one bridge, provides it
-to one React subtree and threads it into plain runtime code.
+Seam 17 corrects sequential hand-off but cannot support two simultaneous
+surfaces. Renderer helpers formerly rediscovered page-global `window.ipc`. An
+asynchronous operation could therefore leave through another surface's bridge.
+The fix adds a structural `LodyIpcClient`. Omitted arguments retain Electron's
+lazy window-backed default. An embedding host captures one bridge, provides it
+to one React subtree, and threads it into plain runtime code.
 
-Bound clients now have a terminal disposal lifecycle. Disposal aborts their
-signal, drains every previously registered listener idempotently, and makes
-later service lookup/send/event operations reject or no-op.
-The local-platform state is a client-keyed WeakMap; its abort listener clears a
-never-settling snapshot interval and deletes the entry. The local Loro adapter
+Bound clients now have a terminal disposal lifecycle. Disposal aborts the client
+signal and idempotently drains every registered listener. Later service lookups,
+sends, and event operations reject or no-op. Local-platform state uses a
+client-keyed WeakMap. Its abort listener clears an unsettled snapshot interval
+and deletes the entry. The local Loro adapter
 owns every message unsubscribe, not only its status listener.
 `RuntimeProvider` also accepts one optional additive `onRuntimeLifecycle`
-callback. It reports `starting` immediately before the constructor call, then
-uses the same unique attempt id for `created` or rollback-complete `failed` and
-for `disposed` after awaited runtime cleanup. `createWorkspaceRuntime` catches
-every post-repo construction error, detaches any transport/listener installed
-so far, and awaits `repo.destroy()` before rejecting. This lets an embedding
-surface retain IPC authority until construction or repo destruction finishes.
-Omission preserves upstream behavior. `RuntimeDeps.localIpcHost` and the matching facade dependency are an explicit
-fast-path capability: supplying a client no longer implies a local plane.
+callback. It reports `starting` immediately before constructor invocation. One
+unique attempt id covers `created` or rollback-complete `failed`. It also covers
+`disposed` after awaited runtime cleanup. `createWorkspaceRuntime` catches every
+post-repo construction error. It detaches installed transports and listeners,
+then awaits `repo.destroy()` before rejecting. An embedding surface thus retains
+IPC authority until construction or repo destruction finishes. Omission
+preserves upstream behavior. `RuntimeDeps.localIpcHost` and the matching facade
+dependency explicitly indicate fast-path capability. Supplying a client no
+longer implies a local plane.
 Omission preserves the existing Electron/global-host test.
 
-The Blitz-mounted public-browser panel is reachable from both desktop and
-mobile `SessionDetail`; its calls therefore consume `useIpcClient()`. The theme
-provider remains ambient without another vendor edit: Blitz hoists one provider
-above its keyed surfaces, publishes compatibility `window.ipc` only for the
-active surface, and its bridge explicitly no-ops `app.nativeTheme` and
-`app.setNativeTheme`. Those reads cannot reach a data/session/machine plane.
+The Blitz-mounted public-browser panel is reachable from desktop and mobile
+`SessionDetail`. Its calls therefore consume `useIpcClient()`. The theme provider
+remains ambient without another vendor edit. Blitz hoists one provider above its
+keyed surfaces. It publishes compatibility `window.ipc` only for the active
+surface. Its bridge explicitly no-ops `app.nativeTheme` and
+`app.setNativeTheme`. Those reads cannot reach data, session, or machine planes.
 
 **Cumulative seam-vs-upstream inventory.** The original Phase A change touched
-exactly **19** vendor source files. The public-browser follow-up added two; seam
+exactly **19** vendor source files. The public-browser follow-up added two. Seam
 18 cumulatively touches the following **21** upstream files. This table is not
 the smaller `ead5af60..HEAD` branch footprint:
 
@@ -1683,8 +1661,8 @@ the 21 rows above. This pass changes only two already-listed seam files:
 | `packages/components/src/lib/electron-ipc-client.ts` | +9 / -2 | Wraps `on` to own each unsubscribe and drains that set from terminal `dispose`; no default-client behavior changes. |
 | `packages/components/src/providers/runtime-provider.tsx` | +14 / -5 | Adds the optional three-phase lifecycle callback and emits it at construction settlement and completed disposal; absent callbacks retain prior behavior. |
 
-Total vendor source footprint for this follow-up: **+23 / -7** lines across two
-of seam 18's existing 21 files (exactly 30 changed lines).
+This follow-up changes **+23 / -7** vendor source lines. Its 30 changed lines
+span two of seam 18's existing 21 files.
 
 **Final correctness footprint (2026-09-03).** This pass remains inside two
 already-listed seam files:
@@ -1694,19 +1672,19 @@ already-listed seam files:
 | `packages/components/src/providers/runtime-provider.tsx` | +13 / -6 | Adds `starting` plus attempt ids and carries the id through construction settlement and completed disposal; an absent callback still changes nothing. |
 | `packages/components/src/providers/create-workspace-runtime.ts` | +11 / -1 | Wraps post-repo construction in rollback, upgrades rollback to transport teardown and then the full disposer as those become available, and rejects only after cleanup. |
 
-Total vendor source footprint for the final pass: **+24 / -7** lines (31 changed
-lines). The cumulative `ead5af60..HEAD` aggregate is ten vendor files at
-**+258 / -89**, including nine source files at **+132 / -37**; the tenth file is
-this seam inventory.
+The final pass changes **+24 / -7** vendor source lines, or 31 lines total. The
+cumulative `ead5af60..HEAD` aggregate spans ten vendor files at **+258 / -89**.
+Nine source files account for **+132 / -37**. This seam inventory is the tenth
+file.
 
 `packages/webapp/test/lody-ipc-client-isolation.test.ts` derives its inventory
-from the import closure rooted at Blitz's `SessionSurface.tsx`. It fails every
-unbound `getIpcServices`, `onIpcEvent`, `sendIpc`,
-`sendLocalSessionControl`, `getPublicBrowserBridge`, or `window.ipc` site except
-exact helper plus enclosing-function sites represented by this allowlist, with
-the expected count inside each named scope. Moving a guarded call to an
-unguarded function in the same file therefore fails even when the file/helper
-count is unchanged:
+from the import closure rooted at Blitz's `SessionSurface.tsx`. It rejects every
+unbound IPC helper or `window.ipc` site outside this allowlist. The helpers are
+`getIpcServices`, `onIpcEvent`, `sendIpc`, `sendLocalSessionControl`, and
+`getPublicBrowserBridge`. Each allowlist entry names exact helper and enclosing
+function sites. It also declares the expected count within each scope. Moving a
+guarded call to an unguarded function therefore fails. This holds even when
+file-level and helper-level counts remain unchanged:
 
 | File | Why ambient IPC is allowed |
 |---|---|
@@ -1729,12 +1707,13 @@ count is unchanged:
 | `lib/electron-ipc-client.ts` | The intentional compatibility default and sole production reader of `window.ipc`. |
 
 **Candidate upstream PR: “allow an embedding renderer to provide a disposable
-IPC client per React/runtime subtree.”** Commit sketch: (1) additive client,
-provider and helper parameters with unchanged Electron defaults; (2)
-client-keyed local-platform state released by the client signal; (3) explicit
-local-host capability through runtime/facade; (4) mechanical mounted leaf
-conversions, including public browser; (5) two-provider poison-global and
-post-disposal tests. The API contains no Blitz URL, workspace or relay concept.
+IPC client per React/runtime subtree.”** The commit adds client, provider, and
+helper parameters while preserving Electron defaults. It keys local-platform
+state by client and releases state through the client signal. Runtime and facade
+layers gain explicit local-host capability. Mounted leaves, including public
+browser, receive mechanical conversions. Tests cover two-provider poison-global
+and post-disposal cases. The API contains no Blitz URL, workspace, or relay
+concept.
 Drop seam 17's reset implementation once the keyed provider lands upstream.
 
 ## Daemon source and configuration seams
@@ -1751,14 +1730,14 @@ needed. The package build does not rewrite `dist/index.js` after Vite emits it.
 Only `machine/acp-authenticate` with `action: 'start'` returns
 `acp-auth:${message.configId}`. Submit-code and cancel return `null`, so they can
 run while the interactive login waits for input. Starts for one persisted agent
-configuration serialize, while starts for different configurations may overlap;
-the authentication manager retains its separate per-agent-type exclusion after
-resolving the configuration. This is strictly narrowing: no other message gains
-a peer it did not already have.
+configuration serialize. Starts for different configurations may overlap. The
+authentication manager retains separate per-agent-type exclusion after resolving
+the configuration. This strictly narrows serialization. No other message gains
+a peer it previously lacked.
 
-Guard: `apps/cli/src/lib/message-processor.test.ts` holds one start open, proves
-submit and cancel run before release, proves same-config starts serialize, and
-proves different-config starts may overlap. The pristine-source hunk is also
+Guard: `apps/cli/src/lib/message-processor.test.ts` holds one start open. It
+proves submit and cancel run before release. Same-config starts serialize, while
+different-config starts may overlap. The pristine-source hunk is also
 pinned by `packages/webapp/test/lody-seam-pin.test.ts`.
 
 **Candidate upstream PR:** “keyless control messages should not serialize behind
@@ -1772,12 +1751,12 @@ authentication concurrency, classify it as C and stop for a human.
 
 ### 20. Hosts may omit Lody's built-in MCP server
 
-**Anchors:** `apps/cli/src/agent/agent-client.ts`, the first guard in
-`buildBuiltinMcpServers` and the workspace-server failure message; and
-`apps/cli/src/session/session-execution-helpers.ts`, the
-`lodyMcpToolsReminder` declaration; plus
-`apps/cli/src/mcp/lody-mcp-http-server.ts`, the early configuration logging in
-`startLodyMcpHttpServer`.
+**Anchors:** The first file is `apps/cli/src/agent/agent-client.ts`. Anchors are
+the first `buildBuiltinMcpServers` guard and workspace-server failure message.
+The second file is `apps/cli/src/session/session-execution-helpers.ts`, at
+`lodyMcpToolsReminder`. The third file is
+`apps/cli/src/mcp/lody-mcp-http-server.ts`. Its anchor is the early configuration
+log in `startLodyMcpHttpServer`.
 
 The two logging hunks are replacements against pristine upstream:
 
@@ -1790,30 +1769,30 @@ The two logging hunks are replacements against pristine upstream:
 prompt reminder for tools that are no longer present. Workspace-configured MCP
 servers still resolve and load through `buildMcpServers`. Omission preserves
 upstream's HTTP-or-stdio built-in server and prompt exactly. The box selects the
-opt-out because the child duplicates the daemon bundle per session and its
-process group can outlive the ACP agent. Daemon startup logs the selected
-opt-out so image smoke and operators can distinguish it from an MCP host that
-failed to start; this does not change server selection.
+opt-out because each child duplicates the daemon bundle per session. Its process
+group can also outlive the ACP agent. Daemon startup logs the selected opt-out.
+Image smoke and operators can distinguish it from an MCP host failure. Logging
+does not change server selection.
 
 Guard: `packages/webapp/test/lody-seam-pin.test.ts` pins both source branches and
 the box service setting. The `Lody daemon pair gate` runs
 `apps/cli/src/agent/agent-client-session-preparation.test.ts` and
-`apps/cli/tests/session-execution-helpers.test.ts` from the scratch tree that
-produced the tarball: they prove the opt-out removes the built-in server and
-reminder without removing an external server, while omission preserves both
-upstream defaults. The enabled-image smoke checks the live daemon environment
+`apps/cli/tests/session-execution-helpers.test.ts` from the tarball's scratch
+tree. They prove the opt-out removes the built-in server and reminder. External
+servers remain available. Omitting the opt-out preserves both upstream defaults.
+The enabled-image smoke checks the live daemon environment
 and its explicit MCP-disable log line.
 
 **Candidate upstream PR:** “allow embedding hosts to disable the built-in Lody
-MCP server.” Document one environment option, return no built-ins when selected,
-suppress the matching prompt hint, and make fallback logs describe the selected
+MCP server.” Document one environment option. When selected, return no built-ins
+and suppress the matching prompt hint. Fallback logs should describe the selected
 empty built-in list.
 
 **Merge conflict drill.** If upstream gains an equivalent option, classify this
 as A and use it from the service. If either method or reminder moves, classify
 as B and move both halves together. If MCP assembly or prompt ownership changes,
-classify as C and stop until the host can prove the advertised and configured
-tool surfaces still agree.
+classify as C and stop. The host must prove that advertised and configured tool
+surfaces still agree.
 
 ### 21. Hosts may select an existing cgroup parent and external capacity policy
 
@@ -1823,27 +1802,26 @@ and `calculateAutomaticSessionSandboxLimits`; plus
 `apps/cli/src/session/session-manager.ts`, the rebalance call.
 
 `LODY_SESSION_CGROUP_PARENT` supplies a cgroup-v2 path relative to the cgroup
-mount instead of nesting `lody-sessions` below the daemon's own cgroup. Omission
-preserves upstream's derived parent. `LODY_SESSION_CAPACITY_LIMITS=0` keeps the
-per-session `pids.max` of 1024 but leaves `memory.max` and `cpu.max` unlimited;
-omission preserves upstream's 75-percent capacity split. The box points at
-`/blitz-user.slice/lody-sessions`, whose controllers and ownership are prepared
-by `blitz-cgroup init`, so session leaves can use `cgroup.kill` without violating
-cgroup v2's no-internal-process rule while the box remains the resource ceiling.
+mount instead of nesting `lody-sessions` below the daemon cgroup. Omission
+preserves upstream's derived parent. `LODY_SESSION_CAPACITY_LIMITS=0` keeps each
+session's `pids.max` at 1024. It leaves `memory.max` and `cpu.max` unlimited.
+Omission preserves upstream's 75-percent capacity split. The box uses
+`/blitz-user.slice/lody-sessions`. `blitz-cgroup init` prepares its controllers
+and ownership. Session leaves can use `cgroup.kill` without violating cgroup
+v2's no-internal-process rule. The box remains the resource ceiling.
 
 Guard: `packages/webapp/test/lody-seam-pin.test.ts` pins the opt-in branches and
 service values. The `Lody daemon pair gate` runs
-`apps/cli/tests/session-sandbox.test.ts` from the built scratch tree, covering
-the configured sibling parent, leaf `pids.max`, unlimited memory/CPU, process
-placement, termination, and cleanup as well as the upstream defaults. The
-enabled-image smoke proves the real s6 daemon enters `lody.scope`, requires
-memory, pids, and CPU delegation in CI, and runs as `blitz` to create and remove
-a probe child beneath the pre-created sibling parent. That child must expose
-`memory.max`, `pids.max`, and `cpu.max`; the parent must also retain its expected
-owner, unlimited `pids.max`, and 4096-process enclosing user ceiling. The probe
-is not presented as a real session: the shipping CLI registers only
-credential-requiring Claude and Codex adapters, so CI cannot create one without
-a member credential.
+`apps/cli/tests/session-sandbox.test.ts` from the built scratch tree. It covers
+the configured sibling parent and leaf `pids.max`. It also covers unlimited
+memory and CPU, process placement, termination, cleanup, and upstream defaults.
+Enabled-image smoke proves the real s6 daemon enters `lody.scope`. CI requires
+memory, pids, and CPU delegation. The daemon runs as `blitz` to manage a probe
+child below the pre-created sibling parent. That child must expose `memory.max`,
+`pids.max`, and `cpu.max`. The parent must retain its expected owner, unlimited
+`pids.max`, and 4096-process user ceiling. The probe is not presented as a real
+session. The shipping CLI registers only credential-requiring Claude and Codex
+adapters. CI cannot create one without a member credential.
 
 **Candidate upstream PR:** “make the execution-sandbox cgroup parent and
 capacity allocation host-configurable.” Parse an optional parent path and an
@@ -1852,22 +1830,22 @@ optional capacity-policy switch while retaining today's defaults.
 **Merge conflict drill.** If upstream adds equivalent settings, classify this
 as A and rename the service variables. If cgroup initialization or rebalance
 moves, classify as B and keep the two opt-ins together. If upstream changes the
-sandbox lifecycle or removes per-session cgroups, classify as C and stop: the
+sandbox lifecycle or removes per-session cgroups, classify as C and stop. The
 reviewer must re-prove descendant containment and termination before adapting.
 
 ## Retired compiled-bundle patches
 
 | Retired script | Disposition | Evidence |
 |---|---|---|
-| `lody-local-platform.mjs` | Obsolete upstream | Upstream commit `2fe304c38041a5ee8739e12d7a6ad749280d7a66` made the public Vite build define `process.env.LODY_PLATFORM` as `"local"`; the tree build therefore enters the local composition root without a bundle rewrite. |
-| `lody-code-collab-worktree-root.mjs` | Obsolete upstream | Upstream commit `dabbf960b2fc3987ca7c965133e4abd9be27caab` (`fix(cli): scope All Changes to local worktrees (#280)`) resolves and waits for the session worktree rather than falling back to the clone. |
+| `lody-local-platform.mjs` | Obsolete upstream | `apps/cli/vite.config.ts` defines `inlineEnv['process.env.LODY_PLATFORM']` as `"local"`. The tree build enters the local composition without a bundle rewrite. |
+| `lody-code-collab-worktree-root.mjs` | Obsolete upstream | `apps/cli/src/lib/message-handler.ts` method `resolveCodeCollabWorkspaceRoot` resolves an existing local worktree or waits for it. It never falls back to the shared clone. |
 | `lody-acp-auth-queue.mjs` | Replaced by source seam 19 | The start-only queue lane now lives beside `extractQueueKey` and is compiled into the package. |
 | `lody-builtin-mcp-off.mjs` | Replaced by source/configuration seam 20 | The generic opt-out is compiled into the package and selected by the box service. |
 | `lody-session-sandbox.mjs` | Replaced by source/configuration seam 21 | The generic cgroup parent and capacity-policy options are compiled into the package and selected by the box service. |
 
-The retired scripts and their compiled-artifact guard tests are deleted. Their
-behavior is now either supplied by upstream or declared and guarded at source,
-so neither the image build nor the test harness mutates a compiled daemon.
+The retired scripts and their compiled-artifact guard tests are deleted. Upstream
+now supplies their behavior, or a declared source seam guards it. Neither the
+image build nor test harness mutates a compiled daemon.
 
 ## Planned seams (not yet applied)
 
@@ -1885,28 +1863,26 @@ Declared ahead of time so a merge agent recognises them when they appear.
 
 Recorded here because each is a candidate seam if the workaround stops holding.
 
-- **The command palette and its keyboard shortcuts are not mounted at all, and
-  three of its commands would ignore a host tab if they were.**
-  `session.archiveCurrent` (`$mod+Alt+a`), `session.closeFocusedTab` and the
-  `session.nextTab` / `session.previousTab` cycle all resolve against
-  `SessionDetail`'s own URL-derived `activeTabSessionId` (the archive/close/cycle
-  handlers around `session-detail.tsx:2483`, `:4013`, `:4361`), which is the
-  CONVERSATION selection — a host tab is invisible to
-  every one of them, so with a terminal on screen they would act on the chat
-  behind it. **They cannot be reached in the BlitzOS mount**: the registry's
-  capture-phase keydown listener is attached by `commands.attach(window)` in
-  `components/AppInitializer.tsx`, which only `routes/__root.tsx` mounts, and
-  `CommandPalette` is mounted only by `routes/$workspaceName/_auth.tsx`. This
-  surface mounts neither (`packages/webapp/src/lody/SessionSurface.tsx`, "what
-  we do not mount, and why it is safe"), so no chord reaches a command and no
-  palette reaches `execute()`. Recorded rather than fixed, because a host-side
-  fix would be a fix to something that does not run;
-  `packages/webapp/test/lody-terminal-tab-wave3.test.tsx` pins both halves, so
-  the day either dispatcher is mounted the limitation becomes a failing test.
-  **Candidate upstream PR: resolve the close and cycle targets over the same
-  `viewerTabs` the strip already draws** (`getSessionTabCloseTarget`,
-  `lib/session-tab-close-target.ts:8`) — the same list seam patch 5 fills, which
-  is why it is one idea with that patch rather than a new one.
+- **The command palette and its keyboard shortcuts are not mounted. Three
+  commands would ignore a host tab if mounted.**
+  `session.archiveCurrent` (`$mod+Alt+a`) and `session.closeFocusedTab` both use
+  `SessionDetail`'s URL-derived `activeTabSessionId`. The `session.nextTab` and
+  `session.previousTab` cycle does too. Their handlers are near
+  `session-detail.tsx:2483`, `:4013`, and `:4361`. That value is the
+  CONVERSATION selection. A host tab is invisible to all three commands. With a
+  terminal visible, they would act on the hidden chat. **They cannot be reached
+  in the BlitzOS mount.** The registry's capture-phase listener is attached by
+  `commands.attach(window)` in `components/AppInitializer.tsx`. Only
+  `routes/__root.tsx` mounts that initializer. `CommandPalette` is mounted only
+  by `routes/$workspaceName/_auth.tsx`. This surface mounts neither, as recorded
+  in `packages/webapp/src/lody/SessionSurface.tsx`. No chord reaches a command,
+  and no palette reaches `execute()`. Fixing an unmounted path would add unused
+  host logic. `packages/webapp/test/lody-terminal-tab-wave3.test.tsx` pins both
+  conditions. Mounting either dispatcher will therefore fail the test.
+  **Candidate upstream PR: resolve close and cycle targets over the strip's
+  `viewerTabs`.** Use `getSessionTabCloseTarget` from
+  `lib/session-tab-close-target.ts:8`. Seam patch 5 fills the same list, so this
+  belongs with that patch.
 - ~~**`LoroSidebar` has no header/footer suppression props.**~~ Phase 4 added
   them at seam patch 2 and drafted the upstream PR
   (`plans/evidence/lody-sidebar-props-pr.md`).
@@ -1917,10 +1893,10 @@ Recorded here because each is a candidate seam if the workaround stops holding.
 - **`useAuthClient()` has no local-platform branch**, and `SessionDetail`
   reaches it through `useWorkspaceMembers` (`hooks/use-workspace-members.ts:26`),
   which calls `authClient.useActiveOrganization()`. A real better-auth client
-  fetches on subscribe, which this composition promises never to do, so
-  `packages/webapp/src/lody/inert-auth-client.ts` supplies four settled
-  signed-out reads and nothing else — any other member is absent, so a new
-  upstream call site throws a TypeError naming it. Their own `AuthProvider`
+  fetches upon subscription. This composition promises never to fetch.
+  `packages/webapp/src/lody/inert-auth-client.ts` therefore supplies four settled
+  signed-out reads and nothing else. Any missing member causes a new upstream
+  call site to throw a naming TypeError. Their own `AuthProvider`
   carries it. Candidate seam if the client's surface grows.
 - **`theme-provider.tsx` calls two Electron IPC channels unconditionally**:
   `app.setNativeTheme` (`:155`) and `app.nativeTheme` (`:139`). Both ask the
@@ -1929,65 +1905,66 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   every mount. Candidate upstream PR: guard both on `getIpcServices()` being an
   Electron bridge.
 - **`theme-provider.tsx` writes `document.documentElement.style.colorScheme`**
-  (`:149`) — an inline style on the html element, outside the Lody surface,
-  which beats any stylesheet of ours. `SessionSurface.adoptShellTheme()` forces
+  at `:149`. This inline style sits on the html element outside Lody's surface.
+  It overrides any stylesheet of ours. `SessionSurface.adoptShellTheme()` forces
   their stored theme to the shell's on every mount so the two never disagree.
 - **`createWorkspaceRuntime`'s startup ACP capabilities pass never runs for a
-  BlitzOS box**: its `listMachineIds` port reads the Convex-authorized machine
-  set (`:2455`), and the box is visible only through
-  `buildVisibleMachineIndex`'s owner fallback, which is excluded from it.
+  BlitzOS box.** Its `listMachineIds` port reads the Convex-authorized machine set
+  at `:2455`. The box is visible only through `buildVisibleMachineIndex`'s owner
+  fallback. That fallback is excluded.
   `packages/webapp/src/lody/agent-configs.ts` runs their own
   `runStartupAcpCapabilitiesRefresh` over BlitzOS ports instead. Candidate
   upstream PR: let the caller supply the machine list.
-- **`locales/en.json` is a FLAT map with dotted keys**, so any i18next instance
-  built for their components needs `keySeparator: false` — their own init sets
-  it (`i18n/index.tsx:121`) and `packages/webapp/src/lody/i18n.ts` now does too.
+- **`locales/en.json` is a FLAT map with dotted keys.** Any i18next instance for
+  these components needs `keySeparator: false`. Their initialization sets it at
+  `i18n/index.tsx:121`. `packages/webapp/src/lody/i18n.ts` now does too.
   Not a divergence, a required initialization option; recorded because getting
   it wrong is silent.
 - **Two strings in `locales/en.json` are wrong on a box** (panels-b sweep).
   `packages/webapp/src/lody/i18n.ts` merges `BLITZ_LODY_EN_OVERRIDES` over their
   bundle, so neither is a vendor edit. `sessions.fileSave.conflictDetail`
-  interpolates `{{conflict}}` and no call site passes one — the save-conflict
-  banner printed the raw placeholder (SP23-I18N), and the replacement is
-  upstream's own inline default for that key. `sessions.fileViewer.save.withShortcut`
-  advertises "Save (⌘S / Ctrl+S)", and this surface mounts no dispatcher for
-  `$mod+s` (`v1-scope.ts`, `keyboardShortcuts`), so the Save button promised a
-  chord nothing answers (SP21-KEY, user ruling: drop the advert, do NOT mount
-  the command layer). `packages/webapp/test/lody-panel-fixes.test.tsx` asserts
-  the VENDORED string still carries each defect, so an upstream fix fails a test
-  and the override is deleted rather than shadowing a corrected string.
+  interpolates `{{conflict}}`, but no caller passes one. The save-conflict banner
+  printed the raw placeholder in SP23-I18N. Its replacement uses upstream's own
+  inline default. `sessions.fileViewer.save.withShortcut` advertises "Save (⌘S /
+  Ctrl+S)". This surface mounts no `$mod+s` dispatcher, per `v1-scope.ts` and
+  `keyboardShortcuts`. The button therefore promised an unanswered chord in
+  SP21-KEY. The user ruled to remove the advert without mounting commands.
+  `packages/webapp/test/lody-panel-fixes.test.tsx` asserts both VENDORED defects.
+  An upstream fix fails the test, prompting deletion of the corresponding
+  override.
   **Candidate upstream PR for the first one: pass the conflict the runtime
   already has** (`SaveTextConflictError.conflict`) into that `t()` call.
 - **The archive path cannot resolve a local project's root path** (phase 5).
   `resolveWorktreeCleanupTarget` (`apps/cli/src/lib/message-handler.ts:4330`)
   merges `machineMeta.localProjects` with `getMachineFlockLocalProjects(
   options.machineFlockRows)`. The DELETE caller passes `machineFlockRows`
-  (`:4514`); the ARCHIVE caller does not (`:3986`) — and the same asymmetry is in
-  the shipped bundle (`lody/dist/index.js:169066` vs `:169476` at 0.88.1). Since
-  `local-project/add` writes only the FLOCK row (`lody-fleet.ts:1552` →
-  `local-project-meta.ts:76`), archive resolves nothing on a box, returns `null`,
-  and leaves the worktree on disk with the member's uncommitted work in it and no
-  backup commit. `packages/webapp/src/lody/local-projects.ts` mirrors the Flock
+  (`:4514`). The ARCHIVE caller at `:3986` does not. The shipped 0.88.1 bundle has
+  the same asymmetry at `lody/dist/index.js:169066` and `:169476`.
+  `local-project/add` writes only the FLOCK row. That path runs from
+  `lody-fleet.ts:1552` to `local-project-meta.ts:76`. Archive therefore resolves
+  nothing on a box and returns `null`. It leaves the worktree and uncommitted work
+  without a backup commit. `packages/webapp/src/lody/local-projects.ts` mirrors
+  the Flock
   rows into the legacy `machineMeta.localProjects` field, which both paths still
-  read. **Candidate upstream PR: pass `machineFlockRows` on the archive path** —
-  four lines, and then this mirror is deleted.
-- **The positional `localProjects.*` IPC helpers carry no `machineId`**, because
-  in Electron the main process IS the machine and fills its own id in.
+  read. **Candidate upstream PR: pass `machineFlockRows` on the archive path.**
+  The change takes four lines, then this mirror can be deleted.
+- **The positional `localProjects.*` IPC helpers carry no `machineId`.** In
+  Electron, the main process IS the machine and fills its own id.
   `requestLocalProjectGitState` (`workspace-machine-rpc-facade.ts:1006`) calls
-  `getGitState(workspaceId, localProjectId)` with two arguments, and every
-  `local-project/*` request schema requires `machineId`. On a box the main
-  process is the box and the browser is not, so `local-bridge.ts` resolves the id
-  from `/lody/platform` and injects it. Not a divergence — an adaptation the
-  Electron seam does not need — but it is why every one of those helpers silently
-  failed the daemon's `.strict()` parse until phase 5.
+  `getGitState(workspaceId, localProjectId)` with two arguments. Every
+  `local-project/*` request schema requires `machineId`. On a box, the main
+  process is the box, not the browser. `local-bridge.ts` resolves the id from
+  `/lody/platform` and injects it. This is an adapter, not a vendor divergence.
+  Electron does not need it. Without it, every helper silently failed the
+  daemon's strict parse until phase 5.
 - **A local project's repo name is dropped unless the cloud already knows the
   repo** (phase 5). `resolveLocalProjectGithubRepoFullName`
-  (`components/chat/chat-landing.tsx:522`) returns the name the daemon derived
-  from the clone's remote only if it also appears in `repositories`, the
-  workspace's cloud-connected GitHub repo list. With no cloud that list is empty,
-  so a worktree session's `ProjectRef` never carries `githubRepoFullName` — and
-  then the rail groups it under Chats instead of GitHub Worktrees, and turn
-  post-processing skips `updateSessionDiffStats` altogether
+  (`components/chat/chat-landing.tsx:522`) returns the daemon-derived remote
+  name only when `repositories` also contains it. That collection is the
+  workspace's cloud-connected GitHub repo list. Without cloud, that list is
+  empty. A worktree session's `ProjectRef` then lacks `githubRepoFullName`. The
+  rail groups it under Chats instead of GitHub Worktrees. Turn post-processing
+  also skips `updateSessionDiffStats`
   (`session-execution-service.ts:2351`). `publishBoxReposAsWorkspaceRepos`
   (`packages/webapp/src/lody/local-projects.ts`) writes the box's own clones into
   `setWorkspaceReposCacheAtom` instead, which is the other half of
@@ -1999,42 +1976,39 @@ Recorded here because each is a candidate seam if the workaround stops holding.
 - **`acpSessionId` is persisted before the ACP session has carried a turn**
   (canary dogfood 3). `createSessionInnerWithAgent` writes it as soon as the
   adapter answers `session/new` (`apps/cli/src/session/session-manager.ts:1455`),
-  and the claude adapter accepts `session/new` while the CLI is signed out — it
-  refuses only at prompt time. So a turn that fails `acp_auth_required` leaves an
-  id for an ACP session that holds no conversation. The member signs in, sends
-  the next message, and the daemon RESUMES it: `loadSession` answers `Resource
-  not found`, the daemon falls into its replay fallback
-  (`session-execution-service.ts:3499`), and THAT turn comes back
+  and the claude adapter accepts `session/new` while signed out. It refuses only
+  at prompt time. A turn failing `acp_auth_required` leaves an id for an empty ACP
+  session. After sign-in, the member sends another message. The daemon RESUMES
+  the empty session. `loadSession` answers `Resource not found`. The daemon uses
+  its replay fallback at `session-execution-service.ts:3499`. THAT turn returns
   `agent_no_output`. Measured against a real `lody@0.88.1` in
   `packages/webapp/test/lody-post-signin-turn.test.ts`; the daemon's own log
   reads `[ACP_RESUME_FAILED] loadSession: Resource not found` and then
   `completed without any agent output`. `packages/webapp/src/lody/session-auth-recovery.ts`
-  drops the phantom id from the session's doc meta —
-  an authored write on a dual-authored document, so no vendor hunk — under three
-  conditions, so an id that names a real conversation is never touched.
-  **Candidate upstream PR: persist `acpSessionId` only once the ACP session has
-  carried a turn, or clear it when a resume reports the session is gone.** The
-  silent turn behind the fallback is a second, separate upstream defect and is
-  not fixed here; the leading explanation is the adapter resolving a dead SDK
-  stream as `end_turn` with no notification (`dist/claude-acp.js:63062`).
+  drops the phantom id from session document metadata. This is an authored write
+  on a dual-authored document, so it needs no vendor hunk. Three conditions
+  protect ids naming real conversations.
+  **Candidate upstream PR: persist `acpSessionId` after the ACP session carries
+  a turn. Alternatively, clear it when resume reports a missing session.** The
+  silent fallback turn is a second upstream defect and remains unfixed. The
+  likely cause is the adapter resolving a dead SDK stream as `end_turn` without
+  notification (`dist/claude-acp.js:63062`).
 - **Lody's own interactive terminal cannot reach a browser.**
-  `LocalTerminalPanel` is a real PTY (xterm.js → `TerminalChannel` → Electron
-  IPC → `TerminalRelay` → node-pty), and it is Electron-gated at two hard
-  places: `TerminalDockHost` returns `null` unless
+  `LocalTerminalPanel` is a real PTY. Its path is xterm.js to `TerminalChannel`,
+  Electron IPC, `TerminalRelay`, and node-pty. Two hard Electron gates apply.
+  `TerminalDockHost` returns `null` unless
   `window.__LODY_ELECTRON__ === true` (`components/terminal-dock-host.tsx:25`,
   `:54`) and `TerminalDockToggleButton` unless `isElectronRenderer()`
   (`session-detail.tsx:628`). Their own docs say so
-  (`site-docs/.../(features)/terminal.mdx`). So BlitzOS keeps ttyd + tmux as the
-  tab CONTENT and adopts Lody's tab CHROME through seam patch 5 — and the gate
-  is also why the dock needs no hunt to stay invisible in our mount. **Watch for
-  the day `TerminalChannel` gains a non-Electron transport**: our channel
-  adapter would be a ~150-line file and the dock becomes an option again. Note
-  what would be LOST if it were adopted as-is, so the trade is re-made and not
-  assumed: the dock draws its own strip (`lody-terminal-tab-strip`,
-  `terminal-dock.tsx:490`), which is the second strip this whole effort deletes;
-  its open/active memory is a module-level `Map` that does not survive a reload,
-  where tmux survives the daemon and the browser; and `blitz-term`'s type map is
-  what makes a tab a Claude Code or Codex TUI.
+  (`site-docs/.../(features)/terminal.mdx`). BlitzOS therefore keeps ttyd and
+  tmux as tab CONTENT. Seam patch 5 provides Lody's tab CHROME. The Electron gate
+  also keeps the dock absent from our mount. **Reconsider if `TerminalChannel`
+  gains a non-Electron transport.** Our channel adapter would need about 150
+  lines, making the dock viable. Revisit its costs before adoption. The dock
+  draws its own strip at `terminal-dock.tsx:490`, duplicating the deleted second
+  strip. Its module-level `Map` loses open and active memory on reload. Tmux
+  survives both daemon and browser. Finally, `blitz-term`'s type map distinguishes
+  Claude Code and Codex TUI tabs.
 - **`acp-extension-dsh` is an empty submodule.** Aliased to a local stub; see
   `UPSTREAM.md`.
 - **`packages/components/vite-renderer-bundle-aliases.ts` cannot be imported.**

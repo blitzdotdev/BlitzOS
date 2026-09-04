@@ -102,11 +102,12 @@ Lody is a local-first workspace for coding agents. Three parts matter to us:
    Tailwind v4 + Jotai + Loro CRDT mirrors. 62 of 1213 files touch Electron,
    all behind one seam (`lib/electron-ipc-client.ts` returns `null` in a
    browser). A 209-story Storybook proves the leaves render in a plain browser.
-2. **Daemon** (`apps/cli`, npm package `lody`, latest 0.88.1): runs ACP agents
-   as stdio child processes, owns session CRDT docs in SQLite, owns the
-   `WorktreeManager` (1804 lines: create, archive-with-backup-commit, safe
-   delete, per-repo file locks, speculative pre-warm). Runs headless via
-   `lody daemon start`. This is the box-side half.
+2. **Daemon, in the original design.** The plan treated `apps/cli` as npm
+   package `lody` and pinned 0.88.1. It ran ACP agents as stdio child
+   processes and owned session CRDT documents in SQLite. It also owned the
+   `WorktreeManager`. That service created, archived, deleted, locked, and
+   pre-warmed worktrees. It ran headless through `lody daemon start` as the
+   box-side half.
 3. **Transport**: the renderer and the daemon share Loro CRDT documents. The
    renderer writes session meta + user turns; the daemon's dispatch watcher
    picks them up (durable pointer, not a bus). Desktop uses Electron IPC.
@@ -263,15 +264,16 @@ follow-up (§8 there) — the vendored renderer's local plane is a singleton on
 
 ```
 vendor/lody/                  # git subtree of LodyAI/Lody, squashed
-vendor/lody/UPSTREAM.md       # pinned upstream SHA + npm lody version + date
+vendor/lody/UPSTREAM.md       # pinned upstream and subtree commits
 vendor/lody/BLITZ-PATCHES.md  # every deliberate divergence, file + reason
 ```
 
 - Add: `git subtree add --prefix vendor/lody <url> <sha> --squash`.
-- The three ACP extension submodule dirs stay empty in the subtree; we do not
-  build `apps/cli` from source. The box installs the prebuilt npm `lody`
-  package, which bundles the adapters. Pin the npm version in the Dockerfile
-  next to the pinned `claude`/`codex` binaries.
+- At this design stage, three ACP extension directories stayed empty in the
+  subtree. BlitzOS did not build `apps/cli` from source. The box installed a
+  prebuilt npm package that bundled the adapters.
+- That package recipe is retired. `docs/LODY-MERGE.md` is the current runbook.
+  `plans/LODY-DAEMON-FROM-TREE.md` records the source-built daemon design.
 - Renderer packages we import from the subtree source (their `exports` maps
   point at raw `.ts/.tsx` — no build step upstream either):
   `@lody/components`, `@lody/shared`, `@lody/platform`,
@@ -336,9 +338,9 @@ vendor/lody/BLITZ-PATCHES.md  # every deliberate divergence, file + reason
 
 ## 6. Box changes
 
-1. Image: `npm i -g lody@<pin>` in `packages/box/Dockerfile` beside claude and
-   codex. Data dir on the state volume: `LODY_DATA_DIR=/var/lib/blitz/lody`,
-   which survives VM replacement like every other `/var/lib/blitz` path.
+1. The original image installed `lody@<pin>` beside Claude and Codex. The data
+   directory was `LODY_DATA_DIR=/var/lib/blitz/lody` on the state volume. The
+   source-built replacement keeps that durable runtime path.
 2. s6 service `lody-daemon`: `lody daemon start` on loopback, plus the
    loro-websocket sync server (§4). Environment: `GIT_AUTHOR_*` from the
    member identity; agent credentials via the existing per-turn minting or
@@ -520,10 +522,10 @@ Phases 1–2 and the Phase 0 UI spike can run in parallel worktrees.
   daemon's repo): fall back to a WS port of the public
   `loro-data-plane-relay` protocol; bounded but bigger. Do not start Phase 2
   until Phase 0 settles this.
-- **npm `lody` vs public tree skew**: npm is at 0.88.1; the public tree's
-  `apps/cli` says 0.76.0. The public tree may lag releases. Pin both sides to
-  a verified-compatible pair at every merge; the CRDT `ignoreUnknownProperties`
-  rule absorbs small skew.
+- **Former npm `lody` versus public-tree skew:** the original image pinned
+  0.88.1 while the public tree reported 0.76.0. That mismatch motivated the
+  source-built design. The current image builds renderer and daemon from one
+  upstream revision. See `plans/LODY-DAEMON-FROM-TREE.md`.
 - **Tailwind preflight vs our global CSS**: the single biggest UI risk; hence
   the layered-CSS-then-iframe ladder in §7.4 and a Phase 0 exit test.
 - **Dependency weight**: ~100 new renderer deps incl. wasm (loro, sqlite-wasm)

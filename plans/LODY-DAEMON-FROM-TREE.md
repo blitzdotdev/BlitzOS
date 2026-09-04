@@ -1,13 +1,14 @@
 # Build the Lody daemon from the vendored tree
 
-Status: approved direction; plan PRs A, B, and C are implemented, with D and E
-still pending below. The target is one upstream Lody revision for both renderer
-and daemon, with no independently selected npm daemon release.
+Status: approved direction. Plan PRs A, B, and C are implemented. D and E are
+still pending below. The release-input portion of E landed with C's review
+follow-up. The target is one upstream Lody revision for both renderer and
+daemon. No npm daemon release is selected independently.
 
 ## Decision and evidence
 
-Before plan PR C, the box installed `lody@0.88.1` globally, copied that npm tree
-into the runtime image, and rewrote its compiled `dist/index.js` with five scripts
+Before plan PR C, the box installed `lody@0.88.1` globally and copied that npm
+tree into the runtime image. Five scripts rewrote its compiled `dist/index.js`
 (`packages/box/Dockerfile:38-63`, `packages/box/Dockerfile:135-142`). The renderer
 comes from the squashed public subtree. Before the 2026-09-04 documentation
 migration, policy called that npm version plus the subtree revision one
@@ -19,8 +20,11 @@ and target rules now live in `docs/LODY-MERGE.md` and
 Build the daemon from `vendor/lody/apps/cli` at the same upstream revision as
 the renderer. The completed spike is sufficient evidence for the decision:
 
+This design removes the step that rewrote a compiled daemon. It adds more
+source-build, adapter, lock, stamp, and release-key tooling.
+
 - after materializing five adapter gitlinks, the frozen install and build
-  completed in 130.67 seconds, of which the build was 91.13 seconds
+  completed in 130.67 seconds. The build itself took 91.13 seconds
   (`/var/lib/blitz/home/codex/daemonbuild-result.md:35-57`);
 - the output was a 5.7 MB tarball with a 59.9 MB development `dist`, and
   `check:published-bundle-imports` passed
@@ -28,11 +32,11 @@ the renderer. The completed spike is sufficient evidence for the decision:
 - `lody-session-surface`, `lody-session-rail`, and `lody-post-signin-turn`
   passed against that self-built daemon, including the capabilities-refresh
   regression (`/var/lib/blitz/home/codex/daemonbuild-result.md:80-94`);
-- the public source already builds local mode and already contains the Code
-  Collab worktree fix, while the ACP authentication queue fix is still needed
+- the public source already builds local mode and contains the Code Collab
+  worktree fix. The ACP authentication queue fix is still needed
   (`/var/lib/blitz/home/codex/daemonbuild-result.md:96-110`); and
-- the package version remains the stale `0.76.0`, so commit provenance—not
-  `lody --version`—has to identify the artifact
+- the package version remains the stale `0.76.0`. Commit provenance, not
+  `lody --version`, must identify the artifact
   (`/var/lib/blitz/home/codex/daemonbuild-result.md:13-31`).
 
 ## Invariants
@@ -48,13 +52,12 @@ the renderer. The completed spike is sufficient evidence for the decision:
 4. The packed artifact is installed, not a loose `dist/index.js`. All chunks,
    workers, presets, WASM, notices, and external runtime dependencies move as
    one unit.
-5. A source-built daemon cannot enter an image unless the pin, adapter, frozen
-   lockfile, published-bundle, output-set, notice, source-seam, and smoke gates
-   all pass.
+5. A source-built daemon enters an image only after every gate passes. Those
+   gates cover pins, adapters, locks, bundles, output, notices, seams, and smoke.
 6. A browser may connect across an old-box transition. It reports a pair skew
    and gives a non-blocking update hint; it does not refuse the session surface.
-7. Every Blitz-authored build-provenance payload has one fixture corpus and
-   conformance on every producing, forwarding, and consuming runtime, as
+7. Every Blitz-authored build-provenance payload has one fixture corpus. Every
+   producing, forwarding, and consuming runtime has conformance coverage, as
    required by `CLAUDE.md:59-63`.
 8. A successful upstream-merge PR changes the canary image input identity. A
    merge to `main` builds, publishes, pins, and deploys that image without a
@@ -73,18 +76,17 @@ The direction holds, with these code-grounded corrections.
    commit's `git-subtree-split` trailer is its integrity mirror. They must agree,
    not act as two independently editable pins. Before the 2026-09-04
    documentation migration, `vendor/lody/UPSTREAM.md` still carried an
-   independent npm row and skew policy; it now records only source and adapter
-   pins plus the qualified transition state.
+   independent npm row and skew policy. It now records source and adapter pins
+   plus the qualified transition state.
 2. **There are six gitlinks, but only five CLI build inputs.** The checked tree
    has core, Claude, Codex, DSH, Grok, and Kimi gitlinks. The CLI declares and
    builds only the first five (`vendor/lody/apps/cli/package.json:13-20`,
    `vendor/lody/apps/cli/package.json:69-73`), while the workspace explicitly
    excludes Kimi (`vendor/lody/pnpm-workspace.yaml:1-5`). Preserve and validate
    the Kimi gitlink, but do not materialize it for the CLI build.
-3. **Do not replace gitlinks inside the subtree.** Replacing
-   `vendor/lody/packages/acp-extension-*` with ordinary directories makes the
-   next subtree pull reconcile a directory/gitlink type change in every adapter,
-   contrary to the declared-seam-only rule (`vendor/lody/UPSTREAM.md:3-6`). Put
+3. **Do not replace gitlinks inside the subtree.** Ordinary directories would
+   make the next pull reconcile five directory/gitlink type changes. That
+   violates the declared-seam-only rule (`vendor/lody/UPSTREAM.md:3-6`). Put
    the five reviewed trees under `vendor/lody-adapters/<name>/`; overlay them
    onto a build copy at the paths the CLI expects. This keeps the imported
    subtree structurally faithful and keeps the next pull mechanical.
@@ -99,9 +101,9 @@ The direction holds, with these code-grounded corrections.
    then require that exact tar entry. This avoids another persistent edit to an
    upstream package manifest.
 6. **Use `/lody/build`, not a field on `/lody/platform`.** The owner platform
-   response is deliberately byte-for-byte daemon catalog data
+   response is byte-for-byte daemon catalog data
    (`packages/box/rootfs/usr/local/libexec/blitz-lody-bridge:20-44`,
-   `packages/box/guest-tests/test/lody-bridge-frames.test.ts:245-249`), and shared
+   `packages/box/guest-tests/test/lody-bridge-frames.test.ts:245-249`). Shared
    requests already have a separately fixture-pinned projection
    (`packages/box/guest-tests/test/lody-bridge-share.test.ts:370-383`). A build
    field would silently turn the owner response into a Blitz-authored envelope.
@@ -110,15 +112,15 @@ The direction holds, with these code-grounded corrections.
    comes from deployment configuration (`packages/control-plane/core/version.ts:17-45`).
    It says what a new box would boot, not what answered this browser request.
 8. **A SHA mismatch does not prove which side is older.** Commit IDs have no
-   ordering in the browser. The hint must say “This box and the app run
-   different Lody builds; update the box to match,” not assert that the box is
-   older. “Restart to update” is also inaccurate: cloud-VM replacement happens
+   ordering in the browser. The hint must say, “This box and the app run
+   different Lody builds. Update the box to match.” It must not claim which
+   side is older. “Restart to update” is also inaccurate. Cloud-VM replacement happens
    only after `updateRequested` is set (`packages/control-plane/core/box-config.ts:21-29`,
    `packages/control-plane/core/box-config.ts:142-180`).
 9. **Correction after #204 (2026-09-04): canary already has the image job and
    release hash.** Every push to `main` runs `gate`, then `image`, then `deploy`.
-   The image job plans a content-derived release, reuses a valid published
-   manifest or builds and publishes it, and passes its exact pin to deploy
+   The image job plans a content-derived release. It reuses a valid manifest or
+   builds and publishes one. It passes the exact pin to deploy
    (`.github/workflows/canary.yml:22-185`, `.github/workflows/canary.yml:187-306`).
    PR E adds the merge command and workflow caching. It does not add the job.
 10. **The image identity now covers pure Lody subtree merges.**
@@ -127,37 +129,38 @@ The direction holds, with these code-grounded corrections.
     tree, adapter vendor area, and all build scripts are included. A contract
     test parses `COPY` instructions and rejects an uncovered source. The key
     uses Git object IDs, so adapter trees and Lody gitlinks stay fast.
-11. **Correction after #204 (2026-09-04): canary R2 releases are already
-    immutable by namespace.** `box-image-key.mjs` hashes the four input object
-    IDs into a 64-character release ID and derives both
+11. **Canary R2 releases already use immutable namespaces.**
+    `box-image-key.mjs` hashes every `BOX_IMAGE_INPUTS` object ID into a
+    64-character release ID. It derives both
     `blitz-box:<releaseId>` and `box-image/<releaseId>`
     (`packages/control-plane/scripts/box-image-key.mjs:20-38`). The planner
-    accepts only a valid manifest with that exact tag, the publisher writes all
-    parts before `manifest.json`, and the Worker retains exact validated
-    release-keyed routes beside legacy routes
+    accepts only a valid manifest with that exact tag. The publisher writes all
+    parts before `manifest.json`. The Worker retains validated release-keyed
+    routes beside legacy routes
     (`packages/control-plane/scripts/plan-box-image.mjs:39-83`,
     `packages/control-plane/scripts/publish-box-image.mjs:315-420`,
-    `packages/control-plane/core/box-images.ts:24-56`). The remaining work is
-    Lody input coverage, not a new namespace or publisher mode.
-12. **The CI prerequisite is slightly larger than “Node plus tarball.”** The
-    harness supplies its own TCP gateway and files stand-in and spawns the Node
-    daemon and bridge itself (`packages/webapp/test/lody-daemon-harness.ts:447-543`),
-    so ttyd, cloudflared, and the Go gateway are not needed. Most suites need a
-    Linux runner, Node 22, repo dependencies, and a globally installed built
-    tarball. `lody-post-signin-turn` additionally execs the real Claude binary at
-    a fixed `/opt` path (`packages/webapp/test/lody-post-signin-turn.test.ts:16-21`,
+    `packages/control-plane/core/box-images.ts:24-56`). Lody input coverage is
+    complete. PR E retains merge automation and workflow caching.
+12. **The CI prerequisite is larger than “Node plus tarball.”** The harness
+    supplies its own TCP gateway and files stand-in. It also spawns the Node
+    daemon and bridge (`packages/webapp/test/lody-daemon-harness.ts:447-543`).
+    Ttyd, cloudflared, and the Go gateway are unnecessary. Most suites need a
+    Linux runner, Node 22, repository dependencies, and an installed tarball.
+    The `lody-post-signin-turn` suite also executes the real Claude binary.
+    Its default path is under `/opt`
+    (`packages/webapp/test/lody-post-signin-turn.test.ts:16-21`,
     `packages/webapp/test/lody-post-signin-turn.test.ts:57-59`,
-    `packages/webapp/test/lody-post-signin-turn.test.ts:131-155`), so make that
-    binary path overridable and install the same Claude CLI used by the image.
-13. **The bridge guest tests are not daemon-pair tests.** They intentionally run
-    the real bridge or registrar against stand-in daemon sockets; the registrar
-    suite says it needs neither a Lody bundle nor a network
+    `packages/webapp/test/lody-post-signin-turn.test.ts:131-155`). Make that
+    path overridable. Install the same Claude CLI used by the image.
+13. **The bridge guest tests are not daemon-pair tests.** They run the real
+    bridge or registrar against stand-in daemon sockets. The registrar suite
+    needs neither a Lody bundle nor a network
     (`packages/box/guest-tests/test/lody-projects-registration.test.ts:1-18`).
-    Keep them in the gate because they protect the boundary, but do not count
-    them as evidence that the built daemon starts.
+    Keep them because they protect the boundary. Do not count them as evidence
+    that the built daemon starts.
 14. **A new box image does not update the field automatically.** The cloud-VM
-    host polls box config and replaces its container only for a requested update;
-    the microVM provider has no update path (`packages/control-plane/core/box-config.ts:21-29`).
+    host replaces its container only after a requested update. The microVM
+    provider has no update path (`packages/control-plane/core/box-config.ts:21-29`).
     Automatic canary publication changes the configured image and new boxes;
     existing cloud boxes still require the update request. Do not silently turn
     a Lody merge into a fleet-wide process-killing replacement.
@@ -175,11 +178,11 @@ Change `vendor/lody/UPSTREAM.md` to record:
   language.
 
 Add `scripts/lody-pin.mjs`. It scans reachable history for the newest matching
-subtree trailer rather than assuming the newest commit touching `vendor/lody`
-is the squash commit. That assumption is already false because later declared
-seam commits also touch the subtree. The current manual runbook searches all
-reachable messages for the matching split trailer (`docs/LODY-MERGE.md`); the
-script exports one shared parser to the build, Vite, drift tests, and merge
+subtree trailer. It does not assume the newest `vendor/lody` commit is the
+squash. That assumption is already false because later declared
+seam commits also touch the subtree. The current runbook searches every
+reachable message for the matching trailer (`docs/LODY-MERGE.md`). The script
+exports one shared parser to the build, Vite, drift tests, and merge
 automation.
 
 `test/lody-pin-provenance.test.mjs` fails unless:
@@ -238,28 +241,26 @@ the corresponding gitlink and rejects unstaged checkout changes. It requires
 all five package files and keeps Kimi excluded. The opt-in fetch check compares
 the staged paths, modes, and bytes with exact upstream exports.
 
-At build time, copy `vendor/lody` to `/src/lody`, remove the five empty gitlink
-directories in that disposable copy, and copy the reviewed adapter trees into
-their expected `packages/acp-extension-*` paths. The source checkout remains
-unchanged.
+At build time, copy `vendor/lody` to `/src/lody`. Remove the five empty gitlink
+directories from that disposable copy. Overlay the reviewed adapters at their
+expected `packages/acp-extension-*` paths. The source checkout remains unchanged.
 
-Fetching adapters during every bake is rejected. It is fewer repository files,
-but adds five availability dependencies to the most expensive CI step, hides
-the adapter diff from code review, and makes an old image impossible to rebuild
-after a repository disappears. Budget roughly 1-2 MiB and 1.3k tracked files
-for the five current trees; the sync PR records the exact diff. That is an
-acceptable price for reviewed, offline adapter inputs. `pnpm install` still
-uses the npm registry, but its resolution is frozen by the lockfile; an adapter
-Git host is no longer part of the bake.
+Fetching adapters during every bake would save repository files. It would add
+five availability dependencies to the most expensive CI step. It would also
+hide adapter diffs and prevent rebuilds after a repository disappears. Budget
+roughly 1-2 MiB and 1.3k tracked files for the five current trees. The sync PR
+records the exact diff. That is acceptable for reviewed, offline adapter inputs.
+`pnpm install` still uses the npm registry. Its resolution is frozen by the
+lockfile. Adapter Git hosts are not part of the bake.
 
 ## Build and package in the image
 
-Add a `lody-build` stage to `packages/box/Dockerfile`, based on the same pinned
-Node 22 image the current vendors/runtime stages use
+Add a `lody-build` stage to `packages/box/Dockerfile`. Base it on the same
+pinned Node 22 image used by the vendors and runtime stages
 (`packages/box/Dockerfile:25-25`, `packages/box/Dockerfile:61-61`). Use Corepack
-for the package manager and run `corepack enable` before the build, because the
-upstream build scripts invoke bare `pnpm` (`vendor/lody/apps/cli/package.json:13-20`)
-and the spike failed until a Corepack shim existed
+and run `corepack enable` before building. Upstream invokes bare `pnpm`
+(`vendor/lody/apps/cli/package.json:13-20`). The spike failed until a Corepack
+shim existed
 (`/var/lib/blitz/home/codex/daemonbuild-result.md:59-66`). The root
 `packageManager` pins pnpm 10.20.0 plus its integrity hash
 (`vendor/lody/package.json:73-80`).
@@ -303,8 +304,8 @@ image still copies `/opt/blitz/npm` wholesale
 shell PATH keep their paths.
 
 The current s6 service invokes `/opt/blitz/npm/bin/lody start` directly
-(`packages/box/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run:46-52`), and the
-watchdog probes the health socket and restarts the s6 service
+(`packages/box/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run:46-52`). The
+watchdog probes the health socket and restarts the service
 (`packages/box/rootfs/etc/s6-overlay/s6-rc.d/lody-watchdog/run:44-68`). Neither
 parses `lody --version`. Keep the upstream `0.76.0` package version unchanged;
 rewriting it would create another version claim. Remove stale comments that say
@@ -331,9 +332,9 @@ Write `apps/cli/dist/BUILD.json` with this shape before packing:
 }
 ```
 
-`distSha256` is the hash of sorted `path\0sha256\n` records for every packed
-`package/dist` file except the self-referential `BUILD.json`, not only `index.js`
-and not the gzip tarball. That makes it stable across tar metadata and covers
+`distSha256` hashes sorted `path\0sha256\n` records for every packed
+`package/dist` file except `BUILD.json`. It does not hash only `index.js` or the
+gzip tarball. That makes it stable across tar metadata and covers
 code-split output. Identical inputs produce identical stamp bytes because the
 stamp has no build timestamp. Make the file mode 0444. The installed package's
 `dist/BUILD.json` is the only image copy. Plan PR D serves that file directly.
@@ -345,19 +346,18 @@ Add one declared daemon seam to
 `machine/acp-authenticate` `action: "start"` onto
 `acp-auth:<configId>`; submit/cancel remain on the default chain. At this pin the
 source protocol replaced caller-supplied agent identity with a
-daemon-authoritative persisted config ID; the authentication manager still
+daemon-authoritative persisted config ID. The authentication manager still
 enforces its per-agent-type exclusion after resolving that config. The defect
-is still present because the switch names session messages and otherwise
-returns `null` (`vendor/lody/apps/cli/src/lib/message-processor.ts:196-220`), while
+is still present because the switch names only session messages. Otherwise it
+returns `null` (`vendor/lody/apps/cli/src/lib/message-processor.ts:196-220`).
 `ConcurrentQueue` turns every `null` into one serial `__default__` chain
 (`vendor/lody/apps/cli/src/lib/concurrent-queue.ts:23-35`). Record the source
 hunk, rationale, conflict drill, and upstream-PR sketch in
 `vendor/lody/BLITZ-PATCHES.md`.
 
 Add `vendor/lody/apps/cli/src/lib/message-processor.test.ts`. Hold a start
-handler open, enqueue submit-code and cancel, and prove both execute before the
-start is released; prove two starts for one config serialize and starts for two
-configs may proceed independently. Extend
+handler open. Prove submit-code and cancel execute before it is released. Prove
+same-config starts serialize. Prove different-config starts may overlap. Extend
 `packages/webapp/test/lody-seam-pin.test.ts` and its pristine baseline mechanism
 to anchor the CLI source hunk as well as renderer seams. The current helper is
 hard-coded to the components tree (`packages/webapp/test/upstream-seam-pin.ts:32-55`),
@@ -368,28 +368,26 @@ upstream behavior:
 
 - `lody-local-platform.mjs`: source already hardcodes the
   public bundle to local mode (`vendor/lody/apps/cli/vite.config.ts:11-18`);
-- `lody-code-collab-worktree-root.mjs`: source now detects
-  local worktrees, uses the worktree path, waits while one is being prepared,
-  and never falls back to the shared clone
+- `lody-code-collab-worktree-root.mjs`: source now detects local worktrees and
+  uses their path. It waits during preparation and never uses the shared clone
   (`vendor/lody/apps/cli/src/lib/message-handler.ts:6234-6311`); and
 - `lody-acp-auth-queue.mjs`: its start-only behavior is tested at source instead
   of rewritten into compiled output.
 
 Two more compiled-bundle scripts landed after the spike:
 `lody-builtin-mcp-off.mjs` and `lody-session-sandbox.mjs`. PR C preserved their
-behavior as default-inert source/configuration seams selected by s6, then
-removed the npm pin, all five patch files and Docker commands, and the harness's
-duplicate patch path.
+behavior as default-inert source seams selected by s6. It then removed the npm
+pin, five patch files, Docker commands, and duplicate harness patch path.
 
 ## Pair identity at connect
 
 ### Box route
 
 Add `GET /build` to `blitz-lody-bridge`. It reads the immutable stamp path from
-`BLITZ_LODY_BUILD_STAMP` (default
-`/opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json`), validates the
-fixture-pinned shape, and serves the exact canonical JSON with `cache-control:
-no-store`. A missing stamp answers 404 with
+`BLITZ_LODY_BUILD_STAMP`. The default is
+`/opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json`. It validates the
+fixture-pinned shape and serves canonical JSON with `cache-control: no-store`.
+A missing stamp answers 404 with
 `{"ok":false,"error":"lody_build_unavailable"}`; malformed or unreadable
 answers 503 and never leaks file-system details.
 
@@ -402,23 +400,23 @@ Expose it as `/lody/build` through:
   names exactly five Lody doors (`packages/schema/src/webapp-surface.ts:12-22`);
   and
 - owned and shared endpoint construction in the webapp/harness. Build metadata
-  is public image provenance, so an otherwise valid shared claim may read it;
-  ordinary workspace viewers retain the gateway's existing Lody-door refusal.
+  is public image provenance. A valid shared claim may read it. Ordinary
+  workspace viewers retain the existing Lody-door refusal.
 
 Do not touch the body semantics of `/lody/platform`.
 
 ### Browser comparison
 
-`scripts/lody-pin.mjs` also supplies a Vite config helper. `vite.config.ts`
-defines a typed `__BLITZ_LODY_UPSTREAM_SHA__` from `UPSTREAM.md` at build time;
-the browser never fetches repository metadata. A drift test invokes the same
+`scripts/lody-pin.mjs` also supplies a Vite config helper. At build time,
+`vite.config.ts` defines `__BLITZ_LODY_UPSTREAM_SHA__` from `UPSTREAM.md`. The
+browser never fetches repository metadata. A drift test invokes the same
 helper and proves the compiled constant, pin parser, and subtree trailer agree.
 This fits the existing Vite config, which already executes Node-side derived
 configuration before the browser build (`packages/webapp/vite.config.ts:27-52`).
 
 Fetch `/lody/build` beside the first successful platform snapshot. Compare only
-`upstreamSha`; the adapter and lockfile fields are diagnostic and are already
-bound to that upstream tree by the pin gates. On mismatch, emit once per surface:
+`upstreamSha`. The adapter and lockfile fields are diagnostic. The pin gates
+already bind them to the upstream tree. On mismatch, emit once per surface:
 
 ```text
 console.warn("lody_pair_skew", {
@@ -439,10 +437,9 @@ transition state: no skew event, no blocking, and at most a debug log. A malform
 present stamp is an operator error and gets a structured error plus the same
 non-blocking hint.
 
-This comparison intentionally detects upstream-pair skew, not every Blitz-only
-renderer seam edit at the same upstream SHA. Those edits are covered by the CI
-pair gate and image-input hash below; making the connect contract hash every
-renderer source file would create false fleet skew for presentation-only seams.
+This comparison detects upstream-pair skew, not every Blitz-only renderer seam
+at the same upstream SHA. The CI pair gate and image-input hash cover those
+edits. Hashing every renderer source would create false fleet skew.
 
 ### Fixture corpus
 
@@ -475,9 +472,9 @@ line with the runbook build and export commands, then skips. CI sets
 workflow also rejects the diagnostic line. The harness never builds or caches
 a daemon on demand.
 
-The `lody-daemon` CI job on `ubuntu-latest` performs the same overlay, frozen
-install, build, output check, notice copy, pack, and stamp steps as the
-Dockerfile through one shared `scripts/lody-build-package.mjs`. It extracts the
+The `lody-daemon` CI job uses the same shared builder as the Dockerfile. The
+builder overlays adapters, installs, builds, checks output, copies notices,
+packs, and stamps. It extracts the
 tarball into a temporary prefix and runs `npm ci` at the package root. It then
 exports `LODY_BUNDLE` for that exact package and installs the image's Claude
 CLI for the post-sign-in signed-out cases. Node comes from the repository
@@ -485,15 +482,16 @@ engine constraint (`package.json:16-18`); Corepack selects the vendored pnpm
 version. Upload the tarball and stamp as workflow artifacts so matrix jobs test
 the exact bytes the build job produced.
 
-Run every non-probe file that imports `lody-daemon-harness.ts`, one file per
-matrix runner so the daemon's single-host lease does not serialize unrelated
-jobs. At minimum this includes:
+Run every non-probe file that imports `lody-daemon-harness.ts`. Use one file per
+matrix runner. The daemon's single-host lease must not serialize unrelated jobs.
+At minimum this includes:
 
 - `lody-session-surface.test.tsx`, `lody-session-rail.test.tsx`, and
   `lody-post-signin-turn.test.ts`;
 - ACP authentication, archive lifecycle, attachments, project-control frames,
-  session roundtrip/workdir, shared endpoints/surface, sharing relay, worktree
-  composer/session, and the remaining harness consumers; and
+  session roundtrip/workdir, shared endpoints/surface, sharing relay, and
+  worktree composer/session;
+- the remaining harness consumers; and
 - the three `lody-bridge-*` guest suites plus
   `lody-projects-registration.test.ts` as boundary gates. They can run in the
   existing JavaScript job because they use stand-ins.
@@ -501,10 +499,9 @@ jobs. At minimum this includes:
 Keep `BLITZ_LODY_LIVE_TURN` unset. The paid cases already skip unless it is
 explicitly enabled (`packages/webapp/test/lody-session-surface.test.tsx:14-24`,
 `packages/webapp/test/lody-post-signin-turn.test.ts:23-28`). Run the two-daemon
-`lody-keepalive-activation.probe.test.tsx` only on a scheduled/manual performance
-workflow: it is useful pair evidence but not a deterministic PR correctness
-gate. `lody-switch-cost.probe.test.tsx` remains opt-in measurement for the same
-reason.
+`lody-keepalive-activation.probe.test.tsx` only in a scheduled or manual
+performance workflow. It is useful pair evidence, not a deterministic PR gate.
+`lody-switch-cost.probe.test.tsx` stays opt-in for the same reason.
 
 ### Fixture provenance under the source-built daemon
 
@@ -524,12 +521,12 @@ build at `f4b1ba25`, then validate them on every later merge:
   (`packages/schema/fixtures/lody-share-claim/README.md:31-50`).
 
 The side-table entries now distinguish the current transition from the target.
-On the first source-built recapture, replace each historical capture sentence
-with “captured from the daemon built from `vendor/lody` at
-`<upstreamSha>` (`distSha256` `<sha>`)”. Do not churn genuine IDs on every merge.
-`scripts/lody-validate-fixtures.mjs` starts the just-built daemon, drives the
-capture scenarios, normalizes only documented nondeterministic IDs/timestamps,
-and fails on a semantic difference. Re-capture and change the provenance SHA
+On the first source-built recapture, replace each historical capture sentence.
+Use “captured from the daemon built from `vendor/lody` at `<upstreamSha>`
+(`distSha256` `<sha>`)”. Do not churn genuine IDs on every merge.
+`scripts/lody-validate-fixtures.mjs` starts the just-built daemon. It drives the
+capture scenarios and normalizes documented nondeterministic values. It fails
+on a semantic difference. Re-capture and change the provenance SHA
 only when the reviewed protocol behavior actually changes. Today the three
 corpora retain qualified historical capture sentences naming the old npm daemon
 (`packages/schema/fixtures/lody-data-plane/README.md:34-46`,
@@ -545,9 +542,9 @@ documentation on 2026-09-04.
 ### `npm run lody:merge`
 
 Add `"lody:merge": "node scripts/lody-merge.mjs"` at the root. The command
-requires a clean worktree, refuses `main`, accepts `--ref <release-tag|main>`,
-and performs the runbook's branch preparation, seam inventory, and subtree pull
-mechanically. Those steps are currently manual (`docs/LODY-MERGE.md`).
+requires a clean worktree and refuses `main`. It accepts
+`--ref <release-tag|main>`. It performs branch preparation, seam inventory, and
+the subtree pull. Those steps are currently manual (`docs/LODY-MERGE.md`).
 
 The script:
 
@@ -556,47 +553,42 @@ The script:
 2. records upstream commits since the old pin and intersects changed files with
    a machine-readable seam-path manifest used by `lody-seam-pin`;
 3. runs `git subtree pull --prefix vendor/lody <public-url> <sha> --squash`;
-4. on a conflict, stops without staging a guessed resolution and writes a
-   report under `.git/lody-merge/` with conflicted files, seam ownership, and
-   the relevant `BLITZ-PATCHES.md` conflict drill. A scheduled merge agent may
+4. on a conflict, stops without staging a guessed resolution. It writes a
+   report under `.git/lody-merge/`. The report lists conflicts, seam ownership,
+   and the relevant `BLITZ-PATCHES.md` drill. A scheduled merge agent may
    resolve it and resume with `--continue`; the script itself never chooses
    product behavior;
-5. runs `lody-sync-adapters`, updates the pin/squash fields in `UPSTREAM.md`,
-   refreshes every pristine upstream baseline, and normalizes the expected
-   `dist` manifest from the new build;
-6. runs adapter drift, pin provenance, source seam pins, the focused upstream
-   CLI seam test, the package build gates, fixture validation, and daemon-backed
-   pair CI locally or in the opened PR;
-7. generates a PR body with old/new commits, merged commit list, adapter changes,
-   every seam file touched, deleted seams, and an A/B/C table: A = upstream now
-   supplies the behavior and Blitz deletes its seam; B = behavior remains and
-   only the declared source anchor moved; C = semantic conflict requiring an
-   explicit resolution; and
+5. runs `lody-sync-adapters` and updates the pin fields in `UPSTREAM.md`. It
+   refreshes pristine baselines and normalizes the expected `dist` manifest;
+6. runs adapter drift, pin provenance, source seam pins, and the upstream seam
+   test. It also runs build gates, fixture validation, and daemon-backed pair CI;
+7. generates a PR body with commits, adapter changes, touched seam files, and
+   deleted seams. Its A/B/C table records the resolution. Class A deletes a
+   seam because upstream supplies it. Class B reanchors unchanged behavior.
+   Class C requires an explicit semantic decision; and
 8. commits generated material, pushes the automation branch, and opens the PR.
    It never enables auto-merge and never calls `gh pr merge`.
 
-Prefer an upstream release tag when it contains the required changes. `main` is
-allowed because upstream sometimes has no corresponding public release, but the
-generated PR marks it `UNRELEASED UPSTREAM` and requires the full pair matrix.
-A scheduled agent can run the command and prepare the PR; the sole routine human
-action is reviewing and clicking merge. A genuine class-C decision can still
-stop that automation—“one click” must not mean silently resolving a semantic
+Prefer an upstream release tag when it contains the required changes. Upstream
+`main` is allowed when no release contains them. The generated PR then says
+`UNRELEASED UPSTREAM` and requires the full pair matrix. A scheduled agent can
+prepare the PR. A human still reviews and clicks merge. A class-C decision can
+stop that automation. “One click” must not mean silently resolving a semantic
 conflict.
 
-The 2026-09-04 documentation migration rewrote `docs/LODY-MERGE.md` around this
-command and recovery path. It removed the former §3 npm verified-pair procedure
-and §5 compiled npm-artifact patch audit while retaining source-seam
-reconciliation, dependency audit, workaround mirrors, gates, and explicit merge
-approval. `CLAUDE.md` likewise replaced its former “one verified pair” and
+The 2026-09-04 migration rewrote `docs/LODY-MERGE.md` around this command and
+recovery path. It removed the npm-pair procedure and compiled-artifact audit.
+It retained seam reconciliation, dependency review, workaround mirrors, gates,
+and explicit approval. `CLAUDE.md` likewise replaced its former “one verified pair” and
 compiled-patch rules with current transition rules and the documentation map.
 PR E can delete the manual mechanics that the command finally emits.
 
 ### Extend the existing canary workflow
 
-PR #204 introduced the shared `BOX_IMAGE_INPUTS` list,
-`box-image-key.mjs`, `plan-box-image.mjs`, the canary `image` job, versioned R2
-routes, JSON publisher output, part-before-manifest upload ordering, and exact
-pin handoff to `deploy`. The source-daemon follow-up expanded that list to every
+PR #204 introduced `BOX_IMAGE_INPUTS`, the image key and planner, and the
+canary image job. It also added versioned R2 routes and JSON publisher output.
+Parts upload before the manifest. Deploy receives the exact pin. The
+source-daemon follow-up expanded that list to every
 Dockerfile repository input, including every Lody build input. Its release ID
 is a SHA-256 over those Git object IDs. All 64 characters become the image tag
 suffix and R2 namespace. A valid manifest is reused without rebuilding
@@ -604,41 +596,39 @@ suffix and R2 namespace. A valid manifest is reused without rebuilding
 `packages/control-plane/scripts/box-image-key.mjs:20-38`,
 `.github/workflows/canary.yml:48-185`).
 
-PR E extends that mechanism rather than adding a parallel one. Input coverage
-already landed and is no longer part of PR E:
+The source-daemon review follow-up extended that mechanism. Input coverage is
+complete and no longer belongs to PR E:
 
-1. extend the key's JSON evidence with `upstreamSha`, `subtreeCommit`, all five
-   adapter SHAs, the `pnpm-lock.yaml` object/digest, and daemon source-seam
-   blobs while retaining the existing full input-object hash;
-2. keep the current exact `box-image/<releaseId>/manifest.json` probe and reuse
-   behavior; when absent, build `linux/amd64` with the existing
-   `BLITZ_LODY_SESSIONS=1` argument, add BuildKit/GitHub Actions layer caching,
-   and run the Lody image smoke before the existing publisher runs;
-3. keep `publish-box-image.mjs --prefix ... --json ...`, its part-first upload,
-   the validated release-key route in `core/box-images.ts`, and the legacy
-   fixed route unchanged; and
-4. keep `deploy` dependent on `image`, passing the job's immutable `ref`, `tag`,
-   and archive SHA, and keep the `/version` check for both `GITHUB_SHA` and the
-   computed image tag.
+1. The key now covers `vendor/lody`, adapter snapshots, `pnpm-lock.yaml`, and
+   every shared daemon build input.
+2. The exact `box-image/<releaseId>/manifest.json` probe and reuse behavior stay
+   unchanged. An absent release builds `linux/amd64` with
+   `BLITZ_LODY_SESSIONS=1`. Lody image smoke runs before publication.
+3. `publish-box-image.mjs --prefix ... --json ...` retains part-first upload.
+   The validated release-key route and legacy fixed route remain unchanged.
+4. `deploy` still depends on `image`. It receives the immutable `ref`, `tag`,
+   and archive SHA. `/version` checks the commit and image tag.
+
+PR E will add BuildKit workflow caching. It will consume the existing input
+evidence rather than changing release identity again.
 
 The build argument already replaced the old untracked `sed`
 (`.github/workflows/canary.yml:109-116`). `env.defaults` remains off for forks
-and self-hosters while canary explicitly enables the daemon. The archive stays
+and self-hosters. Canary explicitly enables the daemon. The archive stays
 amd64 because canary currently offers only x86 machine types
 (`docs/BOX-IMAGE.md:106-108`). The content-derived tag is a cache/release
 identity, not a byte-reproducibility claim: the manifest's archive SHA remains
 the authoritative byte pin.
 
-The result of a vendor PR merge is: new input
-hash -> valid-release reuse or cold/warm image bake -> immutable R2 release ->
-canary Worker deploy pinned to that exact archive. #204 already removed the
-follow-up pin commit for current image inputs. Existing cloud boxes are updated
+The vendor merge changes the input hash. The workflow reuses a valid release or
+bakes an image. It publishes an immutable R2 release and pins canary to that
+archive. #204 removed the follow-up pin commit. Existing cloud boxes are updated
 only when a member or admin requests replacement; new boxes use the new pin
 immediately.
 
-`release.yml` inherits the daemon build without Lody-specific orchestration
-because it already builds `packages/box/Dockerfile` for amd64 and arm64 and pins
-client prod to the resulting immutable GHCR digest
+`release.yml` inherits the daemon build without Lody-specific orchestration. It
+already builds `packages/box/Dockerfile` for amd64 and arm64. Client production
+uses the resulting immutable GHCR digest
 (`.github/workflows/release.yml:45-57`, `.github/workflows/release.yml:71-85`,
 `.github/workflows/release.yml:119-145`). Add `cache-from/cache-to: type=gha`
 there. Each target-platform vendors stage installs native dependencies and runs
@@ -664,8 +654,8 @@ Every item below is a named failing gate, not a review reminder.
 | **Canary image inputs** | an upstream SHA, adapter SHA, lockfile, source seam, or Docker input changes without changing the derived image release ID |
 
 The package manifest is a short required-runtime list. It requires the CLI,
-every worker entry, WASM and its hashed glue, current preset roots, the notice,
-the stamp, `package.json`, and the shrinkwrap. It does not enumerate ordinary
+workers, WASM glue, preset roots, the notice, and the stamp. It also requires
+`package.json` and the shrinkwrap. It does not enumerate ordinary
 hashed chunks or warn about additions. Shipping only `index.js` remains known
 broken (`/var/lib/blitz/home/codex/daemonbuild-result.md:121-124`).
 
@@ -680,9 +670,9 @@ broken (`/var/lib/blitz/home/codex/daemonbuild-result.md:121-124`).
 - **Paid model turns in PR CI.** They spend a member subscription and already
   require an explicit opt-in. Free protocol, sign-out, lifecycle, and daemon
   behavior remain required.
-- **All upstream behavior.** The gates cover Blitz seams, boundary contracts,
-  package completeness, and representative real-daemon flows—not an exhaustive
-  reimplementation of Lody's own test suite.
+- **All upstream behavior.** The gates cover Blitz seams, contracts, package
+  completeness, and representative daemon flows. They do not reimplement
+  Lody's complete test suite.
 - **Automatic class-C conflict resolution or merge.** A stopped automation is
   safer than an invented product decision, and main deploys canary immediately.
 - **Canary arm64.** R2 mode is single-architecture and canary's catalog is x86;
@@ -714,10 +704,10 @@ duplicate lockfiles. Keep those paths until that separate content review.
 
 ## Migration sequence
 
-Each PR can ship on its own. The pair check is required now that PR A builds the
-reviewed artifact; the shipping image and migration pieces remain separate.
+Each PR can ship on its own. PR A builds the reviewed artifact, so the pair
+check is required. The shipping image and migration pieces remain separate.
 
-### PR A — prove the pair in CI (landed)
+### PR A: prove the pair in CI (landed)
 
 - Landed: `packages/webapp/test/lody-daemon-harness.ts`,
   `packages/webapp/test/lody-post-signin-turn.test.ts`,
@@ -727,10 +717,10 @@ reviewed artifact; the shipping image and migration pieces remain separate.
   build run in the required `lody-daemon` job.
 - The builder overlays the five reviewed trees landed in PR B. It does not
   change the shipping image or delete any npm patch yet.
-- Evidence: all non-paid real-daemon suites run instead of skipping for lack of
-  a bundle, and the built tarball/stamp are retained for inspection.
+- Evidence: all non-paid real-daemon suites run with a bundle. The built tarball
+  and stamp are retained for inspection.
 
-### PR B — make adapter inputs reviewed (landed)
+### PR B: make adapter inputs reviewed (landed)
 
 - Landed: `vendor/lody-adapters/<five trees>` plus five stamps,
   `scripts/lody-sync-adapters.mjs`,
@@ -740,7 +730,7 @@ reviewed artifact; the shipping image and migration pieces remain separate.
 - Landed footprint: 1,269 upstream entries plus five stamps. The sync/drift
   code replaced the temporary scratch-fetch procedure.
 
-### PR C — ship the source-built daemon (landed)
+### PR C: ship the source-built daemon (landed)
 
 - Landed across `packages/box/Dockerfile`, `vendor/lody/UPSTREAM.md`,
   `vendor/lody/BLITZ-PATCHES.md`, CLI `message-processor.ts`, source/baseline
@@ -752,30 +742,30 @@ reviewed artifact; the shipping image and migration pieces remain separate.
   steps, and the harness patch list and loop. Platform and Code Collab retain
   regression coverage; builtin MCP and session sandbox use reviewed opt-in
   source/configuration seams.
-- Kept the required CI pair job while moving the same builder into the
-  source-built image smoke; the pair job now executes seams 19-21 directly from
-  its preserved build scratch tree.
+- Kept the required CI pair job and reused its builder in image smoke. The pair
+  job executes seams 19-21 from its preserved build scratch tree.
 - The review follow-up added the lockfile-derived production shrinkwrap, target
   `npm ci`, the short runtime manifest, and deterministic single-copy stamp.
 - It also removed the harness's automatic builder and the dead install test.
 
-### PR D — expose and compare the pair (medium, about 300-450 lines)
+### PR D: expose and compare the pair (medium, about 300-450 lines)
 
-- Add `packages/schema/fixtures/lody-build/`; touch the bridge, gateway and Go
-  tests, schema webapp surface, harness endpoints, Vite config/type declaration,
-  platform fetch/surface UI, and guest/browser conformance tests.
+- Add `packages/schema/fixtures/lody-build/`. Touch the bridge, gateway, Go
+  tests, schema, harness endpoints, and Vite declarations. Add platform UI and
+  guest/browser conformance tests.
 - Add immutable stamp serving on `/lody/build`, the build-time upstream SHA,
   legacy tolerance, once-only structured skew log, and non-blocking update hint.
 - Add the contract row to `CLAUDE.md`. Do not change `/lody/platform` bytes.
 
-### PR E — automate upstream-to-canary (medium, about 350-500 lines)
+### PR E: automate upstream-to-canary (medium, about 350-500 lines)
 
 - Add `scripts/lody-merge.mjs`, `scripts/lody-pin.mjs`, the machine-readable
   seam/input manifests and tests, and root `lody:merge` scripts.
-- Extend `.github/workflows/canary.yml` and the key's evidence with explicit
-  Lody provenance. Input coverage already landed in the source-daemon review.
-  #204 already added the immutable R2 image job, versioned routes, publisher
-  JSON mode, and exact pin handoff to deploy. Add release BuildKit caching.
+- Consume the existing Lody-aware release identity from
+  `.github/workflows/canary.yml`. Input coverage landed in the source-daemon
+  review. #204 already added the immutable R2 image job and versioned routes.
+  It also added publisher JSON mode and exact pin handoff. Add release BuildKit
+  caching.
 - Touch `.github/workflows/release.yml`, `docs/LODY-MERGE.md`,
   `docs/BOX-IMAGE.md`, `CLAUDE.md`, and `vendor/lody/UPSTREAM.md` for the final
   automated shape.
@@ -785,13 +775,15 @@ reviewed artifact; the shipping image and migration pieces remain separate.
 
 ## What is simpler afterwards
 
+The operating model is simpler because no step rewrites a compiled daemon.
+The build tooling is larger, not smaller.
+
 - **Independent Lody core pins: 2 -> 1.** Remove one npm daemon pin; retain one
   upstream revision mirrored by a checked squash trailer. The inherited five
   adapter gitlink SHAs and lockfile are supply-chain inputs, not a second daemon
   selection.
-- **Compiled-bundle patch scripts: 5 -> 0.** Remove all five scripts, five
-  Docker copies/invocations, and the harness's duplicate five-entry patch path
-  after every still-required behavior has source/configuration coverage.
+- **Compiled-bundle patch scripts: 5 -> 0.** Remove all five scripts and Docker
+  invocations. Remove the duplicate harness path after source coverage lands.
 - **Brittle compiled-artifact guards: 7 -> 0.** Remove one published-bundle
   SHA-256 guard, three hard-coded npm-version guards, and three compiled-anchor
   occurrence guards. Replace them with one source anchor plus behavior,
@@ -800,9 +792,8 @@ reviewed artifact; the shipping image and migration pieces remain separate.
   §§3 and 5. Current §§1 and 2 also become one command rather than two manual
   procedures.
 - **Manual canary image operations after a current image-input change: already
-  5 -> 0 in #204.** The separate build, untracked feature-flag edit, R2 publish,
-  three-value source pin edit, and follow-up pin merge are gone. Lody inputs are
-  already part of the release identity, so a reviewed vendor merge starts or
-  reuses the matching bake and deploy.
-- **Runtime daemon paths changed: 0.** s6, watchdog, bridge, guest tests, shell
-  PATH, and the webapp harness keep the installed path they already use.
+  5 -> 0 in #204.** The separate build, feature edit, R2 publish, source pin
+  edit, and follow-up pin merge are gone. Lody inputs are already part of the
+  release identity. A reviewed merge starts or reuses its bake.
+- **Runtime daemon paths changed: 0.** The s6 service, watchdog, bridge, tests,
+  shell PATH, and webapp harness keep their installed paths.

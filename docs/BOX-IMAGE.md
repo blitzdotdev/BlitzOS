@@ -52,8 +52,8 @@ configuration gate and under the `canary` environment:
 1. It checks out the merged tree, sets up Node, runs `npm ci`, writes the
    canary `wrangler.toml` from
    `CANARY_WRANGLER_TOML`, and reads `APP_URL` from that config.
-2. It computes a release id from the git object ids of `packages/box`,
-   `packages/broker`, `packages/schema/fixtures`, and `env.defaults`. The full
+2. It computes a release id from every repository input copied by the
+   Dockerfile. `BOX_IMAGE_INPUTS` is the shared source list. The full
    64-character SHA-256 becomes `<releaseId>`, the image tag is
    `blitz-box:<releaseId>`, and the R2 prefix is `box-image/<releaseId>`.
 3. It requests
