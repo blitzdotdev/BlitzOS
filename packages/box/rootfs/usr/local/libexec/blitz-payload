@@ -4,6 +4,18 @@
 // The payload updater is deliberately part of the base image. It is the one
 // box-side component that must still work when a downloaded payload is bad,
 // so it has no package dependencies and never resolves code through `current`.
+//
+// DAEMON IDLE DOOR. The vendored LocalSessionControlRequest union has no
+// request that lists sessions, and LocalMachineRpcRequest has no presence-read
+// method. The daemon does expose `activeSessionCount` on its probe socket's
+// `/state` document; Lody derives that count from the same active-presence
+// states (`running`, `requestPermission`, and `initializing`) that drive the
+// session UI. We first require the control socket to exist (an absent daemon is
+// idle), then read that bounded local state endpoint. If an older daemon does
+// not expose it, the last resort is the session cgroup CPU signal described in
+// plans/THIN-IMAGE.md: a leaf whose `cpu.stat` usage advanced during the last
+// 30 seconds is busy. Every branch is bounded and fail-open so idle detection
+// can delay an update, but can never strand the updater loop.
 
 const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
@@ -250,11 +262,27 @@ function settings() {
     ),
     serviceRoot: safeAbsolutePath('BLITZ_PAYLOAD_SERVICE_ROOT', '/run/service'),
     s6Svc: process.env.BLITZ_PAYLOAD_S6_SVC || '/command/s6-svc',
+    s6Svstat: process.env.BLITZ_PAYLOAD_S6_SVSTAT || '/command/s6-svstat',
     gatewayHealthUrl:
       process.env.BLITZ_PAYLOAD_GATEWAY_HEALTH_URL || 'http://127.0.0.1:7445/healthz',
     daemonSocket:
       process.env.BLITZ_PAYLOAD_DAEMON_SOCKET
       || path.join(lodyData, 'run/lody-oss-probe.sock'),
+    daemonControlSocket:
+      process.env.BLITZ_PAYLOAD_DAEMON_CONTROL_SOCKET
+      || path.join(lodyData, 'run/lody-oss-control.sock'),
+    daemonCgroupRoot: safeAbsolutePath(
+      'BLITZ_PAYLOAD_DAEMON_CGROUP_ROOT',
+      '/sys/fs/cgroup/blitz-user.slice/lody-sessions',
+    ),
+    daemonIdleWaitMs: positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_WAIT', 600),
+    daemonIdlePollMs: positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_POLL', 15),
+    daemonIdleProbeTimeoutMs: positiveSeconds(
+      'BLITZ_PAYLOAD_DAEMON_IDLE_PROBE_TIMEOUT',
+      2,
+    ),
+    daemonKillGraceMs: positiveSeconds('BLITZ_PAYLOAD_DAEMON_KILL_GRACE', 30),
+    daemonKillPollMs: positiveSeconds('BLITZ_PAYLOAD_DAEMON_KILL_POLL', 5),
     intervalMs: positiveSeconds('BLITZ_PAYLOAD_INTERVAL', 300),
     firstDelayMs: positiveSeconds('BLITZ_PAYLOAD_FIRST_DELAY', 60),
     healthTimeoutMs: positiveSeconds('BLITZ_PAYLOAD_HEALTH_TIMEOUT', 60),
@@ -419,7 +447,41 @@ async function removeStaging(config) {
   }
 }
 
+async function recoverPendingDaemon(config, state) {
+  if (state.pendingDaemon === null || typeof state.pendingDaemon !== 'object') return state;
+  const pending = state.pendingDaemon;
+  const daemonLink = path.join(config.lodyRoot, 'current');
+  const actualDaemon = await linkInfo(daemonLink);
+  let recovered = { ...state };
+  if (
+    typeof pending.target === 'string'
+    && typeof pending.version === 'string'
+    && actualDaemon.target === pending.target
+    && actualDaemon.exists
+  ) {
+    recovered = {
+      ...recovered,
+      daemonVersion: pending.version,
+      daemonTarget: pending.target,
+      daemonProtocolVersion: Number.isSafeInteger(pending.protocolVersion)
+        ? pending.protocolVersion
+        : null,
+      previousDaemonVersion: state.daemonVersion,
+      previousDaemonTarget: state.daemonTarget,
+      previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
+        ? state.daemonProtocolVersion
+        : null,
+    };
+  } else if (typeof state.daemonTarget === 'string') {
+    await atomicLink(daemonLink, state.daemonTarget);
+  }
+  delete recovered.pendingDaemon;
+  await writeState(config, recovered);
+  return recovered;
+}
+
 async function recoverPending(config, state) {
+  state = await recoverPendingDaemon(config, state);
   if (state.pending === null || typeof state.pending !== 'object') return state;
   const pending = state.pending;
   const nextPayload = pending.payload;
@@ -449,8 +511,14 @@ async function recoverPending(config, state) {
       previousTarget: state.currentTarget,
       daemonVersion: nextDaemon.version,
       daemonTarget: nextDaemon.target,
+      daemonProtocolVersion: Number.isSafeInteger(nextDaemon.protocolVersion)
+        ? nextDaemon.protocolVersion
+        : null,
       previousDaemonVersion: state.daemonVersion,
       previousDaemonTarget: state.daemonTarget,
+      previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
+        ? state.daemonProtocolVersion
+        : null,
     };
     delete completed.pending;
     await writeState(config, completed);
@@ -513,8 +581,12 @@ async function initialiseState(config) {
         ? state.previousDaemonVersion
         : inferredVersion(previous),
       daemonTarget: previous,
+      daemonProtocolVersion: Number.isSafeInteger(state.previousDaemonProtocolVersion)
+        ? state.previousDaemonProtocolVersion
+        : null,
       previousDaemonVersion: null,
       previousDaemonTarget: null,
+      previousDaemonProtocolVersion: null,
     };
   }
   if (state.currentTarget !== payload.target) {
@@ -532,8 +604,12 @@ async function initialiseState(config) {
       previousDaemonVersion:
         typeof state.daemonVersion === 'string' ? state.daemonVersion : null,
       previousDaemonTarget: typeof state.daemonTarget === 'string' ? state.daemonTarget : null,
+      previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
+        ? state.daemonProtocolVersion
+        : null,
       daemonVersion: inferredVersion(daemon.target),
       daemonTarget: daemon.target,
+      daemonProtocolVersion: null,
     };
   }
   await writeState(config, state);
@@ -828,10 +904,37 @@ async function switchRelease(config, state, nextPayload, nextDaemon) {
     previousTarget: state.currentTarget,
     daemonVersion: nextDaemon.version,
     daemonTarget: nextDaemon.target,
+    daemonProtocolVersion: Number.isSafeInteger(nextDaemon.protocolVersion)
+      ? nextDaemon.protocolVersion
+      : null,
     previousDaemonVersion: state.daemonVersion,
     previousDaemonTarget: state.daemonTarget,
+    previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
+      ? state.daemonProtocolVersion
+      : null,
   };
   delete committed.pending;
+  await writeState(config, committed);
+  return committed;
+}
+
+async function switchDaemonRelease(config, state, nextDaemon) {
+  await writeState(config, { ...state, pendingDaemon: nextDaemon });
+  await atomicLink(path.join(config.lodyRoot, 'current'), nextDaemon.target);
+  const committed = {
+    ...state,
+    daemonVersion: nextDaemon.version,
+    daemonTarget: nextDaemon.target,
+    daemonProtocolVersion: Number.isSafeInteger(nextDaemon.protocolVersion)
+      ? nextDaemon.protocolVersion
+      : null,
+    previousDaemonVersion: state.daemonVersion,
+    previousDaemonTarget: state.daemonTarget,
+    previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
+      ? state.daemonProtocolVersion
+      : null,
+  };
+  delete committed.pendingDaemon;
   await writeState(config, committed);
   return committed;
 }
@@ -844,18 +947,185 @@ async function restartOrdinaryService(service, config) {
   );
 }
 
-// Step 5 replaces the body of this clearly named seam with the daemon idle
-// wait. Until then the daemon obeys the same manifest-driven restart rule as
-// every other longrun, exactly as §7 step 3 specifies.
-async function restartLodyDaemonWithoutIdleWait(config) {
-  await restartOrdinaryService('lody-daemon', config);
+function daemonRuntimeActiveCount(socketPath, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const request = http.request({
+      socketPath,
+      path: '/state',
+      method: 'GET',
+      headers: { 'x-lody-local-control': '1' },
+      timeout: timeoutMs,
+    }, (response) => {
+      if (
+        response.statusCode === undefined
+        || response.statusCode < 200
+        || response.statusCode >= 300
+      ) {
+        response.resume();
+        finish(null);
+        return;
+      }
+      const chunks = [];
+      let bytes = 0;
+      response.on('data', (chunk) => {
+        if (settled) return;
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        bytes += buffer.length;
+        if (bytes > 64 * 1024) {
+          request.destroy();
+          finish(null);
+          return;
+        }
+        chunks.push(buffer);
+      });
+      response.once('error', () => finish(null));
+      response.once('end', () => {
+        try {
+          const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          const count = parsed !== null && typeof parsed === 'object'
+            ? parsed.activeSessionCount
+            : null;
+          finish(Number.isSafeInteger(count) && count >= 0 ? count : null);
+        } catch {
+          finish(null);
+        }
+      });
+    });
+    request.once('timeout', () => request.destroy());
+    request.once('error', () => finish(null));
+    request.end();
+  });
 }
 
-async function restartServices(services, config) {
-  for (const service of services) {
-    if (service === 'lody-daemon') await restartLodyDaemonWithoutIdleWait(config);
-    else await restartOrdinaryService(service, config);
+async function cgroupCpuUsage(filePath) {
+  try {
+    const source = await fsp.readFile(filePath, 'utf8');
+    const match = /^usage_usec ([0-9]+)$/mu.exec(source);
+    if (match === null) return null;
+    const usage = Number(match[1]);
+    return Number.isSafeInteger(usage) ? usage : null;
+  } catch {
+    return null;
   }
+}
+
+async function activeCgroupCount(config, observations, observedAtMs) {
+  let entries;
+  try {
+    entries = await fsp.readdir(config.daemonCgroupRoot, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let busy = 0;
+  const present = new Set();
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('lody-session-')) continue;
+    const usage = await cgroupCpuUsage(path.join(config.daemonCgroupRoot, entry.name, 'cpu.stat'));
+    if (usage === null) continue;
+    present.add(entry.name);
+    const previous = observations.get(entry.name);
+    if (previous === undefined || observedAtMs - previous.observedAtMs < 30_000) {
+      busy += 1;
+      if (previous === undefined) observations.set(entry.name, { usage, observedAtMs });
+      continue;
+    }
+    if (usage > previous.usage) busy += 1;
+    observations.set(entry.name, { usage, observedAtMs });
+  }
+  for (const name of observations.keys()) {
+    if (!present.has(name)) observations.delete(name);
+  }
+  return busy;
+}
+
+async function daemonActiveSessionCount(config, observations, observedAtMs) {
+  try {
+    const control = await fsp.stat(config.daemonControlSocket).catch(() => null);
+    if (control === null) return 0;
+    const stateCount = await daemonRuntimeActiveCount(
+      config.daemonSocket,
+      config.daemonIdleProbeTimeoutMs,
+    );
+    if (stateCount !== null) return stateCount;
+    return await activeCgroupCount(config, observations, observedAtMs);
+  } catch {
+    return 0;
+  }
+}
+
+function secondsDetail(milliseconds) {
+  const seconds = milliseconds / 1000;
+  return Number.isInteger(seconds) ? String(seconds) : String(Number(seconds.toFixed(3)));
+}
+
+async function waitForDaemonIdle(config) {
+  const observations = new Map();
+  let waitedMs = 0;
+  let runningSessions = await daemonActiveSessionCount(config, observations, waitedMs);
+  while (runningSessions > 0 && waitedMs < config.daemonIdleWaitMs) {
+    const pause = Math.min(config.daemonIdlePollMs, config.daemonIdleWaitMs - waitedMs);
+    await sleep(pause);
+    waitedMs += pause;
+    runningSessions = await daemonActiveSessionCount(config, observations, waitedMs);
+  }
+  return {
+    runningSessions,
+    detail: `restarted with ${runningSessions} sessions running after ${secondsDetail(waitedMs)}s wait`,
+  };
+}
+
+async function daemonPid(config) {
+  try {
+    const output = await runCommand(
+      config.s6Svstat,
+      ['-o', 'pid', path.join(config.serviceRoot, 'lody-daemon')],
+      config.requestTimeoutMs,
+    );
+    const pid = output.trim();
+    return /^[0-9]+$/u.test(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function restartLodyDaemon(config, waitForIdle) {
+  const idle = waitForIdle
+    ? await waitForDaemonIdle(config)
+    : { runningSessions: 0, detail: 'restarted without an idle wait during rollback' };
+  const before = await daemonPid(config);
+  await restartOrdinaryService('lody-daemon', config);
+  if (before === null) return idle.detail;
+  let waitedMs = 0;
+  while (waitedMs < config.daemonKillGraceMs) {
+    const after = await daemonPid(config);
+    if (after === null || after !== before) return idle.detail;
+    const pause = Math.min(config.daemonKillPollMs, config.daemonKillGraceMs - waitedMs);
+    await sleep(pause);
+    waitedMs += pause;
+  }
+  log(`lody-daemon ignored SIGTERM for ${secondsDetail(config.daemonKillGraceMs)}s; sending SIGKILL`);
+  await runCommand(
+    config.s6Svc,
+    ['-k', path.join(config.serviceRoot, 'lody-daemon')],
+    config.requestTimeoutMs,
+  );
+  return idle.detail;
+}
+
+async function restartServices(services, config, waitForDaemonIdleBeforeRestart = true) {
+  let daemonDetail = null;
+  for (const service of services) {
+    if (service === 'lody-daemon') {
+      daemonDetail = await restartLodyDaemon(config, waitForDaemonIdleBeforeRestart);
+    } else await restartOrdinaryService(service, config);
+  }
+  return daemonDetail;
 }
 
 function probeDaemon(socketPath, timeoutMs) {
@@ -891,6 +1161,7 @@ async function probeGateway(config, timeoutMs) {
 
 async function waitForHealth(checkDaemon, config) {
   const deadline = Date.now() + config.healthTimeoutMs;
+  let last = { gatewayHealthy: false, daemonHealthy: !checkDaemon };
   do {
     const remaining = Math.max(1, deadline - Date.now());
     const probeTimeout = Math.min(2000, remaining);
@@ -898,11 +1169,12 @@ async function waitForHealth(checkDaemon, config) {
       probeGateway(config, probeTimeout),
       checkDaemon ? probeDaemon(config.daemonSocket, probeTimeout) : Promise.resolve(true),
     ]);
-    if (gatewayHealthy && daemonHealthy) return true;
+    last = { gatewayHealthy, daemonHealthy };
+    if (gatewayHealthy && daemonHealthy) return last;
     if (Date.now() >= deadline) break;
     await sleep(Math.min(config.healthIntervalMs, Math.max(1, deadline - Date.now())));
   } while (Date.now() < deadline);
-  return false;
+  return last;
 }
 
 async function recordOutcome(config, state, outcome, detail) {
@@ -957,6 +1229,9 @@ async function applyPayload(pin, manifest, config, initialState) {
     target: state.currentTarget,
     daemonVersion: state.daemonVersion,
     daemonTarget: state.daemonTarget,
+    daemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
+      ? state.daemonProtocolVersion
+      : null,
   };
   try {
     state = await switchRelease(
@@ -966,6 +1241,9 @@ async function applyPayload(pin, manifest, config, initialState) {
       {
         version: daemonChanged ? manifest.daemon.version : state.daemonVersion,
         target: daemonTarget,
+        protocolVersion: daemonChanged
+          ? manifest.daemon.protocolVersion
+          : state.daemonProtocolVersion,
       },
     );
   } catch (error) {
@@ -975,21 +1253,65 @@ async function applyPayload(pin, manifest, config, initialState) {
   }
 
   let activationFailure = null;
+  let daemonRestartDetail = null;
+  const daemonRestarted = services.includes('lody-daemon');
   try {
-    await restartServices(services, config);
+    daemonRestartDetail = await restartServices(services, config);
   } catch (error) {
     activationFailure = `service restart failed: ${errorMessage(error)}`;
   }
-  if (activationFailure === null && !await waitForHealth(daemonChanged, config)) {
-    activationFailure = 'health check failed';
+  let health;
+  if (activationFailure === null) {
+    health = await waitForHealth(daemonRestarted, config);
+    if (!health.gatewayHealthy) activationFailure = 'gateway health check failed';
+    else if (!health.daemonHealthy) activationFailure = 'daemon health check failed';
+  } else {
+    health = await waitForHealth(false, config);
   }
   if (activationFailure === null) {
     state.reportVersion = pin.version;
+    const detail = [
+      services.length === 0
+        ? 'healthy; no service restart required'
+        : `healthy; restarted ${services.join(', ')}`,
+      daemonRestartDetail,
+      daemonChanged ? `daemon protocol ${manifest.daemon.protocolVersion}` : null,
+    ].filter((part) => part !== null).join('; ');
     return recordOutcome(
       config,
       state,
       'applied',
-      services.length === 0 ? 'healthy; no service restart required' : `healthy; restarted ${services.join(', ')}`,
+      detail,
+    );
+  }
+
+  if (daemonChanged && health.gatewayHealthy) {
+    try {
+      state = await switchDaemonRelease(config, state, {
+        version: previous.daemonVersion,
+        target: previous.daemonTarget,
+        protocolVersion: previous.daemonProtocolVersion,
+      });
+      await restartLodyDaemon(config, false);
+      const rollbackHealth = await waitForHealth(true, config);
+      if (!rollbackHealth.gatewayHealthy || !rollbackHealth.daemonHealthy) {
+        throw new Error('previous daemon health check failed');
+      }
+    } catch (error) {
+      state.reportVersion = pin.version;
+      return recordOutcome(
+        config,
+        state,
+        'start-failed',
+        `${activationFailure}; daemon-only rollback failed: ${errorMessage(error)}; payload kept`,
+      );
+    }
+    state.reportVersion = pin.version;
+    return recordOutcome(
+      config,
+      state,
+      'rolled-back',
+      `${activationFailure}; daemon protocol ${manifest.daemon.protocolVersion} rolled back; payload kept`,
     );
   }
 
@@ -998,10 +1320,15 @@ async function applyPayload(pin, manifest, config, initialState) {
       config,
       state,
       { version: previous.version, target: previous.target },
-      { version: previous.daemonVersion, target: previous.daemonTarget },
+      {
+        version: previous.daemonVersion,
+        target: previous.daemonTarget,
+        protocolVersion: previous.daemonProtocolVersion,
+      },
     );
-    await restartServices(services, config);
-    if (!await waitForHealth(daemonChanged, config)) {
+    await restartServices(services, config, false);
+    const rollbackHealth = await waitForHealth(daemonRestarted, config);
+    if (!rollbackHealth.gatewayHealthy || !rollbackHealth.daemonHealthy) {
       throw new Error('previous release health check failed');
     }
   } catch (error) {
