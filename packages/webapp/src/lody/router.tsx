@@ -45,7 +45,7 @@ import {
   useParams,
   useSearch,
 } from "@tanstack/react-router";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { isJsonNumber, isJsonString, type JsonValue } from "@blitzos/schema";
 import { ChatLanding } from "@lody/components/components/chat/chat-landing";
@@ -60,6 +60,7 @@ import { WorkspaceRouteTargetProvider } from "@lody/components/providers/workspa
 import { MobileSessionStack } from "./MobileSessionStack.js";
 import { LODY_ARCHIVE_ROUTE, LODY_CHAT_ROUTE, LODY_SESSION_ROUTE } from "./route-ids.js";
 import { TerminalTabsHost } from "./TerminalTabsStrip.js";
+import { useSidePanel } from "./side-panel.js";
 import { useSurfaceTabs } from "./surface-tabs.js";
 import { lodyV1SuppressionProps } from "./v1-scope.js";
 
@@ -337,6 +338,32 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           onSessionTabSelect: surfaceTabs.onDeselect,
           onSessionMissing: surfaceTabs.onSessionMissing,
         };
+    // Seam patches 19 and 20: the right icon strip drives the side panel and
+    // our Connections panel lives in it; loopback addresses in the Browser
+    // panel resolve through the box gateway. Absent when no shell drives the
+    // panel, for the same inertness reason as the six above.
+    //
+    // The state report goes through a ref so the page's effect reads the
+    // latest shell closure without re-running on every render of ours, and
+    // `null` on unmount is OURS to send: the page cannot announce that it is
+    // gone, and a strip left holding the last state would draw a pressed icon
+    // for a panel nobody can see.
+    const sidePanel = useSidePanel();
+    const onSidePanelStateChange = useRef(sidePanel?.onStateChange ?? null);
+    onSidePanelStateChange.current = sidePanel?.onStateChange ?? null;
+    useEffect(() => () => {
+      onSidePanelStateChange.current?.(null);
+    }, []);
+    const sidePanelProps = sidePanel === null
+      ? {}
+      : {
+          hostSidePanelTabs: sidePanel.hostTabs,
+          sidePanelRequest: sidePanel.request,
+          onSidePanelStateChange: sidePanel.onStateChange,
+          resolveManagedPreviewViewerUrl: sidePanel.resolveManagedPreviewViewerUrl,
+        };
+    // Hooks above, the mobile early return below: the phone branch draws the
+    // session as a drawer over the landing (see the doc comment).
     if (isMobile) return null;
     return (
       <AppThemeShell>
@@ -376,6 +403,7 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           // footer says nothing about it.
           hideConnectionStatus={V1.hideConnectionStatus}
           {...hostTabs}
+          {...sidePanelProps}
         />
       </AppThemeShell>
     );

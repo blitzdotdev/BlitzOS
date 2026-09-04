@@ -41,6 +41,7 @@ import {
   type LocalProjectId,
   type LocalProjectMeta,
   type PrStatus,
+  type PreviewTarget,
   type ProjectRef,
   type SessionId,
   type SessionMeta,
@@ -294,7 +295,15 @@ import {
 import { persistAgentSessionDefaults } from '@/lib/local-storage-cache';
 import { SessionChangesSidebar } from './session-changes-sidebar';
 
-type SidebarTab = PersistedSidePanelTab;
+/** The id of a HOST-contributed side-panel tab (seam patch 19). The prefix is
+ * what keeps one out of the persisted side-panel state, whose schema is an enum
+ * of the fixed panels. */
+type HostSidePanelTabId = `host:${string}`;
+type SidebarTab = PersistedSidePanelTab | HostSidePanelTabId;
+const isHostSidePanelTab = (tab: SidebarTab | null): tab is HostSidePanelTabId =>
+  tab !== null && tab.startsWith('host:');
+const isPersistedSidePanelTab = (tab: SidebarTab): tab is PersistedSidePanelTab =>
+  !isHostSidePanelTab(tab);
 
 type ViewerTab =
   | {
@@ -696,6 +705,55 @@ export interface SessionSurfaceTab {
   content: ReactNode;
 }
 
+/** Stable empty default, for the same reason as `EMPTY_SURFACE_TABS`. */
+const EMPTY_HOST_SIDE_PANEL_TABS: readonly SessionHostSidePanelTab[] = [];
+
+/** One tab the HOST contributes to this session's SIDE panel.
+ *
+ * The side panel already merges three kinds of tab — fixed panels, side chats
+ * and viewers — behind one strip and one `+` menu. A host that embeds this page
+ * may own a panel that belongs beside them rather than in a second strip. The
+ * page draws the tab, offers it in the `+` menu and the empty state, and lays
+ * the content out; the host owns the list and the content. */
+export interface SessionHostSidePanelTab {
+  /** MUST start with `host:`, so it can never be mistaken for one of the
+   *  persisted fixed panels and is filtered out of the persisted side-panel
+   *  state. Unique across this panel. */
+  id: `host:${string}`;
+  label: string;
+  icon?: ReactNode;
+  /** Rendered as the panel body while this tab is active; not mounted while
+   *  another tab is. */
+  content: ReactNode;
+}
+
+/** A one-shot request from the host to open or close a side-panel tab.
+ *
+ * `seq` is what makes a repeat distinct: the page handles each `seq` once, so
+ * the host bumps it per request rather than clearing the prop in between. */
+export interface SessionSidePanelRequest {
+  /** A fixed panel id, a `host:` id, or `side-session` (which launches a Side
+   *  Chat, as the `+` menu entry does). Ids the panel cannot offer right now
+   *  are ignored. */
+  tabId: string;
+  action: 'open' | 'close';
+  seq: number;
+}
+
+/** The side panel as it stands, reported to the host whenever any field
+ * changes, so a host that draws its own chrome for it can follow along. */
+export interface SessionSidePanelHostState {
+  open: boolean;
+  /** A fixed id, a `host:` id, a side-session tab id or a viewer id; `null`
+   *  when nothing is selected. */
+  activeTabId: string | null;
+  /** The ids the strip currently draws, in strip order. */
+  openedTabIds: readonly string[];
+  /** Every option the `+` menu or the empty state could offer — Side Chat,
+   *  the fixed panels and the host tabs — with its current `disabled`. */
+  availableOptions: readonly { id: string; disabled: boolean }[];
+}
+
 /**
  * Session detail page component.
  * Displays the chat interface for a single session.
@@ -720,6 +778,10 @@ const SessionDetail = ({
   onSessionTabSelect,
   onSessionMissing,
   sideChatRequiresAssistantTurn = false,
+  hostSidePanelTabs = EMPTY_HOST_SIDE_PANEL_TABS,
+  sidePanelRequest = null,
+  onSidePanelStateChange,
+  resolveManagedPreviewViewerUrl,
 }: {
   sessionId: SessionId;
   urlTab?: string;
@@ -812,6 +874,35 @@ const SessionDetail = ({
    * behaviour and every upstream call site is unchanged.
    */
   sideChatRequiresAssistantTurn?: boolean;
+  /** Host-contributed side-panel tabs, offered after the fixed panels. Empty
+   * by default, so the panel is exactly what it was without them. */
+  hostSidePanelTabs?: readonly SessionHostSidePanelTab[];
+  /**
+   * Open or close a side-panel tab from outside the page.
+   *
+   * The panel's own controls live inside it — the strip, the `+` menu, the
+   * empty state — so a host that draws a control for the panel elsewhere has
+   * no way to reach them. Each request is handled once, by its `seq`, and does
+   * what the `+` menu entry for the same id does. Desktop only: on mobile the
+   * panel is a drawer this page does not own.
+   */
+  sidePanelRequest?: SessionSidePanelRequest | null;
+  /** Called whenever the side panel's state changes; see
+   * `SessionSidePanelHostState`. Read through a ref, so a fresh closure on
+   * every host render costs nothing. */
+  onSidePanelStateChange?: (state: SessionSidePanelHostState) => void;
+  /**
+   * Answer a loopback or private-LAN Browser target with a viewer URL of the
+   * host's own, or `null` to let the panel resolve it as it does today.
+   *
+   * The Browser panel knows two engines for such a target: a local endpoint
+   * (Electron only) and a remote tunnel. A host that already proxies the
+   * session machine's ports can serve the page itself; the URL it returns is
+   * put in the managed-preview iframe AS GIVEN — absolute, since the frame's
+   * origin is read from it — with no annotation runtime expected behind it.
+   * Passed to every `SessionBrowserPanel` this page mounts.
+   */
+  resolveManagedPreviewViewerUrl?: (target: PreviewTarget) => string | null;
 }) => {
   const { t } = useTranslation();
   const router = useRouter();
@@ -2687,6 +2778,17 @@ const SessionDetail = ({
     }
   }, [activeBrowserSession, activeSidebarTab]);
 
+  // Seam patch 19: the rule the two effects above apply to PR and Browser,
+  // for a host tab the host has since withdrawn.
+  useEffect(() => {
+    if (
+      isHostSidePanelTab(activeSidebarTab) &&
+      !hostSidePanelTabs.some((tab) => tab.id === activeSidebarTab)
+    ) {
+      setActiveSidebarTab(null);
+    }
+  }, [activeSidebarTab, hostSidePanelTabs]);
+
   // The ?browser=1 URL param is only meaningful for the mobile full-screen
   // drawer. On desktop the browser lives in the resizable sidebar (no URL
   // state), so strip the flag to keep the URL consistent and avoid a stale
@@ -3544,8 +3646,14 @@ const SessionDetail = ({
         kind: 'pr',
       });
     }
+    // Seam patch 19: host tabs are fixed panels for every purpose but
+    // persistence — offered by the `+` menu and the empty state, opened and
+    // closed by the same handlers, filtered out of the stored state below.
+    for (const tab of hostSidePanelTabs) {
+      options.push({ id: tab.id, label: tab.label, kind: 'custom', icon: tab.icon });
+    }
     return options;
-  }, [activeBrowserSession, latestPr, latestPrNumber, repoFullName, t]);
+  }, [activeBrowserSession, hostSidePanelTabs, latestPr, latestPrNumber, repoFullName, t]);
   const sideChatOption = useMemo<SessionSidePanelOption | null>(() => {
     const launcherState = getSideChatLauncherState({
       providerSupportsFork: Boolean(
@@ -3703,6 +3811,36 @@ const SessionDetail = ({
       visibleOpenedSidebarTabs,
     ]
   );
+
+  // Seam patch 19: the host drives the panel the way its own `+` menu does.
+  // Each `seq` is handled once, through a ref, so the handlers below may change
+  // identity without replaying a request; ignored on mobile, where the panel
+  // is a drawer this page does not own. Sits here, ABOVE the early returns
+  // below, next to the handlers it calls.
+  const handledSidePanelRequestSeqRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (isMobile || !sidePanelRequest) return;
+    if (handledSidePanelRequestSeqRef.current === sidePanelRequest.seq) return;
+    handledSidePanelRequestSeqRef.current = sidePanelRequest.seq;
+    const option = sidePanelOptions.find((candidate) => candidate.id === sidePanelRequest.tabId);
+    if (!option) return;
+    if (sidePanelRequest.action === 'open') {
+      if (option.disabled) return;
+      handleSidePanelOptionOpen(option.id);
+      setIsSidebarOpen(true);
+      return;
+    }
+    const tabId = option.id;
+    if (tabId === 'side-session' || !visibleOpenedSidebarTabs.includes(tabId)) return;
+    handleCloseSidebarTab(tabId);
+  }, [
+    handleCloseSidebarTab,
+    handleSidePanelOptionOpen,
+    isMobile,
+    sidePanelOptions,
+    sidePanelRequest,
+    visibleOpenedSidebarTabs,
+  ]);
 
   const handleViewerTabSaveStateChange = useCallback(
     (tabId: string, state: SessionFileSaveViewState) => {
@@ -4085,8 +4223,10 @@ const SessionDetail = ({
       viewerTab: activeViewerTab,
       sidePanel: {
         open: isSidebarOpen,
-        tab: activeSidebarTab,
-        tabs: openedSidebarTabs,
+        // Seam patch 19: a host tab is the host's to restore, and the stored
+        // schema is an enum of the fixed panels.
+        tab: isHostSidePanelTab(activeSidebarTab) ? null : activeSidebarTab,
+        tabs: openedSidebarTabs.filter(isPersistedSidePanelTab),
         sideSessionId: activeSideSessionId,
       },
     });
@@ -4223,6 +4363,25 @@ const SessionDetail = ({
     (effectiveActiveSideSessionId
       ? getSideSessionPanelTabId(effectiveActiveSideSessionId)
       : activeSidebarTab);
+
+  // Seam patch 19: report the panel to the host. The callback is read through
+  // a ref, so a fresh host closure does not re-run an effect whose subject —
+  // the panel — has not changed.
+  const onSidePanelStateChangeRef = useRef(onSidePanelStateChange);
+  onSidePanelStateChangeRef.current = onSidePanelStateChange;
+  const sidePanelHostOptions = useMemo(
+    () =>
+      sidePanelOptions.map((option) => ({ id: option.id, disabled: option.disabled === true })),
+    [sidePanelOptions]
+  );
+  useEffect(() => {
+    onSidePanelStateChangeRef.current?.({
+      open: isSidebarOpen,
+      activeTabId: activeSidePanelTabId,
+      openedTabIds: sidePanelTabIds,
+      availableOptions: sidePanelHostOptions,
+    });
+  }, [activeSidePanelTabId, isSidebarOpen, sidePanelHostOptions, sidePanelTabIds]);
   const resolveFocusedTabCloseTarget = useCallback(
     () =>
       getSessionTabCloseTarget({
@@ -5558,6 +5717,7 @@ const SessionDetail = ({
                   session={activeBrowserSession}
                   active={Boolean(urlBrowser)}
                   className="h-full"
+                  resolveManagedPreviewViewerUrl={resolveManagedPreviewViewerUrl}
                   candidateNavigationRequestId={
                     browserCandidateNavigationRequest?.sessionId === activeBrowserSession.id
                       ? browserCandidateNavigationRequest.id
@@ -5624,6 +5784,11 @@ const SessionDetail = ({
   const hasMacOSTitlebarInset =
     !isNativeAppShell() && isMacOSElectronRenderer() && !isElectronFullscreen;
 
+  // Seam patch 19: the host tab's body, mounted only while it is the active one.
+  const activeHostSidePanelTab = isHostSidePanelTab(activeSidebarTab)
+    ? (hostSidePanelTabs.find((tab) => tab.id === activeSidebarTab) ?? null)
+    : null;
+
   const nonBrowserSidebarContent =
     activeSidebarTab === 'files' ? (
       <FileTreeView
@@ -5661,6 +5826,8 @@ const SessionDetail = ({
         changeFilePaths={changeFilePaths}
         onOpenChangesDiff={handleOpenChangesDiff}
       />
+    ) : activeHostSidePanelTab ? (
+      <div className="h-full min-h-0">{activeHostSidePanelTab.content}</div>
     ) : null;
 
   // Keep the browser mounted while another sidebar tab is selected. Managed
@@ -5679,6 +5846,7 @@ const SessionDetail = ({
           <SessionBrowserPanel
             session={activeBrowserSession}
             active={activeSidebarTab === 'browser' && isSidebarOpen}
+            resolveManagedPreviewViewerUrl={resolveManagedPreviewViewerUrl}
             candidateNavigationRequestId={
               browserCandidateNavigationRequest?.sessionId === activeBrowserSession.id
                 ? browserCandidateNavigationRequest.id

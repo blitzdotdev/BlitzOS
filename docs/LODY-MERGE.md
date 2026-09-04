@@ -142,7 +142,11 @@ added — thousands of files, and no way to see the seven that matter. Comparing
 the upstream commit to `HEAD:vendor/lody` (a tree, which `git diff` accepts) is
 the comparison that answers the question.
 
-**Expect exactly EIGHT files.** They are:
+**The exact count moves with every seam patch, and `BLITZ-PATCHES.md`'s
+"Expected after seam patch N" notes are the authority** (this list said EIGHT
+through seam patch 5 and has not kept pace since; seam patches 10 to 18 add
+files this table does not list — read the ledger). The files the first nine
+seam patches and seam patches 19 and 20 touch are:
 
 | # | File | Seam patch |
 |---|---|---|
@@ -151,11 +155,21 @@ the comparison that answers the question.
 | 3 | `packages/components/src/window-globals.d.ts` | 1 (hunk 6) |
 | 4 | `packages/components/src/components/loro-sidebar.tsx` | 2 |
 | 5 | `packages/components/src/lib/electron-session-file-sender.ts` | 3 |
-| 6 | `packages/components/src/components/sessions/session-chat-interface.tsx` | 4 |
-| 7 | `packages/components/src/components/sessions/session-detail.tsx` | 4 and 5 |
+| 6 | `packages/components/src/components/sessions/session-chat-interface.tsx` | 4 and 7 |
+| 7 | `packages/components/src/components/sessions/session-detail.tsx` | 4, 5, 6, 7, 15, 16, 19 and 20 |
 | 8 | `packages/components/src/components/sessions/session-tab-bar.tsx` | 5 |
+| 9 | `packages/components/src/lib/session-github-state.ts` | 7 |
+| 10 | `packages/components/src/components/chat/chat-landing.tsx` | 7 |
+| 11 | `packages/components/src/components/chat/unified-project-selector.tsx` | 7 |
+| 12 | `packages/components/src/components/sessions/session-chat-input-area.tsx` | 7 and 8 |
+| 13 | `packages/components/src/components/sessions/session-conversation-diff-panel.tsx` | 7 |
+| 14 | `packages/components/src/hooks/use-chat-landing-file-draft.ts` | 8 |
+| 15 | `packages/components/src/components/session-list.tsx` | 9 |
+| 16 | `packages/components/src/components/sessions/session-side-panel-tab-bar.tsx` | 19 |
+| 17 | `packages/components/src/components/sessions/session-browser-panel.tsx` | 20 |
+| 18 | `packages/components/src/components/sessions/managed-preview-surface.tsx` | 20 |
 
-More than eight means a hunk landed somewhere undeclared. Fewer means a patch
+A file outside the ledger's tables means a hunk landed somewhere undeclared. Fewer means a patch
 was lost in the merge — which typecheck may not catch, because most of these
 widen a predicate rather than change a type. Check each against its row in
 `BLITZ-PATCHES.md`:

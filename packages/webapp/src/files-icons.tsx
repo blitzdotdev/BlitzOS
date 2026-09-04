@@ -1,5 +1,5 @@
-/** Editorial duotone icon set for the Finder-style files view: ink outline
- * with a soft accent wash (plans/mockups/workspace-tabs-editorial.html). */
+/** Editorial duotone icon set for the Drive surfaces: ink outline with a soft
+ * accent wash (plans/mockups/workspace-tabs-editorial.html). */
 
 const DOC_TINTS = new Map([
   ['html', 'var(--ansi-red)'], ['htm', 'var(--ansi-red)'],
@@ -45,20 +45,6 @@ export function FolderDuoIcon({ open = false, className }: { open?: boolean; cla
       <path d={back} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
       <path d={front} fill="var(--accent)" opacity=".35" />
       <path d={front} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-/** Folder with a person badge — the shared root ("folder.badge.person.crop"). */
-export function SharedFolderDuoIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d={CLOSED_FOLDER_PATH} fill="var(--accent)" opacity=".3" />
-      <path d={CLOSED_FOLDER_PATH} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-      <circle cx="17.1" cy="16.1" r="5" fill="var(--accent)" />
-      <circle cx="17.1" cy="14.7" r="1.6" fill="var(--paper)" />
-      <path d="M14.5 18.6c.3-1.5 1.4-2.4 2.6-2.4 1.2 0 2.3.9 2.6 2.4a5 5 0 0 1-5.2 0z" fill="var(--paper)" />
-      <circle cx="17.1" cy="16.1" r="5" fill="none" stroke="var(--paper)" strokeWidth="1.2" />
     </svg>
   );
 }

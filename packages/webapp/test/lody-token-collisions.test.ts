@@ -49,11 +49,6 @@ const CONVERTED = ["--muted", "--hover"];
 /** The two the flip DELETES: same type, and now the same value. */
 const NO_LONGER_OVERRIDDEN = ["--terminal-background", "--terminal-selection"];
 
-/** Every class a BlitzOS component renders as a DIRECT child of `document.body`.
- * The portal rule reads "a body child that is not one of these", so this list
- * being complete is what keeps it from restyling one of ours. */
-const BLITZ_BODY_PORTAL_CLASSES = ["files-context-backdrop", "files-context-menu"];
-
 function rulesDeclaring(css: string, property: string): string[] {
   const selectors: string[] = [];
   postcss.parse(css).walkRules((rule: Rule) => {
@@ -100,24 +95,21 @@ describe("the Lody token collisions", () => {
   });
 
   it("excludes exactly the body-level portals BlitzOS itself renders", () => {
-    const portalRules = rulesDeclaring(generatedCss, "--muted").filter((selector) =>
-      selector.includes("body > "),
-    );
-    expect(portalRules.length).toBeGreaterThan(0);
-    for (const selector of portalRules) {
-      expect(selector).toContain("#root");
-      for (const className of BLITZ_BODY_PORTAL_CLASSES) expect(selector).toContain(className);
+    // The portal rule reads "a body child that is not one of ours". Since the
+    // files panel's context menu retired, BlitzOS renders nothing as a direct
+    // child of `document.body`, so `#root` is the whole exclusion. A component
+    // that starts portalling to the body has to be named here and in the rule,
+    // or a Lody theme lands on a BlitzOS menu.
+    // The token rule's selector is the whole surface scope — the surface, the
+    // vendored rail body and the portal root in one list — so the portal part
+    // is read out of it.
+    const portalSelectors = rulesDeclaring(generatedCss, "--muted")
+      .flatMap((selector) => selector.split(",").map((part) => part.trim()))
+      .filter((part) => part.startsWith("body > "));
+    expect(portalSelectors.length).toBeGreaterThan(0);
+    for (const selector of portalSelectors) {
+      expect(selector).toBe("body > :where(:not(#root))");
     }
-  });
-
-  it("still finds those portal classes in the components that render them", () => {
-    // The exclusion list above is only correct while these classes are what our
-    // own portals carry. Renaming one without updating the rule would hand a
-    // Lody theme to a BlitzOS menu.
-    const sidebar = readFileSync(join(here, "..", "src", "FilesSidebar.tsx"), "utf8");
-    const menu = readFileSync(join(here, "..", "src", "FilesContextMenu.tsx"), "utf8");
-    expect(sidebar).toContain('className="files-context-backdrop"');
-    expect(menu).toContain('className="files-context-menu"');
   });
 
   it("reclaims the two names on :root, which nothing else can do", () => {

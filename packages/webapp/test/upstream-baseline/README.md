@@ -10,13 +10,17 @@ nothing else.
 |---|---|
 | `session-tab-bar.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx` |
 | `session-detail.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-detail.tsx` |
+| `session-side-panel-tab-bar.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-side-panel-tab-bar.tsx` (seam patch 19) |
+| `session-browser-panel.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-browser-panel.tsx` (seam patch 20) |
+| `managed-preview-surface.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/managed-preview-surface.tsx` (seam patch 20) |
 | `mobile-session-tab-sheet.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-session-tab-sheet.tsx` |
 | `mobile-home-screen.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-home-screen.tsx` |
 
-The last two arrived with seam patch 16, which is the first patch to edit a
-mobile-only file. `components/chat/chat-landing.tsx` is patched by seam patches
-7, 15 and 16 and has NO baseline here: adding one means declaring seam patch 7's
-removals in that file as well, which is a job for whoever needs it.
+The two mobile files arrived with seam patch 16, which is the first patch to
+edit a mobile-only file; the three side-panel files with seam patches 19 and
+20. `components/chat/chat-landing.tsx` is patched by seam patches 7, 15 and 16
+and has NO baseline here: adding one means declaring seam patch 7's removals in
+that file as well, which is a job for whoever needs it.
 
 **Taken from `f34748945028ffc04316861ad25edc24535c0235`**, the commit
 `vendor/lody/UPSTREAM.md` pins. The test reads that pin out of `UPSTREAM.md` and
@@ -55,6 +59,8 @@ that has the new upstream commit:
 ```sh
 PIN=<the new upstream sha>
 for f in sessions/session-tab-bar sessions/session-detail \
+         sessions/session-side-panel-tab-bar sessions/session-browser-panel \
+         sessions/managed-preview-surface \
          mobile/mobile-session-tab-sheet mobile/mobile-home-screen; do
   git show "$PIN:packages/components/src/components/$f.tsx" \
     > packages/webapp/test/upstream-baseline/"$(basename "$f").tsx.txt"

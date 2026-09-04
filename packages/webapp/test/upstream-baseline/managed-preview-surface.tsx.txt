@@ -76,14 +76,6 @@ type ManagedPreviewSurfaceProps = {
   command?: { id: number; action: ManagedBrowserCommand };
   className?: string;
   documentHtml?: string;
-  /**
-   * `viewerUrl` was supplied by the host rather than by an endpoint or a
-   * tunnel. It is loaded AS GIVEN — a reload does not re-derive it from the
-   * logical URL, which would replace the host's path — and no annotation
-   * runtime is expected behind it, so the handshake is not armed and its
-   * "did not become ready" error never fires.
-   */
-  hostViewer?: boolean;
   visualAnnotationReferenceKeys?: readonly string[];
   onAnnotationAvailabilityChange: (available: boolean) => void;
   onRuntimeError: (error: string | null) => void;
@@ -284,7 +276,6 @@ export function ManagedPreviewSurface({
   command,
   className,
   documentHtml,
-  hostViewer = false,
   visualAnnotationReferenceKeys = EMPTY_VISUAL_ANNOTATION_REFERENCE_KEYS,
   onAnnotationAvailabilityChange,
   onRuntimeError,
@@ -410,9 +401,6 @@ export function ManagedPreviewSurface({
     setIframeLoaded(true);
     onAnnotationAvailabilityChange(false);
     onLoadingChange(false);
-    // A host-served page carries no runtime to shake hands with: the page is
-    // loaded, annotation stays unavailable, and that is the whole of it.
-    if (hostViewer) return;
     if (runtimeHandshakeTimerRef.current) clearTimeout(runtimeHandshakeTimerRef.current);
     runtimeHandshakeTimerRef.current = setTimeout(() => {
       runtimeHandshakeTimerRef.current = null;
@@ -442,14 +430,6 @@ export function ManagedPreviewSurface({
       runtimeAliveRef.current = false;
       syncFrameLoadState(false);
       iframe.srcdoc = documentHtml;
-      return;
-    }
-    if (hostViewer) {
-      // The host's URL is the page; re-deriving it from the logical URL would
-      // replace the host's path with the page's own.
-      runtimeAliveRef.current = false;
-      syncFrameLoadState(false);
-      iframe.src = viewerUrl;
       return;
     }
     let nextSrc = viewerUrl;

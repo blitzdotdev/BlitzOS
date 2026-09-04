@@ -157,9 +157,6 @@ describe.skipIf(!lodyDaemonAvailable())("the archive page, against a real daemon
         workspaceTitle="Archive workspace"
         railHost={railHost}
         rail={{
-          terminals: [],
-          activeTerminalId: "",
-          onSelectTerminal: () => undefined,
           // NO `onOpenArchive` AND NO `onOpenSession`. Absent, the rail falls
           // back to the surface's own router, which is the headless composition
           // `SessionSurface` documents — and it is what lets this suite drive

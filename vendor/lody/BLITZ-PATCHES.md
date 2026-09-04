@@ -94,6 +94,9 @@ hunks to `session-detail.tsx`, seam patch 7's five new ones:
 `components/sessions/session-conversation-diff-panel.tsx`, and seam patch 8's
 one new one: `hooks/use-chat-landing-file-draft.ts`, which also adds hunks to
 `session-chat-input-area.tsx`.
+Seam patches 19 and 20 add three more under `components/sessions/`:
+`session-side-panel-tab-bar.tsx`, `session-browser-panel.tsx` and
+`managed-preview-surface.tsx`; their own entries carry the running count.
 
 ### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
 
@@ -1605,6 +1608,307 @@ vendored hook across a box switch and fails without hunk 3.
 **Candidate upstream PR:** key the local-platform snapshot by the installed IPC
 bridge (or expose this reset) so a host driving more than one daemon can move
 between them. Until then this is the smallest seam that closes it.
+
+### 18. `LoroSidebar`'s footer takes one host control (rail footer New tab, 2026-09-03)
+
+**One optional prop, three hunks, one file — seam patch 13's row, opened at
+its start.** Seam patch 13 let the host keep the footer's Archive entry and drop
+the rest. The rail then wanted one control of its own in that same row: the
+New tab menu (Claude / Codex / terminal), which had headed a Terminals section
+of native rows under `afterSessionListContent`. That section is deleted — a
+terminal is a tab of the surface's own strip, and the rail listed every tab
+twice — so its `+` needed a home, and the footer is where a rail keeps the
+controls that are not a list entry.
+
+The existing slots cannot place it. `bottomFloatingContent` floats ABOVE the
+list; `afterSessionListContent` is inside the scroll region. Neither is "in the
+footer's row, before Archive". So the row gets a leading slot.
+
+| # | File | Line (after seam patch 13) | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/components/src/components/loro-sidebar.tsx` | 207 | after `footerItems?: readonly LoroSidebarFooterItem[];` in `LoroSidebarProps` | declares `footerLeadingContent?: ReactNode` |
+| 2 | same | 675 | after `footerItems = LORO_SIDEBAR_FOOTER_ITEMS,` in the destructuring | destructures it (no default: absent renders nothing) |
+| 3 | same | 1261 | the footer's `<div className="flex items-center gap-1">` | renders `{footerLeadingContent}` as that row's first child |
+
+Strictly additive: with the prop absent the footer renders byte-for-byte what
+it rendered after seam patch 13. No upstream call site passes it. No new file
+enters the divergence count.
+
+**What BlitzOS passes.** `packages/webapp/src/lody/SessionRailSidebar.tsx`
+hands it `newTabControl`, which is `CloudApp`'s `NewTabControl variant="footer"`
+— a terminal glyph whose menu opens upward and lands on the unchanged
+`spawnTtydSession`. `packages/webapp/src/strip-rail.css` gives the trigger the
+footer button's own 28px box (`getLoroSidebarFooterIconButtonClassName`) so the
+two read as one row, and `blitz-skin.css` pins the Archive button's rest colour
+to the rail's icon-button token for the same reason.
+
+**Merge conflict drill.** If the footer's utility row is restructured, re-apply
+by rendering the prop as the first child of whatever the row became. If
+upstream grows its own footer slot, delete these hunks and pass that prop from
+`SessionRailSidebar.tsx`.
+
+**Candidate upstream PR:** "let a host add a control to the sidebar footer",
+one prop; it belongs with the `hideHeader`/`hideFooter`/`footerItems` set in
+`plans/evidence/lody-sidebar-props-pr.md`.
+
+### 19. Host-contributed side-panel tabs, driven and reported from outside (2026-09-02)
+
+**One idea, twelve hunks in two files, and it is seam patch 5 for the OTHER
+strip.** The session page has two tab systems: the top strip (`SessionTabBar`,
+which seam patch 5 opened to a host) and the right side panel
+(`SessionSidePanelTabBar`), which already merges three kinds of tab — the fixed
+panels Files / All Changes / Browser / PR, side chats, and file/diff viewers —
+behind one strip, one `+` menu and one empty state. BlitzOS wants two things
+from that panel: to put a panel of its own (Connections) inside it rather than
+in a second strip, and to drive it from an icon rail that lives OUTSIDE the
+page, which means opening a tab the page's own controls cannot be clicked for
+and knowing which tab is open so the rail can draw it selected.
+
+Upstream has no way in on either count. Every fixed panel is a member of a
+closed enum (`persistedSidePanelTabSchema`, `session-draft-tabs.ts:55`), every
+handler that opens or closes one is component-local, and the panel's state is
+four `useState`s nothing outside can read.
+
+The patch follows seam patch 5 exactly: a `custom` kind on the tab bar's item
+(what seam patch 5 hunks 2–3 did for `ViewerTabItem`), and on the page a host
+tab is a fixed panel for every purpose but persistence. It is offered by the `+`
+menu and the empty state, opened and closed by the same handlers, and filtered
+out of the stored side-panel state because its id can never satisfy that enum.
+The `host:` prefix is what carries that rule — it is checked at the type
+(`` `host:${string}` ``) and at the filter, so a host cannot pick an id that
+collides with a fixed panel and nothing that touches persistence has to know
+the host's list.
+
+`packages/components/src/components/sessions/session-side-panel-tab-bar.tsx`
+
+| # | Line (at `f3474894`) | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 25 | `kind: 'files' \| 'changes' \| 'pr' \| 'browser' \| 'session' \| 'file' \| 'diff';` in `SessionSidePanelTabItem` | gains `\| 'custom'`, and the item gains `icon?: ReactNode` |
+| 2 | 36, 37 | `SessionSidePanelOption`'s `id` and `kind` | `id` gains `` `host:${string}` ``, `kind` gains `'custom'` |
+| 3 | 166 | the end of the `switch` in `SidePanelTabIcon`, after the `'file'` arm | a `'custom'` arm: `tab.icon`, or the `Files` glyph when the host gave none |
+
+`packages/components/src/components/sessions/session-detail.tsx` (pinned)
+
+| # | Line (at `f3474894`) | Upstream anchor | What it does |
+|---|---|---|---|
+| 4 | 287 | `type SidebarTab = PersistedSidePanelTab;` | widens to `PersistedSidePanelTab \| HostSidePanelTabId` and declares the two guards `isHostSidePanelTab` / `isPersistedSidePanelTab` |
+| 5 | 657 | after `TerminalDockToggleButton`, beside seam patch 5 hunk 8's `SessionSurfaceTab` | declares `SessionHostSidePanelTab`, `SessionSidePanelRequest`, `SessionSidePanelHostState` and the stable `EMPTY_HOST_SIDE_PANEL_TABS` |
+| 6 | 666, 672 | `onMobileBack,` and `onMobileBack?: () => void;` — seam patch 5 and 6's own anchor | declares and defaults `hostSidePanelTabs`, `sidePanelRequest`, `onSidePanelStateChange` |
+| 7 | 2487 | the `});` closing the `activeSidebarTab === 'browser' && !activeBrowserSession` effect | the same rule for a host tab the host has withdrawn: the selection clears |
+| 8 | 3343, 3344 | `return options;` and the dependency list of `sidePanelFixedOptions` | appends one `kind: 'custom'` option per host tab; the dependency list gains `hostSidePanelTabs` |
+| 9 | 3480 | the `);` closing `handleCloseSidebarTab` | the request effect: each `seq` once, `open` through `handleSidePanelOptionOpen` plus `setIsSidebarOpen(true)`, `close` through `handleCloseSidebarTab` |
+| 10 | 3858, 3859 | `tab: activeSidebarTab,` and `tabs: openedSidebarTabs,` in the `writeStoredLastActiveTabState` effect | a host id is stored as `null` and filtered out of `tabs` |
+| 11 | 3995 | after `const activeSidePanelTabId = …` | the state report: `{ open, activeTabId, openedTabIds, availableOptions }` through a ref, on any change |
+| 12 | 5328, 5360 | `const nonBrowserSidebarContent =` and the `SessionChangesSidebar` arm before `) : null;` | derives `activeHostSidePanelTab` and renders its `content` as the panel body |
+
+Hunks 4, 8 and 10 are the only ones that replace an upstream line, and all five
+lines are named in `lody-seam-pin.test.ts`'s anchor table; the rest add
+lines and are covered by that file's subsequence check.
+
+```ts
+/** Its id MUST start with `host:`, so it can never be mistaken for one of the
+ *  persisted fixed panels and is filtered out of the persisted state. */
+export interface SessionHostSidePanelTab {
+  id: `host:${string}`;
+  label: string;
+  icon?: ReactNode;
+  content: ReactNode;   // the panel body while active; not mounted otherwise
+}
+/** One-shot; the page handles each `seq` once, so a repeat bumps it. */
+export interface SessionSidePanelRequest { tabId: string; action: 'open' | 'close'; seq: number; }
+export interface SessionSidePanelHostState {
+  open: boolean;                                              // isSidebarOpen
+  activeTabId: string | null;                                 // activeSidePanelTabId
+  openedTabIds: readonly string[];                            // sidePanelTabIds, strip order
+  availableOptions: readonly { id: string; disabled: boolean }[]; // sidePanelOptions
+}
+hostSidePanelTabs?: readonly SessionHostSidePanelTab[];
+sidePanelRequest?: SessionSidePanelRequest | null;
+onSidePanelStateChange?: (state: SessionSidePanelHostState) => void;
+```
+
+**A request does what the `+` menu does, not less.** The design said
+`activateSidebarTab(tabId)`; hunk 9 goes through `handleSidePanelOptionOpen`
+instead, which is the handler the `+` menu and the empty state already share.
+The difference is what a member clicking the same entry gets: `'side-session'`
+launches a Side Chat, and `'pr'` also pushes `?pr=` into the URL. A host that
+opens PR from a rail and a member who opens it from the menu should land on the
+same page state, and the one handler is how that stays true. The one thing the
+menu never had to do — `setIsSidebarOpen(true)` — is added beside it, because
+the menu lives inside the panel and a rail does not. Ids the panel cannot offer
+right now (an absent PR, a Browser with no session, a disabled Side Chat) are
+ignored, as is a `close` for a tab that is not open; the second guard matters
+because `handleCloseSidebarTab('pr')` clears the `?pr=` URL param whether or not
+the tab was open.
+
+**`seq` through a ref, not the request through the dependency list.** The
+effect lists every handler it calls, so it re-runs when they change identity —
+which they do on most renders — and the ref is what keeps that from replaying
+the last request. A host that wants the same action twice bumps `seq`.
+
+**The report is an effect on the derived values, and that is the right shape
+here** (where seam patch 5 rejected an effect for the wrapper of hunk 17). What
+the host needs is the panel's STATE, and state changes are exactly what an
+effect on `isSidebarOpen`, `activeSidePanelTabId`, `sidePanelTabIds` and the
+option list fires on; seam patch 5 needed a SELECTION, which can repeat without
+changing anything. The callback is read through a ref so a fresh host closure
+does not re-fire a report nothing changed.
+
+**`content` is mounted only while active**, unlike seam patch 5's always-mounted
+surfaces. The side panel already unmounts its fixed bodies on every tab switch —
+the Files tree keeps its expanded folders in `file-tree-view-state.ts` for
+exactly that reason — so a host tab gets the same rule its neighbours have, and
+a host with state to keep keeps it the way Files does.
+
+**The mobile branch is deliberately NOT patched.** `MobileSessionTabSheet` keeps
+its own hand-maintained kind enum (`mobile/mobile-session-tab-sheet.tsx:55`);
+the request effect returns on `isMobile`, the props are otherwise inert there,
+and the mobile drawer keeps today's behaviour.
+
+Strictly additive: with every new prop absent, `sidePanelFixedOptions` is the
+list it was, the persisted state is written byte-for-byte as before (the filter
+removes nothing from a list that holds no host id), no request is handled and
+no report is sent because there is nobody to send it to.
+`packages/webapp/test/lody-seam-pin.test.ts` pins both files against the
+baselines in `packages/webapp/test/upstream-baseline/`, and
+`packages/webapp/test/lody-side-panel-host-tabs.test.tsx` drives the real
+`SessionSidePanelTabBar` and `SessionSidePanelEmptyState` with a `custom`
+option. Upstream PR drafted at `plans/evidence/lody-side-panel-host-tabs-pr.md`;
+**drop this patch when it merges.**
+
+**Merge conflict drill.**
+
+- If `persistedSidePanelTabSchema` stops being an enum — a string, or a
+  namespaced id of upstream's own — hunk 10's filter may be able to go, and the
+  `host:` rule with it. Check what the new schema REJECTS before dropping it.
+- If `sidePanelFixedOptions` is restructured, re-apply hunk 8 by the one rule:
+  a host tab is a fixed option with `kind: 'custom'`, after upstream's own.
+- If the side-panel state moves into one reducer or atom, hunks 9 and 11 follow
+  it there: a request becomes a dispatch, a report becomes a subscription.
+- If `handleSidePanelOptionOpen` is split or renamed, hunk 9 calls whatever the
+  `+` menu calls. Do not reach for `activateSidebarTab` directly — see above.
+- If upstream grows its own host-panel concept, delete all twelve hunks and
+  pass that instead; the BlitzOS half is one binding in
+  `packages/webapp/src/lody/`.
+
+### 20. A host-resolved viewer URL for the Browser panel (2026-09-02)
+
+**One idea, fifteen hunks in three files, and it is inert without one prop.**
+The Browser panel has strict dual engines (`components/sessions/AGENTS.md`):
+a public host goes to Electron's `WebContentsView`, and a loopback or
+private-LAN target goes to Managed Preview — an Electron-only local endpoint, or
+a Lody-cloud tunnel minted by the session runtime. In a BlitzOS browser neither
+exists: there is no `WebContentsView`, no local plane, and no cloud to mint a
+tunnel from, so `openAddress` stops at `if (!runtime || !user?.id)` (or, with a
+runtime, at a confirmation dialog for a tunnel that can never be created) and
+the panel is dead.
+
+What BlitzOS does have is a box gateway that already proxies every loopback
+port on the machine to the browser, at
+`<origin>/workspaces/<id>/webapp/7445/preview/<port>/<path>`. That is a viewer
+URL for exactly the targets Managed Preview exists for. The seam lets the host
+answer a target with one, and the panel puts it in the iframe it already has.
+
+`packages/components/src/components/sessions/session-detail.tsx` (pinned)
+
+| # | Line (at `f3474894`) | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 43 | `type PrStatus,` in the `@lody/shared` import list | imports `type PreviewTarget` |
+| 2 | 666, 672 | `onMobileBack,` and `onMobileBack?: () => void;` — the same anchor as seam patch 19 hunk 6 | declares and destructures `resolveManagedPreviewViewerUrl` |
+| 3 | 5258, 5377 | the two `<SessionBrowserPanel` elements (the mobile drawer and the desktop side panel) | passes it through — mobile too, so there is one prop and not a desktop-only one |
+
+`packages/components/src/components/sessions/session-browser-panel.tsx`
+
+| # | Line (at `f3474894`) | Upstream anchor | What it does |
+|---|---|---|---|
+| 4 | 65 | `onToggleVisualAnnotationInChat?:` in `SessionBrowserPanelProps` | declares `resolveManagedPreviewViewerUrl?: (target: PreviewTarget) => string \| null` |
+| 5 | 108 | `onToggleVisualAnnotationInChat,` in the destructuring | destructures it |
+| 6 | 134 | `const [viewerUrl, setViewerUrl] = useState<string \| null>(null);` | adds `hostViewer` state: whether `viewerUrl` is the host's |
+| 7 | 234 | `setViewerUrl(null);` in the per-session reset effect | resets it |
+| 8 | 402 | `setError(null);` at the top of `openAddress` | resets it per navigation |
+| 9 | 417 | the `};` closing `managedAddress`, BEFORE `if (!runtime \|\| !user?.id)` | the host branch: release any local endpoint, `commitOpenedAddress(managedAddress, hostViewerUrl, historyIndex)`, done |
+| 10 | 563 | `releaseLocalEndpoint,` in `openAddress`'s dependency list | adds the resolver |
+| 11 | 966 | `shareAvailable={currentAddress !== null}` | `&& !hostViewer` — Share would mint a tunnel for a page the host serves |
+| 12 | 1025 | `viewerUrl={viewerUrl}` on `<ManagedPreviewSurface` | passes `hostViewer` |
+
+`packages/components/src/components/sessions/managed-preview-surface.tsx`
+
+| # | Line (at `f3474894`) | Upstream anchor | What it does |
+|---|---|---|---|
+| 13 | 78, 278 | `documentHtml?: string;` and `documentHtml,` | declares `hostViewer?: boolean`, defaults `false` |
+| 14 | 403 | `onLoadingChange(false);` in `handleIframeLoad` | returns before arming the 3 s runtime handshake, whose expiry reports "the annotation runtime did not become ready" |
+| 15 | 434 | the `}` closing the `documentHtml` branch of `hardReloadFrame` | a host branch that sets `iframe.src = viewerUrl` AS GIVEN, instead of `buildManagedViewerUrlForLogicalUrl` |
+
+Hunk 11 is the only line this patch replaces, and it is the one anchor named for
+this file in `lody-surface-tabs.test.tsx`; every other hunk adds lines.
+
+```ts
+/** Answer a loopback or private-LAN Browser target with a viewer URL of the
+ *  host's own, or `null` to let the panel resolve it as it does today. */
+resolveManagedPreviewViewerUrl?: (target: PreviewTarget) => string | null;
+```
+
+**Hunk 9 sits where it does for one reason: the user atom.** BlitzOS's
+`userAtom` may be empty, and `openAddress` requires `user?.id` two lines later
+for every managed target. The host's answer is asked for before that guard,
+because a host that serves the page needs neither the runtime nor the user —
+and every navigation path lands here: the address bar (`navigate`), history
+(`handleBack` / `handleForward` → `navigateHistory` → `openAddress` with
+`historyIndex`), the auto-restore effect (`openAddress` with `restore`), the
+info bar's candidate click, and `handleReload` when the endpoint is gone.
+
+**Hunk 15 is why the URL must be taken verbatim.** A reload with no live
+runtime — which in host mode is every reload — goes through `hardReloadFrame`,
+and upstream rebuilds the frame's `src` from the LOGICAL URL's root-relative
+path, carrying only the capability params over. A gateway prefix is neither, so
+`http://localhost:3000/foo` would come back as `<origin>/foo`. The frame cache
+(`managed-preview-frame-cache.ts:117`, `:158`) already sets `src` from
+`viewerUrl` as given, so it needs no hunk. The URL must be ABSOLUTE:
+`previewOrigin` is `new URL(viewerUrl).origin`, and that line is upstream's.
+
+**Hunk 14 is why the panel does not error three seconds after every load.**
+The managed page is expected to carry Lody's injected annotation runtime, and
+`handleIframeLoad` arms a timer that reports its absence as an error. A page the
+host proxies has no runtime, so annotation is simply unavailable
+(`onAnnotationAvailabilityChange(false)`, which the handler already called) and
+the timer is never armed. `runtimeAliveRef` stays `false`, so `reload` takes the
+`hardReloadFrame` path above rather than a postMessage nothing answers, and
+`managedState` stays `null`, so Back / Forward fall through to the panel's own
+history.
+
+**What the host mode does NOT do.** Visual annotation, preview comments and
+Share are off — the first two need the runtime, the third would create a tunnel
+for a page the host is already serving. The `sessions.browser.emptyNoCandidate`
+copy and the candidate flow are upstream's, so a session whose agent reported a
+dev server opens it on the first click, as it does in Electron.
+
+Strictly additive: with the prop absent `hostViewerUrl` is `null` on every
+navigation, `hostViewer` is `false` on every commit, and each of hunks 11, 14
+and 15 takes the branch it took before. `packages/webapp/test/lody-seam-pin.test.ts`
+pins the three files against their baselines. Upstream PR drafted at
+`plans/evidence/lody-managed-preview-host-viewer-pr.md`; **drop this patch when
+it merges.**
+
+**Merge conflict drill.**
+
+- If `openAddress` is restructured, re-apply hunk 9 by the one rule: **the
+  host's answer is asked for before anything that needs the runtime or the
+  user**, and after the address has been classified as managed.
+- If `hardReloadFrame` stops re-deriving the URL — say upstream keeps the
+  acquire-time `src` — hunk 15 goes, and hunk 14 stands alone.
+- If upstream grows a third engine of its own for a host-served page, or a
+  capability that names one, drop all fifteen hunks and pass that instead; the
+  BlitzOS half is one function in `packages/webapp/src/lody/`.
+
+Verify this divergence by diffing OUR subtree against the upstream commit it was
+imported from, exactly as seam patch 1 describes. **Expected after seam patch
+20: THIRTY-FIVE**, measured on 2026-09-04 with the command above. Seam patch
+19 adds `components/sessions/session-side-panel-tab-bar.tsx`; seam patch 20 adds
+`components/sessions/session-browser-panel.tsx` and
+`components/sessions/managed-preview-surface.tsx`; seam patch 18 adds no file,
+`components/loro-sidebar.tsx` being seam patch 2's. (Seam patch 16 said THIRTY
+and seam patch 17 added one, which leaves one file the running count had
+already lost track of; the measurement is the authority.)
 
 ## Patches to the published npm artifact (NOT to this tree)
 

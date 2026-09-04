@@ -6,14 +6,12 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import type { ControlPlaneClient } from './api';
-import type { LivePort, PreviewLink } from './preview';
 import { maxDrawerWidth, type WorkspaceDrawerSegment } from './storage';
-import { TeenyappsPanel } from './TeenyappsPanel';
 import {
   WorkspaceConnectionsPanel,
   type ConnectionsPanelFocus,
 } from './WorkspaceConnectionsPanel';
-import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
+import { GenericProviderIcon } from './WebAppIcons';
 
 // The connections machinery lives in its own module; these re-exports keep
 // the drawer the one import site its hosts and tests already use.
@@ -30,9 +28,7 @@ export {
 export type WorkspacePanelProps = {
   client: ControlPlaneClient;
   workspaceId: string;
-  orgName: string;
   visible: boolean;
-  files: ReactNode;
   pendingRequests: CredentialRequestView[];
   pendingRequestsError?: string | null;
   /** Provider names this workspace's allow-list holds. */
@@ -45,51 +41,23 @@ export type WorkspacePanelProps = {
     request: CredentialRequestView,
     action: 'approve' | 'deny',
   ) => Promise<void>;
-  livePorts: LivePort[];
-  previewLinks: PreviewLink[];
-  filesBase: string | null;
-  previewReady: boolean;
-  onOpenPreview: (port: number) => void;
-  onOpenPreviewLink: (url: string, title: string) => void;
 };
 
 /** One panel body, wherever it is hosted: a tab in a workspace pane on the
- * desktop, a segment of the off-canvas sheet below the mobile breakpoint. */
+ * desktop, a segment of the off-canvas sheet below the mobile breakpoint.
+ * Connections is the one panel left; `panel` stays in the signature so the
+ * hosts keep naming what they draw. `visible` is read by the hosts' own gate
+ * (`hidden`), not here: the connections panel draws the same either way. */
 export function WorkspacePanelContent({
-  panel,
   client,
   workspaceId,
-  orgName,
-  visible,
-  files,
   pendingRequests,
   pendingRequestsError,
   workspaceConnections,
   connectionsFocus,
   readOnly,
   onResolveRequest,
-  livePorts,
-  previewLinks,
-  filesBase,
-  previewReady,
-  onOpenPreview,
-  onOpenPreviewLink,
 }: WorkspacePanelProps & { panel: WorkspaceDrawerSegment }) {
-  if (panel === 'files') return <>{files}</>;
-  if (panel === 'previews') {
-    return (
-      <TeenyappsPanel
-        orgName={orgName}
-        workspaceId={workspaceId}
-        livePorts={livePorts}
-        previewLinks={previewLinks}
-        filesBase={filesBase}
-        previewReady={previewReady}
-        onOpenPreview={onOpenPreview}
-        onOpenPreviewLink={onOpenPreviewLink}
-      />
-    );
-  }
   return (
     <WorkspaceConnectionsPanel
       client={client}
@@ -136,12 +104,6 @@ export function WorkspaceDrawer({
   };
 
   const tabs: Array<{ id: WorkspaceDrawerSegment; label: string; icon: ReactNode }> = [
-    { id: 'files', label: 'Files', icon: <FolderIcon className="webapp-tab-icon" /> },
-    {
-      id: 'previews',
-      label: 'teenyapps',
-      icon: <span className="webapp-tab-icon mi-preview" aria-hidden="true" />,
-    },
     {
       id: 'connections',
       label: 'Connections',
@@ -177,6 +139,9 @@ export function WorkspaceDrawer({
           onPointerCancel={() => { resizeOrigin.current = null; }}
         />
       )}
+      {/* One segment is no choice: the strip only draws when there is more
+          than one section to switch between. */}
+      {tabs.length > 1 && (
       <header className="workspace-drawer-segments" role="tablist" aria-label="Workspace drawer sections">
         {tabs.map((tab) => {
           const active = effectiveSegment === tab.id;
@@ -205,6 +170,7 @@ export function WorkspaceDrawer({
           );
         })}
       </header>
+      )}
       <div className="workspace-drawer-body">
         {tabs.map((tab) => (
           <div role="tabpanel" hidden={effectiveSegment !== tab.id} key={tab.id}>

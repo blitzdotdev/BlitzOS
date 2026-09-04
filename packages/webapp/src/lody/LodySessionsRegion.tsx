@@ -20,10 +20,10 @@
 import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from "react";
 import type { SessionShareLevel } from "@blitzos/schema";
 import type { BoxEndpoints } from "../resolver.js";
-import type { DriveRailSession } from "../shell/rail-sessions.js";
 import type { LodySessionsCapability } from "./box-capability.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 import type { LodyRailBinding, LodySessionSurfaceApi } from "./SessionSurface.js";
+import type { SidePanelBinding } from "./side-panel.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 import { SurfaceLoadBoundary } from "./SurfaceLoadBoundary.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
@@ -60,14 +60,6 @@ export interface LodySessionsRegionProps {
   visible: boolean;
   /** The rail's list region, once the rail has drawn it. */
   railHost: HTMLElement | null;
-  /** What the rail's Terminals section lists, and what a click on one does. */
-  terminals: DriveRailSession[];
-  activeTerminalId: string;
-  onSelectTerminal: (tabId: string) => void;
-  /** Close a terminal from its rail row. The native strip carried the only
-   * close until it was deleted (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"), and
-   * the rail is the one list every layout has. */
-  onCloseTerminal?: (tabId: string) => void;
   /** What a session row and "+ New session" do: move the shell's ADDRESS, which
    * is the only thing that can take the view back from the panes. See
    * `LodyRailBinding` in `SessionSurface.tsx`. */
@@ -76,8 +68,9 @@ export interface LodySessionsRegionProps {
   /** The rail footer's Archive entry: the archived-session list, with its
    * restore and its permanent delete. */
   onOpenArchive?: () => void;
-  /** The `+ New tab` control for the Terminals section header. */
-  terminalsAction?: ReactNode;
+  /** The `New tab` control for the rail footer, left of Archive (seam patch
+   * 18): Claude / Codex / terminal, on the unchanged tmux/ttyd spawn path. */
+  newTabControl?: ReactNode;
   /** Right-click Share on a session row (plans/LODY-SHARING.md §8). */
   onShareSession?: (sessionId: string) => void;
   /** The rail's "Shared with you" rows, and what a click on one does. */
@@ -87,6 +80,10 @@ export interface LodySessionsRegionProps {
    * (plans/LODY-TERMINAL-TABS.md §3.5). Never reaches a shared surface — see
    * where it is read below. */
   surfaceTabs?: SurfaceTabsBinding;
+  /** The right icon strip's binding onto Lody's side panel (`side-panel.tsx`).
+   * Never reaches a shared surface either — the panel it drives is on the
+   * owner's session, and the strip is a control over this member's own box. */
+  sidePanel?: SidePanelBinding;
   /**
    * The shared session the address names, with the endpoints of the box that
    * runs it. `null` whenever the grantee is looking at their own box.
@@ -155,16 +152,12 @@ function lodyEndpoints(endpoints: BoxEndpoints) {
 export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const sharedOpen = props.sharedOpen ?? null;
   const rail: LodyRailBinding = {
-    terminals: props.terminals,
-    activeTerminalId: props.activeTerminalId,
-    onSelectTerminal: props.onSelectTerminal,
     activeSharedSessionId: sharedOpen === null ? null : sharedOpen.sessionId,
   };
-  if (props.onCloseTerminal !== undefined) rail.onCloseTerminal = props.onCloseTerminal;
   if (props.onOpenSession !== undefined) rail.onOpenSession = props.onOpenSession;
   if (props.onOpenLanding !== undefined) rail.onOpenLanding = props.onOpenLanding;
   if (props.onOpenArchive !== undefined) rail.onOpenArchive = props.onOpenArchive;
-  if (props.terminalsAction !== undefined) rail.terminalsAction = props.terminalsAction;
+  if (props.newTabControl !== undefined) rail.newTabControl = props.newTabControl;
   if (props.onShareSession !== undefined) rail.onShareSession = props.onShareSession;
   if (props.sharedSessions !== undefined) rail.sharedSessions = props.sharedSessions;
   if (props.onSelectSharedSession !== undefined) {
@@ -217,8 +210,8 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   // So opening a shared session tears the runtime down and rebuilds it against
   // the owner's endpoints, which is §6.3's answer taken as written, with the
   // cost it names: the rail's vendored zone lists whichever box is mounted. The
-  // native sections — "Shared with you" and Terminals — are props, so they
-  // follow the mount and the member always has a way back.
+  // native parts — "Shared with you" and the footer's New tab control — are
+  // props, so they follow the mount and the member always has a way back.
   const surfaceProps =
     sharedOpen === null
       ? {
@@ -269,6 +262,9 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const hostTabs = sharedOpen !== null || props.surfaceTabs === undefined
     ? {}
     : { surfaceTabs: props.surfaceTabs };
+  const sidePanel = sharedOpen !== null || props.sidePanel === undefined
+    ? {}
+    : { sidePanel: props.sidePanel };
   // The restored own-box selection rides ONLY the owned surface. A shared
   // surface opens on `sharedOpen.sessionId` through the branch above, so passing
   // it here too would fight that.
@@ -293,6 +289,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
           rail={rail}
           readOnly={surfaceProps.readOnly}
           {...hostTabs}
+          {...sidePanel}
           {...ownInitial}
           {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
           {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}

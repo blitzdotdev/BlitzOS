@@ -184,6 +184,11 @@
   user-select: none;
 }
 
+/* The head's bottom rule is not in the mockup, which drew the head and the list
+   as one column. With the vendored sections under it (plans/LODY-SESSIONS.md
+   §0.3) the head is the one native strip above somebody else's list, and it
+   needs an edge to read as such (dogfood, 2026-09-03). `box-sizing` is
+   border-box, so the 46px is unchanged. */
 .shell-rhead {
   display: flex;
   height: 46px;
@@ -191,6 +196,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 8px 0 13px;
+  border-bottom: 1px solid var(--rule);
 }
 
 .shell-rhead b {
@@ -261,21 +267,51 @@
   left: 8px;
 }
 
-/* The same control as a `+` glyph, in the Terminals section header the
-   vendored rail draws. The bar's border and gutters are the rail's, not the
-   control's, so both come off; the menu keeps its width and hangs from the
-   trigger's right edge, where the header has no room to the left. */
-.shell-newbar--icon {
+/* The same control as a terminal glyph, in the vendored rail's FOOTER, to the
+   left of their Archive entry (`vendor/lody/BLITZ-PATCHES.md` seam patch 18).
+   The bar's border and gutters are the rail's, not the control's, so both come
+   off. The trigger takes the footer button's own box — 28px, the `h-7 w-7
+   rounded-md` of `getLoroSidebarFooterIconButtonClassName` — so the two read
+   as one row, and its glyph the 16px theirs is. The menu opens UPWARD from the
+   trigger's left edge, because below the footer is the end of the rail. */
+.shell-newbar--footer {
   margin-bottom: 0;
   padding: 0;
   border-bottom: 0;
 }
 
-.shell-newbar--icon .shell-newmenu {
-  top: 26px;
-  right: 0;
-  left: auto;
+.shell-newbar--footer .shell-ib {
+  width: 28px;
+  height: 28px;
+}
+
+.shell-newbar--footer .shell-ib__glyph {
+  width: 16px;
+  height: 16px;
+}
+
+.shell-newbar--footer .shell-newmenu {
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
   width: 220px;
+}
+
+/* Their footer grows its buttons to 48px under `useIsMobile()`, which is
+   `MOBILE_LAYOUT_BREAKPOINT` (768) read through `matchMedia`; the trigger
+   follows the same line so the row stays one row on a phone. */
+@media (max-width: 767px) {
+  .shell-newbar--footer .shell-ib {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--r-control);
+  }
+
+  .shell-newbar--footer .shell-ib__glyph {
+    width: 20px;
+    height: 20px;
+  }
 }
 
 .session-list {
@@ -351,16 +387,8 @@
   text-decoration: underline;
 }
 
-/* The Terminals section: their section header, our rows. The rows are the
-   rail's own `.shell-s`, so only the block around them needs a box. */
-.session-rail-terminals {
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 12px;
-}
-
-/* "Shared with you" (plans/LODY-SHARING.md §8): the same shape as Terminals,
-   because both are native rows under one of their section headers. */
+/* "Shared with you" (plans/LODY-SHARING.md §8): native rows under one of
+   their section headers, so only the block around them needs a box. */
 .session-rail-shared {
   display: flex;
   flex-direction: column;

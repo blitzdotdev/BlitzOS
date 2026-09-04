@@ -278,6 +278,12 @@ interface CreateWorkspaceRequest {
    yet; it provisions on first open or by workspace-admin action.
 2. **Viewer role**: no machine, ever. Viewers watch sessions; they do not
    run them.
+   *(Amendment 2026-09-03: a member whose OWN machine is `stopped` opens the
+   workspace to a pane that offers Start, and the shell dials nothing until
+   the machine runs. The legacy `phase` projects `stopped` as `ready` on
+   purpose, so the webapp reads the state off `members[].machine` instead —
+   `workspace-store.ts`, `lifecycleStatusFor`. Before that the shell treated
+   the workspace as running and every box call answered 409.)*
 3. **Member removed from workspace / leaves org**: their machines in that
    scope are destroyed after a grace snapshot; volume retention (existing
    7-day sweep) covers restore.
@@ -394,7 +400,12 @@ port those values into `tokens.css` rather than restyle by taste.
 
 **Scope.** Columns 1 and 2 only. No change to the right icon strip
 (`WorkspaceRailStrip`), the tab strip (`WebAppHeader`), the terminal and
-editor panes, or the mobile drawer semantics. **No sessions yet** — the
+editor panes, or the mobile drawer semantics. *(2026-09-02: the right icon
+strip has since become a quick-action bar over Lody's side panel — Side Chat,
+Files, All Changes, Browser, Connections — and the native Files and teenyapps
+panels are gone; see `vendor/lody/BLITZ-PATCHES.md` seam patches 19 and 20 and
+`packages/webapp/src/lody/side-panel.tsx`. The "Files, Ports, Connections"
+surface icons in the row below are superseded by that bar.)* **No sessions yet** — the
 rail lists the managed tab types that already exist under a workspace
 (`claude | codex | terminal | chat` from `webapp_state`), one workspace
 at a time. Build 2 later swaps the rail's data source to session rows;

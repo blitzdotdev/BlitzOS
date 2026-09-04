@@ -19,11 +19,11 @@ export type SessionRailProps = {
    * When supplied, `div.session-list` becomes a PORTAL TARGET and the rail draws
    * neither the `New tab` bar nor a single row: Lody's own `LoroSidebar` body
    * renders there instead, mounted by `SessionSurface` so it shares the one
-   * runtime. Its header and footer are suppressed through the props phase 4
-   * added upstream, its Chats and GitHub Worktrees sections come from the
-   * daemon, and today's terminal rows go in through its
-   * `afterSessionListContent` slot. `div.shell-rhead` above it stays native and
-   * byte-for-byte unchanged either way.
+   * runtime. Its header is suppressed through the prop phase 4 added upstream,
+   * its footer is cut down to Archive plus our New tab control (seam patches
+   * 13 and 18), and its Chats and GitHub Worktrees sections come from the
+   * daemon. `div.shell-rhead` above it stays native and byte-for-byte
+   * unchanged either way.
    *
    * A ref rather than a `ReactNode`, because the mount has to be a CHILD of the
    * surface's provider stack and this rail is not: what crosses the boundary is
@@ -55,6 +55,16 @@ export type SessionRailProps = {
    * renders at most once.
    */
   sessionsNeedMachine?: boolean;
+  /**
+   * The build has sessions on, the box's gateway answers, and the session
+   * daemon behind it has not published its catalog for longer than a member
+   * should wait (`lody/box-capability.ts`, `stalled`).
+   *
+   * The rail is back to its flag-off shape, so terminals work; the probe keeps
+   * asking, so a daemon that was only slow brings the surface back by itself.
+   * What a member can act on if it does not is the machine, from "My machine".
+   */
+  sessionsStalled?: boolean;
   onSelectSession: (sessionId: string) => void;
   /**
    * Close one tab from its row.
@@ -90,6 +100,11 @@ const RECREATE_TO_ENABLE_SESSIONS = "Recreate this workspace's machine to enable
 const PROVISION_TO_ENABLE_SESSIONS = "Open My machine to provision one";
 const ASK_ADMIN_FOR_A_MACHINE = "Ask a workspace admin to provision one for you";
 
+/** The stalled daemon's pair: the rail keeps asking the box, and the one act
+ * a member has meanwhile is the machine's own Recreate, in "My machine". */
+const RECREATE_TO_UNSTICK_SESSIONS = "Still checking. Open My machine to recreate it";
+const ASK_ADMIN_TO_UNSTICK_SESSIONS = "Still checking. Ask a workspace admin to recreate it";
+
 /** Column two of the shell (plans/mockups/session-rail.html `#rail`): the
  * workspace head, and below it either the vendored session sections or — with
  * Lody sessions off — the pinned New tab action and one row per managed tab.
@@ -104,6 +119,7 @@ export function SessionRail({
   onVendorHost,
   sessionsNeedNewerMachine,
   sessionsNeedMachine,
+  sessionsStalled,
   onSelectSession,
   onCloseSession,
   onSpawnSession,
@@ -193,6 +209,21 @@ export function SessionRail({
         </div>
       )}
 
+      {sessionsStalled === true && (
+        <div className="rail-notice" role="status">
+          <span className="rail-notice__t">Sessions are not answering on this machine</span>
+          {workspace.canControl ? (
+            <button
+              className="rail-notice__a"
+              type="button"
+              onClick={() => onOpenMachine(workspace.id)}
+            >{RECREATE_TO_UNSTICK_SESSIONS}</button>
+          ) : (
+            <span className="rail-notice__d">{ASK_ADMIN_TO_UNSTICK_SESSIONS}</span>
+          )}
+        </div>
+      )}
+
       {!vendored && (
         <NewTabControl
           variant="bar"
@@ -232,7 +263,6 @@ export function SessionRail({
                   <SessionTypeIcon
                     type={session.agent}
                     className="shell-g__glyph"
-                    filePath={session.filePath}
                   />
                 </span>
                 <span className="shell-s__t">{session.label}</span>

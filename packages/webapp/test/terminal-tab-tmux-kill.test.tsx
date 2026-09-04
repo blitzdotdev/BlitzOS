@@ -126,7 +126,7 @@ interface BoxRequest {
 const TERMINAL_TABS: WorkspaceTab[] = [
   { id: 7, type: "terminal" },
   { id: 9, type: "claude" },
-  { id: 11, type: "file", filePath: "README.md" },
+  { id: 11, type: "preview", port: 3000 },
 ];
 
 async function mountShell(options: { path: string; state?: Map<string, unknown> }) {
@@ -162,11 +162,11 @@ async function mountShell(options: { path: string; state?: Map<string, unknown> 
   const surface: SurfaceRecord = { surfaceTabs: undefined };
   vi.doMock("../src/lody/SessionSurface.js", () => ({
     default: (props: {
-      rail?: { terminalsAction?: ReactNode };
+      rail?: { newTabControl?: ReactNode };
       surfaceTabs?: SurfaceRecord["surfaceTabs"];
     }) => {
       surface.surfaceTabs = props.surfaceTabs;
-      return <div data-testid="lody-surface">{props.rail?.terminalsAction}</div>;
+      return <div data-testid="lody-surface">{props.rail?.newTabControl}</div>;
     },
   }));
 
@@ -241,7 +241,7 @@ describe("TABS-1 — a closed terminal tab ends its tmux session", () => {
   });
 
   it("asks for nothing when the closed tab has no session behind it", async () => {
-    // A file tab is a viewer over dufs. There is no `file-11` to end.
+    // A preview tab is a viewer over the port proxy. There is no `preview-11` to end.
     const mounted = await mountShell({ path: "/workspaces/ws-1/chat/terminal/11" });
     await act(async () => {
       mounted.surface.surfaceTabs?.onClose("blitz-tab:11");

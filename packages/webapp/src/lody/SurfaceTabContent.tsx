@@ -3,7 +3,7 @@
  * (plans/LODY-TERMINAL-TABS.md §3.5, §8).
  *
  * The switch below was `WorkPanes`'s `renderedSessions.map` — panel, preview,
- * file, terminal. It moved here because two hosts now draw it: the pane grid,
+ * terminal. It moved here because two hosts now draw it: the pane grid,
  * exactly as before, and a tab of Lody's session strip. Splitting it is what
  * keeps the flag-off column of §6 byte-identical while the flag-on column
  * renders the same bodies somewhere else.
@@ -14,19 +14,15 @@
  * This component renders a body and nothing around it.
  */
 import type { CredentialRequestView } from '@blitzos/schema';
-import type { WebDAVClient } from 'webdav';
 import type { ControlPlaneClient } from '../api';
-import { FileEditor } from '../FileEditor';
 import { PreviewPanel } from '../PreviewPanel';
 import { TtydTerminal } from '../TtydTerminal';
-import type { LivePort, PreviewLink } from '../preview';
 import type { WorkspaceTab } from '../storage';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import {
   WorkspacePanelContent,
   type ConnectionsPanelFocus,
 } from '../WorkspaceDrawer';
-import type { ReactNode } from 'react';
 
 export type SurfaceTabContentProps = {
   session: WorkspaceTab;
@@ -38,12 +34,6 @@ export type SurfaceTabContentProps = {
   activeWorkspaceRunning: boolean;
   activeSessionUrl: string | null;
   activeFilesBase: string | null;
-  filesClient: WebDAVClient | null;
-  filesSidebar: ReactNode;
-  orgName: string;
-  workspaceWakingStage: string | undefined;
-  livePorts: LivePort[];
-  previewLinks: PreviewLink[];
   pendingRequests: CredentialRequestView[];
   pendingRequestsError: string | null;
   connectionsFocus: ConnectionsPanelFocus | null;
@@ -51,12 +41,8 @@ export type SurfaceTabContentProps = {
     request: CredentialRequestView,
     action: 'approve' | 'deny',
   ) => Promise<void>;
-  onFileDirtyChange: (sessionId: string, dirty: boolean) => void;
-  onFilesRefresh: () => void;
-  onUnauthorized: () => void;
   onSignInUrl: (url: string | null) => void;
   onOpenPreview: (port: number, path?: string) => boolean;
-  onOpenPreviewLink: (url: string, title: string) => boolean;
 };
 
 /** The pane class one tab's wrapper carries. Stated here beside the switch it
@@ -76,22 +62,12 @@ export function SurfaceTabContent({
   activeWorkspaceRunning,
   activeSessionUrl,
   activeFilesBase,
-  filesClient,
-  filesSidebar,
-  orgName,
-  workspaceWakingStage,
-  livePorts,
-  previewLinks,
   pendingRequests,
   pendingRequestsError,
   connectionsFocus,
   onResolveRequest,
-  onFileDirtyChange,
-  onFilesRefresh,
-  onUnauthorized,
   onSignInUrl,
   onOpenPreview,
-  onOpenPreviewLink,
 }: SurfaceTabContentProps) {
   const sessionId = String(session.id);
   if (session.type === 'panel') {
@@ -100,21 +76,13 @@ export function SurfaceTabContent({
         panel={session.panel}
         client={client}
         workspaceId={activeWorkspaceId}
-        orgName={orgName}
         visible={active}
-        files={filesSidebar}
         pendingRequests={pendingRequests}
         pendingRequestsError={pendingRequestsError}
         workspaceConnections={activeWorkspace?.connections ?? []}
         connectionsFocus={connectionsFocus}
         readOnly={activeWorkspace?.accessRole === 'viewer'}
         onResolveRequest={onResolveRequest}
-        livePorts={livePorts}
-        previewLinks={previewLinks}
-        filesBase={activeFilesBase}
-        previewReady={activeWorkspaceRunning}
-        onOpenPreview={(port) => { onOpenPreview(port); }}
-        onOpenPreviewLink={(url, title) => { onOpenPreviewLink(url, title); }}
       />
     );
   }
@@ -127,20 +95,6 @@ export function SurfaceTabContent({
         path={'port' in session ? session.path : undefined}
         filesBase={activeFilesBase}
         running={activeWorkspaceRunning}
-      />
-    );
-  }
-  if (session.type === 'file') {
-    return (
-      <FileEditor
-        active={active}
-        client={filesClient}
-        filePath={session.filePath}
-        unavailableStage={workspaceWakingStage}
-        onDirtyChange={(dirty) => onFileDirtyChange(sessionId, dirty)}
-        onSaved={onFilesRefresh}
-        onTreeRefresh={onFilesRefresh}
-        onUnauthorized={onUnauthorized}
       />
     );
   }

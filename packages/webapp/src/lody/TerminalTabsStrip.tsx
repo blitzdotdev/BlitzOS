@@ -76,8 +76,8 @@ export function TerminalTabsHost(props: {
    * own — a bottom tab bar on the landing, a tab sheet inside a session — and a
    * strip above them would be a second tab system on one screen, which is the
    * thing `plans/LODY-TERMINAL-TABS.md` exists to prevent. A phone reaches a
-   * terminal from the BlitzOS drawer rail and from the mobile tab sheet
-   * (seam patch 16), so nothing is lost with the strip off.
+   * terminal from the mobile tab sheet (seam patch 16), so nothing is lost
+   * with the strip off.
    *
    * The CONTENT half is unchanged either way: a selected host tab still covers
    * the landing, and every tab stays mounted.

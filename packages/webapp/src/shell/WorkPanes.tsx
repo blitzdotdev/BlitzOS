@@ -5,7 +5,6 @@ import type {
   RefObject,
 } from 'react';
 import type { CredentialRequestView } from '@blitzos/schema';
-import type { WebDAVClient } from 'webdav';
 import type { ControlPlaneClient } from '../api';
 import {
   SurfaceTabContent,
@@ -38,10 +37,7 @@ export type WorkPanesProps = {
   activeWorkspaceRunning: boolean;
   activeSessionUrl: string | null;
   activeFilesBase: string | null;
-  filesClient: WebDAVClient | null;
-  filesSidebar: ReactNode;
-  orgName: string;
-  workspaceWakingStage: string | undefined;
+  /** The `+ New tab` menu in each strip lists these. */
   livePorts: LivePort[];
   previewLinks: PreviewLink[];
   pendingRequests: CredentialRequestView[];
@@ -54,9 +50,6 @@ export type WorkPanesProps = {
     request: CredentialRequestView,
     action: 'approve' | 'deny',
   ) => Promise<void>;
-  onFileDirtyChange: (sessionId: string, dirty: boolean) => void;
-  onFilesRefresh: () => void;
-  onUnauthorized: () => void;
   onSignInUrl: (url: string | null) => void;
   onBeginPaneResize: (event: ReactMouseEvent<HTMLDivElement>) => void;
 };
@@ -97,10 +90,6 @@ export function WorkPanes({
   activeWorkspaceRunning,
   activeSessionUrl,
   activeFilesBase,
-  filesClient,
-  filesSidebar,
-  orgName,
-  workspaceWakingStage,
   livePorts,
   previewLinks,
   pendingRequests,
@@ -110,9 +99,6 @@ export function WorkPanes({
   onOpenPreview,
   onOpenPreviewLink,
   onResolveRequest,
-  onFileDirtyChange,
-  onFilesRefresh,
-  onUnauthorized,
   onSignInUrl,
   onBeginPaneResize,
 }: WorkPanesProps) {
@@ -150,7 +136,7 @@ export function WorkPanes({
           <div
             className={surfaceTabPaneClassName(session)}
             data-region={region}
-            hidden={!active || (session.type === 'file' && filesClient === null)}
+            hidden={!active}
             key={sessionId}
           >
             <SurfaceTabContent
@@ -162,22 +148,12 @@ export function WorkPanes({
               activeWorkspaceRunning={activeWorkspaceRunning}
               activeSessionUrl={activeSessionUrl}
               activeFilesBase={activeFilesBase}
-              filesClient={filesClient}
-              filesSidebar={filesSidebar}
-              orgName={orgName}
-              workspaceWakingStage={workspaceWakingStage}
-              livePorts={livePorts}
-              previewLinks={previewLinks}
               pendingRequests={pendingRequests}
               pendingRequestsError={pendingRequestsError}
               connectionsFocus={connectionsFocus}
               onResolveRequest={onResolveRequest}
-              onFileDirtyChange={onFileDirtyChange}
-              onFilesRefresh={onFilesRefresh}
-              onUnauthorized={onUnauthorized}
               onSignInUrl={onSignInUrl}
               onOpenPreview={onOpenPreview}
-              onOpenPreviewLink={onOpenPreviewLink}
             />
           </div>
         );
