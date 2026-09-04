@@ -10,7 +10,7 @@ import type {
   LodySessionSurfacePoolHostProps,
 } from "../src/lody/SessionSurface.js";
 import { render, settle } from "./dom.js";
-import { notifyLodyKeepalivePolicyChanged } from "../src/lody/keepalive-pool.js";
+import { createLodySurfaceIdentityClaims } from "../src/lody/surface-identity-claims.js";
 
 interface SurfaceRecorder {
   surfaces: readonly LodySessionSurfaceHostProps[];
@@ -75,6 +75,8 @@ async function claimIdentity(
 
 function apiAt(initialSessionId: string | null): LodySessionSurfaceApi & {
   openSession: ReturnType<typeof vi.fn>;
+  openLanding: ReturnType<typeof vi.fn>;
+  openArchive: ReturnType<typeof vi.fn>;
 } {
   let sessionId = initialSessionId;
   let archive = false;
@@ -122,6 +124,7 @@ describe("the React surface pool adapter", () => {
     const railHost = document.createElement("div");
     const apis: Array<LodySessionSurfaceApi | null> = [];
     const routes: Array<string | null> = [];
+    const identityClaims = createLodySurfaceIdentityClaims();
     const tree = (next: LodySurfacePoolTarget) => (
       <LodySurfacePool
         Surface={Host}
@@ -130,6 +133,8 @@ describe("the React surface pool adapter", () => {
         visible
         railHost={railHost}
         rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        identityClaims={identityClaims}
+        claimantId="ownership-test"
         onApiReady={(api) => apis.push(api)}
         onActiveSessionChange={(sessionId) => routes.push(sessionId)}
       />
@@ -176,6 +181,7 @@ describe("the React surface pool adapter", () => {
   it("navigates a retained router to a changed shell address without remounting", async () => {
     const recorder: SurfaceRecorder = { surfaces: [] };
     const Host = RecordingHost(recorder);
+    const identityClaims = createLodySurfaceIdentityClaims();
     const tree = (next: LodySurfacePoolTarget) => (
       <LodySurfacePool
         Surface={Host}
@@ -184,6 +190,8 @@ describe("the React surface pool adapter", () => {
         visible
         railHost={null}
         rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        identityClaims={identityClaims}
+        claimantId="active-address-test"
       />
     );
     const view = await render(tree(target("a", "old-session")));
@@ -201,9 +209,11 @@ describe("the React surface pool adapter", () => {
     await view.unmount();
   });
 
-  it("shrinks immediately when the same-page kill switch signal fires", async () => {
+  it("follows an archive URL change while the same surface is already active", async () => {
     const recorder: SurfaceRecorder = { surfaces: [] };
     const Host = RecordingHost(recorder);
+    const identityClaims = createLodySurfaceIdentityClaims();
+    const first = target("a", "session-a");
     const tree = (next: LodySurfacePoolTarget) => (
       <LodySurfacePool
         Surface={Host}
@@ -212,6 +222,38 @@ describe("the React surface pool adapter", () => {
         visible
         railHost={null}
         rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        identityClaims={identityClaims}
+        claimantId="active-archive-test"
+      />
+    );
+    const view = await render(tree(first));
+    const surface = current(recorder);
+    const api = apiAt("session-a");
+    await act(async () => {
+      await claimIdentity(surface, identity("a"));
+      surface.onApiReady?.(api);
+    });
+
+    await act(async () => view.root.render(tree({ ...first, desiredArchive: true })));
+    expect(current(recorder).surfaceKey).toBe(surface.surfaceKey);
+    expect(api.openArchive).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
+  it("shrinks when another document publishes the keep-alive storage change", async () => {
+    const recorder: SurfaceRecorder = { surfaces: [] };
+    const Host = RecordingHost(recorder);
+    const identityClaims = createLodySurfaceIdentityClaims();
+    const tree = (next: LodySurfacePoolTarget) => (
+      <LodySurfacePool
+        Surface={Host}
+        target={next}
+        viewer={{ name: "Me", avatarUrl: null }}
+        visible
+        railHost={null}
+        rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        identityClaims={identityClaims}
+        claimantId="storage-test"
       />
     );
     const view = await render(tree(target("a", null)));
@@ -223,7 +265,13 @@ describe("the React surface pool adapter", () => {
     expect(recorder.surfaces).toHaveLength(2);
 
     window.localStorage.setItem("blitz.lody.keepalive", "off");
-    await act(async () => notifyLodyKeepalivePolicyChanged());
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent("storage", {
+        key: "blitz.lody.keepalive",
+        newValue: "off",
+        storageArea: window.localStorage,
+      }));
+    });
     expect(recorder.surfaces).toHaveLength(1);
     expect(current(recorder).surfaceKey).toBe(b.surfaceKey);
     await view.unmount();
@@ -232,6 +280,7 @@ describe("the React surface pool adapter", () => {
   it("remounts when either bridge-construction function changes", async () => {
     const recorder: SurfaceRecorder = { surfaces: [] };
     const Host = RecordingHost(recorder);
+    const identityClaims = createLodySurfaceIdentityClaims();
     const first = target("a", null);
     first.endpoints.fetchImpl = globalThis.fetch.bind(globalThis);
     const second = target("a", null);
@@ -247,6 +296,8 @@ describe("the React surface pool adapter", () => {
         visible
         railHost={null}
         rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        identityClaims={identityClaims}
+        claimantId="constructor-test"
       />
     );
     const view = await render(tree(first));
@@ -265,6 +316,7 @@ describe("the React surface pool adapter", () => {
   it("reactivates a retained identity when a new endpoint resolves to it", async () => {
     const recorder: SurfaceRecorder = { surfaces: [] };
     const Host = RecordingHost(recorder);
+    const identityClaims = createLodySurfaceIdentityClaims();
     const tree = (next: LodySurfacePoolTarget) => (
       <LodySurfacePool
         Surface={Host}
@@ -273,6 +325,8 @@ describe("the React surface pool adapter", () => {
         visible
         railHost={null}
         rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        identityClaims={identityClaims}
+        claimantId="duplicate-test"
       />
     );
     const view = await render(tree(target("old-a", null)));

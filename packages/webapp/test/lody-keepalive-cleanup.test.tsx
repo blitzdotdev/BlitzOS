@@ -5,8 +5,10 @@ import type {
   LodySessionSurfaceHostProps,
   LodySessionSurfacePoolHostProps,
 } from "../src/lody/SessionSurface.js";
+import type { BoxEndpoints } from "../src/resolver.js";
 import { render, settle } from "./dom.js";
 import { createLodySurfaceRuntimeLifecycle } from "../src/lody/surface-runtime-lifecycle.js";
+import { createLodySurfaceIdentityClaims } from "../src/lody/surface-identity-claims.js";
 
 interface ResourceLedger {
   sockets: Set<string>;
@@ -226,9 +228,7 @@ describe("surface eviction cleanup", () => {
     let surfaces: readonly LodySessionSurfaceHostProps[] = [];
     function SlowRuntimeSurface({ surface }: { surface: LodySessionSurfaceHostProps }) {
       const initial = useRef(surface).current;
-      const lifecycle = useRef(
-        createLodySurfaceRuntimeLifecycle({ constructionWarningMs: 1_000 }),
-      ).current;
+      const lifecycle = useRef(createLodySurfaceRuntimeLifecycle()).current;
       useEffect(() => {
         const name = boxName(initial);
         const controller = new AbortController();
@@ -276,6 +276,7 @@ describe("surface eviction cleanup", () => {
         <SlowRuntimeSurface key={surface.surfaceKey} surface={surface} />
       ));
     }
+    const identityClaims = createLodySurfaceIdentityClaims();
     const tree = (target: LodySurfacePoolTarget) => (
       <LodySurfacePool
         Surface={Host}
@@ -284,6 +285,8 @@ describe("surface eviction cleanup", () => {
         visible
         railHost={null}
         rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        identityClaims={identityClaims}
+        claimantId="construction-test"
       />
     );
     const view = await render(tree(boxTarget("a")));
@@ -321,43 +324,31 @@ describe("surface eviction cleanup", () => {
     expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("distinguishes StrictMode attempts and never releases at the warning bound", async () => {
-    vi.useFakeTimers();
-    try {
-      const slow = vi.fn();
-      const release = vi.fn();
-      let nextAttemptId = 10;
-      const lifecycle = createLodySurfaceRuntimeLifecycle({
-        constructionWarningMs: 10,
-        onConstructionSlow: slow,
-      });
-      function StrictRuntimeAttempt() {
-        useEffect(() => {
-          nextAttemptId += 1;
-          const attemptId = nextAttemptId;
-          lifecycle.onRuntimeLifecycle({ attemptId, phase: "starting" });
-          return () => lifecycle.onRuntimeLifecycle({ attemptId, phase: "failed" });
-        }, []);
-        return null;
-      }
-      const view = await render(
-        <StrictMode>
-          <StrictRuntimeAttempt />
-        </StrictMode>,
-      );
-      expect(nextAttemptId).toBe(12);
-      lifecycle.releaseAfterRuntime(release);
-      await vi.advanceTimersByTimeAsync(10);
-      expect(slow).toHaveBeenCalledTimes(1);
-      expect(slow).toHaveBeenCalledWith({ attemptId: 12, timeoutMs: 10 });
-      expect(release).not.toHaveBeenCalled();
-      await view.unmount();
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(release).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
+  it("distinguishes StrictMode construction attempts before releasing", async () => {
+    const release = vi.fn();
+    let nextAttemptId = 10;
+    const lifecycle = createLodySurfaceRuntimeLifecycle();
+    function StrictRuntimeAttempt() {
+      useEffect(() => {
+        nextAttemptId += 1;
+        const attemptId = nextAttemptId;
+        lifecycle.onRuntimeLifecycle({ attemptId, phase: "starting" });
+        return () => lifecycle.onRuntimeLifecycle({ attemptId, phase: "failed" });
+      }, []);
+      return null;
     }
+    const view = await render(
+      <StrictMode>
+        <StrictRuntimeAttempt />
+      </StrictMode>,
+    );
+    expect(nextAttemptId).toBe(12);
+    lifecycle.releaseAfterRuntime(release);
+    expect(release).not.toHaveBeenCalled();
+    await view.unmount();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it("releases every owned resource and permits the same identity to open again", async () => {
@@ -370,6 +361,7 @@ describe("surface eviction cleanup", () => {
       surfaces: [],
     };
     const Host = ResourceHost(ledger);
+    const identityClaims = createLodySurfaceIdentityClaims();
     const tree = (target: LodySurfacePoolTarget) => (
       <LodySurfacePool
         Surface={Host}
@@ -378,6 +370,8 @@ describe("surface eviction cleanup", () => {
         visible
         railHost={null}
         rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        identityClaims={identityClaims}
+        claimantId="resource-test"
       />
     );
     const view = await render(tree(boxTarget("a")));
@@ -418,6 +412,7 @@ describe("surface eviction cleanup", () => {
   it("does not reopen an invalidated identity until asynchronous destroy resolves", async () => {
     const ledger = createBarrierLedger();
     const Host = BarrierHost(ledger);
+    const identityClaims = createLodySurfaceIdentityClaims();
     const tree = (target: LodySurfacePoolTarget) => (
       <LodySurfacePool
         Surface={Host}
@@ -426,6 +421,8 @@ describe("surface eviction cleanup", () => {
         visible
         railHost={null}
         rail={{ terminals: [], activeTerminalId: "", onSelectTerminal: () => {} }}
+        identityClaims={identityClaims}
+        claimantId="barrier-test"
       />
     );
     const view = await render(tree(boxTarget("a-old")));
@@ -454,5 +451,118 @@ describe("surface eviction cleanup", () => {
     await view.unmount();
     await settle();
     expect(ledger.openIdentities.size).toBe(0);
+  });
+
+  it("keeps the retiring identity lease across a real boundary crash and retry", async () => {
+    vi.resetModules();
+    vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
+    const events: string[] = [];
+    let crashFirstAttempt = false;
+    let nextAttempt = 0;
+    let finishRetirement = (): void => undefined;
+    const retirement = new Promise<void>((resolve) => {
+      finishRetirement = resolve;
+    });
+    vi.doMock("../src/lody/SessionSurface.js", () => {
+      function ClaimedSurface(props: {
+        attempt: number;
+        surface: LodySessionSurfaceHostProps;
+      }) {
+        const initial = useRef(props.surface).current;
+        useEffect(() => {
+          const controller = new AbortController();
+          events.push(`claim-requested:${props.attempt}`);
+          void initial.onIdentityClaim?.(
+            { machineId: "machine-a", lwWorkspaceId: "lw_a" },
+            controller.signal,
+          ).then((granted) => {
+            if (granted && !controller.signal.aborted) {
+              events.push(`claim-granted:${props.attempt}`);
+            }
+          });
+          return () => {
+            controller.abort();
+            if (props.attempt !== 1) {
+              initial.onSurfaceReleased?.();
+              return;
+            }
+            events.push("retirement-started:1");
+            void retirement.then(() => {
+              events.push("release-callback:1");
+              initial.onSurfaceReleased?.();
+            });
+          };
+        }, [initial, props.attempt]);
+        return <div data-claim-attempt={props.attempt} />;
+      }
+      function BoundaryProbeHost(props: LodySessionSurfacePoolHostProps) {
+        const attempt = useRef(0);
+        if (attempt.current === 0) {
+          nextAttempt += 1;
+          attempt.current = nextAttempt;
+        }
+        if (attempt.current === 1 && crashFirstAttempt) {
+          throw new Error("boundary retry lease probe");
+        }
+        return props.surfaces.map((surface) => (
+          <ClaimedSurface
+            key={surface.surfaceKey}
+            attempt={attempt.current}
+            surface={surface}
+          />
+        ));
+      }
+      return {
+        default: BoundaryProbeHost,
+      };
+    });
+    const { LodySessionsRegion } = await import("../src/lody/LodySessionsRegion.js");
+    const endpoints: BoxEndpoints = {
+      terminalUrl: "https://a.invalid/webapp/7681/",
+      filesBase: "https://a.invalid/webapp/5000/",
+      lodySyncUrl: "wss://a.invalid/webapp/7445/lody/sync",
+      lodyRpcUrl: "https://a.invalid/webapp/7445/lody/rpc",
+      lodyControlUrl: "https://a.invalid/webapp/7445/lody/control",
+      lodyProjectUrl: "https://a.invalid/webapp/7445/lody/project",
+      lodyPlatformUrl: "https://a.invalid/webapp/7445/lody/platform",
+    };
+    const tree = () => (
+      <LodySessionsRegion
+        endpoints={endpoints}
+        sessions="present"
+        viewerName="Me"
+        viewerAvatarUrl={null}
+        workspaceTitle="A"
+        visible
+        railHost={null}
+        terminals={[]}
+        activeTerminalId=""
+        onSelectTerminal={() => undefined}
+      />
+    );
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const view = await render(tree());
+    await settle();
+    expect(events).toContain("claim-granted:1");
+
+    crashFirstAttempt = true;
+    await act(async () => view.root.render(tree()));
+    await settle();
+    const retry = [...view.container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Try again");
+    if (retry === undefined) throw new Error("the real load boundary did not catch the crash");
+    await act(async () => retry.click());
+    await settle();
+    expect(events).toContain("retirement-started:1");
+    expect(events).toContain("claim-requested:2");
+    expect(events).not.toContain("claim-granted:2");
+
+    finishRetirement();
+    await settle();
+    await settle();
+    expect(events.indexOf("claim-granted:2"))
+      .toBeGreaterThan(events.indexOf("release-callback:1"));
+    await view.unmount();
+    error.mockRestore();
   });
 });

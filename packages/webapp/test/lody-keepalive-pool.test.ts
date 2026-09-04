@@ -28,13 +28,7 @@ function enter(
   kind: LodySurfaceKind = "owned",
 ): LodyPoolDecision {
   const requested = requestLodySurface(pool, { endpointFingerprint, kind });
-  if (requested.entryId === null) throw new Error("surface request selected no entry");
-  const activated = activateLodySurface(requested.pool, requested.entryId);
-  return {
-    ...activated,
-    mount: requested.mount,
-    dispose: [...requested.dispose, ...activated.dispose],
-  };
+  return activateLodySurface(requested.pool, requested.entryId);
 }
 
 function identify(
@@ -68,11 +62,10 @@ describe("the Lody keep-alive pool", () => {
     });
 
     expect(returnToA.entryId).toBe(aId);
-    expect(returnToA.mount).toEqual([]);
-    expect(returnToA.reused).toBe(true);
     const activated = activateLodySurface(returnToA.pool, aId);
-    expect(activated.validate).toEqual([aId]);
-    expect(activated.hide).toEqual([bId]);
+    expect(activated.pool.activeEntryId).toBe(aId);
+    expect(activated.pool.entries.map((entry) => entry.entryId)).toEqual([aId, bId]);
+    expect(activated.pool.entries.find((entry) => entry.entryId === aId)?.generation).toBe(1);
   });
 
   it("never reuses a provisional entry after it is hidden", () => {
@@ -84,12 +77,12 @@ describe("the Lody keep-alive pool", () => {
     // A request that leaves before its snapshot settles disposes the
     // provisional surface instead of making an identity-less cache entry.
     const second = enter(first.pool, "endpoint-b");
-    expect(second.dispose).toContain(provisionalId);
+    expect(second.pool.entries.some((entry) => entry.entryId === provisionalId)).toBe(false);
     pool = second.pool;
 
     const returnToA = enter(pool, "endpoint-a");
     expect(returnToA.entryId).not.toBe(provisionalId);
-    expect(returnToA.mount).toEqual([returnToA.entryId]);
+    expect(returnToA.pool.entries.some((entry) => entry.entryId === returnToA.entryId)).toBe(true);
   });
 
   it("keeps a retained identity and suppresses a duplicate provisional endpoint", () => {
@@ -106,7 +99,6 @@ describe("the Lody keep-alive pool", () => {
 
     // The identity-known surface wins before the provisional endpoint can
     // construct a second runtime for the same IndexedDB name.
-    expect(duplicate.dispose).toEqual([newId]);
     expect(duplicate.pool.entries).toHaveLength(1);
     expect(duplicate.pool.entries[0]?.entryId).toBe(oldId);
     expect(duplicate.pool.entries[0]?.key).toEqual(A);
@@ -128,7 +120,6 @@ describe("the Lody keep-alive pool", () => {
     const firstIdentity = reportLodySurfaceIdentity(second.pool, firstId, A);
     const duplicate = reportLodySurfaceIdentity(firstIdentity.pool, secondId, A);
 
-    expect(duplicate.dispose).toEqual([secondId]);
     expect(duplicate.pool.entries.map((entry) => entry.entryId)).toEqual([firstId]);
     expect(duplicate.pool.entries[0]?.key).toEqual(A);
   });
@@ -146,9 +137,6 @@ describe("the Lody keep-alive pool", () => {
     const cId = selectedId(third);
     pool = identify(third.pool, cId, C);
 
-    expect(third.dispose).toEqual([aId]);
-    expect(third.dispose).not.toContain(bId);
-    expect(third.dispose).not.toContain(cId);
     expect(pool.activeEntryId).toBe(cId);
     expect(pool.entries.map((entry) => entry.entryId)).toEqual([bId, cId]);
   });
@@ -164,12 +152,10 @@ describe("the Lody keep-alive pool", () => {
 
     const shared = enter(pool, "shared-c", "shared");
     const sharedId = selectedId(shared);
-    expect(shared.dispose).toContain(aId);
     expect(shared.pool.entries.map((entry) => entry.entryId)).toEqual([bId, sharedId]);
 
     const backToOwned = enter(shared.pool, "owned-b");
     expect(backToOwned.entryId).toBe(bId);
-    expect(backToOwned.dispose).toContain(sharedId);
     expect(backToOwned.pool.entries.map((entry) => entry.entryId)).toEqual([bId]);
   });
 
@@ -183,13 +169,11 @@ describe("the Lody keep-alive pool", () => {
     pool = identify(second.pool, bId, B);
 
     const hiddenLoss = discontinueLodySurface(pool, aId);
-    expect(hiddenLoss.dispose).toEqual([aId]);
     expect(hiddenLoss.pool.entries.some((entry) => entry.entryId === aId)).toBe(false);
 
     const activeLoss = discontinueLodySurface(hiddenLoss.pool, bId);
-    expect(activeLoss.dispose).toEqual([]);
-    expect(activeLoss.validate).toEqual([bId]);
     expect(activeLoss.pool.entries.find((entry) => entry.entryId === bId)?.continuous).toBe(false);
+    expect(activeLoss.pool.entries.find((entry) => entry.entryId === bId)?.generation).toBe(1);
 
     const revalidated = reportLodySurfaceIdentity(activeLoss.pool, bId, B);
     expect(revalidated.pool.entries[0]?.continuous).toBe(true);
@@ -200,9 +184,8 @@ describe("the Lody keep-alive pool", () => {
     const entryId = selectedId(mounted);
     const pool = identify(mounted.pool, entryId, A);
     const hidden = deactivateLodySurface(pool);
-    expect(hidden.hide).toEqual([entryId]);
     expect(hidden.pool.activeEntryId).toBeNull();
-    expect(hidden.pool.entries[0]?.state).toBe("hidden");
+    expect(hidden.pool.entries[0]?.state).toBe("ready");
   });
 
   it("invalidates an active entry whose validation reports a changed identity", () => {
@@ -211,7 +194,6 @@ describe("the Lody keep-alive pool", () => {
     const known = identify(mounted.pool, entryId, A);
     const mismatch = reportLodySurfaceIdentity(known, entryId, B);
 
-    expect(mismatch.dispose).toEqual([entryId]);
     expect(mismatch.pool.activeEntryId).toBeNull();
     expect(mismatch.pool.entries).toEqual([]);
   });
@@ -226,7 +208,6 @@ describe("the Lody keep-alive pool", () => {
     pool = identify(second.pool, bId, B);
 
     const shrunk = resizeLodyKeepalivePool(pool, 1);
-    expect(shrunk.dispose).toEqual([aId]);
     expect(shrunk.pool.capacity).toBe(1);
     expect(shrunk.pool.entries.map((entry) => entry.entryId)).toEqual([bId]);
   });

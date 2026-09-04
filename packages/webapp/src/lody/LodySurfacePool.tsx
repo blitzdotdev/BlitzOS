@@ -22,7 +22,6 @@ import {
   LODY_KEEPALIVE_STORAGE_KEY,
   lodyKeepaliveEnabled,
   lodySurfacePoolCapacity,
-  subscribeLodyKeepalivePolicy,
   reportLodySurfaceIdentity,
   requestLodySurface,
   resizeLodyKeepalivePool,
@@ -34,8 +33,7 @@ import { MOBILE_WEBAPP_QUERY } from "../mobile-webapp.js";
 import type { BlitzViewer } from "./platform.js";
 import type { LodyRuntimeEndpoints } from "./runtime.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
-import { markLodyActivationPhase } from "./surface-activation-performance.js";
-import { createLodySurfaceIdentityClaims } from "./surface-identity-claims.js";
+import type { LodySurfaceIdentityClaims } from "./surface-identity-claims.js";
 
 export interface LodySurfacePoolTarget {
   kind: LodySurfaceKind;
@@ -79,6 +77,9 @@ export interface LodySurfacePoolProps {
   surfaceTabs?: SurfaceTabsBinding;
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
   onActiveSessionChange?: (sessionId: string | null) => void;
+  identityClaims: LodySurfaceIdentityClaims;
+  /** Distinguishes this boundary attempt from a still-retiring predecessor. */
+  claimantId: string;
 }
 
 /** Every URL is only a hint for finding a known identity; it is never a key. */
@@ -143,7 +144,6 @@ function transitionToTarget(
     endpointFingerprint: lodyEndpointFingerprint(target.endpoints),
     kind: target.kind,
   });
-  if (requested.entryId === null) return resizedState;
   const activated = activateLodySurface(requested.pool, requested.entryId);
   let definitions = retainDefinitions(resizedState.definitions, activated.pool);
   const existing = definitions.findIndex((item) => item.entryId === requested.entryId);
@@ -210,7 +210,6 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
     targetToken: null,
   }));
   const stateRef = useRef(state);
-  const claimsRef = useRef(createLodySurfaceIdentityClaims());
 
   const wantedToken = props.target === null ? null : tokenFor(props.target);
   const addressToken = props.target === null
@@ -242,9 +241,6 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
     if (target === null) return;
     onApiReadyRef.current?.(api);
     const matches = routeMatches(api, target);
-    markLodyActivationPhase(target.endpoints.platformUrl, "address-reconciliation", {
-      navigated: !matches,
-    });
     if (!matches) {
       navigateToTarget(api, target);
       return;
@@ -274,7 +270,9 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
   const applyIdentity = useCallback((entryId: string, identity: LodySurfaceIdentity) => {
     const current = stateRef.current;
     const decision = reportLodySurfaceIdentity(current.pool, entryId, identity);
-    const activeWasDisposed = decision.dispose.includes(current.pool.activeEntryId ?? "");
+    const previouslyActive = current.pool.activeEntryId;
+    const activeWasDisposed = previouslyActive !== null
+      && !decision.pool.entries.some((entry) => entry.entryId === previouslyActive);
     const next = {
       pool: decision.pool,
       definitions: retainDefinitions(current.definitions, decision.pool),
@@ -296,8 +294,9 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
   ): Promise<boolean> => {
     const decision = applyIdentity(entryId, identity);
     if (decision.entryId !== entryId) return false;
-    return await claimsRef.current.claim(identity, mountKey, signal);
-  }, [applyIdentity]);
+    const claimant = `${props.claimantId}:${mountKey}`;
+    return await props.identityClaims.claim(identity, claimant, signal);
+  }, [applyIdentity, props.claimantId, props.identityClaims]);
 
   const onSurfaceIdentity = useCallback((entryId: string, identity: LodySurfaceIdentity): void => {
     applyIdentity(entryId, identity);
@@ -319,11 +318,12 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
   const callbacksFor = (entryId: string, mountKey: string): SurfaceCallbacks => {
     const existing = callbacksByEntryRef.current.get(mountKey);
     if (existing !== undefined) return existing;
+    const claimant = `${props.claimantId}:${mountKey}`;
     const created: SurfaceCallbacks = {
       onIdentityClaim: (identity, signal) =>
         onSurfaceIdentityClaim(entryId, mountKey, identity, signal),
       onIdentity: (identity) => onSurfaceIdentity(entryId, identity),
-      onSurfaceReleased: () => claimsRef.current.release(mountKey),
+      onSurfaceReleased: () => props.identityClaims.release(claimant),
       onContinuityLost: () => onSurfaceContinuityLost(entryId),
       onApiReady: (api) => onSurfaceApiReady(entryId, api),
       onActiveSessionChange: (sessionId) => onSurfaceRoute(entryId, sessionId),
@@ -336,10 +336,6 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
     if (activeEntryId === null) {
       onApiReadyRef.current?.(null);
       return;
-    }
-    const target = targetRef.current;
-    if (target !== null) {
-      markLodyActivationPhase(target.endpoints.platformUrl, "active-flip-commit");
     }
     const api = apiByEntryRef.current.get(activeEntryId);
     if (api === undefined) {
@@ -384,11 +380,7 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
       if (event.key === null || event.key === LODY_KEEPALIVE_STORAGE_KEY) applyCapacity();
     };
     window.addEventListener("storage", onStorage);
-    const unsubscribe = subscribeLodyKeepalivePolicy(applyCapacity);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      unsubscribe();
-    };
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   useEffect(() => () => {
@@ -397,9 +389,10 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
   }, []);
 
   const definitions = new Map(rendered.definitions.map((item) => [item.entryId, item]));
-  const surfaces = rendered.pool.entries.flatMap((entry) => {
-    const definition = definitions.get(entry.entryId);
-    if (definition === undefined) return [];
+  const surfaces = rendered.pool.entries.map((entry) => {
+    // SAFETY: every transition creates a definition for its requested entry,
+    // then filters definitions and pool entries through the same membership.
+    const definition = definitions.get(entry.entryId)!;
     const current = entry.entryId === activeEntryId && props.target !== null;
     // Use the canonical per-entry object so ordinary shell/address renders do
     // not pierce `RetainedSessionSurfaceContent`'s shallow memo comparison.
@@ -421,7 +414,7 @@ export function LodySurfacePool(props: LodySurfacePoolProps) {
     if (current && props.surfaceTabs !== undefined) surface.surfaceTabs = props.surfaceTabs;
     if (target.initialSessionId !== undefined) surface.initialSessionId = target.initialSessionId;
     if (target.shared !== undefined) surface.shared = target.shared;
-    return [surface];
+    return surface;
   });
 
   return surfaces.length === 0 ? null : <props.Surface surfaces={surfaces} />;

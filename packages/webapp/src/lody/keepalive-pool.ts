@@ -14,7 +14,7 @@ export function lodySurfaceIdentityKey(identity: LodySurfaceIdentity): string {
 }
 
 export type LodySurfaceKind = "owned" | "shared";
-export type LodySurfaceState = "booting" | "ready" | "active" | "hidden" | "invalid";
+export type LodySurfaceState = "booting" | "ready";
 
 export interface LodyKeepaliveEntry {
   entryId: string;
@@ -46,12 +46,10 @@ export interface LodyPoolDecision {
   pool: LodyKeepalivePool;
   /** Entry selected by a request/activation, if that operation selects one. */
   entryId: string | null;
-  mount: readonly string[];
-  hide: readonly string[];
-  dispose: readonly string[];
-  /** Mounted entries that must re-fetch `/lody/platform` concurrently. */
-  validate: readonly string[];
-  reused: boolean;
+}
+
+export interface LodyPoolSelection extends LodyPoolDecision {
+  entryId: string;
 }
 
 interface KeepaliveStorage {
@@ -63,19 +61,8 @@ export interface LodySurfaceDevicePolicy {
   desktopClass: boolean;
 }
 
-const keepalivePolicyListeners = new Set<() => void>();
-
-export function notifyLodyKeepalivePolicyChanged(): void {
-  for (const listener of keepalivePolicyListeners) listener();
-}
-
-export function subscribeLodyKeepalivePolicy(listener: () => void): () => void {
-  keepalivePolicyListeners.add(listener);
-  return () => keepalivePolicyListeners.delete(listener);
-}
-
 function emptyDecision(pool: LodyKeepalivePool, entryId: string | null): LodyPoolDecision {
-  return { pool, entryId, mount: [], hide: [], dispose: [], validate: [], reused: false };
+  return { pool, entryId };
 }
 
 function nextClock(pool: LodyKeepalivePool): number {
@@ -91,22 +78,28 @@ function withoutEntries(
   disposed: ReadonlySet<string>,
 ): LodyKeepalivePool {
   if (disposed.size === 0) return pool;
+  if (pool.activeEntryId !== null && disposed.has(pool.activeEntryId)) {
+    throw new Error("lody_keepalive_removed_active_entry");
+  }
   return {
     ...pool,
     entries: pool.entries.filter((entry) => !disposed.has(entry.entryId)),
-    activeEntryId:
-      pool.activeEntryId !== null && disposed.has(pool.activeEntryId)
-        ? null
-        : pool.activeEntryId,
   };
+}
+
+function entryFor(pool: LodyKeepalivePool, entryId: string): LodyKeepaliveEntry {
+  const entry = pool.entries.find((candidate) => candidate.entryId === entryId);
+  if (entry === undefined) throw new Error("lody_keepalive_entry_missing");
+  return entry;
+}
+
+function activeEntry(pool: LodyKeepalivePool): LodyKeepaliveEntry | null {
+  return pool.activeEntryId === null ? null : entryFor(pool, pool.activeEntryId);
 }
 
 export function createLodyKeepalivePool(
   capacity = LODY_SURFACE_POOL_CAPACITY,
 ): LodyKeepalivePool {
-  if (!Number.isInteger(capacity) || capacity < 1) {
-    throw new Error("lody_keepalive_capacity_invalid");
-  }
   return { entries: [], activeEntryId: null, capacity, clock: 0, nextEntrySequence: 1 };
 }
 
@@ -126,16 +119,13 @@ export function resizeLodyKeepalivePool(
   pool: LodyKeepalivePool,
   capacity: number,
 ): LodyPoolDecision {
-  if (!Number.isInteger(capacity) || capacity < 1) {
-    throw new Error("lody_keepalive_capacity_invalid");
-  }
-  const dispose = [...pool.entries]
+  const disposed = new Set([...pool.entries]
     .filter((entry) => entry.entryId !== pool.activeEntryId)
     .sort((left, right) => left.lastUsed - right.lastUsed)
     .slice(0, Math.max(0, pool.entries.length - capacity))
-    .map((entry) => entry.entryId);
-  const next = withoutEntries({ ...pool, capacity }, new Set(dispose));
-  return { ...emptyDecision(next, next.activeEntryId), dispose };
+    .map((entry) => entry.entryId));
+  const next = withoutEntries({ ...pool, capacity }, disposed);
+  return emptyDecision(next, next.activeEntryId);
 }
 
 /**
@@ -145,21 +135,21 @@ export function resizeLodyKeepalivePool(
 export function requestLodySurface(
   pool: LodyKeepalivePool,
   target: LodySurfaceTarget,
-): LodyPoolDecision {
-  const active = pool.entries.find((entry) => entry.entryId === pool.activeEntryId);
+): LodyPoolSelection {
+  const active = activeEntry(pool);
   if (
-    active !== undefined
+    active !== null
     && active.endpointFingerprint === target.endpointFingerprint
     && active.kind === target.kind
-    && active.state === "active"
   ) {
-    return { ...emptyDecision(pool, active.entryId), reused: true };
+    return { pool, entryId: active.entryId };
   }
 
   const candidate = newest(
     pool.entries.filter(
       (entry) =>
-        (entry.state === "hidden" || entry.state === "ready")
+        entry.entryId !== pool.activeEntryId
+        && entry.state === "ready"
         && entry.key !== null
         && entry.continuous
         && entry.endpointFingerprint === target.endpointFingerprint
@@ -167,7 +157,7 @@ export function requestLodySurface(
     ),
   );
   if (candidate !== undefined) {
-    return { ...emptyDecision(pool, candidate.entryId), reused: true };
+    return { pool, entryId: candidate.entryId };
   }
 
   const clock = nextClock(pool);
@@ -183,13 +173,13 @@ export function requestLodySurface(
     continuous: true,
   };
   return {
-    ...emptyDecision({
+    pool: {
       ...pool,
       entries: [...pool.entries, entry],
       clock,
       nextEntrySequence: pool.nextEntrySequence + 1,
-    }, entryId),
-    mount: [entryId],
+    },
+    entryId,
   };
 }
 
@@ -197,26 +187,18 @@ export function requestLodySurface(
 export function activateLodySurface(
   pool: LodyKeepalivePool,
   entryId: string,
-): LodyPoolDecision {
-  const selected = pool.entries.find((entry) => entry.entryId === entryId);
-  if (selected === undefined || selected.state === "invalid") {
-    return emptyDecision(pool, null);
-  }
-  if (pool.activeEntryId === entryId && selected.state === "active") {
-    return { ...emptyDecision(pool, entryId), reused: true };
-  }
+): LodyPoolSelection {
+  const selected = entryFor(pool, entryId);
+  if (pool.activeEntryId === entryId) return { pool, entryId };
 
   const clock = nextClock(pool);
-  const hide: string[] = [];
   const dispose = new Set<string>();
-  const selectedWasRetained = selected.key !== null
-    && (selected.state === "hidden" || selected.state === "ready");
+  const selectedWasRetained = selected.key !== null;
 
   let entries = pool.entries.map((entry): LodyKeepaliveEntry => {
     if (entry.entryId === entryId) {
       return {
         ...entry,
-        state: "active",
         generation: selectedWasRetained ? entry.generation + 1 : entry.generation,
         lastUsed: clock,
       };
@@ -226,16 +208,11 @@ export function activateLodySurface(
     // reusable hidden cache entry, so release them at the hand-off.
     if (entry.kind === "shared" || entry.key === null || !entry.continuous) {
       dispose.add(entry.entryId);
-      return { ...entry, state: "invalid" };
     }
-    hide.push(entry.entryId);
-    return { ...entry, state: "hidden" };
+    return entry;
   });
 
-  const activeEntry = entries.find((entry) => entry.entryId === entryId);
-  if (activeEntry === undefined) return emptyDecision(pool, null);
-
-  if (activeEntry.kind === "owned") {
+  if (selected.kind === "owned") {
     for (const entry of entries) {
       if (entry.entryId !== entryId && entry.kind === "shared") dispose.add(entry.entryId);
     }
@@ -262,9 +239,9 @@ export function activateLodySurface(
   entries = entries.filter((entry) => !dispose.has(entry.entryId));
   while (entries.length > pool.capacity) {
     const victim = [...entries]
-      .filter((entry) => entry.entryId !== entryId && entry.state === "hidden")
+      .filter((entry) => entry.entryId !== entryId)
       .sort((left, right) => left.lastUsed - right.lastUsed)[0];
-    if (victim === undefined) break;
+    if (victim === undefined) throw new Error("lody_keepalive_capacity_without_victim");
     dispose.add(victim.entryId);
     entries = entries.filter((entry) => entry.entryId !== victim.entryId);
   }
@@ -275,37 +252,20 @@ export function activateLodySurface(
     activeEntryId: entryId,
     clock,
   };
-  return {
-    pool: nextPool,
-    entryId,
-    mount: [],
-    hide: hide.filter((id) => !dispose.has(id)),
-    dispose: [...dispose],
-    validate: selectedWasRetained ? [entryId] : [],
-    reused: selectedWasRetained,
-  };
+  return { pool: nextPool, entryId };
 }
 
 /** Hide the current owned entry while the shell has no eligible surface target. */
 export function deactivateLodySurface(pool: LodyKeepalivePool): LodyPoolDecision {
   if (pool.activeEntryId === null) return emptyDecision(pool, null);
-  const active = pool.entries.find((entry) => entry.entryId === pool.activeEntryId);
-  if (active === undefined) return emptyDecision({ ...pool, activeEntryId: null }, null);
+  const active = entryFor(pool, pool.activeEntryId);
   if (active.kind === "shared" || active.key === null || !active.continuous) {
-    return {
-      ...emptyDecision(withoutEntries(pool, new Set([active.entryId])), null),
-      dispose: [active.entryId],
-    };
+    return emptyDecision(
+      withoutEntries({ ...pool, activeEntryId: null }, new Set([active.entryId])),
+      null,
+    );
   }
-  return {
-    ...emptyDecision({
-      ...pool,
-      activeEntryId: null,
-      entries: pool.entries.map((entry) =>
-        entry.entryId === active.entryId ? { ...entry, state: "hidden" } : entry),
-    }, null),
-    hide: [active.entryId],
-  };
+  return emptyDecision({ ...pool, activeEntryId: null }, null);
 }
 
 /** Rekey a provisional entry, suppressing every duplicate daemon identity. */
@@ -318,15 +278,11 @@ export function reportLodySurfaceIdentity(
   if (reporting === undefined) return emptyDecision(pool, null);
 
   if (reporting.key !== null && lodySurfaceIdentityKey(reporting.key) !== lodySurfaceIdentityKey(key)) {
-    const invalidated = {
+    const deactivated = {
       ...pool,
-      entries: pool.entries.map((entry): LodyKeepaliveEntry =>
-        entry.entryId === entryId ? { ...entry, state: "invalid" } : entry),
+      activeEntryId: pool.activeEntryId === entryId ? null : pool.activeEntryId,
     };
-    return {
-      ...emptyDecision(withoutEntries(invalidated, new Set([entryId])), null),
-      dispose: [entryId],
-    };
+    return emptyDecision(withoutEntries(deactivated, new Set([entryId])), null);
   }
 
   const duplicates = pool.entries.filter(
@@ -340,15 +296,18 @@ export function reportLodySurfaceIdentity(
   // Its runtime is the only one permitted to exist; the provisional surface
   // is removed before RuntimeProvider receives a claim.
   const retained = reporting.key === null
-    ? newest(duplicates.filter((entry) => entry.continuous && entry.state !== "invalid"))
+    ? newest(duplicates.filter((entry) => entry.continuous))
     : undefined;
-  const survivor = retained ?? activeContender ?? newest(contenders);
-  if (survivor === undefined) return emptyDecision(pool, null);
+  const survivor = retained ?? activeContender ?? newest(contenders) ?? reporting;
   const disposed = new Set(
     contenders.filter((entry) => entry.entryId !== survivor.entryId).map((entry) => entry.entryId),
   );
 
-  let nextPool = withoutEntries(pool, disposed);
+  const replacingActive = disposed.has(pool.activeEntryId ?? "");
+  let nextPool = withoutEntries(
+    replacingActive ? { ...pool, activeEntryId: null } : pool,
+    disposed,
+  );
   nextPool = {
     ...nextPool,
     entries: nextPool.entries.map((entry): LodyKeepaliveEntry => {
@@ -357,30 +316,14 @@ export function reportLodySurfaceIdentity(
         ...entry,
         key,
         continuous: true,
-        state:
-          nextPool.activeEntryId === entry.entryId
-            ? "active"
-            : entry.state === "booting"
-              ? "ready"
-              : entry.state,
+        state: "ready",
       };
     }),
   };
-  if (survivor.entryId !== entryId && pool.activeEntryId === entryId) {
-    const activated = activateLodySurface(nextPool, survivor.entryId);
-    for (const disposedId of activated.dispose) disposed.add(disposedId);
-    return {
-      ...activated,
-      entryId: null,
-      dispose: [...disposed],
-      reused: true,
-    };
+  if (survivor.entryId !== entryId && replacingActive) {
+    return { ...activateLodySurface(nextPool, survivor.entryId), entryId: null };
   }
-  return {
-    ...emptyDecision(nextPool, disposed.has(entryId) ? null : survivor.entryId),
-    dispose: [...disposed],
-    reused: reporting.key !== null,
-  };
+  return emptyDecision(nextPool, disposed.has(entryId) ? null : survivor.entryId);
 }
 
 /**
@@ -393,16 +336,8 @@ export function discontinueLodySurface(
 ): LodyPoolDecision {
   const entry = pool.entries.find((item) => item.entryId === entryId);
   if (entry === undefined) return emptyDecision(pool, null);
-  if (pool.activeEntryId !== entryId || entry.state !== "active") {
-    const invalidated: LodyKeepalivePool = {
-      ...pool,
-      entries: pool.entries.map((item) =>
-        item.entryId === entryId ? { ...item, state: "invalid", continuous: false } : item),
-    };
-    return {
-      ...emptyDecision(withoutEntries(invalidated, new Set([entryId])), null),
-      dispose: [entryId],
-    };
+  if (pool.activeEntryId !== entryId) {
+    return emptyDecision(withoutEntries(pool, new Set([entryId])), null);
   }
 
   const nextPool: LodyKeepalivePool = {
@@ -412,11 +347,7 @@ export function discontinueLodySurface(
         ? { ...item, continuous: false, generation: item.generation + 1 }
         : item),
   };
-  return {
-    ...emptyDecision(nextPool, entryId),
-    validate: [entryId],
-    reused: true,
-  };
+  return emptyDecision(nextPool, entryId);
 }
 
 /** Runtime switch: absent or inaccessible storage means retention stays on. */

@@ -1026,25 +1026,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     chat: lodyRail.chat,
     revision: shareRevision,
   });
-  // The ADDRESS drives the surface, one way: a deep link, a reload and the back
-  // button all arrive here, and the surface's own navigations come back through
-  // `onActiveSessionChange` below. Both compare before acting, so the pair
-  // converges instead of looping.
-  useEffect(() => {
-    if (lodyApi === null || !lodyRail.visible) return;
-    // THE ARCHIVE IS ASKED FIRST, and it has to be. It names no session, so
-    // `activeSessionId()` answers `null` there exactly as it does on the
-    // landing: comparing session ids alone would leave the surface on the
-    // archive after the address moved back to `/chat`, and would never take it
-    // there in the first place.
-    if (lodyRail.archive) {
-      if (!lodyApi.isArchiveOpen()) lodyApi.openArchive();
-      return;
-    }
-    if (lodyRail.sessionId === lodyApi.activeSessionId() && !lodyApi.isArchiveOpen()) return;
-    if (lodyRail.sessionId === null) lodyApi.openLanding();
-    else lodyApi.openSession(lodyRail.sessionId);
-  }, [lodyApi, lodyRail.archive, lodyRail.sessionId, lodyRail.visible]);
   // "+ NEW SESSION" IS TWO THINGS, and the address is only one of them.
   //
   // Moving the address to the landing does nothing when the landing is already

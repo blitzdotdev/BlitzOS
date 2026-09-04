@@ -35,6 +35,7 @@ import type { LodyRailBinding, LodySessionSurfaceApi } from "./SessionSurface.js
 import { LodySurfacePool, type LodySurfacePoolTarget } from "./LodySurfacePool.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 import { SurfaceLoadBoundary } from "./SurfaceLoadBoundary.js";
+import { createLodySurfaceIdentityClaims } from "./surface-identity-claims.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
 
 /**
@@ -213,9 +214,16 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   useEffect(() => {
     if (wanted) setEverRequested(true);
   }, [wanted]);
-  const [SessionSurface, setSessionSurface] = useState(loadSessionSurface);
+  const identityClaims = useMemo(createLodySurfaceIdentityClaims, []);
+  const [surfaceAttempt, setSurfaceAttempt] = useState(() => ({
+    Surface: loadSessionSurface(),
+    claimantId: 1,
+  }));
   const retrySurface = useCallback(() => {
-    setSessionSurface(loadSessionSurface());
+    setSurfaceAttempt((current) => ({
+      Surface: loadSessionSurface(),
+      claimantId: current.claimantId + 1,
+    }));
   }, []);
 
   const { endpoints } = props;
@@ -282,12 +290,14 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     <SurfaceLoadBoundary onRetry={retrySurface}>
       <Suspense fallback={null}>
         <LodySurfacePool
-          Surface={SessionSurface}
+          Surface={surfaceAttempt.Surface}
           target={target}
           viewer={viewer}
           visible={props.visible}
           railHost={props.railHost}
           rail={rail}
+          identityClaims={identityClaims}
+          claimantId={`boundary-attempt-${surfaceAttempt.claimantId}`}
           {...hostTabs}
           {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
           {...(props.onActiveSessionChange === undefined
