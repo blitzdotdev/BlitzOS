@@ -51,8 +51,10 @@ the way `/box-image/<releaseId>/…` is served today (`core/box-image-routes`).
 }
 ```
 
-- `version` is derived from the payload inputs (same idea as the box-image
-  releaseId: hash of the tree that produces it), never hand-typed.
+- `version` is the SHA-256 of a canonical encoding of the sorted
+  `(path, sha256, mode)` records in `files`, the daemon archive SHA-256 (or
+  `none`), and the sorted `restart` map. It never includes Git history,
+  `createdAt`, build scripts, or base-owned files.
 - `files` lists every file in `payload.tar.gz` with its digest; the updater
   verifies each file after extraction, not just the archive.
 - `daemon` is a separate archive so a script-only release does not re-download

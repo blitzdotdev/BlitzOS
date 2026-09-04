@@ -23,6 +23,7 @@ import {
 import { validateBoxPayloadManifest } from "../scripts/lib/box-payload-manifest.mjs";
 import { PAYLOAD_FILES } from "../scripts/lib/box-payload-files.mjs";
 import { readLodyDaemonMetadata } from "../scripts/lib/box-daemon.mjs";
+import { boxPayloadVersion } from "../scripts/box-payload-key.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const temporaryDirectories = [];
@@ -60,10 +61,8 @@ async function stage(outputDirectory, stagingDirectory, extra = {}) {
     outputDirectory,
     binariesDirectory: extra.binariesDirectory ?? binaries(),
     daemonPath: extra.daemonPath,
-    version: "a".repeat(64),
-    createdAt: 1_788_550_000_000,
+    createdAt: extra.createdAt ?? 1_788_550_000_000,
     appUrl: "https://cp.example",
-    prefix: `box-payload/${"a".repeat(64)}`,
   });
 }
 
@@ -81,6 +80,11 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
   );
   const manifest = JSON.parse(readFileSync(first.manifestPath, "utf8"));
   assert.equal(validateBoxPayloadManifest(manifest), manifest);
+  assert.equal(manifest.version, boxPayloadVersion({
+    files: manifest.files,
+    restart: manifest.restart,
+  }));
+  assert.equal(first.version, second.version);
   assert.deepEqual(manifest.files.map((entry) => entry.path), PAYLOAD_FILES);
   assert.equal(manifest.daemon, undefined);
   assert.equal(
@@ -89,6 +93,17 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
   );
   assert.equal(manifest.archive.bytes, statSync(first.payloadArchivePath).size);
   assert.deepEqual(readFileSync(first.payloadArchivePath), readFileSync(second.payloadArchivePath));
+
+  const differentCommitTime = await stage(
+    temporaryDirectory("blitz-payload-release-created-at-"),
+    temporaryDirectory("blitz-payload-stage-created-at-"),
+    { binariesDirectory: binaryDirectory, createdAt: 1_788_550_999_000 },
+  );
+  assert.equal(differentCommitTime.version, first.version);
+  assert.deepEqual(
+    readFileSync(differentCommitTime.payloadArchivePath),
+    readFileSync(first.payloadArchivePath),
+  );
 
   const extracted = temporaryDirectory("blitz-payload-extracted-");
   const extract = spawnSync("tar", ["-xzf", first.payloadArchivePath, "-C", extracted], {
@@ -128,10 +143,15 @@ test("an optional daemon archive fills all daemon contract fields", async () => 
     { daemonPath },
   );
   const manifest = JSON.parse(readFileSync(staged.manifestPath, "utf8"));
+  assert.equal(manifest.version, boxPayloadVersion({
+    files: manifest.files,
+    daemonSha256: sha256(readFileSync(staged.daemonArchivePath)),
+    restart: manifest.restart,
+  }));
   assert.deepEqual(manifest.daemon, {
     version: "0.88.1+blitz.3",
     protocolVersion: 7,
-    url: `https://cp.example/box-payload/${"a".repeat(64)}/daemon.tar.gz`,
+    url: `https://cp.example/box-payload/${manifest.version}/daemon.tar.gz`,
     sha256: sha256(readFileSync(staged.daemonArchivePath)),
     bytes: statSync(staged.daemonArchivePath).size,
   });

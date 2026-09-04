@@ -86,14 +86,14 @@ FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c
 
 ARG BLITZ_PAYLOAD_VERSION
 WORKDIR /src
-COPY packages/control-plane/scripts/lib/box-payload-files.mjs /tools/box-payload-files.mjs
+COPY packages/control-plane/scripts/lib/box-payload-files.mjs /tools/lib/box-payload-files.mjs
 COPY packages/control-plane/scripts/box-payload-key.mjs /tools/box-payload-key.mjs
 COPY env.defaults ./env.defaults
 COPY packages/box/rootfs ./packages/box/rootfs
-RUN node /tools/box-payload-files.mjs copy /src /out \
-    && node --input-type=module --eval 'import { resolveBoxPayloadVersion, writeBoxPayloadVersionStamp } from "/tools/box-payload-key.mjs"; const version = await resolveBoxPayloadVersion({ repo: "/src", providedVersion: process.env.BLITZ_PAYLOAD_VERSION }); await writeBoxPayloadVersionStamp("/out", version);'
+RUN node /tools/lib/box-payload-files.mjs copy /src /out
 COPY --from=cred-build /out/blitz-cred /out/rootfs/usr/local/bin/blitz-cred
 COPY --from=gateway-build /out/blitz-box-gateway /out/rootfs/usr/local/bin/blitz-box-gateway
+RUN node --input-type=module --eval 'import { writeBoxPayloadVersionStamp } from "/tools/box-payload-key.mjs"; await writeBoxPayloadVersionStamp("/out", process.env.BLITZ_PAYLOAD_VERSION);'
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime-base
 
@@ -172,7 +172,7 @@ COPY --from=vendors /opt/blitz/npm/ /opt/blitz/npm/
 COPY --from=daemon /opt/blitz/lody/baked/ /opt/blitz/lody/baked/
 COPY --from=payload-build /out/ /opt/blitz/payload/baked/
 COPY packages/box/rootfs/ /
-COPY --from=payload-build /tools/box-payload-files.mjs /tmp/box-payload-files.mjs
+COPY --from=payload-build /tools/lib/box-payload-files.mjs /tmp/box-payload-files.mjs
 RUN set -eux; \
     ln -s baked /opt/blitz/payload/current; \
     ln -s baked /opt/blitz/lody/current; \

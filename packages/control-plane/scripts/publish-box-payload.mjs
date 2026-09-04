@@ -1,8 +1,6 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -18,9 +16,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse as parseToml } from "smol-toml";
 import {
+  boxPayloadVersion,
   boxPayloadPrefix,
+  readBoxPayloadContent,
   readBoxPayloadCreatedAt,
-  resolveBoxPayloadVersion,
   writeBoxPayloadVersionStamp,
 } from "./box-payload-key.mjs";
 import { readLodyDaemonMetadata } from "./lib/box-daemon.mjs";
@@ -28,10 +27,7 @@ import { validateBoxPayloadManifest } from "./lib/box-payload-manifest.mjs";
 import { createDeterministicTarGzip, hashFile } from "./lib/deterministic-archive.mjs";
 import {
   copyPayloadSources,
-  PAYLOAD_FILES,
   PAYLOAD_SERVICES,
-  payloadMode,
-  readPayloadRestartMap,
 } from "./lib/box-payload-files.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
@@ -95,12 +91,6 @@ function validatedOrigin(value) {
     throw new Error(`--app-url must be an HTTP(S) origin: ${value}`);
   }
   return parsed.href.replace(/\/$/u, "");
-}
-
-async function hashPayloadFile(filePath) {
-  const digest = createHash("sha256");
-  for await (const chunk of createReadStream(filePath)) digest.update(chunk);
-  return digest.digest("hex");
 }
 
 export async function buildGoPayloadBinaries(repoRoot, destination) {
@@ -202,6 +192,31 @@ async function verifyDaemonArchive(daemonPath, expected) {
   }
 }
 
+export async function prepareBoxPayloadContent({
+  repoRoot,
+  stagingDirectory,
+  binariesDirectory,
+  daemonPath,
+}) {
+  await copyPayloadSources(repoRoot, stagingDirectory);
+  await copyPayloadBinaries(binariesDirectory, stagingDirectory);
+  let daemonMetadata;
+  let daemonArchive;
+  if (daemonPath !== undefined) {
+    daemonMetadata = await readLodyDaemonMetadata(repoRoot);
+    await verifyDaemonArchive(daemonPath, daemonMetadata);
+    daemonArchive = await hashFile(daemonPath);
+  }
+  const content = await readBoxPayloadContent({ repoRoot, payloadRoot: stagingDirectory });
+  if (daemonArchive !== undefined) content.daemonSha256 = daemonArchive.sha256;
+  return {
+    ...content,
+    version: boxPayloadVersion(content),
+    daemonMetadata,
+    daemonArchive,
+  };
+}
+
 export async function stageBoxPayloadRelease({
   repoRoot,
   stagingDirectory,
@@ -212,7 +227,19 @@ export async function stageBoxPayloadRelease({
   createdAt,
   appUrl,
   prefix,
+  preparedContent,
 }) {
+  const prepared = preparedContent ?? await prepareBoxPayloadContent({
+    repoRoot,
+    stagingDirectory,
+    binariesDirectory,
+    daemonPath,
+  });
+  if (version !== undefined && version !== prepared.version) {
+    throw new Error(`provided payload version ${version} does not match ${prepared.version}`);
+  }
+  const releaseVersion = prepared.version;
+  const releasePrefix = prefix ?? boxPayloadPrefix(releaseVersion);
   const payloadArchivePath = path.join(outputDirectory, "payload.tar.gz");
   const daemonArchivePath = path.join(outputDirectory, "daemon.tar.gz");
   const manifestPath = path.join(outputDirectory, "manifest.json");
@@ -225,19 +252,7 @@ export async function stageBoxPayloadRelease({
     }
   }
   await mkdir(outputDirectory, { recursive: true });
-  await copyPayloadSources(repoRoot, stagingDirectory);
-  await copyPayloadBinaries(binariesDirectory, stagingDirectory);
-  await writeBoxPayloadVersionStamp(stagingDirectory, version);
-
-  const files = [];
-  for (const archivePath of PAYLOAD_FILES) {
-    const filePath = path.join(stagingDirectory, archivePath);
-    files.push({
-      path: archivePath,
-      sha256: await hashPayloadFile(filePath),
-      mode: payloadMode(archivePath).toString(8).padStart(4, "0"),
-    });
-  }
+  await writeBoxPayloadVersionStamp(stagingDirectory, releaseVersion);
   await createDeterministicTarGzip(
     stagingDirectory,
     payloadArchivePath,
@@ -245,31 +260,39 @@ export async function stageBoxPayloadRelease({
   );
   const payloadArchive = await hashFile(payloadArchivePath);
   const manifest = {
-    version,
+    version: releaseVersion,
     createdAt,
     minUpdater: 1,
-    files,
+    files: prepared.files,
     archive: {
-      url: `${appUrl}/${prefix}/payload.tar.gz`,
+      url: `${appUrl}/${releasePrefix}/payload.tar.gz`,
       ...payloadArchive,
     },
   };
   if (daemonPath !== undefined) {
-    const daemon = await readLodyDaemonMetadata(repoRoot);
-    await verifyDaemonArchive(daemonPath, daemon);
+    const daemon = prepared.daemonMetadata;
+    if (daemon === undefined || prepared.daemonArchive === undefined) {
+      throw new Error("prepared payload content is missing daemon metadata");
+    }
     await copyFile(daemonPath, daemonArchivePath);
-    const daemonArchive = await hashFile(daemonArchivePath);
     manifest.daemon = {
       version: daemon.version,
       protocolVersion: daemon.protocolVersion,
-      url: `${appUrl}/${prefix}/daemon.tar.gz`,
-      ...daemonArchive,
+      url: `${appUrl}/${releasePrefix}/daemon.tar.gz`,
+      ...prepared.daemonArchive,
     };
   }
-  manifest.restart = await readPayloadRestartMap(repoRoot);
+  manifest.restart = prepared.restart;
   validateBoxPayloadManifest(manifest, new Set(PAYLOAD_SERVICES));
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  return { manifest, manifestPath, payloadArchivePath, daemonArchivePath };
+  return {
+    version: releaseVersion,
+    prefix: releasePrefix,
+    manifest,
+    manifestPath,
+    payloadArchivePath,
+    daemonArchivePath,
+  };
 }
 
 function tomlRecord(value) {
@@ -349,7 +372,7 @@ Options:
                       ./box-payload/<derived-version>.
   --bucket <name>     R2 bucket (default: wrangler BOX_IMAGES bucket).
   --repo <dir>        Repository root (default: current repository).
-  --rev <revision>    Git revision used for version and createdAt (default: HEAD).
+  --rev <revision>    Git revision used only for informational createdAt (default: HEAD).
   --json <file>       Also write {version,ref,prefix,archive,daemon?}.
   --dry-run           Build and verify locally without uploading to R2.
   --help, -h          Print this text.`;
@@ -406,12 +429,6 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
   const defaults = await wranglerDefaults();
-  const version = await resolveBoxPayloadVersion({
-    repo: options.repoRoot,
-    rev: options.rev,
-  });
-  const prefix = options.prefix ?? boxPayloadPrefix(version);
-  validatePrefix(prefix);
   const configAppUrl = defaults.appUrl !== undefined && /^https?:\/\//u.test(defaults.appUrl)
     ? defaults.appUrl
     : undefined;
@@ -419,23 +436,33 @@ export async function main(argv = process.argv.slice(2)) {
   const bucket = options.bucket ?? defaults.bucket ?? DEFAULT_BUCKET;
   const createdAt = await readBoxPayloadCreatedAt({ repo: options.repoRoot, rev: options.rev });
   const temporary = await mkdtemp(path.join(tmpdir(), "blitz-box-payload-"));
-  const outputDirectory = options.outputDirectory
-    ?? (options.dryRun ? path.resolve("box-payload", version) : path.join(temporary, "release"));
   const binariesDirectory = options.binariesDirectory ?? path.join(temporary, "binaries");
   try {
     if (options.binariesDirectory === undefined) {
       await buildGoPayloadBinaries(options.repoRoot, binariesDirectory);
     }
+    const stagingDirectory = path.join(temporary, "payload");
+    const preparedContent = await prepareBoxPayloadContent({
+      repoRoot: options.repoRoot,
+      stagingDirectory,
+      binariesDirectory,
+      daemonPath: options.daemonPath,
+    });
+    const version = preparedContent.version;
+    const prefix = options.prefix ?? boxPayloadPrefix(version);
+    validatePrefix(prefix);
+    const outputDirectory = options.outputDirectory
+      ?? (options.dryRun ? path.resolve("box-payload", version) : path.join(temporary, "release"));
     const staged = await stageBoxPayloadRelease({
       repoRoot: options.repoRoot,
-      stagingDirectory: path.join(temporary, "payload"),
+      stagingDirectory,
       outputDirectory,
       binariesDirectory,
       daemonPath: options.daemonPath,
-      version,
       createdAt,
       appUrl,
       prefix,
+      preparedContent,
     });
     if (options.dryRun) {
       process.stderr.write(`dry run: wrote verified payload release to ${outputDirectory}\n`);

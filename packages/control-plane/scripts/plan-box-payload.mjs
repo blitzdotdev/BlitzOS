@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   boxPayloadPrefix,
-  resolveBoxPayloadVersion,
+  readBoxPayloadCreatedAt,
 } from "./box-payload-key.mjs";
 import { validateBoxPayloadManifest } from "./lib/box-payload-manifest.mjs";
 import { PAYLOAD_SERVICES } from "./lib/box-payload-files.mjs";
+import {
+  buildGoPayloadBinaries,
+  stageBoxPayloadRelease,
+} from "./publish-box-payload.mjs";
+
+const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_REPO = path.resolve(SCRIPT_DIRECTORY, "../../..");
 
 function manifestReference(origin, prefix) {
   const parsed = new URL(origin);
@@ -25,10 +33,18 @@ function errorMessage(error) {
 export async function planBoxPayload({
   url,
   rev = "HEAD",
-  repo,
+  repo = DEFAULT_REPO,
+  binariesDirectory,
+  daemonPath,
   fetchImpl = fetch,
 }) {
-  const version = await resolveBoxPayloadVersion({ repo, rev });
+  const version = await buildPlannedPayload({
+    repo,
+    rev,
+    binariesDirectory,
+    daemonPath,
+    appUrl: url,
+  });
   const prefix = boxPayloadPrefix(version);
   const ref = manifestReference(url, prefix);
   let response;
@@ -61,6 +77,32 @@ export async function planBoxPayload({
   return result;
 }
 
+export async function buildPlannedPayload({
+  repo = DEFAULT_REPO,
+  rev = "HEAD",
+  binariesDirectory,
+  daemonPath,
+  appUrl = "https://payload.invalid",
+}) {
+  const temporary = await mkdtemp(path.join(tmpdir(), "blitz-box-payload-plan-"));
+  const builtBinaries = binariesDirectory ?? path.join(temporary, "binaries");
+  try {
+    if (binariesDirectory === undefined) await buildGoPayloadBinaries(repo, builtBinaries);
+    const staged = await stageBoxPayloadRelease({
+      repoRoot: repo,
+      stagingDirectory: path.join(temporary, "payload"),
+      outputDirectory: path.join(temporary, "release"),
+      binariesDirectory: builtBinaries,
+      daemonPath,
+      createdAt: await readBoxPayloadCreatedAt({ repo, rev }),
+      appUrl,
+    });
+    return staged.version;
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
 function usage() {
   return `Plan whether the content-derived box payload needs to be published.
 
@@ -69,10 +111,12 @@ Usage:
 
 Options:
   --url <origin>    Control-plane origin whose R2-backed route should be probed.
-  --rev <revision>  Git revision whose payload inputs should be read (default: HEAD).
-  --repo <dir>      Repository containing the revision (default: repository root).
+  --rev <revision>  Git revision used only for informational createdAt (default: HEAD).
+  --repo <dir>      Repository whose current payload content is built.
+  --daemon <file>   Include this daemon archive's SHA-256 in the version.
+  --binaries <dir>  Use prebuilt blitz-box-gateway and blitz-cred binaries.
   --json <file>     Also write the JSON result to this file.
-  --print-version   Print only the derived version; does not require --url or fetch.
+  --print-version   Dry-build the release and print only its content version.
   --help, -h        Print this text.`;
 }
 
@@ -81,6 +125,8 @@ function parseCli(argv) {
     url: undefined,
     rev: "HEAD",
     repo: undefined,
+    daemonPath: undefined,
+    binariesDirectory: undefined,
     jsonPath: undefined,
     printVersion: false,
     help: false,
@@ -95,7 +141,7 @@ function parseCli(argv) {
       options.printVersion = true;
       continue;
     }
-    if (!["--url", "--rev", "--repo", "--json"].includes(flag)) {
+    if (!["--url", "--rev", "--repo", "--daemon", "--binaries", "--json"].includes(flag)) {
       throw new Error(`unknown argument: ${flag}`);
     }
     const value = argv[index + 1];
@@ -104,6 +150,8 @@ function parseCli(argv) {
     if (flag === "--url") options.url = value;
     else if (flag === "--rev") options.rev = value;
     else if (flag === "--repo") options.repo = path.resolve(value);
+    else if (flag === "--daemon") options.daemonPath = path.resolve(value);
+    else if (flag === "--binaries") options.binariesDirectory = path.resolve(value);
     else options.jsonPath = path.resolve(value);
   }
   if (options.url === undefined && !options.printVersion) throw new Error("--url is required");
@@ -117,9 +165,11 @@ export async function main(argv = process.argv.slice(2), fetchImpl = fetch) {
     return;
   }
   if (options.printVersion) {
-    const version = await resolveBoxPayloadVersion({
-      repo: options.repo,
+    const version = await buildPlannedPayload({
+      repo: options.repo ?? DEFAULT_REPO,
       rev: options.rev,
+      daemonPath: options.daemonPath,
+      binariesDirectory: options.binariesDirectory,
     });
     process.stdout.write(`${version}\n`);
     return;

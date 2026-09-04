@@ -38,8 +38,7 @@ start a suitably long turn before the experiment.
 
 The production publisher has no test-only overlay flag. `publish_variant`
 therefore clones the current checkout into a temporary directory, copies one
-mutated file from an overlay directory into that clone, commits the resulting
-tree so its content-derived version is honest, and invokes
+mutated file from an overlay directory into that clone, and invokes
 `publish-box-payload.mjs --repo <clone>`. E5 and E12 then overwrite one
 versioned test object to make failures that a validating publisher correctly
 refuses to emit.
