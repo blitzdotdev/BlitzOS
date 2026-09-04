@@ -219,6 +219,11 @@ export async function startLodyMcpHttpServer(options: { logger: Logger }): Promi
   if (supervisorInstance) {
     return;
   }
+  if (process.env.LODY_MCP_BUILTIN_DISABLED === '1') {
+    options.logger.info(
+      '[mcp] built-in server disabled via LODY_MCP_BUILTIN_DISABLED; external MCP servers remain available'
+    );
+  }
   if (process.env.LODY_MCP_HTTP_DISABLED === '1') {
     options.logger.info('[mcp-http] disabled via LODY_MCP_HTTP_DISABLED; using stdio MCP only');
     return;

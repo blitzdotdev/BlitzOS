@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -43,6 +44,7 @@ Options:
   --out <dir>       Write the tarball and BUILD.json here (default: ./lody-build).
   --tree-ish <rev>  Export <rev>:vendor/lody and its adapter snapshots (default: HEAD).
   --source <dir>    Copy an already-materialized Lody tree instead of using Git.
+  --scratch <dir>   Build in this new directory and preserve it for seam tests.
   --keep-scratch    Keep and print the disposable build directory.
   --json            Print the completed BUILD.json stamp.
   --help, -h        Print this text.
@@ -368,6 +370,7 @@ function parseCli(argv) {
     out: path.resolve("lody-build"),
     treeish: "HEAD",
     source: null,
+    scratch: null,
     keepScratch: false,
     json: false,
     help: false,
@@ -377,12 +380,18 @@ function parseCli(argv) {
     if (flag === "--help" || flag === "-h") options.help = true;
     else if (flag === "--keep-scratch") options.keepScratch = true;
     else if (flag === "--json") options.json = true;
-    else if (flag === "--out" || flag === "--source" || flag === "--tree-ish") {
+    else if (
+      flag === "--out" ||
+      flag === "--source" ||
+      flag === "--scratch" ||
+      flag === "--tree-ish"
+    ) {
       const value = argv[index + 1];
       if (value === undefined) throw new Error(`${flag} requires a value`);
       index += 1;
       if (flag === "--out") options.out = path.resolve(value);
       else if (flag === "--source") options.source = path.resolve(value);
+      else if (flag === "--scratch") options.scratch = path.resolve(value);
       else options.treeish = value;
     } else throw new Error(`unknown argument: ${flag}`);
   }
@@ -390,6 +399,65 @@ function parseCli(argv) {
     throw new Error("--source and --tree-ish are mutually exclusive");
   }
   return options;
+}
+
+/** Publish one verified tarball and its stamp as a single directory swap. */
+export function publishPackageOutput(
+  scratchTarball,
+  stampJson,
+  outputDirectory,
+) {
+  const parent = path.dirname(outputDirectory);
+  const base = path.basename(outputDirectory);
+  mkdirSync(parent, { recursive: true });
+  const staging = mkdtempSync(path.join(parent, `.${base}.publish-`));
+  const backup = path.join(
+    parent,
+    `.${base}.backup-${process.pid}-${Date.now().toString(36)}`,
+  );
+  let movedExisting = false;
+  try {
+    const stagedTarball = path.join(staging, path.basename(scratchTarball));
+    cpSync(scratchTarball, stagedTarball);
+    const stagedStamp = path.join(staging, "BUILD.json");
+    writeFileSync(stagedStamp, stampJson);
+    chmodSync(stagedStamp, 0o444);
+    const tarballs = readdirSync(staging).filter((entry) =>
+      /^lody-.+\.tgz$/u.test(entry),
+    );
+    if (tarballs.length !== 1) {
+      throw new Error(
+        `staged Lody output contains ${tarballs.length} tarballs; expected exactly one`,
+      );
+    }
+
+    if (existsSync(outputDirectory)) {
+      renameSync(outputDirectory, backup);
+      movedExisting = true;
+    }
+    try {
+      renameSync(staging, outputDirectory);
+    } catch (error) {
+      if (movedExisting && !existsSync(outputDirectory)) {
+        renameSync(backup, outputDirectory);
+        movedExisting = false;
+      }
+      throw error;
+    }
+    if (movedExisting) {
+      rmSync(backup, { recursive: true, force: true });
+      movedExisting = false;
+    }
+    return {
+      tarball: path.join(outputDirectory, path.basename(scratchTarball)),
+      stampFile: path.join(outputDirectory, "BUILD.json"),
+    };
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+    if (movedExisting && !existsSync(outputDirectory) && existsSync(backup)) {
+      renameSync(backup, outputDirectory);
+    }
+  }
 }
 
 function packageTarball(lodyRoot, packRoot, environment) {
@@ -459,7 +527,14 @@ export function main(argv = process.argv.slice(2)) {
     return;
   }
   const started = Date.now();
-  const scratch = mkdtempSync(path.join(tmpdir(), "lody-build-"));
+  let scratch;
+  if (options.scratch === null) {
+    scratch = mkdtempSync(path.join(tmpdir(), "lody-build-"));
+  } else {
+    mkdirSync(path.dirname(options.scratch), { recursive: true });
+    mkdirSync(options.scratch);
+    scratch = options.scratch;
+  }
   try {
     const lodyRoot = path.join(scratch, "lody");
     const packRoot = path.join(scratch, "out");
@@ -538,19 +613,19 @@ export function main(argv = process.argv.slice(2)) {
 
     const scratchTarball = packageTarball(lodyRoot, packRoot, environment);
     verifyTarball(scratchTarball, scratch, readPackageManifest(), stamp);
-    mkdirSync(options.out, { recursive: true });
-    const tarball = path.join(options.out, path.basename(scratchTarball));
-    const stampFile = path.join(options.out, "BUILD.json");
-    cpSync(scratchTarball, tarball);
-    rmSync(stampFile, { force: true });
-    writeFileSync(stampFile, stampJson);
-    chmodSync(stampFile, 0o444);
+    const { tarball, stampFile } = publishPackageOutput(
+      scratchTarball,
+      stampJson,
+      options.out,
+    );
 
     const elapsed = ((Date.now() - started) / 1_000).toFixed(2);
     const summary =
       `built Lody ${provenance.upstreamSha.slice(0, 12)} in ${elapsed}s (${sha256File(tarball).slice(0, 12)} tarball)\n` +
       `tarball: ${tarball}\nBUILD.json: ${stampFile}\n` +
-      (options.keepScratch ? `scratch: ${scratch}\n` : "");
+      (options.keepScratch || options.scratch !== null
+        ? `scratch: ${scratch}\n`
+        : "");
     if (options.json) {
       process.stdout.write(stampJson);
       process.stderr.write(summary);
@@ -558,7 +633,9 @@ export function main(argv = process.argv.slice(2)) {
       process.stdout.write(summary);
     }
   } finally {
-    if (!options.keepScratch) rmSync(scratch, { recursive: true, force: true });
+    if (!options.keepScratch && options.scratch === null) {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   }
 }
 

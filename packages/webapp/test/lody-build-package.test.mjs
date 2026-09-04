@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,6 +14,7 @@ import {
   distContentSha256,
   normalizePackagePath,
   packageManifestReport,
+  publishPackageOutput,
   readPackageManifest,
 } from "../../../scripts/lody-build-package.mjs";
 
@@ -103,5 +111,34 @@ describe("the reviewed Lody package manifest", () => {
         "package/dist/new-worker.js",
       ]),
     ).toEqual({ missing: [], extra: ["package/dist/new-worker.js"] });
+  });
+});
+
+describe("Lody package publication", () => {
+  it("replaces the tarball and stamp pair without retaining stale archives", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "lody-publish-"));
+    scratch.push(root);
+    const sourceTarball = path.join(root, "lody-2.0.0.tgz");
+    const output = path.join(root, "artifact");
+    writeFileSync(sourceTarball, "new tarball\n");
+    mkdirSync(output);
+    writeFileSync(path.join(output, "lody-1.0.0.tgz"), "old tarball\n");
+    writeFileSync(path.join(output, "lody-0.9.0.tgz"), "older tarball\n");
+    writeFileSync(path.join(output, "BUILD.json"), "old stamp\n");
+
+    const published = publishPackageOutput(
+      sourceTarball,
+      '{"upstreamSha":"new"}\n',
+      output,
+    );
+
+    expect(readdirSync(output).sort()).toEqual([
+      "BUILD.json",
+      "lody-2.0.0.tgz",
+    ]);
+    expect(readFileSync(published.tarball, "utf8")).toBe("new tarball\n");
+    expect(readFileSync(published.stampFile, "utf8")).toBe(
+      '{"upstreamSha":"new"}\n',
+    );
   });
 });

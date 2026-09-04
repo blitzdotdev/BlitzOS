@@ -43,6 +43,7 @@ import {
 import { createConnection, createServer as createTcpServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { resolveAtomicBuildCache } from "./lody-build-cache.js";
 
 /**
  * Repo root, found by walking up from the working directory.
@@ -95,6 +96,7 @@ function localBuildFingerprint(root: string): string {
     "vendor/lody/pnpm-lock.yaml",
     "vendor/lody/apps/cli/src/lib/message-processor.ts",
     "vendor/lody/apps/cli/src/agent/agent-client.ts",
+    "vendor/lody/apps/cli/src/mcp/lody-mcp-http-server.ts",
     "vendor/lody/apps/cli/src/session/session-execution-helpers.ts",
     "vendor/lody/apps/cli/src/session/session-manager.ts",
     "vendor/lody/apps/cli/src/session/session-sandbox.ts",
@@ -118,60 +120,73 @@ function runBuildStep(command: string, args: string[], cwd: string): void {
   }
 }
 
-function buildCachedLodyBundle(root: string): string {
-  const sha = upstreamSha(root);
-  const cacheRoot = join(homedir(), ".cache", "blitz-lody-build", sha);
-  const bundle = join(cacheRoot, "install", "lib", "node_modules", "lody");
-  const fingerprint = localBuildFingerprint(root);
-  const fingerprintFile = join(cacheRoot, "SOURCE.sha256");
-  if (
-    existsSync(join(bundle, "dist", "BUILD.json")) &&
-    existsSync(fingerprintFile) &&
-    readFileSync(fingerprintFile, "utf8").trim() === fingerprint
-  ) {
-    return bundle;
+function cacheEntryIsValid(cachePath: string, fingerprint: string): boolean {
+  const bundleStamp = join(
+    cachePath,
+    "install",
+    "lib",
+    "node_modules",
+    "lody",
+    "dist",
+    "BUILD.json",
+  );
+  const artifactStamp = join(cachePath, "artifact", "BUILD.json");
+  const fingerprintFile = join(cachePath, "SOURCE.sha256");
+  try {
+    return (
+      readFileSync(fingerprintFile, "utf8").trim() === fingerprint &&
+      readFileSync(bundleStamp, "utf8") === readFileSync(artifactStamp, "utf8")
+    );
+  } catch {
+    return false;
   }
+}
 
-  process.stderr.write(
-    `lody-daemon-harness: building vendored daemon in ${cacheRoot}\n`,
-  );
-  rmSync(cacheRoot, { recursive: true, force: true });
-  const artifact = join(cacheRoot, "artifact");
-  mkdirSync(artifact, { recursive: true });
-  runBuildStep(
-    process.execPath,
-    [
-      join(root, "scripts/lody-build-package.mjs"),
-      "--source",
-      join(root, "vendor/lody"),
-      "--out",
-      artifact,
-    ],
-    root,
-  );
-  const tarballs = readdirSync(artifact).filter((entry) =>
-    /^lody-.+\.tgz$/u.test(entry),
-  );
-  if (tarballs.length !== 1) {
-    throw new Error(`tree build produced ${tarballs.length} Lody tarballs`);
-  }
-  runBuildStep(
-    "npm",
-    [
-      "install",
-      "--global",
-      "--prefix",
-      join(cacheRoot, "install"),
-      "--omit=dev",
-      join(artifact, tarballs[0]!),
-    ],
-    root,
-  );
-  if (!existsSync(join(bundle, "dist", "BUILD.json"))) {
-    throw new Error("tree-built Lody install has no dist/BUILD.json");
-  }
-  writeFileSync(fingerprintFile, `${fingerprint}\n`);
-  return bundle;
+async function buildCachedLodyBundle(root: string): Promise<string> {
+  const sha = upstreamSha(root);
+  const fingerprint = localBuildFingerprint(root);
+  const cachePath = join(homedir(), ".cache", "blitz-lody-build", sha, fingerprint);
+  const winner = await resolveAtomicBuildCache({
+    cachePath,
+    validate: (candidate) => cacheEntryIsValid(candidate, fingerprint),
+    build: async (staging) => {
+      process.stderr.write(
+        `lody-daemon-harness: building vendored daemon in ${staging}\n`,
+      );
+      const artifact = join(staging, "artifact");
+      runBuildStep(
+        process.execPath,
+        [
+          join(root, "scripts/lody-build-package.mjs"),
+          "--source",
+          join(root, "vendor/lody"),
+          "--out",
+          artifact,
+        ],
+        root,
+      );
+      const tarballs = readdirSync(artifact).filter((entry) =>
+        /^lody-.+\.tgz$/u.test(entry),
+      );
+      if (tarballs.length !== 1) {
+        throw new Error(`tree build produced ${tarballs.length} Lody tarballs`);
+      }
+      runBuildStep(
+        "npm",
+        [
+          "install",
+          "--global",
+          "--prefix",
+          join(staging, "install"),
+          "--omit=dev",
+          join(artifact, tarballs[0]!),
+        ],
+        root,
+      );
+      writeFileSync(join(staging, "SOURCE.sha256"), `${fingerprint}\n`);
+    },
+  });
+  return join(winner, "install", "lib", "node_modules", "lody");
 }
 
 /**
@@ -180,26 +195,26 @@ function buildCachedLodyBundle(root: string): string {
  * package is installed) a cached build of this tree. A machine with no daemon
  * at all stays unavailable so daemon-free test jobs do not unexpectedly build.
  */
-function resolveLodyBundle(): string {
+async function resolveLodyBundle(): Promise<string> {
   if (process.env.LODY_BUNDLE !== undefined) return process.env.LODY_BUNDLE;
   if (existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "BUILD.json"))) {
     return INSTALLED_LODY_BUNDLE;
   }
   if (existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "index.js"))) {
-    return buildCachedLodyBundle(repoRoot());
+    return await buildCachedLodyBundle(repoRoot());
   }
   return INSTALLED_LODY_BUNDLE;
 }
 
-export const LODY_BUNDLE = resolveLodyBundle();
 const BRIDGE_SCRIPT = join(repoRoot(), "packages/box/rootfs/usr/local/libexec/blitz-lody-bridge");
 const REPO_NODE_MODULES = join(repoRoot(), "node_modules");
 
-/** `true` after resolving an explicit, installed, or on-demand tree bundle. */
+/** `true` when an explicit or installed bundle makes a lazy resolution viable. */
 export function lodyDaemonAvailable(): boolean {
-  const available = existsSync(join(LODY_BUNDLE, "dist", "index.js"));
+  const candidate = process.env.LODY_BUNDLE ?? INSTALLED_LODY_BUNDLE;
+  const available = existsSync(join(candidate, "dist", "index.js"));
   if (!available && process.env.LODY_REQUIRE_BUNDLE === "1") {
-    process.stderr.write(`LODY PAIR GATE: skipped for lack of a bundle at ${LODY_BUNDLE}\n`);
+    process.stderr.write(`LODY PAIR GATE: skipped for lack of a bundle at ${candidate}\n`);
   }
   return available;
 }
@@ -569,6 +584,7 @@ async function acquireHarnessLock(): Promise<() => void> {
 
 /** Boots all three, and resolves once the daemon has written its catalog. */
 export async function startLodyHarness(): Promise<LodyHarness> {
+  const sourceBundle = await resolveLodyBundle();
   const releaseLock = await acquireHarnessLock();
   const root = mkdtempSync(join(tmpdir(), "lp-"));
   const dataDir = join(root, "d");
@@ -577,7 +593,7 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   // Always a copy: mutating the installed package from a test would leave it
   // changed for every later suite on this machine.
   const bundle = join(root, "lody");
-  cpSync(LODY_BUNDLE, bundle, { recursive: true });
+  cpSync(sourceBundle, bundle, { recursive: true });
   let daemonLog = "";
   const daemon = spawn(process.execPath, [join(bundle, "dist", "index.js"), "start"], {
     cwd: root,

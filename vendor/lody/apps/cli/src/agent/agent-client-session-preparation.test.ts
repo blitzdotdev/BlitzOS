@@ -57,6 +57,7 @@ function createLogger(): Logger {
 
 describe('AgentClient session preparation gate', () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
     connectionMocks.initialize.mockResolvedValue({ agentCapabilities: {} });
     connectionMocks.newSession.mockResolvedValue({ sessionId: 'acp-session-1' });
@@ -436,6 +437,37 @@ describe('AgentClient session preparation gate', () => {
           ]),
         }),
       ],
+    });
+  });
+
+  it('omits built-in Lody MCP while retaining workspace MCP when disabled', async () => {
+    vi.stubEnv('LODY_MCP_BUILTIN_DISABLED', '1');
+    const workspaceServer = {
+      name: 'workspace-tools',
+      command: 'workspace-mcp',
+      args: ['--stdio'],
+      env: [{ name: 'WORKSPACE_MCP_MODE', value: 'test' }],
+    };
+    const client = new AgentClient({
+      logger: createLogger(),
+      sessionId: 'session-mcp-disabled' as SessionId,
+      workspaceId: 'workspace-1' as WorkspaceId,
+      machineId: 'machine-1' as MachineId,
+      terminalManager: {} as never,
+      agentConfig: { cliType: 'builtin', agentType: 'deepseek' },
+      loadExternalMcpServers: async () => () => ({
+        servers: [workspaceServer],
+        problems: [],
+      }),
+      onUpdateMessage: vi.fn(),
+      onRequestPermission: vi.fn(),
+    });
+
+    await client.startSession({} as never, '/workdir');
+
+    expect(connectionMocks.newSession).toHaveBeenCalledWith({
+      cwd: '/workdir',
+      mcpServers: [workspaceServer],
     });
   });
 

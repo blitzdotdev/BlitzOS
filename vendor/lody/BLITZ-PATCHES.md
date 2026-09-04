@@ -1775,18 +1775,27 @@ authentication concurrency, classify it as C and stop for a human.
 **Anchors:** `apps/cli/src/agent/agent-client.ts`, the first guard in
 `buildBuiltinMcpServers`; and
 `apps/cli/src/session/session-execution-helpers.ts`, the
-`LODY_MCP_TOOLS_REMINDER` declaration.
+`lodyMcpToolsReminder` declaration; plus
+`apps/cli/src/mcp/lody-mcp-http-server.ts`, the early configuration logging in
+`startLodyMcpHttpServer`.
 
 `LODY_MCP_BUILTIN_DISABLED=1` makes the built-in server list empty and omits the
 prompt reminder for tools that are no longer present. Workspace-configured MCP
 servers still resolve and load through `buildMcpServers`. Omission preserves
 upstream's HTTP-or-stdio built-in server and prompt exactly. The box selects the
 opt-out because the child duplicates the daemon bundle per session and its
-process group can outlive the ACP agent.
+process group can outlive the ACP agent. Daemon startup logs the selected
+opt-out so image smoke and operators can distinguish it from an MCP host that
+failed to start; this does not change server selection.
 
 Guard: `packages/webapp/test/lody-seam-pin.test.ts` pins both source branches and
-the box service setting; the tree-built daemon suites prove normal ACP session
-startup with the setting selected.
+the box service setting. The `Lody daemon pair gate` runs
+`apps/cli/src/agent/agent-client-session-preparation.test.ts` and
+`apps/cli/tests/session-execution-helpers.test.ts` from the scratch tree that
+produced the tarball: they prove the opt-out removes the built-in server and
+reminder without removing an external server, while omission preserves both
+upstream defaults. The enabled-image smoke checks the live daemon environment
+and its explicit MCP-disable log line.
 
 **Candidate upstream PR:** “allow embedding hosts to disable the built-in Lody
 MCP server.” Document one environment option, return no built-ins when selected,
@@ -1815,9 +1824,15 @@ by `blitz-cgroup init`, so session leaves can use `cgroup.kill` without violatin
 cgroup v2's no-internal-process rule while the box remains the resource ceiling.
 
 Guard: `packages/webapp/test/lody-seam-pin.test.ts` pins the opt-in branches and
-service values; `apps/cli/tests/session-sandbox.test.ts` exercises both source
-configuration choices. Existing box smoke coverage verifies the session leaf
-path, controller files, `pids.max`, unlimited memory/CPU, and descendant cleanup.
+service values. The `Lody daemon pair gate` runs
+`apps/cli/tests/session-sandbox.test.ts` from the built scratch tree, covering
+the configured sibling parent, leaf `pids.max`, unlimited memory/CPU, process
+placement, termination, and cleanup as well as the upstream defaults. The
+enabled-image smoke proves the real s6 daemon enters `lody.scope` and that the
+pre-created sibling parent has the expected owner, controllers, unlimited
+parent `pids.max`, and 4096-process enclosing user ceiling. It does not claim a
+real leaf: the shipping CLI registers only credential-requiring Claude and
+Codex adapters, so CI cannot create a session without a member credential.
 
 **Candidate upstream PR:** “make the execution-sandbox cgroup parent and
 capacity allocation host-configurable.” Parse an optional parent path and an

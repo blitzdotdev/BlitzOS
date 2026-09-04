@@ -56,11 +56,20 @@ jobs:
           restore-keys: lody-pnpm-${{ runner.os }}-
       - run: npm ci
       - name: Build and stamp the tree daemon
-        run: node scripts/lody-build-package.mjs --out "$RUNNER_TEMP/lody-artifact"
+        run: node scripts/lody-build-package.mjs --out "$RUNNER_TEMP/lody-artifact" --scratch "$RUNNER_TEMP/lody-scratch"
+      - name: Run the ported daemon seam tests against the built tree
+        working-directory: ${{ runner.temp }}/lody-scratch/lody/apps/cli
+        run: |
+          corepack pnpm exec vitest run \
+            src/lib/message-processor.test.ts \
+            src/agent/agent-client-session-preparation.test.ts \
+            tests/session-execution-helpers.test.ts \
+            tests/session-sandbox.test.ts
       - name: Install the daemon artifact and Claude CLI
         run: |
-          tarball=$(find "$RUNNER_TEMP/lody-artifact" -maxdepth 1 -name 'lody-*.tgz' -print -quit)
-          test -n "$tarball"
+          mapfile -t tarballs < <(find "$RUNNER_TEMP/lody-artifact" -maxdepth 1 -type f -name 'lody-*.tgz' -print)
+          test "${#tarballs[@]}" -eq 1
+          tarball=${tarballs[0]}
           npm install --global --prefix "$RUNNER_TEMP/lody-install" --omit=dev "$tarball"
           npm install --global --prefix "$RUNNER_TEMP/lody-install" --omit=dev @anthropic-ai/claude-code@latest
           echo "LODY_BUNDLE=$RUNNER_TEMP/lody-install/lib/node_modules/lody" >> "$GITHUB_ENV"
@@ -151,16 +160,8 @@ jobs:
   box-image:
     name: Box image build check (amd64)
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: package.json
-          cache: npm
-      - run: npm ci
-      - run: docker build --platform linux/amd64 --tag blitz-box:ci -f packages/box/Dockerfile .
-      - name: Verify the installed daemon provenance contract
-        env:
-          BLITZ_BOX_IMAGE: blitz-box:ci
-        run: npx vitest run --maxWorkers=1 test/lody-build-install.test.ts
-        working-directory: packages/box/guest-tests
+      - name: Build and boot the Lody-enabled image
+        run: packages/box/test/smoke.sh

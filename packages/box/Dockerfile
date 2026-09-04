@@ -55,8 +55,10 @@ ENV NPM_CONFIG_PREFIX=/opt/blitz/npm
 # tarball through npm preserves the established global prefix and binary path.
 COPY --from=lody-build /out/ /tmp/lody-build/
 RUN set -eux; \
-    lody_tarball=$(find /tmp/lody-build -maxdepth 1 -name 'lody-*.tgz' -print -quit); \
-    test -n "$lody_tarball"; \
+    set -- /tmp/lody-build/lody-*.tgz; \
+    test "$#" -eq 1; \
+    test -f "$1"; \
+    lody_tarball=$1; \
     npm install --global --omit=dev \
       @anthropic-ai/claude-code@latest \
       @openai/codex@0.147.0 \

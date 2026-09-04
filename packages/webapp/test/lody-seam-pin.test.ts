@@ -65,6 +65,7 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       readFileSync(join(repoRoot, "vendor/lody/apps/cli/src", path), "utf8");
     const agentClient = cliSource("agent/agent-client.ts");
     const promptHelpers = cliSource("session/session-execution-helpers.ts");
+    const mcpHttpServer = cliSource("mcp/lody-mcp-http-server.ts");
     const sandbox = cliSource("session/session-sandbox.ts");
     const sessionManager = cliSource("session/session-manager.ts");
     const service = readFileSync(
@@ -74,6 +75,9 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
 
     expect(agentClient).toContain("process.env.LODY_MCP_BUILTIN_DISABLED === '1'");
     expect(promptHelpers).toContain("process.env.LODY_MCP_BUILTIN_DISABLED === '1'");
+    expect(mcpHttpServer).toContain(
+      "[mcp] built-in server disabled via LODY_MCP_BUILTIN_DISABLED",
+    );
     expect(sandbox).toContain("this.deps.environment.LODY_SESSION_CGROUP_PARENT?.trim()");
     expect(sandbox).toContain("if (options.capacityLimits === false)");
     expect(sessionManager).toContain(

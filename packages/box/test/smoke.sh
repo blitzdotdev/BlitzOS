@@ -10,6 +10,7 @@ script_dir=$(realpath "$(dirname "$0")")
 repo_root=$(realpath "$script_dir/../../..")
 image="${IMAGE:-blitz-box:smoke}"
 lody_sessions_image="blitz-box:smoke-lody-sessions-on-$$"
+runtime_image="$image"
 container="blitz-box-smoke-$$"
 state_volume="blitz-box-smoke-state-$$"
 unprivileged_container="blitz-box-smoke-unprivileged-$$"
@@ -75,7 +76,15 @@ if [ -z "${IMAGE:-}" ]; then
     "$repo_root"
   docker run --rm --entrypoint grep "$lody_sessions_image" \
     -x 'BLITZ_LODY_SESSIONS=1' /etc/blitz/env.defaults
+  runtime_image="$lody_sessions_image"
 fi
+
+# IMAGE is used by canary after its enabled build and before publication. Make
+# that contract fail closed instead of silently forcing a disabled image on at
+# runtime and claiming its baked default was exercised.
+docker run --rm --entrypoint grep "$runtime_image" \
+  -x 'BLITZ_LODY_SESSIONS=1' /etc/blitz/env.defaults \
+  || fail "$runtime_image was not built with BLITZ_LODY_SESSIONS=1"
 
 install -d -m 0755 "$test_dir/workspace"
 ssh-keygen -q -t ed25519 -N '' -C 'blitz-box-smoke' -f "$test_dir/id_ed25519"
@@ -89,6 +98,7 @@ docker run -d \
   --name "$container" \
   --privileged \
   --env-file "$repo_root/env.defaults" \
+  --env BLITZ_LODY_SESSIONS=1 \
   --env "BLITZ_UID=$(id -u)" \
   --env "BLITZ_GID=$(id -g)" \
   --mount "type=volume,source=$state_volume,target=/var/lib/blitz" \
@@ -96,32 +106,72 @@ docker run -d \
   --mount "type=bind,source=$test_dir/id_ed25519.pub,target=/run/blitz/authorized_key,readonly" \
   --mount "type=bind,source=$test_dir/secret,target=/run/blitz/smoke-secret,readonly" \
   --publish 127.0.0.1::22 \
-  "$image" >/dev/null
+  "$runtime_image" >/dev/null
 
 ready=false
-for _attempt in $(seq 1 100); do
+platform_json=''
+for _attempt in $(seq 1 900); do
   if [ "$(docker inspect --format '{{.State.Running}}' "$container")" != true ]; then
     fail "container exited during startup"
   fi
   listeners=$(docker exec "$container" ss -ltnH 2>/dev/null || true)
+  platform_json=$(docker exec "$container" \
+    curl --silent --show-error --fail --max-time 2 \
+    http://127.0.0.1:7445/lody/platform 2>/dev/null || true)
+  lody_health=$(docker exec "$container" \
+    curl --silent --show-error --fail --max-time 2 \
+    --unix-socket /var/lib/blitz/lody-bridge.sock \
+    http://localhost/healthz 2>/dev/null || true)
   if grep -q '0.0.0.0:22' <<<"$listeners" \
     && grep -q '127.0.0.1:7443' <<<"$listeners" \
     && grep -q '127.0.0.1:7445' <<<"$listeners" \
-    && grep -q '127.0.0.1:17445' <<<"$listeners"; then
+    && grep -q '127.0.0.1:17445' <<<"$listeners" \
+    && docker exec "$container" /command/s6-svstat /run/service/lody-daemon 2>/dev/null | grep -q '^up' \
+    && docker exec "$container" /command/s6-svstat /run/service/lody-bridge 2>/dev/null | grep -q '^up' \
+    && grep -q '"ok"[[:space:]]*:[[:space:]]*true' <<<"$lody_health" \
+    && [ -n "$platform_json" ]; then
     ready=true
     break
   fi
   sleep 0.2
 done
-[ "$ready" = true ] || fail "loopback services did not become ready"
+[ "$ready" = true ] || fail "enabled Lody services and loopback endpoints did not become ready within 180 seconds"
 
 services=$(docker exec "$container" /command/s6-rc -a list)
-for service in init-state enroll register sshd ttyd dufs gateway watch dockerd; do
+for service in init-state enroll register sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
-for service in sshd ttyd dufs gateway watch dockerd; do
+for service in sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
+
+docker exec "$container" cmp \
+  /opt/blitz/lody/BUILD.json \
+  /opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json \
+  || fail "the image-level and packaged Lody BUILD.json files differ"
+docker exec "$container" /opt/blitz/npm/bin/lody --help >/dev/null \
+  || fail "the tree-built Lody CLI does not answer --help"
+docker exec "$container" grep -Eq '^[[:space:]]*/opt/blitz/npm/bin/lody start$' \
+  /etc/s6-overlay/s6-rc.d/lody-daemon/run \
+  || fail "the lody daemon service no longer points at /opt/blitz/npm/bin/lody"
+docker exec "$container" node -e '
+  const catalog = JSON.parse(process.argv[1]);
+  if (!catalog.identity || !Array.isArray(catalog.workspaces) || !catalog.machine) process.exit(1);
+' "$platform_json" || fail "/lody/platform did not return the local identity/workspace/machine catalog: $platform_json"
+lody_pid=$(docker exec "$container" pgrep -f '/opt/blitz/npm/bin/lody start$' | head -1)
+[ -n "$lody_pid" ] || fail "the enabled Lody daemon process was not found"
+docker exec "$container" sh -c \
+  "tr '\\0' '\\n' </proc/$lody_pid/environ | grep -qx 'LODY_MCP_BUILTIN_DISABLED=1'" \
+  || fail "the Lody daemon process did not receive LODY_MCP_BUILTIN_DISABLED=1"
+
+# The shipping image registers Claude and Codex only; neither can create a
+# credential-free ACP session. The built-tarball tests below exercise a fake
+# adapter. Here, prove every real-image invariant available without a provider
+# credential, and do not pretend a session leaf was created.
+docker logs "$container" >"$test_dir/container.log" 2>&1
+grep -q '\[mcp\] built-in server disabled via LODY_MCP_BUILTIN_DISABLED' "$test_dir/container.log" \
+  || fail "the daemon log did not confirm that its built-in MCP server is disabled"
+echo "PASS enabled Lody daemon, bridge, platform catalog, provenance, service environment, and MCP-disable log"
 dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
 [ "$dufs_version" = 'dufs 0.46.0' ] || fail "unexpected dufs version: $dufs_version"
 # dufs must NOT publish the agent HOME. The symlink that used to sit beside
@@ -155,6 +205,9 @@ cgroup_of() {
 }
 
 if [ "$boundary_expected" = no ]; then
+  if [ "${CI:-}" = true ]; then
+    fail "CI did not delegate the memory controller required to prove the Lody session cgroup parent"
+  fi
   docker exec "$container" test ! -d /sys/fs/cgroup/blitz-system.slice \
     || fail "no memory controller here, yet a half-built system slice exists"
   echo "SKIP memory boundary layout (memory controller is not delegated here; CI and the Hetzner lab assert it)"
@@ -179,29 +232,9 @@ for service in sshd ttyd dufs blitz-box-gatew; do
   [ "$where" = /blitz-system.slice ] \
     || fail "$service must sit in the reservation, but it is in [$where]"
 done
-# The actor that used to hold user/actor.scope is gone; the Lody daemon
-# inherited the placement. It is dark by default, so a smoke box idles it in
-# `sleep infinity` and there is no node to look at here. The placement is
-# asserted by reading its run script instead — see the boundary lab
-# (packages/box/test/memory-load.sh) for the live check on an enabled box.
-docker exec "$container" grep -q 'blitz-cgroup enter user/lody.scope' \
-  /etc/s6-overlay/s6-rc.d/lody-daemon/run \
-  || fail "the lody daemon does not enter the user ceiling"
-docker exec "$container" test -f /opt/blitz/lody/BUILD.json \
-  || fail "the image-level Lody BUILD.json is missing"
-docker exec "$container" test -f /opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json \
-  || fail "the packaged Lody BUILD.json is missing"
-docker exec "$container" node -e '
-  const fs = require("node:fs");
-  const image = JSON.parse(fs.readFileSync("/opt/blitz/lody/BUILD.json", "utf8"));
-  const installed = JSON.parse(fs.readFileSync("/opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json", "utf8"));
-  if (JSON.stringify(image) !== JSON.stringify(installed)) process.exit(1);
-' || fail "the image-level and packaged Lody stamps differ"
-docker exec "$container" /opt/blitz/npm/bin/lody --help >/dev/null \
-  || fail "the tree-built Lody CLI does not answer --help"
-docker exec "$container" grep -Eq '^[[:space:]]*/opt/blitz/npm/bin/lody start$' \
-  /etc/s6-overlay/s6-rc.d/lody-daemon/run \
-  || fail "the lody daemon service no longer points at /opt/blitz/npm/bin/lody"
+where=$(docker exec "$container" sed -n 's|^0::||p' "/proc/$lody_pid/cgroup")
+[ "$where" = /blitz-user.slice/lody.scope ] \
+  || fail "the enabled Lody daemon must run in its user leaf, but it is in [$where]"
 where=$(cgroup_of dockerd) || fail "dockerd is not running"
 [ "$where" = /blitz-user.slice/dockerd.scope ] \
   || fail "dockerd must sit beside its containers, not in them: [$where]"
@@ -257,9 +290,18 @@ if docker exec "$container" grep -qw cpu /sys/fs/cgroup/cgroup.controllers; then
   grep -qw cpu <<<"$session_controllers" \
     || fail "cpu is delegated here, yet lody-sessions does not hand it to its leaves: [$session_controllers]"
 fi
+session_parent_pids=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/lody-sessions/pids.max)
+[ "$session_parent_pids" = max ] \
+  || fail "lody-sessions parent pids.max is [$session_parent_pids], expected max beneath the 4096-process user ceiling"
+user_pids=$(docker exec "$container" cat /sys/fs/cgroup/blitz-user.slice/pids.max)
+[ "$user_pids" = 4096 ] || fail "the user slice pids.max is [$user_pids], expected 4096"
 echo "PASS memory boundary layout"
 fi
 
+if [ "${LODY_BOOT_ONLY:-0}" = 1 ]; then
+  echo "PASS enabled Lody image boot smoke"
+  exit 0
+fi
 
 docker logs "$container" >"$test_dir/container.log" 2>&1
 grep -q 'enroll: skipped (no control-plane origin)' "$test_dir/container.log" || fail "enroll did not skip cleanly"
@@ -477,12 +519,13 @@ docker volume create "$unprivileged_volume" >/dev/null
 docker run -d \
   --name "$unprivileged_container" \
   --env-file "$repo_root/env.defaults" \
+  --env BLITZ_LODY_SESSIONS=1 \
   --env "BLITZ_UID=$(id -u)" \
   --env "BLITZ_GID=$(id -g)" \
   --mount "type=volume,source=$unprivileged_volume,target=/var/lib/blitz" \
   --mount "type=bind,source=$test_dir/workspace,target=/workspace" \
   --mount "type=bind,source=$test_dir/id_ed25519.pub,target=/run/blitz/authorized_key,readonly" \
-  "$image" >/dev/null
+  "$runtime_image" >/dev/null
 unprivileged_ready=false
 for _attempt in $(seq 1 50); do
   if docker logs "$unprivileged_container" 2>&1 | grep -q 'dockerd: skipped (container is not privileged)'; then

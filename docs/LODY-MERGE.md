@@ -281,8 +281,9 @@ lives in the subtree; the builder never rewrites the compiled output.
 ```sh
 LODY_OUT=$(mktemp -d)
 npm run lody:build -- --out "$LODY_OUT"
-TARBALL=$(find "$LODY_OUT" -maxdepth 1 -name 'lody-*.tgz' -print -quit)
-test -n "$TARBALL"
+mapfile -t TARBALLS < <(find "$LODY_OUT" -maxdepth 1 -type f -name 'lody-*.tgz' -print)
+test "${#TARBALLS[@]}" -eq 1
+TARBALL=${TARBALLS[0]}
 jq . "$LODY_OUT/BUILD.json"
 ```
 
@@ -364,6 +365,9 @@ cd ../../..
 
 The required `lody-daemon` job runs this discovery against the artifact it just
 built and fails explicitly if a non-paid suite reports a bundle-absence skip.
+Before installing that artifact, it also runs the focused authentication-queue,
+built-in-MCP request/reminder, and session-sandbox tests in the preserved
+scratch tree that produced it.
 
 ## Recapture fixture corpora only for semantic changes
 
@@ -465,10 +469,11 @@ object IDs for `packages/box`, `packages/broker`,
 `packages/control-plane/scripts/lib/box-image-inputs.mjs` and
 `packages/control-plane/scripts/box-image-key.mjs`. It validates and reuses an
 existing matching manifest or builds an amd64 image with Lody sessions enabled,
-publishes parts before the manifest under immutable `box-image/<releaseId>/`
-keys through `packages/control-plane/scripts/publish-box-image.mjs`, passes the
-exact ref/tag/archive digest to `deploy`, and verifies both commit and image tag
-through `/version`.
+boot-smokes that enabled image, publishes parts before the manifest under
+immutable `box-image/<releaseId>/` keys through
+`packages/control-plane/scripts/publish-box-image.mjs`, passes the exact
+ref/tag/archive digest to `deploy`, and verifies both commit and image tag through
+`/version`.
 
 That automation exists now, and `packages/box/Dockerfile` installs the
 source-built daemon. A pure `vendor/lody` change does not yet change the

@@ -49,7 +49,6 @@ import { fetchLodyPlatformSnapshot, type LodyPlatformSnapshot } from "../src/lod
 import { continueLodySession, dispatchLodyTurn, startLodySession } from "../src/lody/session.js";
 import {
   claudeCredentialAvailable,
-  LODY_BUNDLE,
   lodyDaemonAvailable,
   startLodyHarness,
   type LodyHarness,
@@ -118,7 +117,7 @@ function assistantSpoke(history: readonly JsonValue[]): boolean {
 }
 
 const prerequisiteFailure = !lodyDaemonAvailable()
-  ? `the Lody package is absent at ${LODY_BUNDLE}`
+  ? "the Lody package is absent"
   : !existsSync(CLAUDE_BINARY)
     ? `the Claude binary is absent at ${CLAUDE_BINARY}`
     : null;

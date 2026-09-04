@@ -2,4 +2,4 @@
 packages/schema/fixtures/** -text
 # Adapter snapshots are byte-for-byte upstream archives. Their content hash is
 # the drift gate, so Git must not ask contributors to hand-normalize whitespace.
-vendor/lody-adapters/** whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+vendor/lody-adapters/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab

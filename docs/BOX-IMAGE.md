@@ -244,20 +244,31 @@ copy; it carries the `--privileged` and long-`--mount` reasoning with it.
 
 `packages/box/test/smoke.sh` exercises the whole surface: s6 service graph,
 key-only SSH, ttyd/tmux, files, ports, previews, DinD, and the
-unprivileged degradation path.
+unprivileged degradation path. It builds both the default-disabled image and
+the same `BLITZ_LODY_SESSIONS=1` variant canary ships, then boots the enabled
+variant. The Lody checks wait up to three minutes for the supervised daemon and
+bridge, probe bridge health and `/lody/platform`, compare the installed and
+outer `BUILD.json` bytes, inspect the live daemon environment and cgroup, and
+require its built-in-MCP-disable log. The shipping CLI has no credential-free
+adapter, so real session-leaf limits and cleanup are instead exercised by the
+vendor sandbox suite in the daemon pair gate.
 
 ```sh
 # Builds a throwaway blitz-box:smoke from this tree, then tests it:
 packages/box/test/smoke.sh
 
-# Tests an image you already have, and never builds:
+# Tests an already-built Lody-enabled image, and never builds:
 IMAGE=blitz-box:local packages/box/test/smoke.sh
 ```
 
 Building is the default on purpose. This is the only gate that runs the s6
 service graph, so a run that silently adopted an existing tag could pass an
 edit to `rootfs/` or an s6 unit against an image that predates it. `IMAGE=`
-skips the build, and then the freshness of that tag is yours to guarantee.
+skips the build, requires that tag's baked default to enable Lody, and leaves
+the freshness of that tag yours to guarantee. Canary runs this form with
+`LODY_BOOT_ONLY=1` immediately after its enabled build and before publishing any
+archive parts, exiting after the Lody and cgroup checks rather than repeating
+the later terminal/files/preview checks already owned by PR CI.
 
 ## Upgrade and rollback
 

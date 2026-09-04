@@ -229,10 +229,8 @@ Do not edit its contents by hand.
   writeFileSync(path.join(root, "UPSTREAM.md"), contents);
 }
 
-function destinationHasLocalChanges(repository, name) {
+export function destinationHasLocalChanges(repository, name) {
   const relative = `vendor/lody-adapters/${name}`;
-  const tracked = gitText(repository, ["ls-files", relative]);
-  if (tracked === "") return false;
   return gitText(repository, ["status", "--porcelain=v1", "--untracked-files=all", "--", relative]) !== "";
 }
 

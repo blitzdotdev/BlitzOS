@@ -663,7 +663,8 @@ Every item below is a named failing gate, not a review reminder.
 | `lody-dist-manifest.test.mjs` | packed output is missing anything from the reviewed normalized set: fixed entry/ACP/worker JS names, expected normalized hashed chunks, DSH preset paths, `zstd.wasm`, license/readme/manifest, or notice; unlisted files warn so upstream additions are visible without making a complete package unsafe |
 | `lody-notices.test.mjs` | `package/dist/THIRD_PARTY_NOTICES.md` is absent, empty, or differs byte-for-byte from the root notice; the current research tar omitted it (`/var/lib/blitz/home/codex/daemonbuild-result.md:119-123`) |
 | extended `lody-seam-pin.test.ts` + `message-processor.test.ts` | the ACP source anchor moves, undeclared source is removed, or submit/cancel again serialize behind an interactive start |
-| **Lody built-image smoke** | inside the just-built image, `lody --help` fails; the stamp disagrees with `UPSTREAM.md`; s6 cannot start the enabled daemon; its health socket fails; `/lody/platform` or `/lody/build` fails; or the served stamp differs from disk |
+| **Lody daemon seam behavior** | the built scratch tree fails the focused ACP authentication queue, built-in-MCP request/reminder, or session-sandbox suites; this includes preserving external MCP servers and the upstream defaults when the host options are absent |
+| **Lody built-image smoke** | inside the just-built enabled image, `lody --help` fails; the installed and outer stamps differ byte-for-byte; s6 cannot keep the daemon and bridge up; bridge health or `/lody/platform` fails; the daemon misses its selected MCP environment/log; or its live cgroup and prepared session parent violate the box boundary |
 | `lody-build-contract.test.ts` on guest/gateway/webapp | any Docker/Node/Go/browser side accepts, rejects, forwards, compares, logs, or renders a fixture differently |
 | **Lody daemon pair matrix** | a non-paid daemon-backed suite skips for lack of a bundle or fails against the tarball built from the PR's own tree |
 | **Canary image inputs** | an upstream SHA, adapter SHA, lockfile, source seam, or Docker input changes without changing the derived image release ID |
@@ -714,6 +715,16 @@ legitimate code-splitting change updates this reviewed manifest in the vendor PR
 | First field migration | Legacy npm boxes have no stamp and remain usable. A cloud VM can be moved through the request-gated box-config v1 updater; it polls, replaces the container, and reports the installed ref (`packages/control-plane/core/box-config.ts:21-29`, `packages/control-plane/core/box-config.ts:126-180`). A microVM cannot update in place, so it keeps the old npm daemon until recreation. `docs/BOX-IMAGE.md` records this current split. |
 | Immutable R2 storage growth | Release-keyed objects accumulate. Apply a lifecycle policy only after the maximum rollback/field-update window, and never delete the release currently reported by canary or any pending box update. |
 
+### Follow-ups
+
+Slim the 1,290-file adapter snapshots in a separately reviewed change, not as a
+side effect of a daemon merge. Use a versioned per-adapter filter manifest that
+excludes CI configuration, docs, examples, tests/fixtures, duplicate lockfiles,
+and prebuilt output not consumed by the package build; record the filter
+identity plus the filtered path/mode/content digest in each adapter stamp, build
+only the filtered scratch result, and retain the frozen-build and package-output
+verification before changing any recorded hashes.
+
 ## Migration sequence
 
 Each PR can ship on its own. The pair check is required now that PR A builds the
@@ -748,13 +759,15 @@ reviewed artifact; the shipping image and migration pieces remain separate.
   `vendor/lody/BLITZ-PATCHES.md`, CLI `message-processor.ts`, source/baseline
   tests, s6 comments, harness comments, and the build/stamp/dist-manifest tests.
 - Added the Corepack/frozen builder, package install, notice, stamp, target smoke,
-  ACP queue source seam, and focused behavior test.
+  ACP queue source seam, and focused behavior test. The follow-up fix pass made
+  the target smoke boot the enabled image and made canary run it before publish.
 - Deleted the npm daemon install item, all five compiled-patch files and Docker
   steps, and the harness patch list and loop. Platform and Code Collab retain
   regression coverage; builtin MCP and session sandbox use reviewed opt-in
   source/configuration seams.
 - Kept the required CI pair job while moving the same builder into the
-  source-built image smoke.
+  source-built image smoke; the pair job now executes seams 19-21 directly from
+  its preserved build scratch tree.
 
 ### PR D — expose and compare the pair (medium, about 300-450 lines)
 

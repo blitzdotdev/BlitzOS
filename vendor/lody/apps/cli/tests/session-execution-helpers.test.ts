@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildPrompt } from '../src/session/session-execution-helpers';
 
 describe('session execution prompt helpers', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('replaces detailed Lody MCP guidance with a concise reminder', () => {
     const prompt = buildPrompt('inspect the UI');
 
@@ -24,5 +28,14 @@ describe('session execution prompt helpers', () => {
     expect(prompt).toContain('Use the available Lody MCP tools when relevant');
     expect(prompt).not.toContain('The "lody" MCP server provides tools');
     expect(prompt).not.toContain('lody_upload_images');
+  });
+
+  it('omits the Lody MCP reminder when the built-in server is disabled', () => {
+    vi.stubEnv('LODY_MCP_BUILTIN_DISABLED', '1');
+
+    const prompt = buildPrompt('inspect the UI');
+
+    expect(prompt).toBe('inspect the UI');
+    expect(prompt).not.toContain('Lody MCP');
   });
 });
