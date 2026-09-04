@@ -96,6 +96,9 @@ install and CLI build, verifies the package manifest, and emits a tarball plus
 `BUILD.json`. A BuildKit cache mount retains the pnpm 10.20 store by Node line
 and target platform; the lockfile and build inputs still invalidate the build
 layer. Files outside the Lody inputs, including `packages/webapp`, do not.
+The Dockerfile ignore file re-includes adapter snapshots, and
+`lody-adapters-drift.test.mjs` checks that every tracked Lody builder input stays
+in the build context.
 
 The vendors stage installs that tarball at the established global prefix, so
 the package remains `/opt/blitz/npm/lib/node_modules/lody` and s6 still executes

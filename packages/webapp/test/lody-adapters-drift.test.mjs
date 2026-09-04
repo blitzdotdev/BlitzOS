@@ -26,6 +26,69 @@ import {
   verifyAdapterManifest,
 } from "../../../scripts/lody-sync-adapters.mjs";
 
+function dockerignoreRules(source) {
+  return source.split(/\r?\n/u).flatMap((sourceLine) => {
+    const line = sourceLine.trim();
+    if (line === "" || line.startsWith("#")) return [];
+    const negated = line.startsWith("!");
+    const pattern = negated ? line.slice(1) : line;
+    const directoryOnly = pattern.endsWith("/");
+    const normalized = pattern.replace(/^\/+|\/+$/gu, "");
+    return [{
+      negated,
+      directoryOnly,
+      segments: normalized.split("/"),
+    }];
+  });
+}
+
+function matchesSegment(pattern, value) {
+  const expression = pattern
+    .replace(/[.+^${}()|[\]\\]/gu, "\\$&")
+    .replace(/\*/gu, "[^/]*")
+    .replace(/\?/gu, "[^/]");
+  return new RegExp(`^${expression}$`, "u").test(value);
+}
+
+function matchesSegments(pattern, candidate) {
+  const memo = new Map();
+  function match(patternIndex, candidateIndex) {
+    const key = `${patternIndex}:${candidateIndex}`;
+    if (memo.has(key)) return memo.get(key);
+    let result;
+    if (patternIndex === pattern.length) {
+      result = candidateIndex === candidate.length;
+    } else if (pattern[patternIndex] === "**") {
+      result = match(patternIndex + 1, candidateIndex)
+        || (candidateIndex < candidate.length && match(patternIndex, candidateIndex + 1));
+    } else {
+      result = candidateIndex < candidate.length
+        && matchesSegment(pattern[patternIndex], candidate[candidateIndex])
+        && match(patternIndex + 1, candidateIndex + 1);
+    }
+    memo.set(key, result);
+    return result;
+  }
+  return match(0, 0);
+}
+
+function ruleMatchesPath(rule, file) {
+  const segments = file.split("/");
+  return segments.some((_segment, index) => {
+    const directory = index < segments.length - 1;
+    if (rule.directoryOnly && !directory) return false;
+    return matchesSegments(rule.segments, segments.slice(0, index + 1));
+  });
+}
+
+function isDockerIgnored(file, rules) {
+  let ignored = false;
+  for (const rule of rules) {
+    if (ruleMatchesPath(rule, file)) ignored = !rule.negated;
+  }
+  return ignored;
+}
+
 test("the reviewed Lody adapters match their gitlinks and stamps", () => {
   expect(LODY_ADAPTER_NAMES).toEqual([
     "core",
@@ -35,6 +98,41 @@ test("the reviewed Lody adapters match their gitlinks and stamps", () => {
     "grok",
   ]);
   expect(adapterDriftErrors(DEFAULT_REPOSITORY)).toEqual([]);
+});
+
+test("the box build context includes every tracked Lody builder input", () => {
+  const ignoreFile = path.join(
+    DEFAULT_REPOSITORY,
+    "packages/box/Dockerfile.dockerignore",
+  );
+  const rules = dockerignoreRules(readFileSync(ignoreFile, "utf8"));
+  const trackedInputs = execFileSync(
+    "git",
+    [
+      "ls-files",
+      "--",
+      "vendor/lody-adapters",
+      "vendor/lody",
+      "scripts/lody-*",
+    ],
+    { cwd: DEFAULT_REPOSITORY, encoding: "utf8" },
+  ).trim().split("\n").filter((file) => file !== "");
+
+  expect(
+    isDockerIgnored("vendor/lody-adapters/dsh/dist/index.js", rules),
+    "the committed DSH dist must be re-included after the broad dist rule",
+  ).toBe(false);
+  expect(
+    isDockerIgnored(
+      "vendor/lody-adapters/dsh/node_modules/local-install.js",
+      rules,
+    ),
+    "a local install inside an adapter snapshot must stay excluded",
+  ).toBe(true);
+  expect(
+    trackedInputs.filter((file) => isDockerIgnored(file, rules)),
+    "Dockerfile.dockerignore excludes tracked input copied by the Lody builder",
+  ).toEqual([]);
 });
 
 test("an untracked non-empty adapter destination is a local change", () => {
