@@ -18,17 +18,20 @@ Origin header), and whose `updateRequested` is a boolean. Unknown extra keys
 are tolerated on both sides for forward compatibility. That includes the
 additive `payload: {version, manifestUrl} | null` field consumed by the
 in-box payload updater: the old host image updater deliberately ignores it,
-as pinned by `config-valid-payload.json`. An unversioned or
-versioned tarball HTTPS `boxImageRef` is accepted by the parser; the updater
-then reports the attempt `unsupported` rather than rejecting the poll, so the
-origin refresh still happens. On a rejected envelope the host changes nothing
-and keeps polling.
+as pinned by `config-valid-payload.json`. An unversioned or versioned
+box-image manifest URL is accepted by the parser; the updater fetches its
+manifest, verifies and concatenates its parts, loads the image under the
+manifest's `imageTag`, and replaces the container by that tag. Other
+URL-shaped refs report `unsupported` rather than being passed to `docker
+pull`, so the origin refresh still happens. On a rejected envelope the host
+changes nothing and keeps polling.
 
 `result-*.json` fixtures pair a candidate update-result request body
 (`request`) with whether the control-plane consumer must accept it
 (`accepts`): `ref` is one image-reference token and `outcome` is one of
-`updated`, `up-to-date`, `rolled-back`, `pull-failed`, `start-failed`,
-`unsupported` (`BOX_UPDATE_OUTCOMES` in `packages/schema/src/box-config.ts`).
+`updated`, `up-to-date`, `rolled-back`, `pull-failed`, `fetch-failed`,
+`start-failed`, `unsupported` (`BOX_UPDATE_OUTCOMES` in
+`packages/schema/src/box-config.ts`).
 Extra keys are tolerated on purpose: hosts only update by shipping new
 images, so an older control plane must keep accepting a newer host's report
 or the workspace's update flag would stay set forever.

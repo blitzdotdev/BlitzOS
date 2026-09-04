@@ -130,8 +130,10 @@ export interface BoxConfigResponse {
 
 /** What the host reports after an update attempt, in the order it tries:
  * `up-to-date` (the requested ref already runs, nothing replaced),
- * `unsupported` (a tarball https ref, which the updater cannot pull),
+ * `unsupported` (neither a registry ref nor a box-image manifest URL),
  * `pull-failed` (the pull failed; the old container was never touched),
+ * `fetch-failed` (a manifest archive failed fetch, verification, or load;
+ * the old container was never touched),
  * `updated` (the new container runs), `rolled-back` (the new container did
  * not start and the old ref runs again), `start-failed` (neither started). */
 export const BOX_UPDATE_OUTCOMES = [
@@ -139,6 +141,7 @@ export const BOX_UPDATE_OUTCOMES = [
   "up-to-date",
   "rolled-back",
   "pull-failed",
+  "fetch-failed",
   "start-failed",
   "unsupported",
 ] as const;

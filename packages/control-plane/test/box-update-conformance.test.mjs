@@ -48,7 +48,7 @@ function python3Available() {
 }
 
 test("the emitted host scripts are valid bash", () => {
-  for (const marker of ["BOX_RUN", "BOX_UPDATER"]) {
+  for (const marker of ["BOX_IMAGE_MANIFEST_LOADER", "BOX_RUN", "BOX_UPDATER"]) {
     const result = spawnSync("bash", ["-n"], {
       input: embeddedSection(bootstrap, marker),
       encoding: "utf8",
@@ -67,6 +67,26 @@ test("the updater and the initial start share the one blitz-box-run path", () =>
     updater.indexOf('docker pull "$next_ref"') < updater.indexOf("docker rm -f blitz-box"),
     "the updater must pull before it removes the running container",
   );
+});
+
+test("first boot and the updater source one emitted manifest loader", () => {
+  const tarballBootstrap = buildBootstrapScript({
+    boxImageSha256: "a".repeat(64),
+    boxImageRef: "https://cp.example/box-image/release/manifest.json",
+    boxImageTag: "blitz-box:release",
+    phoneHomeUrl: "https://cp.example/workspaces/workspace/phone-home/token",
+    sshPublicKey: "ssh-ed25519 AAAAcaller",
+  });
+  const updater = embeddedSection(tarballBootstrap, "BOX_UPDATER");
+  const loader = embeddedSection(tarballBootstrap, "BOX_IMAGE_MANIFEST_LOADER");
+  assert.equal(tarballBootstrap.match(/^load_box_image_manifest\(\) \{$/gmu)?.length, 1);
+  assert.match(loader, /^load_box_image_manifest\(\) \{$/mu);
+  assert.equal(
+    tarballBootstrap.match(/^\s*\. \/usr\/local\/libexec\/blitz-box-image-manifest\.sh$/gmu)?.length,
+    2,
+  );
+  assert.match(updater, /^\s*\. \/usr\/local\/libexec\/blitz-box-image-manifest\.sh$/mu);
+  assert.match(updater, /https:\/\/\*\/manifest\.json/u);
 });
 
 test("embedded box-config parser matches every config fixture", (context) => {

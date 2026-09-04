@@ -23,7 +23,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BOX_IMAGE_SETUP_HELPERS, boxImageSetupScript } from "../dist/core/bootstrap.js";
+import {
+  BOX_IMAGE_MANIFEST_LOADER_INSTALL,
+  BOX_IMAGE_SETUP_HELPERS,
+  boxImageSetupScript,
+} from "../dist/core/bootstrap.js";
 
 const API = "https://api.hetzner.cloud/v1";
 const POLL_INTERVAL_MS = 5_000;
@@ -112,6 +116,7 @@ apt-get install -y docker.io curl
 systemctl enable --now docker
 
 mkdir -p /var/lib/blitz
+${BOX_IMAGE_MANIFEST_LOADER_INSTALL}
 ${boxImageSetupScript(image)}
 echo "bake: box image present as $box_image"
 

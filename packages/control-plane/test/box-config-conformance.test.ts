@@ -115,6 +115,7 @@ describe("box-config control-plane conformance", () => {
       "result-ref-with-space.json",
       "result-unknown-outcome.json",
       "result-valid-extra-key.json",
+      "result-valid-fetch-failed.json",
       "result-valid-rolled-back.json",
       "result-valid-updated.json",
     ]);

@@ -107,7 +107,7 @@ test("manifest parts stay beneath a versioned box-image release prefix", () => {
   });
   // A versioned manifest owns parts under its release directory, so deriving
   // the base from the complete ref must preserve box-image/<releaseId>/.
-  assert.ok(bootstrap.includes('manifest_base=${BOX_IMAGE_REF%/*}'));
+  assert.ok(bootstrap.includes('manifest_base=${manifest_ref%/*}'));
   assert.ok(bootstrap.includes('download "$manifest_base/$part_name" "$part_path"'));
 });
 
