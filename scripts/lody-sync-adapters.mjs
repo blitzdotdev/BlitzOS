@@ -21,6 +21,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_REPOSITORY = path.resolve(SCRIPT_DIRECTORY, "..");
 export const LODY_ADAPTER_NAMES = Object.freeze(["core", "claude", "codex", "dsh", "grok"]);
+export const ADAPTER_FILTER = "dist/**, node_modules/**";
 const GIT_SHA = /^[a-f0-9]{40}$/u;
 const HTTPS_URL = /^https:\/\/[^\s]+$/u;
 const ADAPTER_METADATA_FILES = new Set(["UPSTREAM.md"]);
@@ -285,6 +286,7 @@ export function readAdapterStamp(file) {
     sha: stampValue(source, "Commit"),
     commitDate: stampValue(source, "Commit date"),
     syncDate: stampValue(source, "Synced on"),
+    filter: stampValue(source, "Filter"),
   };
   if (!LODY_ADAPTER_NAMES.includes(stamp.name)) throw new Error("adapter stamp has an invalid name");
   if (!HTTPS_URL.test(stamp.url)) throw new Error(`${stamp.name} stamp has an invalid URL`);
@@ -294,6 +296,9 @@ export function readAdapterStamp(file) {
   }
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(stamp.syncDate)) {
     throw new Error(`${stamp.name} stamp has an invalid sync date`);
+  }
+  if (stamp.filter !== ADAPTER_FILTER) {
+    throw new Error(`${stamp.name} stamp has an invalid snapshot filter`);
   }
   return stamp;
 }
@@ -383,6 +388,7 @@ Do not edit its contents by hand.
 | Commit | \`${sha}\` |
 | Commit date | ${commitDate} |
 | Synced on | ${syncDate} |
+| Filter | \`${ADAPTER_FILTER}\` |
 `;
   writeFileSync(path.join(root, "UPSTREAM.md"), contents);
 }
@@ -413,6 +419,9 @@ function fetchAdapter(scratch, repository, name) {
   if (fetched !== sha) throw new Error(`${name}: fetched ${fetched}, expected ${sha}`);
   const archive = runBinary("git", ["archive", "--format=tar", sha], checkout);
   runBinary("tar", ["-x", "-C", tree], scratch, archive);
+  for (const directory of ["dist", "node_modules"]) {
+    rmSync(path.join(tree, directory), { recursive: true, force: true });
+  }
   const commitDate = gitText(checkout, ["show", "-s", "--format=%cI", sha]);
   return { name, sha, url, commitDate, tree };
 }
@@ -451,6 +460,12 @@ function snapshotPaths(root) {
   return paths;
 }
 
+function previousAdapterSha(file) {
+  const sha = stampValue(readFileSync(file, "utf8"), "Commit");
+  if (!GIT_SHA.test(sha)) throw new Error("adapter stamp has an invalid commit");
+  return sha;
+}
+
 export function syncAdapters(repository = DEFAULT_REPOSITORY) {
   const previous = new Map();
   for (const name of LODY_ADAPTER_NAMES) {
@@ -460,7 +475,7 @@ export function syncAdapters(repository = DEFAULT_REPOSITORY) {
     const root = path.join(repository, "vendor/lody-adapters", name);
     previous.set(name, {
       sha: existsSync(path.join(root, "UPSTREAM.md"))
-        ? readAdapterStamp(path.join(root, "UPSTREAM.md")).sha
+        ? previousAdapterSha(path.join(root, "UPSTREAM.md"))
         : "none",
       paths: snapshotPaths(root),
     });

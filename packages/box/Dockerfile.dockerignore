@@ -9,7 +9,4 @@ scratchpad/
 plans/
 tests/
 **/dist
-# Adapter snapshots can contain committed dist output (notably DSH), so keep them whole.
-!vendor/lody-adapters/**
-vendor/lody-adapters/**/node_modules
 tools/

@@ -270,7 +270,8 @@ npm run lody:adapters:check -- --fetch
 ```
 
 The sync fetches each exact public gitlink commit, archives only its tracked
-tree, and replaces the corresponding `vendor/lody-adapters/<name>/` snapshot.
+tree, and removes `dist/` and `node_modules/`. It then replaces the matching
+`vendor/lody-adapters/<name>/` snapshot. Tests, docs, and lockfiles remain.
 Sync reports the old and new SHAs plus file write and removal counts. It exits
 without comparing its output to the old index.
 

@@ -114,11 +114,14 @@ test("the box build context includes every tracked Lody builder input", () => {
     ],
     { cwd: DEFAULT_REPOSITORY, encoding: "utf8" },
   ).trim().split("\n").filter((file) => file !== "");
+  const trackedAdapters = trackedInputs.filter((file) =>
+    file.startsWith("vendor/lody-adapters/"),
+  );
 
   expect(
     isDockerIgnored("vendor/lody-adapters/dsh/dist/index.js", rules),
-    "the committed DSH dist must be re-included after the broad dist rule",
-  ).toBe(false);
+    "generated adapter output must stay outside the build context",
+  ).toBe(true);
   expect(
     isDockerIgnored(
       "vendor/lody-adapters/dsh/node_modules/local-install.js",
@@ -126,6 +129,10 @@ test("the box build context includes every tracked Lody builder input", () => {
     ),
     "a local install inside an adapter snapshot must stay excluded",
   ).toBe(true);
+  expect(
+    trackedAdapters.filter((file) => /\/(?:dist|node_modules)\//u.test(file)),
+    "tracked adapter snapshots must contain only build inputs",
+  ).toEqual([]);
   expect(
     trackedInputs.filter((file) => isDockerIgnored(file, rules)),
     "Dockerfile.dockerignore excludes tracked input copied by the Lody builder",

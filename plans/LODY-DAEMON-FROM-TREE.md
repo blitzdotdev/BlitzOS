@@ -228,8 +228,9 @@ The script:
    are already recorded there (`vendor/lody/.gitmodules:1-18`);
 2. reads the five required object IDs directly from the gitlinks;
 3. fetches each public repository at exactly that object ID into a temporary
-   directory and verifies `git rev-parse HEAD`;
-4. copies tracked files into `vendor/lody-adapters/<name>` without `.git`; and
+   directory and verifies `FETCH_HEAD`;
+4. excludes `dist/` and `node_modules/`, then copies the remaining tracked
+   files into `vendor/lody-adapters/<name>` without `.git`; and
 5. writes a per-adapter `UPSTREAM.md` with the name, URL, commit, commit date,
    and sync date.
 
@@ -716,13 +717,9 @@ legitimate code-splitting change updates this reviewed manifest in the vendor PR
 
 ### Follow-ups
 
-Slim the 1,290-file adapter snapshots in a separately reviewed change, not as a
-side effect of a daemon merge. Use a versioned per-adapter filter manifest that
-excludes CI configuration, docs, examples, tests/fixtures, duplicate lockfiles,
-and prebuilt output not consumed by the package build; record the filter
-identity plus the filtered path/mode/content digest in each adapter stamp, build
-only the filtered scratch result, and retain the frozen-build and package-output
-verification before changing any recorded hashes.
+The snapshots now exclude `dist/` and `node_modules/`. A later review can
+consider excluding CI configuration, examples, tests, fixtures, docs, and
+duplicate lockfiles. Keep those paths until that separate content review.
 
 ## Migration sequence
 
@@ -749,7 +746,7 @@ reviewed artifact; the shipping image and migration pieces remain separate.
   `packages/webapp/test/lody-adapters-drift.test.mjs`, and root package scripts.
 - The shared builder uses this reviewed overlay. Assert
   Kimi remains an excluded gitlink.
-- Landed footprint: 1,285 upstream entries plus five stamps. The sync/drift
+- Landed footprint: 1,269 upstream entries plus five stamps. The sync/drift
   code replaced the temporary scratch-fetch procedure.
 
 ### PR C — ship the source-built daemon (landed)

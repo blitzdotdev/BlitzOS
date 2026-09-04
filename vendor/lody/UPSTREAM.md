@@ -36,14 +36,14 @@ npm daemon pin or compiled-bundle rewrite step.
 The subtree contains six gitlinks. The CLI workspace builds the first five and
 explicitly excludes Kimi in `pnpm-workspace.yaml`.
 
-| Adapter | Gitlink commit | Build disposition |
-|---|---|---|
-| `acp-extension-core` | `23c792b910a903b74601e346473827106f991715` | `vendor/lody-adapters/core/`; overlay for builds |
-| `acp-extension-claude` | `d395b3dc69832c6566eb0da84a08486d16ba1e69` | `vendor/lody-adapters/claude/`; overlay for builds |
-| `acp-extension-codex` | `0887c5620b7b1773fa401e65a1009f10f80715a7` | `vendor/lody-adapters/codex/`; overlay for builds |
-| `acp-extension-dsh` | `c584a16e4f4ce982c762b2c11f0c344f1643fd6d` | `vendor/lody-adapters/dsh/`; overlay for builds |
-| `acp-extension-grok` | `77a994f4e0a5acec8c52020c0a8e01b0e90aaef9` | `vendor/lody-adapters/grok/`; overlay for builds |
-| `acp-extension-kimi` | `aab809cca845e4b1d0a0db243d336ab5f128b177` | preserve as a gitlink; do not materialize for the CLI build |
+| Adapter | Gitlink commit | Snapshot filter | Build disposition |
+|---|---|---|---|
+| `acp-extension-core` | `23c792b910a903b74601e346473827106f991715` | exclude `dist/**`, `node_modules/**` | `vendor/lody-adapters/core/`; overlay for builds |
+| `acp-extension-claude` | `d395b3dc69832c6566eb0da84a08486d16ba1e69` | exclude `dist/**`, `node_modules/**` | `vendor/lody-adapters/claude/`; overlay for builds |
+| `acp-extension-codex` | `0887c5620b7b1773fa401e65a1009f10f80715a7` | exclude `dist/**`, `node_modules/**` | `vendor/lody-adapters/codex/`; overlay for builds |
+| `acp-extension-dsh` | `c584a16e4f4ce982c762b2c11f0c344f1643fd6d` | exclude `dist/**`, `node_modules/**` | `vendor/lody-adapters/dsh/`; overlay for builds |
+| `acp-extension-grok` | `77a994f4e0a5acec8c52020c0a8e01b0e90aaef9` | exclude `dist/**`, `node_modules/**` | `vendor/lody-adapters/grok/`; overlay for builds |
+| `acp-extension-kimi` | `aab809cca845e4b1d0a0db243d336ab5f128b177` | not materialized | preserve as a gitlink; do not materialize for the CLI build |
 
 `npm run lody:adapters:sync` replaces those five reviewed trees from the exact
 public commits. Stage its output before checking it. The network-free check

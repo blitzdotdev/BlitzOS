@@ -10,3 +10,4 @@ Do not edit its contents by hand.
 | Commit | `0887c5620b7b1773fa401e65a1009f10f80715a7` |
 | Commit date | 2026-08-31T12:34:00+08:00 |
 | Synced on | 2026-09-04 |
+| Filter | `dist/**, node_modules/**` |
