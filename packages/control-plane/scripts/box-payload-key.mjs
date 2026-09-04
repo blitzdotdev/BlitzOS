@@ -14,12 +14,11 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   PAYLOAD_FILES,
-  payloadMode,
   readPayloadRestartMap,
 } from "./lib/box-payload-files.mjs";
 
@@ -43,7 +42,8 @@ function checkedMode(value, label) {
 }
 
 function canonicalPayloadContent({ files, daemonSha256, restart }) {
-  const sortedFiles = [...files].sort((left, right) => left.path.localeCompare(right.path));
+  const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+  const sortedFiles = [...files].sort((left, right) => compareText(left.path, right.path));
   for (const [index, entry] of sortedFiles.entries()) {
     if (String(entry.path) !== entry.path || entry.path === "") {
       throw new Error(`files[${index}].path must be a non-empty string`);
@@ -55,7 +55,7 @@ function canonicalPayloadContent({ files, daemonSha256, restart }) {
     checkedMode(entry.mode, `files[${index}].mode`);
   }
   const restartEntries = Object.entries(restart)
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareText(left, right))
     .map(([service, dependencies]) => [service, [...dependencies].sort()]);
   return {
     files: sortedFiles.map((entry) => [entry.path, entry.sha256, entry.mode]),
@@ -87,10 +87,13 @@ export async function readBoxPayloadContent({
   if (payloadRoot === undefined) throw new Error("payloadRoot is required");
   const files = [];
   for (const archivePath of PAYLOAD_FILES) {
+    const filePath = path.join(payloadRoot, archivePath);
+    const metadata = await stat(filePath);
+    if (!metadata.isFile()) throw new Error(`payload path is not a regular file: ${archivePath}`);
     files.push({
       path: archivePath,
-      sha256: await hashPayloadFile(path.join(payloadRoot, archivePath)),
-      mode: payloadMode(archivePath).toString(8).padStart(4, "0"),
+      sha256: await hashPayloadFile(filePath),
+      mode: (metadata.mode & 0o7777).toString(8).padStart(4, "0"),
     });
   }
   return {
