@@ -12,6 +12,46 @@ const sources = import.meta.glob<string>(
 const home = sources["../../webapp/public/home.html"] ?? "";
 const manifestSource = sources["../../webapp/published-assets.json"] ?? "";
 
+const HTML_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  apos: "'",
+  copy: "©",
+  gt: ">",
+  hellip: "…",
+  lt: "<",
+  mdash: "—",
+  middot: "·",
+  nbsp: "\u00a0",
+  ndash: "–",
+  quot: '"',
+  reg: "®",
+};
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(
+    /&(#(?:x[0-9a-f]+|[0-9]+)|[a-z][a-z0-9]+);/giu,
+    (entity, reference: string) => {
+      if (!reference.startsWith("#")) return HTML_ENTITIES[reference.toLowerCase()] ?? entity;
+      const hexadecimal = reference[1]?.toLowerCase() === "x";
+      const codePoint = Number.parseInt(reference.slice(hexadecimal ? 2 : 1), hexadecimal ? 16 : 10);
+      return Number.isSafeInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : entity;
+    },
+  );
+}
+
+function visibleCopyWordCount(html: string): number {
+  const body = html.match(/<body\b[^>]*>([\s\S]*?)<\/body>/iu)?.[1] ?? "";
+  const visibleCopy = decodeHtmlEntities(
+    body
+      .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/giu, " ")
+      .replace(/<!--[\s\S]*?-->/gu, " ")
+      .replace(/<[^>]*>/gu, " "),
+  ).replace(/\s+/gu, " ").trim();
+  return visibleCopy === "" ? 0 : visibleCopy.split(/\s+/u).length;
+}
+
 // The root serves the marketing page to a visitor with no session and the app
 // shell to everyone else. That switch lives in src/worker.ts, which the Worker
 // test pool cannot mount a route table for, so the parts asserted here are the
@@ -50,6 +90,25 @@ describe("marketing home", () => {
     expect(signIn).toBeGreaterThan(-1);
     expect(startFree).toBeGreaterThan(-1);
     expect(signIn).toBeLessThan(startFree);
+  });
+
+  it("does not use the AI operating system framing", () => {
+    expect(
+      /AI operating system/iu.test(home),
+      'home.html must not contain the phrase "AI operating system"',
+    ).toBe(false);
+  });
+
+  it("keeps visible copy at or below 300 words", () => {
+    const count = visibleCopyWordCount(home);
+    expect(count, `home.html visible copy word count is ${String(count)}`).toBeLessThanOrEqual(300);
+  });
+
+  it("resolves every in-page anchor to a document id", () => {
+    const ids = new Set(Array.from(home.matchAll(/\sid="([^"]+)"/gu), (match) => match[1]));
+    const anchors = Array.from(home.matchAll(/\shref="#([^"]+)"/gu), (match) => match[1]);
+    expect(anchors.length).toBeGreaterThan(0);
+    for (const anchor of anchors) expect(ids, `missing id="${anchor}"`).toContain(anchor);
   });
 
   it("sends every call to action to a route that exists", () => {
