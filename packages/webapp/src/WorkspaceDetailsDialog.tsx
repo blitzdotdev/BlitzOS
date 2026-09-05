@@ -129,59 +129,99 @@ export function WorkspaceDetailsDialog({
     return () => { cancelled = true; };
   }, [client, listMachineTypes, workspaceId]);
 
-  const saveSettings = useCallback(async (input: UpdateWorkspaceRequest) => {
-    try {
-      const { workspace: updated } = await client.updateWorkspace(workspaceId, input);
-      commitWorkspaceMutation({
-        type: 'workspace_settings_updated',
-        workspaceId,
-        settings: {
-          serverName: updated.name,
+  const saveSettings = useCallback((input: UpdateWorkspaceRequest) => {
+    const snapshot = {
+      serverName: workspace.serverName,
+      defaultMachineTypeId: workspace.defaultMachineTypeId,
+      autoProvision: workspace.autoProvision,
+      agentRuleId: workspace.agentRuleId,
+      updatedAt: workspace.updatedAt,
+    };
+    const optimistic = {
+      serverName: input.name ?? workspace.serverName,
+      defaultMachineTypeId: input.defaultMachineTypeId ?? workspace.defaultMachineTypeId,
+      autoProvision: input.autoProvision ?? workspace.autoProvision,
+      agentRuleId: input.agentRuleId === undefined ? workspace.agentRuleId : input.agentRuleId,
+      updatedAt: Date.now(),
+    };
+    commitWorkspaceMutation({
+      type: 'workspace_settings_updated',
+      workspaceId,
+      settings: optimistic,
+    });
+    return client.updateWorkspace(workspaceId, input)
+      .then(({ workspace: updated }) => {
+        commitWorkspaceMutation({
+          type: 'workspace_settings_updated',
+          workspaceId,
+          settings: {
+            serverName: updated.name,
+            defaultMachineTypeId: updated.defaultMachineTypeId,
+            autoProvision: updated.autoProvision,
+            agentRuleId: updated.agentRuleId,
+            updatedAt: updated.updatedAt,
+          },
+        });
+        return {
+          name: updated.name,
           defaultMachineTypeId: updated.defaultMachineTypeId,
           autoProvision: updated.autoProvision,
           agentRuleId: updated.agentRuleId,
-          updatedAt: updated.updatedAt,
-        },
+        };
+      })
+      .catch((caught) => {
+        commitWorkspaceMutation({
+          type: 'workspace_settings_updated',
+          workspaceId,
+          settings: snapshot,
+        });
+        reportError(caught instanceof Error ? caught : new Error('The settings could not be saved.'), {
+          title: 'Couldn’t save workspace settings',
+          action: 'Saving settings for ' + workspace.title + '.',
+          workspaceId,
+        });
+        throw caught;
       });
-      return {
-        name: updated.name,
-        defaultMachineTypeId: updated.defaultMachineTypeId,
-        autoProvision: updated.autoProvision,
-        agentRuleId: updated.agentRuleId,
-      };
-    } catch (caught) {
-      reportError(caught instanceof Error ? caught : new Error('The settings could not be saved.'), {
-        title: 'Couldn’t save workspace settings',
-        action: 'Saving settings for ' + workspace.title + '.',
-        workspaceId,
-      });
-      throw caught;
-    }
-  }, [client, commitWorkspaceMutation, reportError, workspace.title, workspaceId]);
+  }, [client, commitWorkspaceMutation, reportError, workspace, workspaceId]);
 
-  /** A repo write answers with the list it produced, so the panel shows what
-   * the server holds rather than what the browser hoped for. A remove answers
-   * 204, and the row the server agreed to delete is the one dropped here. */
+  /** An add stays visible while its write runs, then the response replaces the
+   * whole list. A remove remembers its index so a rejection restores order. */
   const addRepo = (repo: string) => {
+    const pending: TemplateRepoView = { repo, private: false };
+    setRepos((current) => current.some((entry) => entry.repo === repo)
+      ? current
+      : [...current, pending]);
     void client.addWorkspaceRepo(workspaceId, { repo })
       .then((response) => { setRepos(response.repos); })
-      .catch((caught) => reportError(caught, {
-        title: 'Couldn’t add repository',
-        action: `Adding ${repo} to ${workspace.title}.`,
-        workspaceId,
-      }));
+      .catch((caught) => {
+        setRepos((current) => current.filter((entry) => entry !== pending));
+        reportError(caught, {
+          title: 'Couldn’t add repository',
+          action: `Adding ${repo} to ${workspace.title}.`,
+          workspaceId,
+        });
+      });
   };
 
   const removeRepo = (repo: string) => {
+    const index = repos.findIndex((entry) => entry.repo === repo);
+    const removed = repos[index];
+    if (removed === undefined) return;
+    setRepos((current) => current.filter((entry) => entry.repo !== repo));
     void client.removeWorkspaceRepo(workspaceId, repo)
-      .then(() => {
-        setRepos((current) => current.filter((entry) => entry.repo !== repo));
-      })
-      .catch((caught) => reportError(caught, {
-        title: 'Couldn’t remove repository',
-        action: `Removing ${repo} from ${workspace.title}.`,
-        workspaceId,
-      }));
+      .catch((caught) => {
+        setRepos((current) => {
+          if (current.some((entry) => entry.repo === repo)) return current;
+          const restored = [...current];
+          restored.splice(Math.min(Math.max(index, 0), restored.length), 0, removed);
+          return restored;
+        });
+        reportError(caught, {
+          title: 'Couldn’t remove repository',
+          action: `Removing ${repo} from ${workspace.title}.`,
+          workspaceId,
+        });
+      });
   };
 
   const changeMachineType = (member: WorkspaceMemberView, machineTypeId: string) => {
