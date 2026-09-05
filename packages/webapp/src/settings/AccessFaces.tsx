@@ -1,5 +1,7 @@
 import type { OrgCredentialGrantSubjectKind, OrgCredentialGrantView } from '@blitzos/schema';
+import { squareAvatarUrl } from '../avatar-url';
 import { accessSubjectLabel, accessSubjectTag, type AccessSubjects } from '../org-credential-access';
+import { WorkspaceSigilIcon } from '../shell/WorkspaceStrip';
 
 /* Who can use a credential, as a strip of stacked faces. Styles and the
    layout reasoning are in org-credentials.css under "face strip". */
@@ -47,9 +49,25 @@ const CHEVRON_ICON = (
   </svg>
 );
 
+/** The member behind a membership row, for the picture on their face. */
+function memberFor(
+  subject: Pick<OrgCredentialGrantView, 'subjectKind' | 'subjectId'>,
+  subjects: AccessSubjects,
+): AccessSubjects['members'][number] | null {
+  if (subject.subjectKind !== 'membership' || subject.subjectId === null) return null;
+  return subjects.members.find(({ id }) => id === subject.subjectId) ?? null;
+}
+
 /**
- * One subject as a mark: a rounded square for a workspace, a tinted circle
- * for a member, the accent circle for everyone in the org.
+ * One subject as the mark it already wears elsewhere in the product: a
+ * workspace's own sigil, a member's own picture, and the accent circle for
+ * everyone in the org.
+ *
+ * NOT A SECOND SET OF MARKS. The rail draws every workspace as
+ * `WorkspaceSigilIcon` and the account at its foot as their photo, so a
+ * credential's audience is read with the same two glyphs rather than a third
+ * alphabet of initials. Initials remain the fallback, and for a member that is
+ * exactly `MemberAvatar`'s own rule: a picture when the account has one.
  *
  * `decorative` is what the caller knows and this component cannot: in the
  * strip the face is the only thing naming its subject, and on an access row
@@ -68,17 +86,27 @@ export function AccessFace({
   // The org's own initials, not the sentence's: "everyone in Acme" is the
   // label, and "EI" would be a mark of the preposition.
   const initials = accessFaceInitials(subject.subjectKind === 'org' ? subjects.orgName : label);
+  const photo = memberFor(subject, subjects)?.avatarUrl ?? null;
+  const workspaceId = subject.subjectKind === 'workspace' ? subject.subjectId : null;
   return (
     <span
       className={`org-access-face org-access-face--${accessSubjectTag(subject.subjectKind)}`}
-      style={subject.subjectKind === 'membership'
+      // The tint is the fallback's, so an account with a photo does not paint
+      // a coloured ring behind it.
+      style={subject.subjectKind === 'membership' && photo === null
         ? { background: `var(${faceTint(label)})` }
         : undefined}
       role={decorative ? undefined : 'img'}
       aria-label={decorative ? undefined : label}
       aria-hidden={decorative ? true : undefined}
       title={decorative ? undefined : label}
-    >{initials}</span>
+    >
+      {workspaceId !== null
+        ? <WorkspaceSigilIcon workspaceId={workspaceId} />
+        : photo !== null
+          ? <img src={squareAvatarUrl(photo)} alt="" />
+          : initials}
+    </span>
   );
 }
 

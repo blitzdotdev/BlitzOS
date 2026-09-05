@@ -18,7 +18,10 @@ export type AccessSubjects = {
   /** The signed-in member, so their own row reads "You". */
   viewerMembershipId: string | null;
   workspaces: ReadonlyArray<{ id: string; name: string }>;
-  members: ReadonlyArray<{ id: string; name: string; email: string }>;
+  /** `avatarUrl` so a member's face is their own picture, the one the rail
+   * draws at its foot. Null is the honest state for an account with none, and
+   * the face falls back to initials. */
+  members: ReadonlyArray<{ id: string; name: string; email: string; avatarUrl: string | null }>;
 };
 
 /** The pill everyone with access wears. Kind is never conveyed by colour
