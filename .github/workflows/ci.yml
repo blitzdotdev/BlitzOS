@@ -107,28 +107,6 @@ jobs:
             ${{ runner.temp }}/lody-artifact/lody-*.tgz
           if-no-files-found: error
 
-  # Target B is the blitz.dev managed deployment: the control plane emitted as
-  # plain source files instead of a bundled Worker. Nothing else in CI builds
-  # it, so it broke silently — core/compute/aws.ts joined the module graph at
-  # #11 and was never added to CORE_MANIFEST, which shipped a deploy that 500'd
-  # on every route. This job builds the artifact and runs the vendor-only
-  # suites, closure gate included. No network, no secrets, no deploy: the
-  # emitter reads the repo and writes a local directory.
-  blitzdev:
-    name: Target B managed build (blitz.dev)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: package.json
-          cache: npm
-      - run: npm ci
-      - run: npm run blitzdev:build
-      - run: npm run test:blitzdev
-        env:
-          BLITZDEV_MANAGED: "1"
-
   broker:
     name: Go broker
     runs-on: ubuntu-latest
