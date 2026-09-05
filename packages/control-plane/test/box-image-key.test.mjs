@@ -197,7 +197,6 @@ test("payload and daemon-only commits keep the base image release id", async () 
     ["packages/box/rootfs/usr/local/bin/blitz", "payload edit\n"],
     ["packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run", "payload run edit\n"],
     ["vendor/lody/UPSTREAM.md", "daemon edit\n"],
-    ["env.defaults", "payload defaults edit\n"],
   ]) {
     const filePath = path.join(repository, relativePath);
     mkdirSync(path.dirname(filePath), { recursive: true });
@@ -208,9 +207,9 @@ test("payload and daemon-only commits keep the base image release id", async () 
 
   assert.equal(boxImageReleaseId(await readBoxImageInputIds({ repo: repository })), before);
 
-  writeFileSync(path.join(repository, "packages/box/Dockerfile"), "changed base\n");
+  writeFileSync(path.join(repository, "env.defaults"), "changed base defaults\n");
   git(repository, ["add", "."]);
-  git(repository, ["commit", "-qm", "base change"]);
+  git(repository, ["commit", "-qm", "base defaults change"]);
   assert.notEqual(boxImageReleaseId(await readBoxImageInputIds({ repo: repository })), before);
 });
 

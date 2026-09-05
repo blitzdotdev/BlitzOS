@@ -39,25 +39,18 @@ const LOG_MAX_BYTES = 1024 * 1024;
 const FAILED_RETRY_MS = 6 * 60 * 60 * 1000;
 const QUIET_LOG_INTERVAL_MS = 60 * 60 * 1000;
 const RESTART_SERVICES = new Set([
-  'cgroups',
   'cloudflared',
   'dockerd',
   'dufs',
-  'enroll',
   'gateway',
-  'init-state',
   'lody-bridge',
   'lody-daemon',
   'lody-projects',
   'lody-watchdog',
   'machine-stats',
-  'payload',
-  'register',
   'remote-control',
-  'rules',
   'sshd',
   'ttyd',
-  'user',
   'watch',
 ]);
 const RESULT_OUTCOMES = new Set([
@@ -944,9 +937,6 @@ function servicesToRestart(manifest, changed, daemonChanged) {
     if (dependencies.some((dependency) => changed.has(dependency))) services.add(service);
   }
   if (daemonChanged) services.add('lody-daemon');
-  // The updater's launcher is base-owned and has no payload dependency. A
-  // self-restart here would kill the transaction before health and reporting.
-  services.delete('payload');
   return [...services].sort();
 }
 

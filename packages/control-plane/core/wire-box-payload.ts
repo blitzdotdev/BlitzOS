@@ -5,28 +5,22 @@
  * not know about the seam. The mirror is
  * `packages/schema/src/box-payload.ts`, pinned by `test/wire-drift.test.ts`. */
 
-/** The base-image s6 services a payload manifest may ask the updater to
- * restart. This list is also pinned to the rootfs service directory. */
+/** Payload-owned longrun services a manifest may ask the updater to restart.
+ * Oneshots take effect at next boot, and the updater cannot restart itself. */
 export const BOX_PAYLOAD_RESTART_SERVICES = [
-  "cgroups",
   "cloudflared",
   "dockerd",
   "dufs",
   "enroll",
   "gateway",
-  "init-state",
   "lody-bridge",
   "lody-daemon",
   "lody-projects",
   "lody-watchdog",
   "machine-stats",
-  "payload",
-  "register",
   "remote-control",
-  "rules",
   "sshd",
   "ttyd",
-  "user",
   "watch",
 ] as const;
 

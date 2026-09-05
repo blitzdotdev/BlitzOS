@@ -19,7 +19,5 @@
     "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
     "bytes": 850
   },
-  "restart": {
-    "rules": ["rootfs/usr/local/bin/blitz-rules", "rootfs/opt/blitz/skel/agent-rules.md"]
-  }
+  "restart": {}
 }

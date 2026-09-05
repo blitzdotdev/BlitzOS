@@ -87,6 +87,7 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
   assert.equal(first.version, second.version);
   assert.deepEqual(manifest.files.map((entry) => entry.path), PAYLOAD_FILES);
   assert.equal(manifest.daemon, undefined);
+  assert.equal(manifest.files.some((entry) => entry.path === "rootfs/etc/blitz/env.defaults"), false);
   assert.equal(
     manifest.archive.sha256,
     sha256(readFileSync(first.payloadArchivePath)),
@@ -126,6 +127,9 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
     manifest.restart.ttyd.includes("rootfs/usr/local/libexec/blitz-term"),
     false,
   );
+  for (const oneshot of ["cgroups", "init-state", "register", "rules"]) {
+    assert.equal(manifest.restart[oneshot], undefined);
+  }
 });
 
 test("an optional daemon archive fills all daemon contract fields", async () => {

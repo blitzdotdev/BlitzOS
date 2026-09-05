@@ -6,30 +6,23 @@ import {
   type JsonValue,
 } from "./json.js";
 
-/** The base-image s6 services a payload manifest may ask the updater to
- * restart. Adding or removing a service is an image change, so this list is
- * intentionally checked in and pinned to the rootfs service directory by the
- * box-payload conformance test. */
+/** Payload-owned longrun services a manifest may ask the updater to restart.
+ * Oneshots are updated as files and take effect at next boot; the base-owned
+ * updater longrun cannot restart itself during a transaction. */
 export const BOX_PAYLOAD_RESTART_SERVICES = [
-  "cgroups",
   "cloudflared",
   "dockerd",
   "dufs",
   "enroll",
   "gateway",
-  "init-state",
   "lody-bridge",
   "lody-daemon",
   "lody-projects",
   "lody-watchdog",
   "machine-stats",
-  "payload",
-  "register",
   "remote-control",
-  "rules",
   "sshd",
   "ttyd",
-  "user",
   "watch",
 ] as const;
 

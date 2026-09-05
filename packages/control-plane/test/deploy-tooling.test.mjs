@@ -457,12 +457,14 @@ test("a base-owned box change requires a rebuild", () => {
   const decision = boxImageDecision("abc1234", [
     "packages/broker/cmd/blitz-cred/main.go",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
+    "env.defaults",
     "packages/webapp/src/App.tsx",
   ]);
   assert.equal(decision.rebuild, true);
   assert.deepEqual(decision.paths, [
     "packages/broker/cmd/blitz-cred/main.go",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
+    "env.defaults",
   ]);
 });
 
@@ -483,7 +485,6 @@ test("payload and daemon inputs do not rebuild the base image", () => {
     "packages/box/rootfs/usr/local/bin/blitz",
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run",
     "vendor/lody/UPSTREAM.md",
-    "env.defaults",
   ]);
   assert.equal(decision.rebuild, false);
   assert.deepEqual(decision.paths, []);
@@ -518,6 +519,7 @@ test("IMAGE_PATHS pins the Dockerfile, updater, and s6 service topology", () => 
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/payload",
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user",
     "packages/control-plane/scripts/lib/box-payload-files.mjs",
+    "env.defaults",
   ]) {
     assert.ok(IMAGE_PATHS.includes(required), required);
   }

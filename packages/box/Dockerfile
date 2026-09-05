@@ -88,7 +88,6 @@ ARG BLITZ_PAYLOAD_VERSION
 WORKDIR /src
 COPY packages/control-plane/scripts/lib/box-payload-files.mjs /tools/lib/box-payload-files.mjs
 COPY packages/control-plane/scripts/box-payload-key.mjs /tools/box-payload-key.mjs
-COPY env.defaults ./env.defaults
 COPY packages/box/rootfs ./packages/box/rootfs
 RUN node /tools/lib/box-payload-files.mjs copy /src /out
 COPY --from=gateway-build /out/blitz-box-gateway /out/rootfs/usr/local/bin/blitz-box-gateway
@@ -171,6 +170,7 @@ COPY --from=vendors /opt/blitz/npm/ /opt/blitz/npm/
 COPY --from=daemon /opt/blitz/lody/baked/ /opt/blitz/lody/baked/
 COPY --from=payload-build /out/ /opt/blitz/payload/baked/
 COPY packages/box/rootfs/ /
+COPY env.defaults /etc/blitz/env.defaults
 COPY --from=cred-build /out/blitz-cred /usr/local/bin/blitz-cred
 COPY --from=payload-build /tools/lib/box-payload-files.mjs /tmp/box-payload-files.mjs
 RUN set -eux; \
@@ -190,7 +190,7 @@ ARG BLITZ_LODY_SESSIONS=
 RUN set -eu; \
     if [ -n "$BLITZ_LODY_SESSIONS" ]; then \
       case "$BLITZ_LODY_SESSIONS" in 0|1) ;; *) echo "BLITZ_LODY_SESSIONS must be 0 or 1" >&2; exit 1 ;; esac; \
-      sed -i "s/^BLITZ_LODY_SESSIONS=.*/BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS/" /opt/blitz/payload/baked/rootfs/etc/blitz/env.defaults; \
+      sed -i "s/^BLITZ_LODY_SESSIONS=.*/BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS/" /etc/blitz/env.defaults; \
       grep -qx "BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS" /etc/blitz/env.defaults; \
     fi
 

@@ -111,8 +111,11 @@ the `canary` environment:
 
 The base release id deliberately excludes payload-owned files, the gateway
 binary, and the daemon; it includes the base-owned credential broker sources.
-A payload-only merge therefore reuses the current
-image rather than rebuilding it. Its baked stamp may name the payload current
+It also includes `env.defaults`: environment is fixed when the container is
+created, so changing that file requires an image rather than an in-place
+payload. A payload-only merge therefore reuses the current image rather than
+rebuilding it. Its baked stamp names only the bytes in the baked payload and
+is unaffected by the later canary-only `env.defaults` mutation; it may name the payload current
 when that base was built; that is informational boot state, not the rollout
 pin. A fresh machine starts there and the updater converges it to
 `BOX_PAYLOAD_VERSION`. When a base input changes, the new image is stamped with

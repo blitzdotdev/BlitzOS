@@ -14,14 +14,13 @@ const fixtureSources = import.meta.glob<string>(
   { eager: true, import: "default", query: "?raw" },
 );
 
-// Every s6 service directory has either a `type` marker or (for the `user`
-// bundle) entries under `contents.d`. Vite inlines these paths before the
-// Worker test isolate starts, so this checks the real rootfs tree without
-// depending on filesystem access from inside workerd.
-const serviceMarkerSources = import.meta.glob<string>([
+// Vite inlines the real s6 type markers before the Worker isolate starts. The
+// restart vocabulary is exactly payload-owned longruns: oneshots wait for the
+// next boot, and the base-owned payload updater cannot restart itself.
+const serviceTypeSources = import.meta.glob<string>(
   "../../box/rootfs/etc/s6-overlay/s6-rc.d/*/type",
-  "../../box/rootfs/etc/s6-overlay/s6-rc.d/*/contents.d/*",
-], { eager: true, import: "default", query: "?raw" });
+  { eager: true, import: "default", query: "?raw" },
+);
 
 const fixtureMarker = "/box-payload/";
 
@@ -119,17 +118,20 @@ describe("box-payload v1 fixture conformance", () => {
     }
   });
 
-  it("keeps the restart service vocabulary equal to the base-image directory", () => {
-    const serviceNames = [...new Set(Object.keys(serviceMarkerSources).map((markerPath) => {
-      const marker = "/s6-rc.d/";
-      const markerIndex = markerPath.indexOf(marker);
-      if (markerIndex < 0) throw new Error(`s6 service marker is outside rootfs: ${markerPath}`);
-      const serviceName = markerPath.slice(markerIndex + marker.length).split("/")[0];
-      if (serviceName === undefined || serviceName === "") {
-        throw new Error(`s6 service marker has no service name: ${markerPath}`);
-      }
-      return serviceName;
-    }))].sort();
+  it("keeps the restart vocabulary equal to payload-owned longruns", () => {
+    const serviceNames = Object.entries(serviceTypeSources)
+      .filter(([markerPath, source]) =>
+        source.trim() === "longrun" && !markerPath.endsWith("/payload/type"))
+      .map(([markerPath]) => {
+        const marker = "/s6-rc.d/";
+        const markerIndex = markerPath.indexOf(marker);
+        if (markerIndex < 0) throw new Error(`s6 service marker is outside rootfs: ${markerPath}`);
+        const serviceName = markerPath.slice(markerIndex + marker.length).split("/")[0];
+        if (serviceName === undefined || serviceName === "") {
+          throw new Error(`s6 service marker has no service name: ${markerPath}`);
+        }
+        return serviceName;
+      }).sort();
     expect([...BOX_PAYLOAD_RESTART_SERVICES]).toEqual(serviceNames);
   });
 });

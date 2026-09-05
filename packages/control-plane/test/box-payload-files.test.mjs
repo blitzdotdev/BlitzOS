@@ -77,13 +77,16 @@ test("the checked-in inventory owns every eligible rootfs file", () => {
   assert.deepEqual(PAYLOAD_GENERATED_PATHS, ["rootfs/usr/local/bin/blitz-box-gateway"]);
   assert.equal(new Set(PAYLOAD_FILES).size, PAYLOAD_FILES.length);
   assert.deepEqual(PAYLOAD_FILES, [...PAYLOAD_FILES].sort());
-  assert.ok(PAYLOAD_FILES.includes("rootfs/etc/blitz/env.defaults"));
+  assert.ok(!PAYLOAD_FILES.includes("rootfs/etc/blitz/env.defaults"));
+  for (const service of ["cgroups", "init-state", "register", "rules"]) {
+    assert.ok(PAYLOAD_FILES.includes(`rootfs/etc/s6-overlay/s6-rc.d/${service}/up`));
+  }
 });
 
 test("restart dependencies come from service sources plus the narrow override table", async () => {
   const restart = await readPayloadRestartMap(repoRoot);
   const servicesWithPayloadScripts = PAYLOAD_ROOTFS_PATHS
-    .map((relativePath) => /^etc\/s6-overlay\/s6-rc\.d\/([^/]+)\/(?:run|up)$/u.exec(relativePath)?.[1])
+    .map((relativePath) => /^etc\/s6-overlay\/s6-rc\.d\/([^/]+)\/run$/u.exec(relativePath)?.[1])
     .filter((service) => service !== undefined)
     .sort();
   assert.deepEqual(Object.keys(restart), servicesWithPayloadScripts);
@@ -92,6 +95,9 @@ test("restart dependencies come from service sources plus the narrow override ta
   assert.ok(restart["machine-stats"].includes("rootfs/usr/local/bin/blitz-machine-stats"));
   assert.equal(restart.watch.includes("rootfs/usr/local/bin/blitz-cred"), false);
   assert.equal(restart.ttyd.includes("rootfs/usr/local/libexec/blitz-term"), false);
+  for (const oneshot of ["cgroups", "init-state", "register", "rules"]) {
+    assert.equal(restart[oneshot], undefined);
+  }
   for (const dependencies of Object.values(restart)) {
     assert.deepEqual(dependencies, [...dependencies].sort());
     for (const dependency of dependencies) assert.ok(PAYLOAD_FILES.includes(dependency));

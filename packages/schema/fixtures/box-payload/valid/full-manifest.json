@@ -12,11 +12,6 @@
       "path": "rootfs/usr/local/libexec/blitz-term",
       "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "mode": "0755"
-    },
-    {
-      "path": "rootfs/etc/blitz/env.defaults",
-      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "mode": "0644"
     }
   ],
   "archive": {
@@ -34,6 +29,6 @@
   "restart": {
     "gateway": ["rootfs/usr/local/bin/blitz-box-gateway"],
     "lody-daemon": [],
-    "ttyd": ["rootfs/usr/local/libexec/blitz-term", "rootfs/etc/blitz/env.defaults"]
+    "ttyd": []
   }
 }

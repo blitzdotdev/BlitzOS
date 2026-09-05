@@ -2,7 +2,7 @@
 
 // The one source of truth for files that move with an in-place box payload.
 // Archive paths always start at `rootfs/`; source paths are derived from that
-// prefix except for env.defaults, which lives at the repository root.
+// prefix.
 //
 // Keep this list explicit. test/box-payload-files.test.mjs discovers every
 // eligible source file independently and fails when a new script is not given
@@ -59,14 +59,13 @@ export const PAYLOAD_GENERATED_PATHS = Object.freeze([
 ]);
 
 export const PAYLOAD_FILES = Object.freeze([
-  "rootfs/etc/blitz/env.defaults",
   ...PAYLOAD_ROOTFS_PATHS.map((relativePath) => `rootfs/${relativePath}`),
   ...PAYLOAD_GENERATED_PATHS,
 ].sort());
 
 export const PAYLOAD_SERVICES = Object.freeze([...new Set(PAYLOAD_ROOTFS_PATHS
   .map((relativePath) =>
-    /^etc\/s6-overlay\/s6-rc\.d\/([^/]+)\/(?:run|up)$/u.exec(relativePath)?.[1])
+    /^etc\/s6-overlay\/s6-rc\.d\/([^/]+)\/run$/u.exec(relativePath)?.[1])
   .filter((service) => service !== undefined))].sort());
 
 // Most executable dependencies can be read directly from the service source.
@@ -82,13 +81,12 @@ export const PAYLOAD_SERVICE_OVERRIDES = Object.freeze({
 
 const SERVICE_SCRIPT_PATTERN =
   /^rootfs\/etc\/s6-overlay\/s6-rc\.d\/([^/]+)\/(?:run|up)$/u;
+const LONGRUN_SCRIPT_PATTERN =
+  /^rootfs\/etc\/s6-overlay\/s6-rc\.d\/([^/]+)\/run$/u;
 const LIVE_PAYLOAD_PATH_PATTERN =
   /\/(?:usr\/local\/(?:bin|libexec)|opt\/blitz\/skel|etc\/blitz)\/[A-Za-z0-9._/-]+/gu;
 
 export function payloadSourcePath(repoRoot, archivePath) {
-  if (archivePath === "rootfs/etc/blitz/env.defaults") {
-    return path.join(repoRoot, "env.defaults");
-  }
   if (PAYLOAD_GENERATED_PATHS.includes(archivePath)) return null;
   return path.join(repoRoot, "packages/box", archivePath);
 }
@@ -112,7 +110,7 @@ function uncommentedSource(source) {
 /** Derives service -> payload dependencies from the real s6 source scripts. */
 export async function readPayloadRestartMap(repoRoot) {
   const serviceScripts = PAYLOAD_FILES.filter((archivePath) =>
-    SERVICE_SCRIPT_PATTERN.test(archivePath),
+    LONGRUN_SCRIPT_PATTERN.test(archivePath),
   );
   const sources = await Promise.all(serviceScripts.map(async (archivePath) => ({
     archivePath,
@@ -120,7 +118,7 @@ export async function readPayloadRestartMap(repoRoot) {
   })));
   const dependencies = new Map();
   for (const { archivePath } of sources) {
-    const service = SERVICE_SCRIPT_PATTERN.exec(archivePath)?.[1];
+    const service = LONGRUN_SCRIPT_PATTERN.exec(archivePath)?.[1];
     if (service === undefined) throw new Error(`invalid payload service script: ${archivePath}`);
     dependencies.set(service, new Set([archivePath]));
   }
@@ -131,7 +129,7 @@ export async function readPayloadRestartMap(repoRoot) {
     const services = overridden ?? (livePath === null ? [] : sources
       .filter(({ source }) => [...source.matchAll(LIVE_PAYLOAD_PATH_PATTERN)]
         .some((match) => match[0] === livePath))
-      .map(({ archivePath: scriptPath }) => SERVICE_SCRIPT_PATTERN.exec(scriptPath)?.[1])
+      .map(({ archivePath: scriptPath }) => LONGRUN_SCRIPT_PATTERN.exec(scriptPath)?.[1])
       .filter((service) => service !== undefined));
     for (const service of services) {
       const serviceDependencies = dependencies.get(service);

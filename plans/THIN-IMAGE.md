@@ -23,11 +23,11 @@ interruption; this generalises that to everything we ship.
 
 | Base (image only) | Payload (in place) |
 |---|---|
-| Debian + node 22 + docker static + s6-overlay | every other script under `rootfs/usr/local/{bin,libexec}` |
-| cloudflared, ttyd, dufs | s6 `run`/`up` scripts of EXISTING services (the service SET is base) |
+| Debian + node 22 + docker static + s6-overlay; `env.defaults` | every other script under `rootfs/usr/local/{bin,libexec}` |
+| cloudflared, ttyd, dufs | s6 `run`/`up` scripts of EXISTING services (the service SET is base; updated oneshots take effect at next boot) |
 | the payload updater `blitz-payload`, `blitz-cred`, and their s6/runtime dependencies | `blitz-box-gateway` (linux/amd64; arm64 later) |
 | `/opt/blitz/npm` prefix with claude, codex, ws | the Lody **daemon bundle** (the patched `lody` install) |
-| a baked copy of the current payload + daemon bundle (§3) | agent rules skeleton, `env.defaults` for services |
+| a baked copy of the current payload + daemon bundle (§3) | agent rules skeleton |
 
 `claude`/`codex` keep self-updating as today; not part of this.
 
@@ -60,10 +60,11 @@ the way `/box-image/<releaseId>/…` is served today (`core/box-image-routes`).
 - `daemon` is a separate archive so a script-only release does not re-download
   the daemon. Its `version` is the npm version plus a `+blitz.N` patch-set
   serial; two releases with the same daemon version share the object.
-- `restart` maps each s6 service to the payload paths it depends on; the
+- `restart` maps each payload-owned longrun service to the payload paths it depends on; the
   updater restarts a service iff one of its paths changed between the running
-  payload and the new one. This is the producer's knowledge (which script is
-  which service), so it lives in the manifest, not in the updater.
+  payload and the new one. Oneshot scripts remain in `files` but apply on the
+  next boot; live s6-rc orchestration is deliberately not added to the box.
+  This is the producer's knowledge, so it lives in the manifest, not in the updater.
 - `minUpdater`: an updater older than this reports `unsupported` and applies
   nothing; the control plane then knows an image update is required.
 
@@ -79,7 +80,7 @@ wire copy pinned by `wire-drift.test.ts`.
 Layout has a reserved `payload-version` root entry containing the derived
 version and otherwise mirrors the image: `rootfs/usr/local/bin/*`, `rootfs/usr/local/libexec/*`,
 `rootfs/etc/s6-overlay/s6-rc.d/<service>/{run,up}` (only for services that
-exist in the base), `rootfs/opt/blitz/skel/*`, `rootfs/etc/blitz/env.defaults`.
+exist in the base), and `rootfs/opt/blitz/skel/*`.
 `payload-version` is outside `rootfs/` and therefore is not listed in
 `manifest.files`; the updater verifies it separately against `manifest.version`.
 Built by `control-plane/scripts/publish-box-payload.mjs` from the repo tree plus

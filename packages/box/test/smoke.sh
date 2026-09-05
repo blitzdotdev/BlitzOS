@@ -238,7 +238,6 @@ for payload_path in \
   /usr/local/bin/blitz \
   /usr/local/bin/blitz-box-gateway \
   /usr/local/libexec/blitz-term \
-  /etc/blitz/env.defaults \
   /opt/blitz/skel/agent-rules.md; do
   docker exec "$container" test -L "$payload_path" \
     || fail "$payload_path is not indirected through the current payload"
@@ -253,6 +252,8 @@ docker exec "$container" test ! -L /usr/local/bin/blitz-cred \
   || fail "the base-owned credential broker is indirected through the payload"
 docker exec "$container" test -x /usr/local/bin/blitz-cred \
   || fail "the base-owned credential broker is missing"
+docker exec "$container" test ! -L /etc/blitz/env.defaults \
+  || fail "the base-owned environment defaults are indirected through the payload"
 docker exec "$container" grep -qx 'exec /usr/local/libexec/blitz-payload' \
   /etc/s6-overlay/s6-rc.d/payload/run \
   || fail "the payload service does not run the base-owned updater"
