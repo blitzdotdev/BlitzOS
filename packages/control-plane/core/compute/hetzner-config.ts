@@ -3,7 +3,6 @@
  * Split out of `hetzner.ts` so the adapter itself stays under the 700-line
  * warn. Nothing here performs I/O. */
 import { isNumber, isRecord, isString } from "../http.js";
-import type { MachinePrice } from "../wire.js";
 import type { ProviderMachineType } from "./types.js";
 
 export const HETZNER_USER_DATA_MAX_BYTES = 32 * 1024;
@@ -278,100 +277,48 @@ function numberField(value: Record<string, unknown>, field: string): number {
   return result;
 }
 
-/**
- * Hetzner's own name for the line a server type belongs to: `cost_optimized`
- * (cx, cax), `regular_purpose` (cpx) or `general_purpose` (ccx).
- *
- * Absent reads as unknown, and unknown is deliberately not fatal. The field
- * decides one thing — whether a type may stand in for a sold-out one — so a
- * vendor that stops sending it costs the stand-in, not the create page. Every
- * other field here throws on absence because the card cannot be drawn without
- * it; this one can.
- */
-function categoryField(value: Record<string, unknown>): string {
-  const category = value.category;
-  return isString(category) ? category : "";
-}
-
 function isDeprecated(value: Record<string, unknown>): boolean {
   return value.deprecated === true || isRecord(value.deprecation);
 }
 
 export { isDeprecated, numberField, records, stringField };
 
-/** What one `/server_types` page says: which offers are in stock, and what
- * every non-deprecated type is, in stock or not. */
-export interface HetznerServerTypes {
-  available: HetznerOffer[];
-  specs: Map<string, HetznerTypeSpec>;
+/* ------------------------------- reading one Hetzner failure body */
+
+/** A Hetzner failure body, parsed at the boundary into a named shape. `code`
+ * is the machine-readable reason, which tells a definitive pre-creation
+ * refusal apart from anything else. Either field is null when the body does
+ * not state it. */
+export interface HetznerFailure {
+  message: string | null;
+  code: string | null;
 }
 
-/**
- * Turns a `/server_types` payload into the two things the catalog needs.
- *
- * `available` is one entry per type per location Hetzner has in stock, which
- * is what the page could show. `specs` covers every non-deprecated type
- * whether or not it is in stock, because the stand-in rule has to know the
- * line and the size of a type that is sold out everywhere — and the sold-out
- * type is exactly the one that appears in no `available` entry.
- */
-export function hetznerOffersFromServerTypes(
-  types: readonly Record<string, unknown>[],
-  currency: string | null,
-): HetznerServerTypes {
-  const specs = new Map<string, HetznerTypeSpec>();
-  for (const type of types) {
-    if (isDeprecated(type)) continue;
-    const name = stringField(type, "name");
-    if (name === "") continue;
-    specs.set(name, {
-      category: categoryField(type),
-      cpuCores: numberField(type, "cores"),
-      memGb: numberField(type, "memory"),
-    });
-  }
-  const available = types.flatMap((type) => {
-    if (isDeprecated(type)) return [];
-    const locations = Array.isArray(type.locations)
-      ? type.locations
-          .filter(isRecord)
-          .filter((location) => location.available === true && !isDeprecated(location))
-      : [];
-    // Hetzner prices each location on its own, in one row per location.
-    const prices = Array.isArray(type.prices) ? type.prices.filter(isRecord) : [];
-    return locations.map((location) => {
-      const name = stringField(type, "name");
-      const architecture = type.architecture;
-      const locationName = stringField(location, "name");
-      // Gross is what the customer pays. Hetzner sends it as a decimal string,
-      // so it becomes a number here and the browser never parses a price.
-      // Number(" ") is 0, so a blank string must not sell a machine for
-      // nothing. A malformed row leaves the price out, because a wrong number
-      // costs the customer more than a blank card corner does. An unnamed
-      // currency does the same: an amount with the wrong sign in front of it
-      // is the defect this code exists to stop.
-      const monthly = prices.find((price) => price.location === locationName)?.price_monthly;
-      const gross = isRecord(monthly) && isString(monthly.gross) ? monthly.gross.trim() : "";
-      const amount = gross === "" ? Number.NaN : Number(gross);
-      const monthlyPrice: MachinePrice | null = currency !== null && Number.isFinite(amount)
-        ? { amount, currency }
-        : null;
-      return {
-        category: categoryField(type),
-        machineType: {
-          id: `${name}@${locationName}`,
-          name,
-          cpuCores: numberField(type, "cores"),
-          memGb: numberField(type, "memory"),
-          diskGb: numberField(type, "disk"),
-          arch: architecture === "arm" ? "arm64" : "x86",
-          location: locationName,
-          monthlyPrice,
-          // A card is a stand-in only when the rule below makes it one.
-          standsInFor: null,
-        } satisfies ProviderMachineType,
-      } satisfies HetznerOffer;
-    });
+export function hetznerFailure(value: unknown): HetznerFailure {
+  const error = isRecord(value) && isRecord(value.error) ? value.error : null;
+  if (error === null) return { message: null, code: null };
+  const raw = isString(error.message)
+    ? error.message.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim()
+    : "";
+  return {
+    message: raw === "" ? null : raw.slice(0, 1_024),
+    code: isString(error.code) ? error.code : null,
+  };
+}
+
+export function annotateServerTypeIds(
+  message: string,
+  names: ReadonlyMap<number, string>,
+): string {
+  return message.replace(/\bserver type (\d+)\b/giu, (match, rawId: string) => {
+    const name = names.get(Number(rawId));
+    return name === undefined ? match : `${match} (${name})`;
   });
-  return { available, specs };
+}
+
+export function serverTypeIds(message: string): number[] {
+  const ids = [...message.matchAll(/\bserver type (\d+)\b/giu)]
+    .map((match) => Number(match[1]))
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+  return [...new Set(ids)].slice(0, 8);
 }
