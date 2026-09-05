@@ -26,6 +26,7 @@ WORKSPACE_ID=
 MACHINE_ID=
 LAB_FINAL_LINE=false
 LAB_TEMP_ROOT=
+LAB_DEPLOY_REPO=
 LAB_REMOTE_CLEANUP_WORKSPACE=
 LAB_REMOTE_CLEANUP_COMMAND=
 LAB_SESSION_CLEANUP_WORKSPACE=
@@ -857,7 +858,8 @@ pin_payload() {
 }
 
 pin_payload_ref() {
-  local version=$1 ref=$2 version_report deployed_ref deployed_tag configured_ref configured_tag
+  local version=$1 ref=$2 version_report deployed_ref deployed_tag
+  local configured_ref configured_tag configured_origin configured_bucket
   local image_overrides=()
   payload_lab_trace "pinning payload $version"
   if payload_lab_dry; then
@@ -872,6 +874,14 @@ pin_payload_ref() {
     || experiment_fail "/version did not report boxImageRef"
   deployed_tag=$(printf '%s' "$version_report" | jq -er '.boxImageTag | strings') \
     || experiment_fail "/version did not report boxImageTag"
+  configured_origin=$(_wrangler_string_var APP_URL) \
+    || experiment_fail "could not read APP_URL from wrangler.toml"
+  configured_bucket=$(_wrangler_string_var bucket_name) \
+    || experiment_fail "could not read the R2 bucket from wrangler.toml"
+  assert_equal "${configured_origin%/}" "${THINLAB_ORIGIN%/}" \
+    "wrangler.toml APP_URL is not the thinlab origin"
+  assert_equal "$configured_bucket" "$LAB_R2_BUCKET" \
+    "wrangler.toml R2 binding is not the thinlab payload bucket"
 
   if [ -n "${LAB_IMAGE_REF:-}" ] || [ -n "${LAB_IMAGE_TAG:-}" ] \
       || [ -n "${LAB_IMAGE_SHA256:-}" ]; then
@@ -897,8 +907,15 @@ pin_payload_ref() {
     assert_equal "$configured_tag" "$deployed_tag" \
       "wrangler.toml BOX_IMAGE_TAG would change the deployment's image pin"
   fi
+  if [ -z "$LAB_DEPLOY_REPO" ]; then
+    LAB_DEPLOY_REPO="$LAB_TEMP_ROOT/deploy-repo"
+    git clone --quiet --no-hardlinks "$PAYLOAD_LAB_REPO" "$LAB_DEPLOY_REPO"
+    ln -s "$PAYLOAD_LAB_REPO/node_modules" "$LAB_DEPLOY_REPO/node_modules"
+    cp "$PAYLOAD_LAB_REPO/packages/control-plane/wrangler.toml" \
+      "$LAB_DEPLOY_REPO/packages/control-plane/wrangler.toml"
+  fi
   (
-    cd "$PAYLOAD_LAB_REPO"
+    cd "$LAB_DEPLOY_REPO"
     env "${image_overrides[@]}" \
       BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF="$ref" \
       BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION="$version" \

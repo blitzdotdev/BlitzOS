@@ -67,11 +67,15 @@ refuses to emit.
 
 Pinning changes only the payload. Before every deploy, `pin_payload` reads the
 deployment's public `/version` report and compares its `boxImageRef` and
-`boxImageTag` with the values in the lab's `wrangler.toml`; it refuses the
+`boxImageTag` with the values in the lab's `wrangler.toml`; it also requires
+that config's `APP_URL` and R2 binding to identify thinlab. It refuses the
 deploy if they differ. A lab that intentionally keeps its image pins outside
 that file may instead set all of `LAB_IMAGE_REF`, `LAB_IMAGE_TAG`, and
 `LAB_IMAGE_SHA256`; the helper checks the reported ref/tag and passes all three
 through to the deploy. It never sends only the two payload vars when doing so.
+The first pin copies the checkout and validated deployment config into the
+experiment's temporary directory, and every later pin in that experiment uses
+that isolated snapshot so another lab process cannot retarget it mid-run.
 
 No experiment forces an updater transaction. After a pin, every experiment
 waits for the box's supervised payload service, whose default poll interval is
