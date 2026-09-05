@@ -53,7 +53,9 @@ compared as a whole, or cancelled.
 The production publisher has no test-only overlay flag. `publish_variant`
 therefore clones the current checkout into a temporary directory, copies one
 mutated file from an overlay directory into that clone, and invokes
-`publish-box-payload.mjs --repo <clone>`. E5 and E12 then overwrite one
+that clone's `publish-box-payload.mjs --repo <clone>` so imported release
+metadata and staged sources come from the same commit. The lab's uncommitted
+deployment `wrangler.toml` is copied in only for the R2 upload. E5 and E12 then overwrite one
 versioned test object to make failures that a validating publisher correctly
 refuses to emit.
 

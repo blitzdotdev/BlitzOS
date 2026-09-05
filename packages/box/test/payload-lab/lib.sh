@@ -737,6 +737,12 @@ publish_variant() {
       commit --quiet -m "payload lab variant $name"
   )
   ln -s "$PAYLOAD_LAB_REPO/node_modules" "$repo/node_modules"
+  # Execute the publisher from the overlay checkout so its imported release
+  # metadata (including LODY_PATCHSET_SERIAL) comes from the same tree as the
+  # payload sources. Keep the lab deployment config, which is intentionally
+  # uncommitted, rather than the clone's tracked production defaults.
+  cp "$PAYLOAD_LAB_REPO/packages/control-plane/wrangler.toml" \
+    "$repo/packages/control-plane/wrangler.toml"
   if [[ "$name" = daemon-* ]]; then
     require_env LAB_DAEMON_ARCHIVE
     [ -r "$LAB_DAEMON_ARCHIVE" ] || experiment_fail "LAB_DAEMON_ARCHIVE is not readable"
@@ -746,7 +752,7 @@ publish_variant() {
   fi
   published="$root/published.json"
   payload_lab_trace "publishing variant $name"
-  node "$PAYLOAD_LAB_REPO/packages/control-plane/scripts/publish-box-payload.mjs" \
+  node "$repo/packages/control-plane/scripts/publish-box-payload.mjs" \
     --repo "$repo" --app-url "$THINLAB_ORIGIN" --bucket "$LAB_R2_BUCKET" \
     --out "$release" --json "$published" "${daemon_args[@]}" >/dev/null
   PUBLISHED_VERSION=$(jq -er .version "$published")
