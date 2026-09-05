@@ -324,6 +324,7 @@ export function OrgCredentialsPanel({
       key={rotating ?? 'add'}
       mode={rotating === null ? { kind: 'add' } : { kind: 'rotate', name: rotating }}
       subjects={subjects}
+      takenNames={credentials.map(({ name }) => name)}
       onSubmit={put}
       onCancel={rotating === null ? undefined : () => setRotating(null)}
     />
