@@ -5,7 +5,7 @@ payload_lab_init E5 "$@"
 
 if payload_lab_dry; then
   dry_command "snapshot current payload and every service pid"
-  for variant in e5-archive-sha e5-file-sha e5-bad-manifest; do
+  for variant in e5-archive-sha e5-file-sha e5-manifest-bad; do
     publish_variant "$variant"
     pin_payload "$PUBLISHED_VERSION"
     dry_command "wait for a natural updater tick; assert $variant reports verify-failed with current and service pids unchanged"
@@ -17,7 +17,7 @@ require_workspace
 before_current=$(payload_current "$WORKSPACE_ID")
 before_pids=$(service_pids "$WORKSPACE_ID")
 
-for variant in e5-archive-sha e5-file-sha e5-bad-manifest; do
+for variant in e5-archive-sha e5-file-sha e5-manifest-bad; do
   publish_variant "$variant"
   version=$PUBLISHED_VERSION
   before_report=$(payload_reported_at "$MACHINE_ID" "$WORKSPACE_ID")
