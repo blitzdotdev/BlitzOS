@@ -50,9 +50,7 @@ describe("blitz-payload file log", () => {
       env: {
         ...process.env,
         BLITZ_STATE_DIR: stateRoot,
-        BLITZ_PAYLOAD_ROOT: payloadRoot,
-        BLITZ_PAYLOAD_STATE: payloadState,
-        BLITZ_PAYLOAD_LODY_ROOT: lodyRoot,
+        BLITZ_PAYLOAD_TEST_CONFIG: JSON.stringify({ payloadRoot, lodyRoot }),
         BLITZ_PAYLOAD_ONCE: "1",
       },
     });

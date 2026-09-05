@@ -11,17 +11,9 @@
 // archive additionally uses the image's tar and s6-svc/s6-svstat tools. None
 // of these paths is payload-owned; the gateway deliberately remains payload.
 //
-// DAEMON IDLE DOOR. The vendored LocalSessionControlRequest union has no
-// request that lists sessions, and LocalMachineRpcRequest has no presence-read
-// method. The daemon does expose `activeSessionCount` on its probe socket's
-// `/state` document; Lody derives that count from the same active-presence
-// states (`running`, `requestPermission`, and `initializing`) that drive the
-// session UI. We first require the control socket to exist (an absent daemon is
-// idle), then read that bounded local state endpoint. If an older daemon does
-// not expose it, the last resort is the session cgroup CPU signal described in
-// plans/THIN-IMAGE.md: a leaf whose `cpu.stat` usage advanced during the last
-// 30 seconds is busy. Every branch is bounded and fail-open so idle detection
-// can delay an update, but can never strand the updater loop.
+// DAEMON IDLE DOOR. The updater reads `activeSessionCount` from the daemon's
+// bounded local `/state` probe. An absent control socket is idle; a failed
+// probe remains busy until the idle cap rather than guessing from CPU use.
 
 const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
@@ -54,23 +46,12 @@ const RESTART_SERVICES = new Set([
   'ttyd',
   'watch',
 ]);
-const RESULT_OUTCOMES = new Set([
-  'booted',
-  'applied',
-  'rolled-back',
-  'unsupported',
-  'fetch-failed',
-  'verify-failed',
-  'start-failed',
-  'up-to-date',
-]);
 const FAILED_OUTCOMES = new Set([
   'verify-failed',
   'rolled-back',
   'start-failed',
   'unsupported',
 ]);
-
 class FetchFailure extends Error {}
 class VerifyFailure extends Error {}
 
@@ -242,22 +223,6 @@ function parseManifest(value) {
   return result;
 }
 
-function parseResult(value) {
-  const parsed = record(value, 'payload-result');
-  const outcome = requiredString(parsed.outcome, 'payload-result.outcome');
-  if (!RESULT_OUTCOMES.has(outcome)) {
-    throw new VerifyFailure(
-      `box-payload payload-result.outcome must be one of ${[...RESULT_OUTCOMES].join(', ')}`,
-    );
-  }
-  return {
-    version: version(parsed.version, 'payload-result.version'),
-    daemonVersion: version(parsed.daemonVersion, 'payload-result.daemonVersion'),
-    outcome,
-    detail: requiredString(parsed.detail, 'payload-result.detail'),
-  };
-}
-
 function parsePayloadConfig(value) {
   const envelope = record(value, 'box-config');
   if (envelope.payload === undefined || envelope.payload === null) return null;
@@ -290,43 +255,39 @@ function safeAbsolutePath(name, fallback) {
 
 function settings() {
   const stateRoot = safeAbsolutePath('BLITZ_STATE_DIR', '/var/lib/blitz');
-  const lodyData = safeAbsolutePath('LODY_DATA_DIR', path.join(stateRoot, 'lody'));
+  const test = process.env.BLITZ_PAYLOAD_TEST_CONFIG === undefined
+    ? {}
+    : JSON.parse(process.env.BLITZ_PAYLOAD_TEST_CONFIG);
+  const configured = (key, fallback) => test[key] ?? fallback;
   return {
-    payloadRoot: safeAbsolutePath('BLITZ_PAYLOAD_ROOT', '/opt/blitz/payload'),
-    payloadState: safeAbsolutePath('BLITZ_PAYLOAD_STATE', '/var/lib/blitz/payload'),
-    lodyRoot: safeAbsolutePath('BLITZ_PAYLOAD_LODY_ROOT', '/opt/blitz/lody'),
-    originFile: safeAbsolutePath(
-      'BLITZ_PAYLOAD_ORIGIN_FILE',
-      path.join(stateRoot, 'origin'),
+    payloadRoot: configured('payloadRoot', '/opt/blitz/payload'),
+    payloadState: path.join(stateRoot, 'payload'),
+    lodyRoot: configured('lodyRoot', '/opt/blitz/lody'),
+    originFile: path.join(stateRoot, 'origin'),
+    serviceRoot: configured('serviceRoot', '/run/service'),
+    s6Svc: configured('s6Svc', '/command/s6-svc'),
+    s6Svstat: configured('s6Svstat', '/command/s6-svstat'),
+    gatewayHealthUrl: configured('gatewayHealthUrl', 'http://127.0.0.1:7445/healthz'),
+    daemonSocket: configured(
+      'daemonSocket',
+      path.join(stateRoot, 'lody/run/lody-oss-probe.sock'),
     ),
-    serviceRoot: safeAbsolutePath('BLITZ_PAYLOAD_SERVICE_ROOT', '/run/service'),
-    s6Svc: process.env.BLITZ_PAYLOAD_S6_SVC || '/command/s6-svc',
-    s6Svstat: process.env.BLITZ_PAYLOAD_S6_SVSTAT || '/command/s6-svstat',
-    gatewayHealthUrl:
-      process.env.BLITZ_PAYLOAD_GATEWAY_HEALTH_URL || 'http://127.0.0.1:7445/healthz',
-    daemonSocket:
-      process.env.BLITZ_PAYLOAD_DAEMON_SOCKET
-      || path.join(lodyData, 'run/lody-oss-probe.sock'),
-    daemonControlSocket:
-      process.env.BLITZ_PAYLOAD_DAEMON_CONTROL_SOCKET
-      || path.join(lodyData, 'run/lody-oss-control.sock'),
-    daemonCgroupRoot: safeAbsolutePath(
-      'BLITZ_PAYLOAD_DAEMON_CGROUP_ROOT',
-      '/sys/fs/cgroup/blitz-user.slice/lody-sessions',
+    daemonControlSocket: configured(
+      'daemonControlSocket',
+      path.join(stateRoot, 'lody/run/lody-oss-control.sock'),
     ),
-    daemonIdleWaitMs: positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_WAIT', 600),
-    daemonIdlePollMs: positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_POLL', 15),
-    daemonIdleProbeTimeoutMs: positiveSeconds(
-      'BLITZ_PAYLOAD_DAEMON_IDLE_PROBE_TIMEOUT',
-      2,
-    ),
-    daemonKillGraceMs: positiveSeconds('BLITZ_PAYLOAD_DAEMON_KILL_GRACE', 30),
-    daemonKillPollMs: positiveSeconds('BLITZ_PAYLOAD_DAEMON_KILL_POLL', 5),
+    daemonIdleWaitMs: configured('daemonIdleWaitMs',
+      positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_WAIT', 600)),
+    daemonIdlePollMs: configured('daemonIdlePollMs', 15_000),
+    daemonIdleProbeTimeoutMs: configured('daemonIdleProbeTimeoutMs', 2000),
+    daemonKillGraceMs: configured('daemonKillGraceMs', 30_000),
+    daemonKillPollMs: configured('daemonKillPollMs', 5000),
     intervalMs: positiveSeconds('BLITZ_PAYLOAD_INTERVAL', 300),
-    firstDelayMs: positiveSeconds('BLITZ_PAYLOAD_FIRST_DELAY', 60),
-    healthTimeoutMs: positiveSeconds('BLITZ_PAYLOAD_HEALTH_TIMEOUT', 60),
-    healthIntervalMs: positiveSeconds('BLITZ_PAYLOAD_HEALTH_INTERVAL', 1),
-    requestTimeoutMs: positiveSeconds('BLITZ_PAYLOAD_REQUEST_TIMEOUT', 30),
+    firstDelayMs: configured('firstDelayMs', 60_000),
+    healthTimeoutMs: configured('healthTimeoutMs', 60_000),
+    healthIntervalMs: configured('healthIntervalMs', 1000),
+    requestTimeoutMs: configured('requestTimeoutMs', 30_000),
+    testKillAt: configured('killAt', null),
   };
 }
 
@@ -334,8 +295,8 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function testKillAt(stage) {
-  if (process.env.BLITZ_PAYLOAD_TEST_KILL_AT === stage) {
+function testKillAt(config, stage) {
+  if (config.testKillAt === stage) {
     process.kill(process.pid, 'SIGKILL');
   }
 }
@@ -430,7 +391,7 @@ async function postResult(origin, token, result, config) {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(parseResult(result)),
+      body: JSON.stringify(result),
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     });
     if (!response.ok) {
@@ -559,16 +520,18 @@ async function removeStaging(config) {
 
 async function recoverPending(config, state) {
   if (state.pending === null || typeof state.pending !== 'object') return state;
-  if (typeof state.currentTarget === 'string') {
-    await atomicLink(path.join(config.payloadRoot, 'current'), state.currentTarget);
+  return restorePendingRelease(config, state);
+}
+
+async function ensureCurrentLink(linkPath, fallbackTarget, label) {
+  const current = await linkInfo(linkPath);
+  if (current.exists) return { link: current, restored: false };
+  const fallback = await fsp.stat(fallbackTarget).catch(() => null);
+  if (fallback === null || !fallback.isDirectory()) {
+    throw new Error(`neither current nor baked ${label} exists`);
   }
-  if (typeof state.daemonTarget === 'string') {
-    await atomicLink(path.join(config.lodyRoot, 'current'), state.daemonTarget);
-  }
-  const restored = { ...state };
-  delete restored.pending;
-  await writeState(config, restored);
-  return restored;
+  await atomicLink(linkPath, fallbackTarget);
+  return { link: await linkInfo(linkPath), restored: true };
 }
 
 async function initialiseState(config) {
@@ -580,34 +543,16 @@ async function initialiseState(config) {
   let state = await recoverPending(config, await readState(config));
   const payloadLink = path.join(config.payloadRoot, 'current');
   const daemonLink = path.join(config.lodyRoot, 'current');
-  let payload = await linkInfo(payloadLink);
-  let restoredPayload = false;
-  if (!payload.exists) {
-    const previous = typeof state.previousTarget === 'string'
-      ? state.previousTarget
-      : path.join(config.payloadRoot, 'baked');
-    const fallback = await fsp.stat(previous).catch(() => null);
-    if (fallback === null || !fallback.isDirectory()) {
-      throw new Error('neither current nor baked payload exists');
-    }
-    await atomicLink(payloadLink, previous);
-    payload = await linkInfo(payloadLink);
-    restoredPayload = true;
-  }
-  let daemon = await linkInfo(daemonLink);
-  let restoredDaemon = false;
-  if (!daemon.exists) {
-    const previous = typeof state.previousDaemonTarget === 'string'
-      ? state.previousDaemonTarget
-      : path.join(config.lodyRoot, 'baked');
-    const fallback = await fsp.stat(previous).catch(() => null);
-    if (fallback === null || !fallback.isDirectory()) {
-      throw new Error('neither current nor baked daemon exists');
-    }
-    await atomicLink(daemonLink, previous);
-    daemon = await linkInfo(daemonLink);
-    restoredDaemon = true;
-  }
+  const payloadFallback = typeof state.previousTarget === 'string'
+    ? state.previousTarget
+    : path.join(config.payloadRoot, 'baked');
+  const daemonFallback = typeof state.previousDaemonTarget === 'string'
+    ? state.previousDaemonTarget
+    : path.join(config.lodyRoot, 'baked');
+  const payloadLinkState = await ensureCurrentLink(payloadLink, payloadFallback, 'payload');
+  const daemonLinkState = await ensureCurrentLink(daemonLink, daemonFallback, 'daemon');
+  const { link: payload, restored: restoredPayload } = payloadLinkState;
+  const { link: daemon, restored: restoredDaemon } = daemonLinkState;
   const payloadVersion = await readVersionStamp(payload.target, 'payload-version', 'payload');
   const daemonIdentity = await readDaemonIdentity(daemon.target);
   if (restoredPayload) {
@@ -661,22 +606,6 @@ async function initialiseState(config) {
       daemonVersion: daemonIdentity.version,
       daemonProtocolVersion: daemonIdentity.protocolVersion,
     };
-  }
-  if (state.previous === 'baked') {
-    if (typeof state.previousTarget === 'string') {
-      state.previous = await readVersionStamp(
-        state.previousTarget,
-        'payload-version',
-        'previous payload',
-      );
-    } else state.previous = null;
-  }
-  if (state.previousDaemonVersion === 'baked') {
-    if (typeof state.previousDaemonTarget === 'string') {
-      const previousDaemon = await readDaemonIdentity(state.previousDaemonTarget);
-      state.previousDaemonVersion = previousDaemon.version;
-      state.previousDaemonProtocolVersion = previousDaemon.protocolVersion;
-    } else state.previousDaemonVersion = null;
   }
   await writeState(config, state);
   return state;
@@ -1092,48 +1021,7 @@ function daemonRuntimeActiveCount(socketPath, timeoutMs) {
   });
 }
 
-async function cgroupCpuUsage(filePath) {
-  try {
-    const source = await fsp.readFile(filePath, 'utf8');
-    const match = /^usage_usec ([0-9]+)$/mu.exec(source);
-    if (match === null) return null;
-    const usage = Number(match[1]);
-    return Number.isSafeInteger(usage) ? usage : null;
-  } catch {
-    return null;
-  }
-}
-
-async function activeCgroupCount(config, observations, observedAtMs) {
-  let entries;
-  try {
-    entries = await fsp.readdir(config.daemonCgroupRoot, { withFileTypes: true });
-  } catch {
-    return 0;
-  }
-  let busy = 0;
-  const present = new Set();
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith('lody-session-')) continue;
-    const usage = await cgroupCpuUsage(path.join(config.daemonCgroupRoot, entry.name, 'cpu.stat'));
-    if (usage === null) continue;
-    present.add(entry.name);
-    const previous = observations.get(entry.name);
-    if (previous === undefined || observedAtMs - previous.observedAtMs < 30_000) {
-      busy += 1;
-      if (previous === undefined) observations.set(entry.name, { usage, observedAtMs });
-      continue;
-    }
-    if (usage > previous.usage) busy += 1;
-    observations.set(entry.name, { usage, observedAtMs });
-  }
-  for (const name of observations.keys()) {
-    if (!present.has(name)) observations.delete(name);
-  }
-  return busy;
-}
-
-async function daemonActiveSessionCount(config, observations, observedAtMs) {
+async function daemonActiveSessionCount(config) {
   try {
     const control = await fsp.stat(config.daemonControlSocket).catch(() => null);
     if (control === null) return 0;
@@ -1142,30 +1030,24 @@ async function daemonActiveSessionCount(config, observations, observedAtMs) {
       config.daemonIdleProbeTimeoutMs,
     );
     if (stateCount !== null) return stateCount;
-    return await activeCgroupCount(config, observations, observedAtMs);
+    return 1;
   } catch {
     return 0;
   }
 }
 
-function secondsDetail(milliseconds) {
-  const seconds = milliseconds / 1000;
-  return Number.isInteger(seconds) ? String(seconds) : String(Number(seconds.toFixed(3)));
-}
-
 async function waitForDaemonIdle(config) {
-  const observations = new Map();
   let waitedMs = 0;
-  let runningSessions = await daemonActiveSessionCount(config, observations, waitedMs);
+  let runningSessions = await daemonActiveSessionCount(config);
   while (runningSessions > 0 && waitedMs < config.daemonIdleWaitMs) {
     const pause = Math.min(config.daemonIdlePollMs, config.daemonIdleWaitMs - waitedMs);
     await sleep(pause);
     waitedMs += pause;
-    runningSessions = await daemonActiveSessionCount(config, observations, waitedMs);
+    runningSessions = await daemonActiveSessionCount(config);
   }
   return {
     runningSessions,
-    detail: `restarted with ${runningSessions} sessions running after ${secondsDetail(waitedMs)}s wait`,
+    detail: `restarted with ${runningSessions} sessions running after ${waitedMs / 1000}s wait`,
   };
 }
 
@@ -1198,7 +1080,7 @@ async function restartLodyDaemon(config, waitForIdle) {
     await sleep(pause);
     waitedMs += pause;
   }
-  log(`lody-daemon ignored SIGTERM for ${secondsDetail(config.daemonKillGraceMs)}s; sending SIGKILL`);
+  log(`lody-daemon ignored SIGTERM for ${config.daemonKillGraceMs / 1000}s; sending SIGKILL`);
   await runCommand(
     config.s6Svc,
     ['-k', path.join(config.serviceRoot, 'lody-daemon')],
@@ -1236,13 +1118,8 @@ function probeDaemon(socketPath, timeoutMs) {
   });
 }
 
-// The gateway's `/healthz` sits behind the webApp-ticket check, so a bare local
-// probe is answered 403 — by a gateway that is up. `blitz-healthcheck` accepts
-// any answer for the same reason. Healthy therefore means "an HTTP response
-// arrived and it is not a 5xx": a gateway that cannot serve says so with 5xx or
-// with no answer at all. Demanding 2xx here made every apply fail its health
-// check, roll back, fail the rollback's check too, and report `start-failed`
-// (fancy-marten, 2026-09-04).
+// Gateway health requires a webApp ticket, so its local probe returns 403.
+// Like blitz-healthcheck, treat any non-5xx response as proof it is serving.
 async function probeGateway(config, timeoutMs) {
   try {
     const response = await fetch(config.gatewayHealthUrl, {
@@ -1397,7 +1274,7 @@ async function applyPayload(pin, manifest, config, initialState) {
           : state.daemonProtocolVersion,
       },
     );
-    testKillAt('after-switch');
+    testKillAt(config, 'after-switch');
   } catch (error) {
     state = await initialiseState(config);
     return recordOutcome(
@@ -1414,17 +1291,14 @@ async function applyPayload(pin, manifest, config, initialState) {
   const daemonRestarted = services.includes('lody-daemon');
   try {
     daemonRestartDetail = await restartServices(services, config);
-    testKillAt('before-health');
+    testKillAt(config, 'before-health');
   } catch (error) {
     activationFailure = `service restart failed: ${errorMessage(error)}`;
   }
-  let health;
   if (activationFailure === null) {
-    health = await waitForHealth(daemonRestarted, config);
+    const health = await waitForHealth(daemonRestarted, config);
     if (!health.gatewayHealthy) activationFailure = 'gateway health check failed';
     else if (!health.daemonHealthy) activationFailure = 'daemon health check failed';
-  } else {
-    health = await waitForHealth(false, config);
   }
   if (activationFailure === null) {
     try {
@@ -1649,24 +1523,15 @@ async function runLoop() {
 }
 
 async function validatorMain(kind, fixturePath) {
-  const source = fixturePath === '-'
-    ? await new Promise((resolve, reject) => {
-        let input = '';
-        process.stdin.setEncoding('utf8');
-        process.stdin.on('data', (chunk) => { input += chunk; });
-        process.stdin.once('end', () => resolve(input));
-        process.stdin.once('error', reject);
-      })
-    : await fsp.readFile(fixturePath, 'utf8');
-  const parsed = JSON.parse(source);
+  const parsed = JSON.parse(await fsp.readFile(fixturePath, 'utf8'));
   if (kind === 'validate-manifest') parseManifest(parsed);
-  else parseResult(parsed);
+  else parsePayloadConfig(parsed);
 }
 
 if (require.main === module) {
   const [command, fixturePath] = process.argv.slice(2);
   if (
-    (command === 'validate-manifest' || command === 'validate-result')
+    (command === 'validate-manifest' || command === 'validate-config')
     && fixturePath !== undefined
     && process.argv.length === 4
   ) {
@@ -1678,10 +1543,10 @@ if (require.main === module) {
     void runLoop();
   } else {
     process.stderr.write(
-      'usage: blitz-payload [validate-manifest|validate-result <file|->]\n',
+      'usage: blitz-payload [validate-manifest|validate-config <file>]\n',
     );
     process.exitCode = 2;
   }
 }
 
-module.exports = { parseManifest, parseResult, probeGateway };
+module.exports = { parseManifest, parsePayloadConfig, probeGateway };

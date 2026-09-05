@@ -288,35 +288,39 @@ class DaemonHarness {
     response.end();
   }
 
-  environment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  environment(
+    testOverrides: Record<string, string | number | null> = {},
+    environmentOverrides: NodeJS.ProcessEnv = {},
+  ): NodeJS.ProcessEnv {
     return {
       ...process.env,
       PATH: `${this.bin}:${process.env.PATH ?? ""}`,
-      BLITZ_PAYLOAD_ROOT: this.payloadRoot,
-      BLITZ_PAYLOAD_STATE: this.payloadState,
-      BLITZ_PAYLOAD_LODY_ROOT: this.lodyRoot,
-      BLITZ_PAYLOAD_ORIGIN_FILE: this.originFile,
-      BLITZ_PAYLOAD_SERVICE_ROOT: this.serviceRoot,
-      BLITZ_PAYLOAD_S6_SVC: path.join(this.bin, "s6-svc"),
-      BLITZ_PAYLOAD_S6_SVSTAT: path.join(this.bin, "s6-svstat"),
-      BLITZ_PAYLOAD_GATEWAY_HEALTH_URL: `${this.origin}/healthz`,
-      BLITZ_PAYLOAD_DAEMON_SOCKET: this.daemonSocket,
-      BLITZ_PAYLOAD_DAEMON_CONTROL_SOCKET: this.options.controlSocket === false
-        ? this.missingControlSocket
-        : this.daemonSocket,
-      BLITZ_PAYLOAD_DAEMON_CGROUP_ROOT: path.join(this.root, "cgroups"),
+      BLITZ_STATE_DIR: path.join(this.root, "state"),
       BLITZ_PAYLOAD_DAEMON_IDLE_WAIT: "0.12",
-      BLITZ_PAYLOAD_DAEMON_IDLE_POLL: "0.015",
-      BLITZ_PAYLOAD_DAEMON_IDLE_PROBE_TIMEOUT: "0.03",
-      BLITZ_PAYLOAD_DAEMON_KILL_GRACE: "0.06",
-      BLITZ_PAYLOAD_DAEMON_KILL_POLL: "0.01",
-      BLITZ_PAYLOAD_HEALTH_TIMEOUT: "0.09",
-      BLITZ_PAYLOAD_HEALTH_INTERVAL: "0.01",
-      BLITZ_PAYLOAD_REQUEST_TIMEOUT: "0.25",
+      BLITZ_PAYLOAD_TEST_CONFIG: JSON.stringify({
+        payloadRoot: this.payloadRoot,
+        lodyRoot: this.lodyRoot,
+        serviceRoot: this.serviceRoot,
+        s6Svc: path.join(this.bin, "s6-svc"),
+        s6Svstat: path.join(this.bin, "s6-svstat"),
+        gatewayHealthUrl: `${this.origin}/healthz`,
+        daemonSocket: this.daemonSocket,
+        daemonControlSocket: this.options.controlSocket === false
+          ? this.missingControlSocket
+          : this.daemonSocket,
+        daemonIdlePollMs: 15,
+        daemonIdleProbeTimeoutMs: 30,
+        daemonKillGraceMs: 60,
+        daemonKillPollMs: 10,
+        healthTimeoutMs: 90,
+        healthIntervalMs: 10,
+        requestTimeoutMs: 250,
+        ...testOverrides,
+      }),
       BLITZ_PAYLOAD_ONCE: "1",
       BLITZ_TEST_DAEMON_PID: this.pidFile,
       BLITZ_TEST_S6_LOG: this.s6Log,
-      ...overrides,
+      ...environmentOverrides,
     };
   }
 
@@ -338,10 +342,16 @@ class DaemonHarness {
   }
 }
 
-function runUpdater(harness: DaemonHarness, overrides: NodeJS.ProcessEnv = {}): Promise<RunResult> {
+function runUpdater(
+  harness: DaemonHarness,
+  testOverrides: Record<string, string | number | null> = {},
+  environmentOverrides: NodeJS.ProcessEnv = {},
+): Promise<RunResult> {
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [updater], { env: harness.environment(overrides) });
+    const child = spawn(process.execPath, [updater], {
+      env: harness.environment(testOverrides, environmentOverrides),
+    });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => { stderr += chunk; });
@@ -360,9 +370,13 @@ function runUpdater(harness: DaemonHarness, overrides: NodeJS.ProcessEnv = {}): 
   });
 }
 
-async function apply(harness: DaemonHarness, overrides: NodeJS.ProcessEnv = {}): Promise<PayloadResult> {
+async function apply(
+  harness: DaemonHarness,
+  testOverrides: Record<string, string | number | null> = {},
+  environmentOverrides: NodeJS.ProcessEnv = {},
+): Promise<PayloadResult> {
   await harness.start();
-  const run = await runUpdater(harness, overrides);
+  const run = await runUpdater(harness, testOverrides, environmentOverrides);
   expect(run.status, run.stderr).toBe(0);
   const result = harness.results.at(-1);
   if (result === undefined) throw new Error("updater did not report a payload result");
@@ -409,7 +423,7 @@ describe("blitz-payload daemon activation", () => {
   it("restarts with the running-session count when the idle cap expires", async () => {
     const harness = new DaemonHarness({ activeCounts: [2] });
 
-    const result = await apply(harness, { BLITZ_PAYLOAD_DAEMON_IDLE_WAIT: "0.045" });
+    const result = await apply(harness, { daemonIdleWaitMs: 45 });
 
     expect(result.outcome).toBe("applied");
     expect(result.detail).toContain("restarted with 2 sessions running after 0.045s wait");
@@ -461,7 +475,7 @@ describe("blitz-payload daemon activation", () => {
   it("escalates to SIGKILL when the supervised daemon PID does not change", async () => {
     const harness = new DaemonHarness({ activeCounts: [0] });
 
-    const result = await apply(harness, { BLITZ_TEST_DAEMON_STUCK: "1" });
+    const result = await apply(harness, {}, { BLITZ_TEST_DAEMON_STUCK: "1" });
 
     expect(result.outcome).toBe("applied");
     expect(harness.calls()).toEqual([

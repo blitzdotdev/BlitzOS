@@ -329,22 +329,24 @@ class Harness {
     response.end();
   }
 
-  environment(once = true): NodeJS.ProcessEnv {
+  environment(once = true, testOverrides: Record<string, string | number | null> = {}): NodeJS.ProcessEnv {
     return {
       ...process.env,
       PATH: `${this.bin}:${process.env.PATH ?? ""}`,
-      BLITZ_PAYLOAD_ROOT: this.payloadRoot,
-      BLITZ_PAYLOAD_STATE: this.payloadState,
-      BLITZ_PAYLOAD_LODY_ROOT: this.lodyRoot,
-      BLITZ_PAYLOAD_ORIGIN_FILE: this.originFile,
-      BLITZ_PAYLOAD_SERVICE_ROOT: this.serviceRoot,
-      BLITZ_PAYLOAD_S6_SVC: path.join(this.bin, "s6-svc"),
-      BLITZ_PAYLOAD_GATEWAY_HEALTH_URL: `${this.origin}/healthz`,
-      BLITZ_PAYLOAD_HEALTH_TIMEOUT: "0.12",
-      BLITZ_PAYLOAD_HEALTH_INTERVAL: "0.01",
-      BLITZ_PAYLOAD_REQUEST_TIMEOUT: "0.25",
+      BLITZ_STATE_DIR: path.join(this.root, "state"),
       BLITZ_PAYLOAD_INTERVAL: "0.1",
-      BLITZ_PAYLOAD_FIRST_DELAY: "0.01",
+      BLITZ_PAYLOAD_TEST_CONFIG: JSON.stringify({
+        payloadRoot: this.payloadRoot,
+        lodyRoot: this.lodyRoot,
+        serviceRoot: this.serviceRoot,
+        s6Svc: path.join(this.bin, "s6-svc"),
+        gatewayHealthUrl: `${this.origin}/healthz`,
+        healthTimeoutMs: 120,
+        healthIntervalMs: 10,
+        requestTimeoutMs: 250,
+        firstDelayMs: 10,
+        ...testOverrides,
+      }),
       BLITZ_TEST_CREDENTIAL_LOG: this.credentialLog,
       BLITZ_TEST_S6_LOG: this.s6Log,
       BLITZ_TEST_S6_FAILURE: this.s6Failure,
@@ -380,12 +382,12 @@ class Harness {
 function runUpdater(
   harness: Harness,
   timeoutMs = 3000,
-  environmentOverrides: NodeJS.ProcessEnv = {},
+  environmentOverrides: Record<string, string | number | null> = {},
 ): Promise<RunResult> {
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [updater], {
-      env: { ...harness.environment(), ...environmentOverrides },
+      env: harness.environment(true, environmentOverrides),
     });
     let stderr = "";
     child.stderr.setEncoding("utf8");
@@ -408,7 +410,7 @@ function runUpdater(
 async function expectOneOutcome(
   harness: Harness,
   outcome: string,
-  environmentOverrides: NodeJS.ProcessEnv = {},
+  environmentOverrides: Record<string, string | number | null> = {},
 ): Promise<PayloadResult> {
   const run = await runUpdater(harness, 3000, environmentOverrides);
   expect(run.status, run.stderr).toBe(0);
@@ -728,7 +730,7 @@ describe("blitz-payload", () => {
     const harness = new Harness({ oversizedConfig: true });
     await harness.start();
 
-    const run = await runUpdater(harness, 3000, { BLITZ_PAYLOAD_REQUEST_TIMEOUT: "2" });
+    const run = await runUpdater(harness, 3000, { requestTimeoutMs: 2000 });
 
     expect(run.status, run.stderr).toBe(0);
     expect(run.elapsedMs).toBeLessThan(1000);
@@ -871,7 +873,7 @@ describe("blitz-payload", () => {
     const harness = new Harness({ release });
     await harness.start();
 
-    const killed = await runUpdater(harness, 3000, { BLITZ_PAYLOAD_TEST_KILL_AT: stage });
+    const killed = await runUpdater(harness, 3000, { killAt: stage });
     expect(killed.signal).toBe("SIGKILL");
     expect(harness.currentTarget()).toBe(path.join(harness.payloadState, "versions/v2"));
 
@@ -893,7 +895,7 @@ describe("blitz-payload", () => {
     await startUnixHealth(daemonSocket);
 
     const result = await expectOneOutcome(harness, "applied", {
-      BLITZ_PAYLOAD_DAEMON_SOCKET: daemonSocket,
+      daemonSocket,
     });
 
     expect(result.daemonVersion).toBe("daemon-v2");
