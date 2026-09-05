@@ -25,9 +25,9 @@ customer. A credential that reaches one must not reach the other, and an
 the boundary working, not a fault to route around.
 
 Each deployment is one Cloudflare Worker with the same script name, one D1
-database, and one R2 bucket. The R2 bucket holds box images **and user
-workspace files** (`core/files/dav.ts`, `core/files/folders.ts`), so the two
-deployments can never share one.
+database, and one R2 bucket. The R2 bucket holds box images, box payloads,
+**and user workspace files** (`core/files/dav.ts`, `core/files/folders.ts`), so
+the two deployments can never share one.
 
 ### Finding out what you are pointed at
 
@@ -67,6 +67,19 @@ So the image and the Worker always ship together, in that order. **Never deploy
 the control plane alone for a release, and never publish an image by hand for
 one.**
 
+Client-prod payload publishing is not enabled yet. The v1 payload publisher
+produces amd64 Go binaries, while the GHCR box release is a multi-architecture
+amd64/arm64 image. Pinning that archive deployment-wide would offer amd64 bytes
+to an arm64 machine. Before enabling it, the owner must choose and implement
+one of these contracts: architecture-keyed payload manifests selected by box
+config, or an amd64-only production catalog. The intended workflow after that
+decision is: build each daemon/binary archive, derive the matching content
+version with `--daemon`, stamp the corresponding image, publish the payload to
+client prod's own R2 bucket before deployment, then pass
+`BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF` and `_VERSION` exactly as canary does. Until
+then `release.yml` remains image-only and must not copy canary's payload URL;
+the Cloudflare account boundary applies to artifacts too.
+
 ```sh
 git tag -a v0.3.0 -m "..." && git push origin v0.3.0
 ```
@@ -77,27 +90,44 @@ should hold one.
 ## How canary is deployed
 
 `.github/workflows/canary.yml` runs on every push to `main`. Its `gate` job
-checks that canary is configured. Its `image` job derives a release from every
-repository input copied by the box Dockerfile, reuses a valid archive already
-at that versioned R2 prefix or builds and publishes it, and passes the exact ref,
-tag, and digest to `deploy`. The deploy job pins those values and verifies both
-the merged commit and box-image tag through `/version`.
+checks that canary is configured. The `image` job first builds the daemon
+archive and amd64 payload binaries, derives the daemon-inclusive payload
+version, then derives the base-image release. It reuses a valid image archive
+at that versioned R2 prefix or builds an absent one stamped with the planned
+payload version and publishes it.
+
+The dependent `payload` job independently rebuilds those deterministic inputs,
+refuses a version different from the image job's plan, then probes
+`box-payload/<version>/manifest.json`. It reuses a valid manifest for that
+version or publishes `payload.tar.gz`, `daemon.tar.gz`, and finally the
+manifest. The deploy pins the image ref/tag/digest and payload ref/version, and
+verifies the merged commit and box-image tag through `/version`.
+
+Payload-only changes do not derive another base-image release. The image may
+therefore retain the payload stamp baked when its base was built; that stamp is
+boot state, while `BOX_PAYLOAD_VERSION` is desired state. A fresh machine boots
+the baked copy and converges to the deployment pin. Dockerfile changes, the
+updater, and s6 service-set/topology changes do derive a new image.
 
 It **queues** rather than cancels concurrent runs. A cancelled deploy can leave
 migrations applied while the old Worker still serves.
 
-Canary serves its box image as an **R2 archive (mode B)**, out of its own
-account; client prod serves it from a registry (mode A), pushed by the tag
-workflow. The automatic image job writes only canary's versioned R2 prefix and
-never touches the customer's account or GHCR. The full procedure and required
-R2 permission are in [BOX-IMAGE.md](BOX-IMAGE.md#automatic-canary-image-publish).
-Lody upstream merges follow [LODY-MERGE.md](LODY-MERGE.md); that runbook also
-records the temporary gap before the image key includes the vendored tree.
+Canary serves its box image and payload as public, versioned R2 artifacts out
+of its own account; client prod serves its image from a registry (mode A),
+pushed by the tag workflow. The canary jobs write only canary's R2 bucket and
+never touch the customer's account or GHCR. The full procedure and required R2
+permission are in [BOX-IMAGE.md](BOX-IMAGE.md#automatic-canary-image-publish).
 
 Canary is one shared Worker and the last deploy wins. That is why it deploys
 from `main` and not from a laptop: a branch deployed by hand replaces whatever
 was there, and the next person debugs a build that matches no commit. This has
 happened.
+
+To reproduce the artifact build locally, follow
+[BOX-IMAGE.md's build order](BOX-IMAGE.md#build-locally): build the daemon
+archive, derive the payload version with `--daemon`, build the image with that
+stamp, then publish the payload with the same daemon archive. Reversing or
+omitting those inputs produces a different version.
 
 ## What GitHub holds
 
@@ -168,8 +198,8 @@ Run from the repository root. Each is documented in
 
 `config:check` and the migration listing also run inside every deploy, before
 anything contacts Cloudflare. Hosted image planning is part of the workflows:
-canary's `image` job derives and publishes a content-addressed R2 release, while
-the client-prod tag workflow always builds and pins its GHCR image.
+canary derives and publishes content-addressed image and payload releases,
+while the client-prod tag workflow always builds and pins its GHCR image.
 
 `config:check` compares key paths and the entries of `triggers.crons`. It never
 reads a value out of the deployment config, so it can run against a real one and
@@ -193,8 +223,34 @@ generated, and the deploy rewrites it on every run.
 ## Rollback
 
 A Worker version carries its own vars, so a rollback restores the previous
-`BOX_IMAGE_REF` along with the previous code. New workspaces return to the old
-box image with no second step.
+`BOX_IMAGE_REF` and both `BOX_PAYLOAD_*` vars along with the previous code. New
+workspaces return to the old box image with no second step, and existing canary
+machines converge to the restored payload version.
+
+For a payload-only rollback, do not roll back Worker code. Take the previous
+immutable release's manifest URL and version from the last known-good canary
+workflow, set `BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF` and
+`BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION` together, and deploy. Downgrades use the
+normal updater path. Never replace the bytes under a published version.
+
+To keep one machine on what it currently runs while the rest of the deployment
+advances, issue the session-authenticated workspace-admin request:
+
+```http
+PATCH /machines/<machine-id>
+Content-Type: application/json
+
+{"payloadHold":true}
+```
+
+The hold makes only that machine's box config omit the payload pin; it does not
+roll the machine back. Send `{"payloadHold":false}` to resume the current pin.
+
+Read a workspace fleet with authenticated `GET /workspaces/<workspace-id>`.
+For each `workspace.members[].machine`, compare `payloadVersion` with the
+deployment pin and inspect `daemonVersion`, `payloadOutcome`, and
+`payloadReportedAt`. Null means the machine has not reported since payload
+updates shipped, not that it is current.
 
 **D1 does not roll back.** Read the migration list before you answer the plan.
 
@@ -211,10 +267,12 @@ There is no traffic ramp. A deploy goes to full traffic at once.
   derived from webapp source, so a change to a route, a provider, or
   `core/bootstrap.ts` leaves it identical. Two deployments running different
   commits can serve the same bundle name. Ask `/version` instead.
-- **Box and broker changes reach new workspaces only.** A box never upgrades in
-  place. CLI verbs, gateway routes, rootfs files, and baked agent-rules copies
-  all ride the image. Webapp and control-plane changes ride the Worker and reach
-  everything at once.
+- **Base-image and payload changes have different reach.** Dockerfile/base OS,
+  the payload updater, and the s6 service set require a new image and normally
+  reach new workspaces only. Payload-owned scripts, gateway/credential binaries,
+  existing service implementations, agent-rules bytes, env defaults, and the
+  Lody daemon update existing boxes in place. Webapp and control-plane changes
+  ride the Worker and reach everything at once.
 - **A core route absent from `assets.run_worker_first` is served the SPA shell
   with status 200**, not the route. Nothing errors. The list is derived from
   core's route registrations now, and `packages/control-plane/test/route-prefixes.test.ts`
@@ -245,15 +303,15 @@ There is no traffic ramp. A deploy goes to full traffic at once.
   `POST /v2/.../blobs/uploads/` with HTTP 403; the GitHub App token has no
   package access at all (403, `Resource not accessible by integration`). That
   is the boundary working, not a fault to route around: the same tag that
-  would push an image also ships client prod. Canary's automatic `image` job
-  publishes its content-addressed release through R2 instead.
+  would push an image also ships client prod. Canary's automatic jobs publish
+  their content-addressed image and payload releases through R2 instead.
 - **The `wrangler.toml` in a working checkout is client prod's.**
-  `packages/control-plane/scripts/publish-box-image.mjs` always passes
+  The box image and payload publishers always pass
   `--config packages/control-plane/wrangler.toml`, so publishing a canary image
-  from a checkout carrying the client-prod config uploads it into the
-  customer's bucket. Write a canary-scoped config from `wrangler.toml.example`
-  first. That file is gitignored, so it never lands in a commit and never
-  travels between the two accounts.
+  or payload from a checkout carrying the client-prod config uploads it into
+  the customer's bucket. Write a canary-scoped config from
+  `wrangler.toml.example` first. That file is gitignored, so it never lands in
+  a commit and never travels between the two accounts.
 
 ## Rules for agents
 
@@ -274,12 +332,12 @@ that is said.
    check `/version` after deploying. For anything else a change shipped, fetch
    the live bundle and grep for a string the change introduced. A green deploy
    command proves upload, not content.
-6. **Let the canary workflow publish and pin its box image.** The `image` job
-   runs before deploy, reuses only a valid matching release, and fails the run
-   if planning, building, or publishing fails. See
+6. **Let the canary workflow publish and pin its box image and payload.** The
+   image and payload jobs run before deploy, reuse only valid matching releases,
+   and fail the run if planning, building, or publishing fails. See
    [BOX-IMAGE.md](BOX-IMAGE.md#automatic-canary-image-publish).
 7. **Never cut a `v*` tag only to refresh canary.** A tag ships client prod to
-   real users. The automatic canary image job needs no registry access; no
+   real users. The automatic canary artifact jobs need no registry access; no
    workspace or agent credential can push there anyway. The `production`
    reviewer remains the boundary between a tag and a customer deployment.
 8. **Say what you could not verify.** A gate that could not run is not a gate
