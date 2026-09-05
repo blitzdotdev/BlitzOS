@@ -1,12 +1,17 @@
 import { isNumber, isRecord, isString } from "../http.js";
-import type { CreateVolumeRequest, MachinePrice, Volume } from "../wire.js";
+import type { CreateVolumeRequest, Volume } from "../wire.js";
 import { fetchBoundedJson, type Fetcher } from "./json-fetch.js";
 import {
   HETZNER_STOCK_IMAGE,
   HETZNER_USER_DATA_MAX_BYTES,
+  hetznerCatalogWithStandIns,
   hetznerMachineTypeAllowlistFromEnv,
+  hetznerOffersFromServerTypes,
   hetznerServerImagesFromEnv,
   machineId,
+  numberField,
+  records,
+  stringField,
   SERVER_TYPE_NAME_PATTERN,
   LOCATION_NAME_PATTERN,
   type HetznerWarningSink,
@@ -109,29 +114,6 @@ function abortable<T>(
   });
 }
 
-function records(value: unknown, field: string): Record<string, unknown>[] {
-  if (!isRecord(value) || !Array.isArray(value[field])) {
-    throw new Error(`invalid Hetzner ${field} response`);
-  }
-  return value[field].filter(isRecord);
-}
-
-function stringField(value: Record<string, unknown>, field: string): string {
-  const result = value[field];
-  if (!isString(result)) throw new Error(`invalid Hetzner ${field}`);
-  return result;
-}
-
-function numberField(value: Record<string, unknown>, field: string): number {
-  const result = value[field];
-  if (!isNumber(result)) throw new Error(`invalid Hetzner ${field}`);
-  return result;
-}
-
-function isDeprecated(value: Record<string, unknown>): boolean {
-  return value.deprecated === true || isRecord(value.deprecation);
-}
-
 /** Carries Hetzner's machine-readable error code beside the message, so a
  * caller can tell a definitive pre-creation refusal from anything else.
  * Existing catchers read `.message` only and are unaffected. */
@@ -194,12 +176,17 @@ function volumeFromHetzner(value: Record<string, unknown>): Volume {
 
 export {
   DEFAULT_HETZNER_MACHINE_TYPES,
+  HETZNER_COST_OPTIMIZED,
+  HETZNER_REGULAR_PURPOSE,
   HETZNER_STOCK_IMAGE,
   HETZNER_USER_DATA_MAX_BYTES,
+  hetznerCatalogWithStandIns,
   hetznerMachineTypeAllowlistFromEnv,
   hetznerServerImagesFromEnv,
 } from "./hetzner-config.js";
 export type {
+  HetznerOffer,
+  HetznerTypeSpec,
   HetznerMachineTypeCatalogWarning,
   HetznerPriceCurrencyWarning,
   HetznerProviderWarning,
@@ -417,44 +404,8 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
         this.serverTypeNames.set(id, name);
       }
     }
-    return types.flatMap((type) => {
-      if (isDeprecated(type)) return [];
-      const locations = Array.isArray(type.locations)
-        ? type.locations
-            .filter(isRecord)
-            .filter((location) => location.available === true && !isDeprecated(location))
-        : [];
-      // Hetzner prices each location on its own, in one row per location.
-      const prices = Array.isArray(type.prices) ? type.prices.filter(isRecord) : [];
-      return locations.map((location) => {
-        const name = stringField(type, "name");
-        const architecture = type.architecture;
-        const locationName = stringField(location, "name");
-        // Gross is what the customer pays. Hetzner sends it as a decimal
-        // string, so it becomes a number here and the browser never parses a
-        // price. Number(" ") is 0, so a blank string must not sell a machine
-        // for nothing. A malformed row leaves the price out, because a wrong
-        // number costs the customer more than a blank card corner does.
-        // An unnamed currency does the same: an amount with the wrong sign in
-        // front of it is the defect this code exists to stop.
-        const monthly = prices.find((price) => price.location === locationName)?.price_monthly;
-        const gross = isRecord(monthly) && isString(monthly.gross) ? monthly.gross.trim() : "";
-        const amount = gross === "" ? Number.NaN : Number(gross);
-        const monthlyPrice: MachinePrice | null = currency !== null && Number.isFinite(amount)
-          ? { amount, currency }
-          : null;
-        return {
-          id: `${name}@${locationName}`,
-          name,
-          cpuCores: numberField(type, "cores"),
-          memGb: numberField(type, "memory"),
-          diskGb: numberField(type, "disk"),
-          arch: architecture === "arm" ? "arm64" : "x86",
-          location: locationName,
-          monthlyPrice,
-        } satisfies ProviderMachineType;
-      });
-    }).filter((machineType) => this.machineTypeAllowlist.has(machineType.id));
+    const { available, specs } = hetznerOffersFromServerTypes(types, currency);
+    return hetznerCatalogWithStandIns(available, specs, this.machineTypeAllowlist);
   }
 
   async createVm(input: CreateVmInput): Promise<CreatedVm> {

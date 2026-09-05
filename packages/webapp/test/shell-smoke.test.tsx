@@ -1524,6 +1524,7 @@ const workspaceCreateMachine = {
   arch: "x86" as const,
   location: "fsn1",
   monthlyPrice: { amount: 6.49, currency: "USD" },
+  standsInFor: null,
 };
 
 async function submitWorkspaceCreate(view: Rendered, name: string): Promise<void> {

@@ -419,10 +419,10 @@ describe("control plane security and lifecycle", () => {
             ],
           },
           {
-            name: "cx23",
-            cores: 2,
-            memory: 4,
-            disk: 40,
+            name: "cx53",
+            cores: 16,
+            memory: 32,
+            disk: 320,
             architecture: "x86",
             deprecation: null,
             locations: [{ name: "fsn1", available: true, deprecation: null }],
@@ -440,8 +440,9 @@ describe("control plane security and lifecycle", () => {
     });
 
     // cpx31@hil is allowlisted but type-deprecated; cpx21@hil is allowlisted
-    // but location-deprecated; cpx21@ash and cx23@fsn1 are healthy but not
-    // allowlisted.
+    // but location-deprecated; cpx21@ash and cx53@fsn1 are healthy but not
+    // allowlisted. Nothing stands in either: this fixture states no category,
+    // so no type here counts as cost-optimized.
     expect(response.status).toBe(200);
     const body = await response.json<ListMachineTypesResponse>();
     expect(body.machineTypes.map(({ id }) => id)).toEqual([]);
@@ -522,28 +523,34 @@ describe("control plane security and lifecycle", () => {
     ]);
   });
 
-  it("keeps the four-type default catalog when HETZNER_MACHINE_TYPES is unset or blank", () => {
+  it("keeps the eight-type default catalog when HETZNER_MACHINE_TYPES is unset or blank", () => {
+    // Two cost-optimized sizes in each of the three EU locations, then the two
+    // US-west types. Hetzner sells the cx line in the EU only.
     expect(DEFAULT_HETZNER_MACHINE_TYPES).toEqual([
+      "cx23@nbg1",
+      "cx33@nbg1",
+      "cx23@fsn1",
+      "cx33@fsn1",
       "cx23@hel1",
       "cx33@hel1",
       "cpx21@hil",
       "cpx31@hil",
     ]);
-    expect([...hetznerMachineTypeAllowlistFromEnv(undefined)].sort()).toEqual([
+    const expected = [
       "cpx21@hil",
       "cpx31@hil",
+      "cx23@fsn1",
       "cx23@hel1",
+      "cx23@nbg1",
+      "cx33@fsn1",
       "cx33@hel1",
-    ]);
-    expect([...hetznerMachineTypeAllowlistFromEnv("  ")].sort()).toEqual([
-      "cpx21@hil",
-      "cpx31@hil",
-      "cx23@hel1",
-      "cx33@hel1",
-    ]);
+      "cx33@nbg1",
+    ];
+    expect([...hetznerMachineTypeAllowlistFromEnv(undefined)].sort()).toEqual(expected);
+    expect([...hetznerMachineTypeAllowlistFromEnv("  ")].sort()).toEqual(expected);
   });
 
-  it("keeps the default catalog's Helsinki cx types through the allowlist filter", async () => {
+  it("keeps the default catalog's EU cx types through the allowlist filter", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         server_types: [
@@ -583,9 +590,10 @@ describe("control plane security and lifecycle", () => {
     );
     const provider = new HetznerProvider("test-token");
 
-    // cx23@fsn1 is healthy but not allowlisted; only hel1 carries the cx line
-    // in the default catalog. This fixture carries no prices, so each entry
-    // states null rather than staying silent.
+    // The default catalog carries the cx line in all three EU locations, so
+    // cx23@fsn1 is offered as well as cx23@hel1. This fixture carries no
+    // prices, so each entry states null rather than staying silent, and no
+    // category, so nothing stands in for anything.
     expect(await provider.listMachineTypes()).toEqual([
       {
         id: "cx23@hel1",
@@ -596,6 +604,18 @@ describe("control plane security and lifecycle", () => {
         arch: "x86",
         location: "hel1",
         monthlyPrice: null,
+        standsInFor: null,
+      },
+      {
+        id: "cx23@fsn1",
+        name: "cx23",
+        cpuCores: 2,
+        memGb: 4,
+        diskGb: 40,
+        arch: "x86",
+        location: "fsn1",
+        monthlyPrice: null,
+        standsInFor: null,
       },
       {
         id: "cx33@hel1",
@@ -606,6 +626,7 @@ describe("control plane security and lifecycle", () => {
         arch: "x86",
         location: "hel1",
         monthlyPrice: null,
+        standsInFor: null,
       },
       {
         id: "cpx31@hil",
@@ -616,6 +637,7 @@ describe("control plane security and lifecycle", () => {
         arch: "x86",
         location: "hil",
         monthlyPrice: null,
+        standsInFor: null,
       },
     ]);
   });

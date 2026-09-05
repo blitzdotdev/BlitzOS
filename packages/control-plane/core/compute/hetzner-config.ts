@@ -2,6 +2,9 @@
  * raises about them, and the small pure helpers that parse a machine-type id.
  * Split out of `hetzner.ts` so the adapter itself stays under the 700-line
  * warn. Nothing here performs I/O. */
+import { isNumber, isRecord, isString } from "../http.js";
+import type { MachinePrice } from "../wire.js";
+import type { ProviderMachineType } from "./types.js";
 
 export const HETZNER_USER_DATA_MAX_BYTES = 32 * 1024;
 // Current Hetzner server-type names (for example cx22, cpx31, and cax11)
@@ -21,25 +24,45 @@ export function machineId(value: string): MachineSelection {
 
 export const SERVER_TYPE_NAME_PATTERN = /^[a-z]+\d+$/u;
 export const LOCATION_NAME_PATTERN = /^[a-z0-9-]+$/u;
-// Default catalog: two cheap EU types first, then the two US-west types.
-// Gross price each month, read from /v1/pricing on 2026-08-25: cx23@hel1
-// 6.49, cx33@hel1 9.99, cpx21@hil 37.49, cpx31@hil 73.49. That account bills
-// in USD. The figures are the same numbers this comment once called euro,
-// which is how the wrong sign reached the cards.
-// cx33@hel1 gives the same 4 cpu and 8 GB as cpx31@hil. It costs about one
-// seventh as much. That is the reason for the EU entries.
-// Hetzner does not sell cpx21 or cpx31 in any EU location. It sells the cx
-// line only in hel1. A cheaper EU box needs a different type, not the same
-// type in a different region.
+// Default catalog: two cost-optimized EU sizes in each of the three EU
+// locations, then the two US-west types.
+//
+// Hetzner runs two catalogs by continent, and the split is not a preference.
+// The EU locations (fsn1, hel1, nbg1) and sin sell the cx line and the second
+// cpx generation (cpx12, cpx22, cpx32, cpx42, cpx52, cpx62). The US locations
+// (ash, hil) sell neither: they sell the first cpx generation (cpx11, cpx21,
+// cpx31, cpx41, cpx51) and nothing else shared. So a cheaper EU box needs a
+// different type, not the same type in another region.
+//
+// Gross price each month, read live on 2026-09-05, one price for all three EU
+// locations: cx23 6.49, cx33 9.99, cpx22 22.99, cpx32 41.99. cpx21@hil 10.99
+// and cpx31@hil 20.49. That account bills in USD. The figures were once
+// called euro in this comment, which is how the wrong sign reached the cards.
+//
+// The cx entries are the reason the EU rows exist: cx33 gives the same 4 cpu
+// and 8 GB as cpx32 for about a quarter of the price. Hetzner sells out of the
+// cx line often, so `hetznerCatalogWithStandIns` puts the RAM-equal cpx type
+// in the same location in its place rather than dropping the row.
+//
 // Operators override the catalog with the HETZNER_MACHINE_TYPES Worker var.
 // The catalog constrains what the create page offers; existing workspaces on
 // other types keep working because ownership stays shape-based.
 export const DEFAULT_HETZNER_MACHINE_TYPES: readonly string[] = [
+  "cx23@nbg1",
+  "cx33@nbg1",
+  "cx23@fsn1",
+  "cx33@fsn1",
   "cx23@hel1",
   "cx33@hel1",
   "cpx21@hil",
   "cpx31@hil",
 ];
+
+/** Hetzner's own name for its cheap shared line: the cx and cax types. The
+ * catalog never guesses a line from the id, because the vendor states it. */
+export const HETZNER_COST_OPTIMIZED = "cost_optimized";
+/** Hetzner's own name for its standard shared line: the cpx types. */
+export const HETZNER_REGULAR_PURPOSE = "regular_purpose";
 
 /** The stock image every Hetzner VM booted before golden images existed, and
  * the fallback whenever a configured snapshot cannot be used. */
@@ -155,3 +178,200 @@ export function hetznerServerImagesFromEnv(
   return images;
 }
 
+
+/** One server type Hetzner offers in one location, with the line it belongs
+ * to. `category` is Hetzner's own field, so nothing here reads a line out of
+ * an id. */
+export interface HetznerOffer {
+  machineType: ProviderMachineType;
+  category: string;
+}
+
+/** What the catalog needs to know about a type that has no stock anywhere:
+ * which line it belongs to, and the size a stand-in has to match. */
+export interface HetznerTypeSpec {
+  category: string;
+  cpuCores: number;
+  memGb: number;
+}
+
+/** Sorts by price, cheapest first. A type with no price sorts last: an
+ * unpriced stand-in is the one a customer can least afford to be handed. */
+function byPrice(offer: HetznerOffer): number {
+  return offer.machineType.monthlyPrice?.amount ?? Number.POSITIVE_INFINITY;
+}
+
+/**
+ * The catalog the create page sees: every allow-listed entry Hetzner has in
+ * stock, plus a stand-in for each cost-optimized entry it has sold out.
+ *
+ * WHY A STAND-IN AT ALL. An entry with no stock used to vanish from the page.
+ * On 2026-09-05 that left the whole EU offer at one machine, because Hetzner
+ * had cx33, cx43 and cx53 sold out in all three EU locations at once. A row
+ * that disappears reads as a bug; a row that costs more and says why does not.
+ *
+ * THE RULE. A stand-in matches the sold-out entry's RAM exactly and stays in
+ * the SAME location, because a volume never leaves the location it was made
+ * in. It comes from the regular line, never from the dedicated one, whose
+ * prices are another order again. Equal cpu wins over cheaper, so a stand-in
+ * is a like-for-like machine first and a cheap one second.
+ *
+ * WHAT IT NEVER DOES. It never stands in for an entry that IS in stock, so a
+ * location with cx23 on the shelf shows cx23 and no cpx22 beside it. It never
+ * adds a type the page already offers in its own right, and it never lets two
+ * sold-out entries land on the same stand-in.
+ *
+ * Prices are compared as plain numbers because one Hetzner account bills in
+ * one currency, so every offer here carries the same one.
+ */
+export function hetznerCatalogWithStandIns(
+  available: readonly HetznerOffer[],
+  specs: ReadonlyMap<string, HetznerTypeSpec>,
+  allowlist: ReadonlySet<string>,
+): ProviderMachineType[] {
+  const inStock = available.filter((offer) => allowlist.has(offer.machineType.id));
+  const taken = new Set(inStock.map((offer) => offer.machineType.id));
+  const catalog = inStock.map((offer) => offer.machineType);
+  for (const entry of allowlist) {
+    if (taken.has(entry)) continue;
+    const { type, location } = machineId(entry);
+    if (location === null) continue;
+    const soldOut = specs.get(type);
+    if (soldOut === undefined || soldOut.category !== HETZNER_COST_OPTIMIZED) continue;
+    const [standIn] = available
+      .filter((offer) =>
+        offer.category === HETZNER_REGULAR_PURPOSE
+        && offer.machineType.location === location
+        && offer.machineType.memGb === soldOut.memGb
+        && !taken.has(offer.machineType.id))
+      .sort((left, right) =>
+        Number(right.machineType.cpuCores === soldOut.cpuCores)
+          - Number(left.machineType.cpuCores === soldOut.cpuCores)
+        || byPrice(left) - byPrice(right)
+        || left.machineType.id.localeCompare(right.machineType.id));
+    if (standIn === undefined) continue;
+    taken.add(standIn.machineType.id);
+    catalog.push({ ...standIn.machineType, standsInFor: type });
+  }
+  return catalog;
+}
+
+
+/* -------------------------------- reading one Hetzner server-type payload */
+
+function records(value: unknown, field: string): Record<string, unknown>[] {
+  if (!isRecord(value) || !Array.isArray(value[field])) {
+    throw new Error(`invalid Hetzner ${field} response`);
+  }
+  return value[field].filter(isRecord);
+}
+
+function stringField(value: Record<string, unknown>, field: string): string {
+  const result = value[field];
+  if (!isString(result)) throw new Error(`invalid Hetzner ${field}`);
+  return result;
+}
+
+function numberField(value: Record<string, unknown>, field: string): number {
+  const result = value[field];
+  if (!isNumber(result)) throw new Error(`invalid Hetzner ${field}`);
+  return result;
+}
+
+/**
+ * Hetzner's own name for the line a server type belongs to: `cost_optimized`
+ * (cx, cax), `regular_purpose` (cpx) or `general_purpose` (ccx).
+ *
+ * Absent reads as unknown, and unknown is deliberately not fatal. The field
+ * decides one thing — whether a type may stand in for a sold-out one — so a
+ * vendor that stops sending it costs the stand-in, not the create page. Every
+ * other field here throws on absence because the card cannot be drawn without
+ * it; this one can.
+ */
+function categoryField(value: Record<string, unknown>): string {
+  const category = value.category;
+  return isString(category) ? category : "";
+}
+
+function isDeprecated(value: Record<string, unknown>): boolean {
+  return value.deprecated === true || isRecord(value.deprecation);
+}
+
+export { isDeprecated, numberField, records, stringField };
+
+/** What one `/server_types` page says: which offers are in stock, and what
+ * every non-deprecated type is, in stock or not. */
+export interface HetznerServerTypes {
+  available: HetznerOffer[];
+  specs: Map<string, HetznerTypeSpec>;
+}
+
+/**
+ * Turns a `/server_types` payload into the two things the catalog needs.
+ *
+ * `available` is one entry per type per location Hetzner has in stock, which
+ * is what the page could show. `specs` covers every non-deprecated type
+ * whether or not it is in stock, because the stand-in rule has to know the
+ * line and the size of a type that is sold out everywhere — and the sold-out
+ * type is exactly the one that appears in no `available` entry.
+ */
+export function hetznerOffersFromServerTypes(
+  types: readonly Record<string, unknown>[],
+  currency: string | null,
+): HetznerServerTypes {
+  const specs = new Map<string, HetznerTypeSpec>();
+  for (const type of types) {
+    if (isDeprecated(type)) continue;
+    const name = stringField(type, "name");
+    if (name === "") continue;
+    specs.set(name, {
+      category: categoryField(type),
+      cpuCores: numberField(type, "cores"),
+      memGb: numberField(type, "memory"),
+    });
+  }
+  const available = types.flatMap((type) => {
+    if (isDeprecated(type)) return [];
+    const locations = Array.isArray(type.locations)
+      ? type.locations
+          .filter(isRecord)
+          .filter((location) => location.available === true && !isDeprecated(location))
+      : [];
+    // Hetzner prices each location on its own, in one row per location.
+    const prices = Array.isArray(type.prices) ? type.prices.filter(isRecord) : [];
+    return locations.map((location) => {
+      const name = stringField(type, "name");
+      const architecture = type.architecture;
+      const locationName = stringField(location, "name");
+      // Gross is what the customer pays. Hetzner sends it as a decimal string,
+      // so it becomes a number here and the browser never parses a price.
+      // Number(" ") is 0, so a blank string must not sell a machine for
+      // nothing. A malformed row leaves the price out, because a wrong number
+      // costs the customer more than a blank card corner does. An unnamed
+      // currency does the same: an amount with the wrong sign in front of it
+      // is the defect this code exists to stop.
+      const monthly = prices.find((price) => price.location === locationName)?.price_monthly;
+      const gross = isRecord(monthly) && isString(monthly.gross) ? monthly.gross.trim() : "";
+      const amount = gross === "" ? Number.NaN : Number(gross);
+      const monthlyPrice: MachinePrice | null = currency !== null && Number.isFinite(amount)
+        ? { amount, currency }
+        : null;
+      return {
+        category: categoryField(type),
+        machineType: {
+          id: `${name}@${locationName}`,
+          name,
+          cpuCores: numberField(type, "cores"),
+          memGb: numberField(type, "memory"),
+          diskGb: numberField(type, "disk"),
+          arch: architecture === "arm" ? "arm64" : "x86",
+          location: locationName,
+          monthlyPrice,
+          // A card is a stand-in only when the rule below makes it one.
+          standsInFor: null,
+        } satisfies ProviderMachineType,
+      } satisfies HetznerOffer;
+    });
+  });
+  return { available, specs };
+}

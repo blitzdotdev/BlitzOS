@@ -15,6 +15,7 @@ function machine(over: Partial<MachineType>): MachineType {
     arch: 'x86',
     location: 'hel1',
     monthlyPrice: null,
+    standsInFor: null,
     ...over,
   };
 }
@@ -130,6 +131,46 @@ describe('machine catalog grid', () => {
     // The other cards keep their prices, so one bad code costs one label.
     expect(priceOf(view.container, 'cx23@hel1')).toBe('$6.49/mo');
     expect(priceOf(view.container, 'aws-t3.medium@us-east-1')).toBeNull();
+    await view.unmount();
+  });
+
+  it('says which sold-out entry a stand-in card replaces', async () => {
+    // Hetzner had cx33 sold out in hel1 on 2026-09-05, so the page offers
+    // cpx32 there instead. It costs four times as much, so the card must say
+    // why rather than leave the jump unexplained.
+    const standIn = machine({
+      id: 'cpx32@hel1',
+      name: 'CPX32',
+      cpuCores: 4,
+      memGb: 8,
+      diskGb: 160,
+      monthlyPrice: { amount: 41.99, currency: 'USD' },
+      standsInFor: 'cx33',
+    });
+
+    const view = await catalog([DOLLARS, standIn]);
+
+    expect(card(view.container, 'cpx32@hel1').querySelector('.blueprint-machine-standin')
+      ?.textContent).toBe('stands in for cx33, sold out in hel1');
+    // A machine offered in its own right carries no such line.
+    expect(card(view.container, 'cx23@hel1').querySelector('.blueprint-machine-standin'))
+      .toBeNull();
+    await view.unmount();
+  });
+
+  it('survives a control plane that sends no stand-in field at all', async () => {
+    // Same reason as the price field above: the control plane deploys on its
+    // own clock, so an older one answers without the key.
+    // SAFETY: parsed JSON is typed as the wire type here, exactly as the API
+    // client does it.
+    const legacy = JSON.parse(
+      JSON.stringify({ ...DOLLARS, standsInFor: undefined }),
+    ) as MachineType;
+
+    const view = await catalog([legacy]);
+
+    expect(card(view.container, 'cx23@hel1').querySelector('.blueprint-machine-standin'))
+      .toBeNull();
     await view.unmount();
   });
 });

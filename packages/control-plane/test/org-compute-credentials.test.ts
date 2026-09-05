@@ -202,6 +202,7 @@ class OfferedExternalProvider implements VmProvider {
       arch: "x86",
       location: "lab",
       monthlyPrice: null,
+      standsInFor: null,
     }];
   }
 
@@ -579,6 +580,7 @@ describe("organization compute credentials", () => {
         arch: "x86",
         location: "lab",
         monthlyPrice: null,
+        standsInFor: null,
       }],
       failures: [],
       providerStatuses: [{ providerId: "hetzner", access: "credential-required" }],

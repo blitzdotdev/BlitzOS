@@ -126,6 +126,7 @@ const machineTypes: MachineType[] = [
     arch: 'x86',
     location: 'hel1',
     monthlyPrice: { amount: 3.79, currency: 'EUR' },
+    standsInFor: null,
   },
   {
     id: 'cx32@hel1',
@@ -138,6 +139,7 @@ const machineTypes: MachineType[] = [
     arch: 'x86',
     location: 'hel1',
     monthlyPrice: { amount: 6.8, currency: 'EUR' },
+    standsInFor: null,
   },
   {
     id: 'cpx41@hil',
@@ -150,6 +152,7 @@ const machineTypes: MachineType[] = [
     arch: 'x86',
     location: 'hil',
     monthlyPrice: { amount: 25.61, currency: 'USD' },
+    standsInFor: null,
   },
   {
     id: 'cax31@fsn1',
@@ -162,6 +165,7 @@ const machineTypes: MachineType[] = [
     arch: 'arm64',
     location: 'fsn1',
     monthlyPrice: { amount: 12.49, currency: 'EUR' },
+    standsInFor: null,
   },
 ];
 

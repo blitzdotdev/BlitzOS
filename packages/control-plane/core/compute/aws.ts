@@ -470,6 +470,8 @@ export class AwsProvider implements VmProvider, VolumeProvider {
         machineType.diskGb,
         nowMs,
       ),
+      // AWS sells one line here, so no card ever replaces another.
+      standsInFor: null,
     } satisfies ProviderMachineType));
   }
 

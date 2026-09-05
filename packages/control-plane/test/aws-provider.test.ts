@@ -240,6 +240,7 @@ describe("AWS provider ownership", () => {
       // The snapshot in `aws-prices.ts` owns this figure; `test/aws-prices.test.ts`
       // owns the cases behind it.
       monthlyPrice: { amount: 36.81, currency: "USD" },
+      standsInFor: null,
     });
     expect(machineTypes.every((machineType) => machineType.arch === "x86")).toBe(true);
   });

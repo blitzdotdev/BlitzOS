@@ -42,6 +42,7 @@ class StubVmProvider implements VmProvider {
       // The stub declares a price so the aggregate proves it carries one
       // through, in the currency the provider named.
       monthlyPrice: { amount: 12.34, currency: "USD" },
+      standsInFor: null,
     }];
   }
 
@@ -128,6 +129,7 @@ describe("VM provider registry", () => {
         arch: "x86",
         location: "test",
         monthlyPrice: { amount: 12.34, currency: "USD" },
+        standsInFor: null,
       }],
       failures: [{ providerId: "secondary", error: "capacity unavailable" }],
     });

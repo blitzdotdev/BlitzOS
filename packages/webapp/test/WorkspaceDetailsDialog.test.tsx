@@ -33,6 +33,7 @@ const machineTypes: MachineType[] = [
     arch: 'x86',
     location: 'fsn1',
     monthlyPrice: null,
+    standsInFor: null,
   },
   {
     id: 'cx33@hel1',
@@ -45,6 +46,7 @@ const machineTypes: MachineType[] = [
     arch: 'x86',
     location: 'hel1',
     monthlyPrice: null,
+    standsInFor: null,
   },
 ];
 

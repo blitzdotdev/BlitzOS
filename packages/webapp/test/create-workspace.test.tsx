@@ -67,8 +67,8 @@ const orgMembers = [
 ];
 
 const machines = [
-  { id: "cx23@fsn1", providerId: "hetzner", supportsVolumes: true, name: "CX23", cpuCores: 2, memGb: 4, diskGb: 40, arch: "x86" as const, location: "fsn1", monthlyPrice: { amount: 6.49, currency: "USD" } },
-  { id: "aws-t3.medium@us-east-1", providerId: "aws", supportsVolumes: true, name: "t3.medium", cpuCores: 2, memGb: 4, diskGb: 40, arch: "x86" as const, location: "us-east-1", monthlyPrice: { amount: 36.81, currency: "USD" } },
+  { id: "cx23@fsn1", providerId: "hetzner", supportsVolumes: true, name: "CX23", cpuCores: 2, memGb: 4, diskGb: 40, arch: "x86" as const, location: "fsn1", monthlyPrice: { amount: 6.49, currency: "USD" }, standsInFor: null },
+  { id: "aws-t3.medium@us-east-1", providerId: "aws", supportsVolumes: true, name: "t3.medium", cpuCores: 2, memGb: 4, diskGb: 40, arch: "x86" as const, location: "us-east-1", monthlyPrice: { amount: 36.81, currency: "USD" }, standsInFor: null },
 ];
 
 describe("create workspace dialog", () => {
