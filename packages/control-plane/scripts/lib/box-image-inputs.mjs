@@ -37,22 +37,3 @@ export const BOX_PAYLOAD_SOURCE_INPUTS = Object.freeze([
   "vendor/lody",
   "vendor/lody-adapters",
 ]);
-
-// Build-context sources the Dockerfile ALSO copies that are not base inputs.
-// They reach a running box through the payload channel: the gateway sources
-// become the payload's `blitz-box-gateway` binary, and the Lody tree, its
-// reviewed adapter snapshots and the shared build scripts become
-// `daemon.tar.gz`. The payload version hashes those built artifacts, so a
-// change here publishes a payload and reuses the base image.
-// `test/box-image-key.test.mjs` proves every Dockerfile COPY source is a base
-// input, one of these, or a payload-owned rootfs file (`box-payload-files.mjs`).
-export const BOX_PAYLOAD_SOURCE_INPUTS = Object.freeze([
-  "packages/box/gateway",
-  "packages/schema/fixtures",
-  "scripts/lody-build-package.mjs",
-  "scripts/lody-npm-shrinkwrap.mjs",
-  "scripts/lody-package-manifest.json",
-  "scripts/lody-sync-adapters.mjs",
-  "vendor/lody",
-  "vendor/lody-adapters",
-]);
