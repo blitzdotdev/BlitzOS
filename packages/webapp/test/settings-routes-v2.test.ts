@@ -16,10 +16,10 @@ describe('settings routes', () => {
       page: 'settings',
       settingsSection: 'profile',
     });
-    expect(parseAppRoute('/settings/people')).toEqual({
+    expect(parseAppRoute('/settings/members')).toEqual({
       workspaceId: null,
       page: 'settings',
-      settingsSection: 'people',
+      settingsSection: 'members',
     });
     expect(parseAppRoute('/settings/connections')).toEqual({
       workspaceId: null,
@@ -41,7 +41,7 @@ describe('settings routes', () => {
       page: 'drive',
     });
     expect(settingsPath('profile')).toBe('/settings');
-    expect(settingsPath('people')).toBe('/settings/people');
+    expect(settingsPath('members')).toBe('/settings/members');
     expect(settingsPath('connections')).toBe('/settings/connections');
     expect(settingsPath('compute')).toBe('/settings/compute');
     expect(settingsPath('credentials')).toBe('/settings/credentials');
@@ -49,14 +49,14 @@ describe('settings routes', () => {
 
   // A settings link is pasted into chats and bookmarked, so an address for a
   // section that no longer exists resolves rather than blanks.
-  it('resolves the four retired section addresses', () => {
-    // Members and Invites were two pages of one question and are one People
-    // page now, so both land on it.
-    for (const address of ['/settings/members', '/settings/invites']) {
+  it('resolves the three retired section addresses', () => {
+    // Invites was the second half of one question and is a section of the
+    // Members page now.
+    for (const address of ['/settings/invites']) {
       expect(parseAppRoute(address), address).toEqual({
         workspaceId: null,
         page: 'settings',
-        settingsSection: 'people',
+        settingsSection: 'members',
       });
     }
     // Requests and Usage have no panel left, so they land on the index, which

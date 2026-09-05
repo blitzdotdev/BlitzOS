@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient, InviteView, MemberView } from '../src/api.js';
 import type { TenantMe } from '../src/api-adapter.js';
 import { SettingsPage } from '../src/SettingsPage.js';
-import { PeoplePanel } from '../src/settings/PeoplePanel.js';
+import { MembersPanel } from '../src/settings/MembersPanel.js';
 import { render, settle } from './dom.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -62,9 +62,9 @@ function headings(container: HTMLElement): string[] {
   return [...container.querySelectorAll('.cfg-title')].map((node) => node.textContent ?? '');
 }
 
-describe('the people panel', () => {
+describe('the members panel', () => {
   it('reveals the invite fields as the last row of the members list', async () => {
-    const view = await render(<PeoplePanel client={client()} admin orgName="Acme" onLeft={() => undefined} />);
+    const view = await render(<MembersPanel client={client()} admin orgName="Acme" onLeft={() => undefined} />);
     await settle();
 
     // The list is the surface: no form is drawn until somebody asks for one.
@@ -83,7 +83,7 @@ describe('the people panel', () => {
   });
 
   it('counts the members and hides the invites section until one is pending', async () => {
-    const empty = await render(<PeoplePanel client={client()} admin orgName="Acme" onLeft={() => undefined} />);
+    const empty = await render(<MembersPanel client={client()} admin orgName="Acme" onLeft={() => undefined} />);
     await settle();
     expect(headings(empty.container)).toEqual(['Members · 2', 'Danger zone']);
     await empty.unmount();
@@ -98,7 +98,7 @@ describe('the people panel', () => {
       ],
       ttlDays: 7,
     }));
-    const view = await render(<PeoplePanel client={client({ listInvites })} admin orgName="Acme" onLeft={() => undefined} />);
+    const view = await render(<MembersPanel client={client({ listInvites })} admin orgName="Acme" onLeft={() => undefined} />);
     await settle();
     expect(headings(view.container)).toEqual(['Members · 2', 'Pending invites · 2', 'Danger zone']);
     const rows = view.container.querySelectorAll('[aria-label="Pending invites"] .settings-person');
@@ -112,7 +112,7 @@ describe('the people panel', () => {
 
   it('gives a member the list and the danger zone, and nothing to write with', async () => {
     const listInvites = vi.fn(async () => ({ invites: [invite()], ttlDays: 7 }));
-    const view = await render(<PeoplePanel client={client({ listInvites })} admin={false} orgName="Acme" onLeft={() => undefined} />);
+    const view = await render(<MembersPanel client={client({ listInvites })} admin={false} orgName="Acme" onLeft={() => undefined} />);
     await settle();
 
     // Every write here is refused for a member, so nothing offers one.
@@ -127,7 +127,7 @@ describe('the people panel', () => {
 });
 
 describe('the settings navigation', () => {
-  function page(role: 'admin' | 'member', section: 'people' | 'profile') {
+  function page(role: 'admin' | 'member', section: 'members' | 'profile') {
     return (
       <SettingsPage
         client={client()}
@@ -147,13 +147,13 @@ describe('the settings navigation', () => {
       .map((node) => node.textContent ?? '');
   }
 
-  it('carries five entries for an admin and mounts People on the people address', async () => {
-    const view = await render(page('admin', 'people'));
+  it('carries five entries for an admin and mounts Members on the members address', async () => {
+    const view = await render(page('admin', 'members'));
     await settle();
     expect(labels(view.container)).toEqual([
-      'Profile', 'People', 'Connections', 'Credentials', 'Compute',
+      'Profile', 'Members', 'Connections', 'Credentials', 'Compute',
     ]);
-    expect(view.container.querySelector('[aria-label="People"]')).not.toBeNull();
+    expect(view.container.querySelector('[aria-label="Members"]')).not.toBeNull();
     // The four sections this page absorbed or retired name nothing here.
     for (const gone of ['Members', 'Invites', 'Requests', 'Usage']) {
       expect(labels(view.container)).not.toContain(gone);
@@ -161,10 +161,10 @@ describe('the settings navigation', () => {
     await view.unmount();
   });
 
-  it('drops Compute for a member and keeps People', async () => {
+  it('drops Compute for a member and keeps Members', async () => {
     const view = await render(page('member', 'profile'));
     await settle();
-    expect(labels(view.container)).toEqual(['Profile', 'People', 'Connections', 'Credentials']);
+    expect(labels(view.container)).toEqual(['Profile', 'Members', 'Connections', 'Credentials']);
     await view.unmount();
   });
 });

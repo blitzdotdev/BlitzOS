@@ -5,7 +5,7 @@ import { appliedTheme, chooseTheme, type ThemeChoice } from './theme';
 import type { SettingsSection } from './sessions-page-state';
 import { ConnectionsPanel } from './settings/ConnectionsPanel';
 import { OrgCredentialsPanel } from './settings/OrgCredentialsPanel';
-import { PeoplePanel } from './settings/PeoplePanel';
+import { MembersPanel } from './settings/MembersPanel';
 import { ComputeCredentialsPanel } from './settings/ComputeCredentialsPanel';
 import { PanelHeader } from './settings/primitives';
 
@@ -227,12 +227,12 @@ export function SettingsPage({
   onCreateOrg: () => void;
 }) {
   // Five entries, and Members and Invites are one of them: they were two
-  // pages of one question (see PeoplePanel). Requests moved to the popup an
+  // pages of one question (see MembersPanel). Requests moved to the popup an
   // agent's ask raises, and the usage-capture routes kept their server side
   // and lost their tab.
   const sections: Array<{ id: SettingsSection; label: string }> = [
     { id: 'profile', label: 'Profile' },
-    { id: 'people', label: 'People' },
+    { id: 'members', label: 'Members' },
     { id: 'connections', label: 'Connections' },
     // Org credentials (plans/ORG-CREDENTIALS.md §9): any active member may
     // store one, so the tab is not admin-gated.
@@ -280,8 +280,8 @@ export function SettingsPage({
             onCreateOrg={onCreateOrg}
           />
         )}
-        {section === 'people' && (
-          <PeoplePanel
+        {section === 'members' && (
+          <MembersPanel
             client={client}
             admin={viewer.membership.role === 'admin'}
             orgName={viewer.org.name || viewer.org.slug}

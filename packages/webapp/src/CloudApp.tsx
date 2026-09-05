@@ -37,8 +37,7 @@ import { PasteCodeModal } from './shell/PasteCodeModal';
 import { ShellDialogs, type WebAppConfirmation } from './shell/ShellDialogs';
 import { AccessApprovalDialog } from './AccessApprovalDialog';
 import { useAccessProposals } from './use-access-proposals';
-import { publishConnectionsFocus } from './connections-focus-target';
-import type { WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
+import type { ConnectionsFocus, WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
 import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { NewTabControl } from './shell/NewTabControl';
@@ -199,7 +198,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
    * blank create. Cleared with the dialog. */
   const [cloneFromWorkspaceId, setCloneFromWorkspaceId] = useState<string | null>(null);
   const [details, setDetails] = useState<
-    { workspaceId: string; tab: WorkspaceDetailsTab; focusAddMember?: boolean } | null
+    {
+      workspaceId: string;
+      tab: WorkspaceDetailsTab;
+      focusAddMember?: boolean;
+      focusProvider?: ConnectionsFocus;
+    } | null
   >(null);
   const [machineWorkspaceId, setMachineWorkspaceId] = useState<string | null>(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
@@ -438,15 +442,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     activeFilesBase,
     (focus) => {
       // The marker's own `requestedAt`, not `Date.now()`: the row re-highlights
-      // on a fresh version, and a focus replayed from the box must carry the
-      // time the box raised it. Published before the dialog opens, because the
-      // tab reads the retained target when it mounts.
-      publishConnectionsFocus({
+      // on a fresh ask, and a focus replayed from the box must carry the time
+      // the box raised it. It rides the dialog's own state beside `tab` and
+      // `focusAddMember`, which is where "open this dialog pointed at a thing"
+      // already lives.
+      setDetails({
         workspaceId: activeWorkspaceId,
-        provider: focus.provider,
-        version: focus.requestedAt,
+        tab: 'connections',
+        focusProvider: { provider: focus.provider, at: focus.requestedAt },
       });
-      setDetails({ workspaceId: activeWorkspaceId, tab: 'connections' });
     },
   );
 
@@ -1450,9 +1454,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         activeFilesBase={activeFilesBase}
         pendingRequests={activePendingRequests}
         pendingRequestsError={pendingRequestsError}
-        // The focus opens the details dialog, not a pane; a legacy panel tab
-        // that survived in a persisted layout draws its rows unpointed.
-        connectionsFocus={null}
         onResolveRequest={resolveWorkspaceRequest}
         onSignInUrl={setTerminalSignInUrl}
         onOpenPreview={openPreviewPort}
@@ -1896,9 +1897,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               previewLinks={orderedPreviewLinks}
               pendingRequests={activePendingRequests}
               pendingRequestsError={pendingRequestsError}
-              // The focus opens the details dialog; a legacy panel tab in a
-              // persisted layout draws its rows unpointed.
-              connectionsFocus={null}
               onOpenDrawer={() => setDrawerOpen(true)}
               onOpenPreview={openPreviewPort}
               onOpenPreviewLink={openPreviewLink}

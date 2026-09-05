@@ -9,6 +9,7 @@ import {
 } from '../CreateWorkspaceDialog';
 import {
   WorkspaceDetailsDialog,
+  type ConnectionsFocus,
   type WorkspaceDetailsTab,
 } from '../WorkspaceDetailsDialog';
 import { MyMachineDialog } from '../MyMachineDialog';
@@ -47,6 +48,9 @@ export type ShellDialogsProps = {
     workspaceId: string;
     tab: WorkspaceDetailsTab;
     focusAddMember?: boolean;
+    /** Set when a `connections-focus` marker opened the dialog: the Connections
+     * tab points at that provider's row. */
+    focusProvider?: ConnectionsFocus;
   } | null;
   onCloseDetails: () => void;
   /** The workspace whose "My machine" panel is open, or null. */
@@ -129,6 +133,7 @@ export function ShellDialogs({
           refreshWorkspaces={refreshWorkspaces}
           initialTab={details.tab}
           focusAddMember={details.focusAddMember ?? false}
+          focusProvider={details.focusProvider ?? null}
           viewerMembershipId={viewer?.membership.id ?? null}
           orgName={viewer?.org.name || viewer?.org.slug || 'the organization'}
           orgWorkspaces={workspaces.map(({ id, title }) => ({ id, name: title }))}

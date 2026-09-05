@@ -3,7 +3,6 @@ import type { ControlPlaneClient } from './api';
 import type { WorkspaceDrawerSegment } from './storage';
 import {
   WorkspaceConnectionsPanel,
-  type ConnectionsPanelFocus,
 } from './WorkspaceConnectionsPanel';
 
 /* THE OFF-CANVAS SHEET IS GONE. `WorkspaceDrawer` hosted one segment,
@@ -21,7 +20,6 @@ export {
   WorkspaceConnectionsPanel,
   WorkspaceEventsPanel,
   WorkspaceRequestsPanel,
-  type ConnectionsPanelFocus,
   type WorkspaceEventFeed,
 } from './WorkspaceConnectionsPanel';
 
@@ -33,7 +31,6 @@ export type WorkspacePanelProps = {
   pendingRequestsError?: string | null;
   /** Provider names this workspace's allow-list holds. */
   workspaceConnections?: readonly string[];
-  connectionsFocus?: ConnectionsPanelFocus | null;
   /** Workspace sharing, not an org role: a viewer sees the panel but cannot
    * connect or disconnect on this workspace's behalf. */
   readOnly?: boolean;
@@ -53,7 +50,6 @@ export function WorkspacePanelContent({
   pendingRequests,
   pendingRequestsError,
   workspaceConnections,
-  connectionsFocus,
   readOnly,
   onResolveRequest,
 }: WorkspacePanelProps & { panel: WorkspaceDrawerSegment }) {
@@ -65,7 +61,6 @@ export function WorkspacePanelContent({
       pendingRequests={pendingRequests}
       pendingRequestsError={pendingRequestsError}
       workspaceConnections={workspaceConnections}
-      connectionsFocus={connectionsFocus}
       onResolveRequest={onResolveRequest}
     />
   );

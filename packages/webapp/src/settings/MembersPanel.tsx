@@ -35,7 +35,7 @@ function expiry(invite: InviteView, now: number): string {
 }
 
 /**
- * People: the members of the organization, and the invites that are on their
+ * Members: the people of the organization, and the invites that are on their
  * way to becoming members.
  *
  * ONE PAGE, BECAUSE IT WAS ALWAYS ONE QUESTION. Members and Invites were two
@@ -58,7 +58,7 @@ function expiry(invite: InviteView, now: number): string {
  * by the server for a member, so nothing offers one: no invite row, no pending
  * invites, no seat action.
  */
-export function PeoplePanel({
+export function MembersPanel({
   client,
   admin,
   orgName,
@@ -133,10 +133,10 @@ export function PeoplePanel({
   };
 
   return (
-    <section className="settings-panel" role="tabpanel" aria-label="People">
+    <section className="settings-panel" role="tabpanel" aria-label="Members">
       <PanelHeader
         eyebrow="Organization"
-        title="People"
+        title="Members"
         action={seatLimit !== null ? (
           <button
             className={`webapp-action${full ? ' webapp-action--primary' : ''}`}

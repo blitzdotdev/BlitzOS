@@ -330,13 +330,13 @@ function Gallery() {
       <GalleryHeader />
       <Section
         title="Settings page (admin)"
-        caption="All five panels behind a live left rail: Profile, People, Connections, Credentials, Compute."
+        caption="All five panels behind a live left rail: Profile, Members, Connections, Credentials, Compute."
       >
         <SettingsFrame viewer={adminViewer} />
       </Section>
       <Section
         title="Settings page (member view)"
-        caption="The same page as a non-admin: Compute disappears, and People keeps the list and the danger zone with no invite row."
+        caption="The same page as a non-admin: Compute disappears, and Members keeps the list and the danger zone with no invite row."
       >
         <SettingsFrame viewer={memberViewer} />
       </Section>

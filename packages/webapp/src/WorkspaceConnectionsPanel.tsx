@@ -18,7 +18,6 @@ export function portAge(firstSeenAt: number, now = Date.now()): string {
 /** An in-box agent asked for this panel by provider, via
  * `blitz connections open`. A fresh object arrives per focus event, so the
  * panel re-selects even when the same provider is asked for twice. */
-export type ConnectionsPanelFocus = { provider: string; at: number };
 
 /** Every card in this panel wears the same stamp: `Aug 27, 14:02`. A wanted
  * card and a log card used to print a full `toLocaleString`, which wrapped in a
@@ -181,7 +180,6 @@ export function WorkspaceConnectionsPanel({
   pendingRequests,
   pendingRequestsError,
   workspaceConnections,
-  connectionsFocus,
   onResolveRequest,
 }: {
   client: ControlPlaneClient;
@@ -193,7 +191,6 @@ export function WorkspaceConnectionsPanel({
    * may pull exactly these, and nothing else. */
   workspaceConnections?: readonly string[];
   /** The latest `blitz connections open` focus: opens that provider's row. */
-  connectionsFocus?: ConnectionsPanelFocus | null;
   onResolveRequest: (
     request: CredentialRequestView,
     action: 'approve' | 'deny',
@@ -201,17 +198,13 @@ export function WorkspaceConnectionsPanel({
 }) {
   const [connected, noteConnected] = useConnectedProviders(workspaceConnections ?? []);
   // Which provider row to open, and a version so asking twice for the same
-  // one re-opens a row the person closed. Two things ask: an agent's
-  // `blitz connections open`, and Connect on a request in the inbox.
+  // one re-opens a row the person closed. One thing asks now — Connect on a
+  // request in the inbox. `blitz connections open` used to be the second, and
+  // it lands on the workspace-details Connections tab instead.
   const [opened, setOpened] = useState<{ name: string; version: number } | null>(null);
   const ask = useCallback((name: string) => {
     setOpened((current) => ({ name, version: (current?.version ?? 0) + 1 }));
   }, []);
-  useEffect(() => {
-    if (connectionsFocus == null) return;
-    ask(connectionsFocus.provider);
-  }, [ask, connectionsFocus]);
-
   /** A provider just became usable here. The inbox entry that asked for it is
    * the same question, so answering one answers the other. Nothing is pushed
    * at the box: the next token ask reads the allow-list this write just

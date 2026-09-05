@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
 import { WorkspaceConnectionsPanel } from '../src/WorkspaceDrawer.js';
 import { buildRows } from '../src/connections/WorkspaceProviderRows.js';
-import { PeoplePanel } from '../src/settings/PeoplePanel.js';
+import { MembersPanel } from '../src/settings/MembersPanel.js';
 import { render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -232,7 +232,7 @@ describe('v2 credential surfaces', () => {
       code: 'one-time-code',
       ttlDays: 7,
     }));
-    const view = await render(<PeoplePanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
+    const view = await render(<MembersPanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
     // The fields are the last row of the members card, revealed by the `+`.
     await act(async () => {

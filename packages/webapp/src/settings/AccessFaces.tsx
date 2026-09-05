@@ -33,6 +33,10 @@ export function accessFaceInitials(label: string): string {
 
 function faceTint(label: string): string {
   let sum = 0;
+  // Both `??`s are the compiler's, not a guard: `codePointAt` is typed
+  // `number | undefined`, and `noUncheckedIndexedAccess` gives a computed
+  // tuple index the same shape. A literal index does not need one, which is
+  // why the fallback is `[0]`.
   for (const character of label) sum += character.codePointAt(0) ?? 0;
   return FACE_TINTS[sum % FACE_TINTS.length] ?? FACE_TINTS[0];
 }

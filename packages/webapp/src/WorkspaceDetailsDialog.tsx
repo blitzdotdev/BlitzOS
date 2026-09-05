@@ -25,6 +25,11 @@ import type { CloudWorkspaceModel } from './workspace-store';
  * and the settings. */
 export type WorkspaceDetailsTab = 'members' | 'connections' | 'credentials' | 'settings';
 
+/** Which provider row `blitz connections open <provider>` pointed at, and when
+ * the box raised it — `at` is the marker's own `requestedAt`, so the same
+ * provider asked for twice re-points the row. */
+export type ConnectionsFocus = { provider: string; at: number };
+
 const TAB_LABELS = {
   members: 'Members',
   connections: 'Connections',
@@ -83,6 +88,7 @@ export function WorkspaceDetailsDialog({
   refreshWorkspaces,
   initialTab = 'members',
   focusAddMember = false,
+  focusProvider = null,
   viewerMembershipId = null,
   orgName = 'the organization',
   orgWorkspaces = [],
@@ -93,6 +99,9 @@ export function WorkspaceDetailsDialog({
   client: ControlPlaneClient;
   workspace: CloudWorkspaceModel;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  /** The provider the box pointed at, when the dialog was opened by a
+   * `connections-focus` marker rather than by a click. */
+  focusProvider?: ConnectionsFocus | null;
   /** The signed-in member, so the Credentials tab can tell their own
    * own membership from the rest. */
   viewerMembershipId?: string | null;
@@ -291,6 +300,7 @@ export function WorkspaceDetailsDialog({
               workspaceId={workspaceId}
               connections={workspace.connections}
               readOnly={workspace.accessRole === 'viewer'}
+              focusProvider={focusProvider}
               onChanged={refreshWorkspaces}
             />
           )}

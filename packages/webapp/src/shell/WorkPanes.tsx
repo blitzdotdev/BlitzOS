@@ -14,7 +14,6 @@ import { PaneChrome } from './PaneChrome';
 import type { LivePort, PreviewLink } from '../preview';
 import type { WorkspaceRegion, WorkspaceTab } from '../storage';
 import type { CloudWorkspaceModel } from '../workspace-store';
-import type { ConnectionsPanelFocus } from '../WorkspaceDrawer';
 
 export type WorkPanesProps = {
   client: ControlPlaneClient;
@@ -42,7 +41,6 @@ export type WorkPanesProps = {
   previewLinks: PreviewLink[];
   pendingRequests: CredentialRequestView[];
   pendingRequestsError: string | null;
-  connectionsFocus: ConnectionsPanelFocus | null;
   onOpenDrawer: () => void;
   onOpenPreview: (port: number, path?: string) => boolean;
   onOpenPreviewLink: (url: string, title: string) => boolean;
@@ -94,7 +92,6 @@ export function WorkPanes({
   previewLinks,
   pendingRequests,
   pendingRequestsError,
-  connectionsFocus,
   onOpenDrawer,
   onOpenPreview,
   onOpenPreviewLink,
@@ -150,7 +147,6 @@ export function WorkPanes({
               activeFilesBase={activeFilesBase}
               pendingRequests={pendingRequests}
               pendingRequestsError={pendingRequestsError}
-              connectionsFocus={connectionsFocus}
               onResolveRequest={onResolveRequest}
               onSignInUrl={onSignInUrl}
               onOpenPreview={onOpenPreview}

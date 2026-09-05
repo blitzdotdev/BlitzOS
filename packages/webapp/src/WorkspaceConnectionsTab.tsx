@@ -1,12 +1,12 @@
 import type { CatalogEntryView, UserGrantView } from '@blitzos/schema';
 import { useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from './api';
-import { useConnectionsFocusTarget } from './connections-focus-target';
 import { connectMethod } from './connections/connect-method';
 import { ProviderGlyph } from './connections/ProviderGlyph';
 import { useConnectedProviders } from './connections/use-connected-providers';
 import { buildRows, type ProviderRow } from './connections/WorkspaceProviderRows';
 import { caughtErrorMessage } from './error-message';
+import type { ConnectionsFocus } from './WorkspaceDetailsDialog';
 import { settingsPath } from './sessions-page-state';
 
 export type ConnectionsTabClient = Pick<
@@ -101,6 +101,7 @@ export function WorkspaceConnectionsTab({
   workspaceId,
   connections,
   readOnly,
+  focusProvider = null,
   onChanged,
 }: {
   client: ConnectionsTabClient;
@@ -110,6 +111,9 @@ export function WorkspaceConnectionsTab({
   /** Workspace sharing, not an org role: a viewer reads the rows and throws
    * nothing. */
   readOnly?: boolean;
+  /** The provider the box pointed at, when a `connections-focus` marker opened
+   * this dialog. A fresh `at` re-points the row for the same provider. */
+  focusProvider?: ConnectionsFocus | null;
   /** A settled write; the host runs the workspace poll so the allow-list this
    * tab draws from catches up with what the server holds. */
   onChanged?: () => void;
@@ -120,9 +124,6 @@ export function WorkspaceConnectionsTab({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [connected, noteConnected] = useConnectedProviders(connections);
-  // Where the box last pointed. It arrives out of band because the dialog's
-  // host carries no per-tab props — see `connections-focus-target.ts`.
-  const focus = useConnectionsFocusTarget(workspaceId);
   const focused = useRef<HTMLLabelElement>(null);
 
   useEffect(() => {
@@ -152,9 +153,9 @@ export function WorkspaceConnectionsTab({
   // tab; bringing its row into view is what makes the marker land on the
   // provider rather than on the list. A fresh version scrolls again.
   useEffect(() => {
-    if (focus === null) return;
+    if (focusProvider === null) return;
     focused.current?.scrollIntoView({ block: 'nearest' });
-  }, [focus, loading]);
+  }, [focusProvider, loading]);
 
   const toggle = async (row: ProviderRow, next: boolean) => {
     if (busy !== null) return;
@@ -192,7 +193,7 @@ export function WorkspaceConnectionsTab({
           <div className="workspace-connection-rows">
             {rows.map((row) => {
               const state = rowState(row);
-              const isFocused = focus?.provider === row.name;
+              const isFocused = focusProvider?.provider === row.name;
               return (
                 <label
                   className={`settings-switch-row settings-switch-row--flush${

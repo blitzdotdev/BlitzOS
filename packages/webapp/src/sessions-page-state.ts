@@ -1,17 +1,17 @@
 export type SettingsSection =
   | 'profile'
-  | 'people'
+  | 'members'
   | 'connections'
   | 'credentials'
   | 'compute';
 
 /**
- * The section an address names, including the four spellings this surface no
+ * The section an address names, including the three spellings this surface no
  * longer has. A settings link is pasted into chats and bookmarked, so a
  * retired one resolves rather than blanks:
  *
- * - `members` and `invites` were two pages of one question and are one People
- *   page (`settings/PeoplePanel.tsx`).
+ * - `invites` was the second half of one question and is a section of the
+ *   Members page (`settings/MembersPanel.tsx`).
  * - `requests` and `usage` have no panel left — an agent's ask raises a popup,
  *   and usage capture kept its routes and lost its tab — so they land on the
  *   index, which is where an unknown address already lands.
@@ -19,14 +19,13 @@ export type SettingsSection =
  */
 function settingsSection(segment: string | undefined): SettingsSection {
   switch (segment) {
-    case 'people':
+    case 'members':
     case 'connections':
     case 'credentials':
     case 'compute':
       return segment;
-    case 'members':
     case 'invites':
-      return 'people';
+      return 'members';
     case 'integrations':
       return 'connections';
     default:
@@ -136,7 +135,7 @@ export type AppRoute =
 const HOME: AppRoute = { workspaceId: null, page: 'drive' };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|people|members|invites|connections|integrations|credentials|compute|requests|usage))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|credentials|compute|requests|usage))?\/?$/u);
   if (settings) {
     return {
       workspaceId: null,

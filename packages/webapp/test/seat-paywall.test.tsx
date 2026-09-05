@@ -2,7 +2,7 @@ import type { OrgUsageResponse } from '@blitzos/schema';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { ApiRequestError, type ControlPlaneClient } from '../src/api.js';
-import { PeoplePanel } from '../src/settings/PeoplePanel.js';
+import { MembersPanel } from '../src/settings/MembersPanel.js';
 import { render, settle } from './dom.js';
 
 /** Only what this panel calls. The panel takes the whole client, but a stub
@@ -45,7 +45,7 @@ async function invite(container: HTMLElement): Promise<void> {
 
 describe('the seat paywall', () => {
   it('shows no seat counter where no billing service is attached', async () => {
-    const view = await render(<PeoplePanel client={client()} admin orgName="Example" onLeft={() => undefined} />);
+    const view = await render(<MembersPanel client={client()} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
     expect(view.container.querySelector('.settings-seats')).toBeNull();
     // No cap, nothing to manage: the header carries no action either.
@@ -54,7 +54,7 @@ describe('the seat paywall', () => {
   });
 
   it('counts the seats in use against the cap', async () => {
-    const view = await render(<PeoplePanel client={client({
+    const view = await render(<MembersPanel client={client({
       orgUsage: vi.fn(async () => ({ seatsUsed: 2, seatLimit: 3, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
@@ -69,7 +69,7 @@ describe('the seat paywall', () => {
 
   it('keeps the same control when the seats are full', async () => {
     const billing = vi.fn(async () => ({ url: 'https://billing.example/checkout#token=abc' }));
-    const view = await render(<PeoplePanel client={client({
+    const view = await render(<MembersPanel client={client({
       billing,
       orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: 1, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     })} admin orgName="Example" onLeft={() => undefined} />);
@@ -84,7 +84,7 @@ describe('the seat paywall', () => {
 
   it('leaves the seat meter and its action to admins', async () => {
     const orgUsage = vi.fn(async () => ({ seatsUsed: 2, seatLimit: 3, vmsUsed: 0, vmLimit: 10, platformCompute: false }));
-    const view = await render(<PeoplePanel client={client({ orgUsage })} admin={false} orgName="Example" onLeft={() => undefined} />);
+    const view = await render(<MembersPanel client={client({ orgUsage })} admin={false} orgName="Example" onLeft={() => undefined} />);
     await settle();
     // A member cannot buy a seat, so the panel does not ask what the cap is.
     expect(orgUsage).not.toHaveBeenCalled();
@@ -102,7 +102,7 @@ describe('the seat paywall', () => {
         'https://billing.example/checkout#token=abc',
       );
     });
-    const view = await render(<PeoplePanel client={client({
+    const view = await render(<MembersPanel client={client({
       createInvite,
       orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: 1, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     })} admin orgName="Example" onLeft={() => undefined} />);
@@ -125,7 +125,7 @@ describe('the seat paywall', () => {
     const createInvite = vi.fn(async () => {
       throw new ApiRequestError('organization admin required', 403, null);
     });
-    const view = await render(<PeoplePanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
+    const view = await render(<MembersPanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
     await invite(view.container);
 
