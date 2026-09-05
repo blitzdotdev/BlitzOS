@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -32,6 +35,32 @@ describe("thin-image payload lab dry runs", () => {
     );
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toContain("DRY session-driver cancel session-1 on <workspace:workspace-1>");
+  });
+
+  it("reads a quoted image pin from the deployment config once", () => {
+    const root = mkdtempSync(join(tmpdir(), "payload-lab-config-"));
+    try {
+      mkdirSync(join(root, "packages/control-plane"), { recursive: true });
+      writeFileSync(
+        join(root, "packages/control-plane/wrangler.toml"),
+        'BOX_IMAGE_REF = "https://control-plane.example/box-image/thin-7/manifest.json"\n',
+      );
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          'source "$1"; PAYLOAD_LAB_REPO=$2; _wrangler_string_var BOX_IMAGE_REF',
+          "payload-lab",
+          `${labDirectory}/lib.sh`,
+          root,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("https://control-plane.example/box-image/thin-7/manifest.json\n");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   for (let experiment = 1; experiment <= 16; experiment += 1) {

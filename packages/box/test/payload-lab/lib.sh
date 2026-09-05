@@ -753,7 +753,7 @@ _wrangler_string_var() {
   value=${line#*=}
   value=${value#"${value%%[![:space:]]*}"}
   value=${value%"${value##*[![:space:]]}"}
-  printf '%s' "$value" | jq -er 'fromjson | strings'
+  printf '%s' "$value" | jq -er 'strings'
 }
 
 gateway_health_code() {
