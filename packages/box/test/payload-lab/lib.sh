@@ -556,6 +556,13 @@ daemon_pid() {
     'curl --silent --fail --max-time 3 --unix-socket /var/lib/blitz/lody/run/lody-oss-probe.sock http://localhost/state | jq -er .pid'
 }
 
+# runit's supervise directory is root-only on the live image. The gateway
+# process itself is visible to the unprivileged workspace user, and its exact
+# argv distinguishes it from s6-supervise and this harness's SSH commands.
+gateway_pid() {
+  box_ssh "$1" "pgrep -fo '^/usr/local/bin/blitz-box-gateway$'"
+}
+
 session_catalog() {
   box_ssh "$1" \
     'jq -r '\''.sessions[]?.sessionId'\'' /var/lib/blitz/lody/workspace-catalog.json | sort'

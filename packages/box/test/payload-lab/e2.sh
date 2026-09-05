@@ -28,7 +28,7 @@ create_test_terminal "$WORKSPACE_ID"
 before_tmux=$(tmux_session_identity "$WORKSPACE_ID" "$LAB_TEST_TERMINAL_SESSION") \
   || experiment_fail "the E2 tmux precondition is not running"
 before_daemon=$(daemon_pid "$WORKSPACE_ID")
-before_gateway=$(box_ssh "$WORKSPACE_ID" 'cat /run/service/gateway/supervise/pid') \
+before_gateway=$(gateway_pid "$WORKSPACE_ID") \
   || experiment_fail "gateway pid was unavailable before the update"
 wait_local_gateway_health "$WORKSPACE_ID" 10 \
   || experiment_fail "the local gateway did not answer before the update"
@@ -46,7 +46,7 @@ stop_health_poll "$HEALTH_POLL_PID"
 
 gap=$(health_gap_ms "$health_log")
 [ "$gap" -lt 10000 ] || experiment_fail "gateway reconnect gap was ${gap}ms (limit 9999ms)"
-after_gateway=$(box_ssh "$WORKSPACE_ID" 'cat /run/service/gateway/supervise/pid') \
+after_gateway=$(gateway_pid "$WORKSPACE_ID") \
   || experiment_fail "gateway pid was unavailable after the update"
 [ "$after_gateway" != "$before_gateway" ] \
   || experiment_fail "gateway service did not restart for its changed binary"
