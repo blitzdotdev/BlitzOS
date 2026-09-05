@@ -7,7 +7,7 @@ Founder constraints (ratified 2026-08-11):
 - just install the broker via docker pull, define control plane base urls, and setup broker CLI thats it
 
 Carve 2026-08-11. Full report: session scratchpad `codex-broker-carve.txt`.
-Registry half: `packages/oss/control-plane/TODO.md`. The daemon is OPEN.
+Registry half: `packages/control-plane/RECORD.md`. The daemon is OPEN.
 Inventory: 32 files, ~5.2k LOC → 24 open, 7 closed, 1 deleted.
 No open questions remain. All were decided 2026-08-11 (see Decided).
 
@@ -92,7 +92,7 @@ No ceiling (founder, 2026-08-11). Do not control key lifecycle.
 - The config file exists only to hold the box credential. Secrets never go in
   argv or env (env shows in `docker inspect`). The CLI writes the file. Nobody
   hand-writes it.
-- The enrollment API lives in core (`packages/oss/control-plane/TODO.md`).
+- The enrollment API lives in core (`packages/control-plane/RECORD.md`).
 - The daemon advertises exactly what the image installs: Claude Code + Codex.
 
 ## The CLI: two binaries, one Go module

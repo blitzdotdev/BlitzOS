@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  boxFeaturesFromEnv,
   boxPayloadConfigFromEnv,
   controlPlaneOriginFromEnv,
 } from "../core/box-config.js";
@@ -106,6 +107,8 @@ describe("box-config control-plane conformance", () => {
       "config-payload-not-object.json",
       "config-payload-version-unsafe.json",
       "config-valid-extra-key.json",
+      "config-valid-features-off.json",
+      "config-valid-features-on.json",
       "config-valid-minimal.json",
       "config-valid-payload.json",
       "config-valid-tarball-ref.json",
@@ -142,6 +145,7 @@ describe("box-config control-plane conformance", () => {
       controlPlaneOrigin: "https://cp.example",
       updateRequested: false,
       payload: null,
+      features: { lodySessions: false },
     });
     // The server always emits the additive payload key. The old host parser's
     // tolerance is pinned by the payload fixture on the Python side.
@@ -149,6 +153,26 @@ describe("box-config control-plane conformance", () => {
       .find(([name]) => name === "config-valid-payload.json")?.[1];
     if (payloadFixture === undefined) throw new Error("missing payload box-config fixture");
     expect(Object.keys(body).sort()).toEqual(Object.keys(payloadFixture.response).sort());
+  });
+
+  it("projects the Lody feature from the exact deployment switch", async () => {
+    expect(boxFeaturesFromEnv("1")).toEqual({ lodySessions: true });
+    expect(boxFeaturesFromEnv("0")).toEqual({ lodySessions: false });
+    expect(boxFeaturesFromEnv("true")).toEqual({ lodySessions: false });
+    expect(boxFeaturesFromEnv(undefined)).toEqual({ lodySessions: false });
+
+    const h = harness();
+    const cookie = await operatorSession();
+    const { box } = await readyWorkspaceBox(h, cookie);
+    const response = await appRequest(
+      h.app,
+      "/workspaces/self/box-config",
+      { headers: boxHeaders(box) },
+      { BOX_LODY_SESSIONS: "1" },
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json<BoxConfigResponse>()).features)
+      .toEqual({ lodySessions: true });
   });
 
   it("projects the deployment payload pin without fetching its manifest", async () => {

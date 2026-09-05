@@ -199,12 +199,18 @@ test("a missing input at the requested revision is a hard error", async () => {
   );
 });
 
-test("payload and daemon-only commits keep the base image release id", async () => {
+test("payload, box configuration, daemon, and env.defaults keep the base image release id", async () => {
   const repository = createInputRepository();
   const before = boxImageReleaseId(await readBoxImageInputIds({ repo: repository }));
   for (const [relativePath, contents] of [
     ["packages/box/rootfs/usr/local/bin/blitz", "payload edit\n"],
     ["packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run", "payload run edit\n"],
+    ["packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/type", "longrun\n"],
+    ["packages/box/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/new-service", ""],
+    ["packages/box/rootfs/etc/blitz/sshd_config", "payload sshd config\n"],
+    ["packages/box/rootfs/etc/gitconfig", "payload git config\n"],
+    ["packages/box/rootfs/etc/profile.d/blitz-npm.sh", "payload profile\n"],
+    ["packages/box/rootfs/etc/tmux.conf", "payload tmux config\n"],
     ["packages/box/gateway/main.go", "gateway edit\n"],
     ["vendor/lody/UPSTREAM.md", "daemon edit\n"],
     ["vendor/lody-adapters/core/package.json", "adapter edit\n"],
@@ -219,10 +225,10 @@ test("payload and daemon-only commits keep the base image release id", async () 
 
   assert.equal(boxImageReleaseId(await readBoxImageInputIds({ repo: repository })), before);
 
-  writeFileSync(path.join(repository, "env.defaults"), "changed base defaults\n");
+  writeFileSync(path.join(repository, "env.defaults"), "changed non-box defaults\n");
   git(repository, ["add", "."]);
-  git(repository, ["commit", "-qm", "base defaults change"]);
-  assert.notEqual(boxImageReleaseId(await readBoxImageInputIds({ repo: repository })), before);
+  git(repository, ["commit", "-qm", "documented defaults change"]);
+  assert.equal(boxImageReleaseId(await readBoxImageInputIds({ repo: repository })), before);
 });
 
 test("CLI prints the contracted JSON and mirrors it to --json", () => {

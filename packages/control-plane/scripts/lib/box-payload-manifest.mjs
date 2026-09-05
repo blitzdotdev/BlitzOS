@@ -61,13 +61,16 @@ function archive(value, label) {
   positiveBytes(object.bytes, `${label}.bytes`);
 }
 
-export function validateBoxPayloadManifest(value, knownServices) {
+export function validateBoxPayloadManifest(value) {
   const manifest = record(value, "box-payload manifest");
+  const requiredFields = manifest.daemon === undefined
+    ? ["version", "createdAt", "minUpdater", "files", "archive", "restart"]
+    : ["version", "createdAt", "minUpdater", "files", "archive", "daemon", "restart"];
   keysExactly(
     manifest,
-    manifest.daemon === undefined
-      ? ["version", "createdAt", "minUpdater", "files", "archive", "restart"]
-      : ["version", "createdAt", "minUpdater", "files", "archive", "daemon", "restart"],
+    manifest.directories === undefined
+      ? requiredFields
+      : [...requiredFields, "directories"],
     "box-payload manifest",
   );
   version(manifest.version, "version");
@@ -97,6 +100,25 @@ export function validateBoxPayloadManifest(value, knownServices) {
       throw new Error(`files[${index}].mode is invalid`);
     }
   }
+  const directories = manifest.directories === undefined ? [] : manifest.directories;
+  if (!Array.isArray(directories)) throw new Error("directories must be an array");
+  const directoryPaths = new Set();
+  for (const [index, directory] of directories.entries()) {
+    if (
+      String(directory) !== directory
+      || !PAYLOAD_PATH_PATTERN.test(directory)
+      || directory.split("/").some((segment) => segment === "." || segment === "..")
+    ) {
+      throw new Error(`directories[${index}] is invalid`);
+    }
+    if (payloadPaths.has(directory)) {
+      throw new Error(`directories[${index}] also names a payload file`);
+    }
+    if (directoryPaths.has(directory)) {
+      throw new Error(`directories[${index}] is duplicated`);
+    }
+    directoryPaths.add(directory);
+  }
   archive(manifest.archive, "archive");
   if (manifest.daemon !== undefined) {
     const daemon = record(manifest.daemon, "daemon");
@@ -112,8 +134,9 @@ export function validateBoxPayloadManifest(value, knownServices) {
   const restart = record(manifest.restart, "restart");
   for (const [service, paths] of Object.entries(restart)) {
     if (!SERVICE_PATTERN.test(service)) throw new Error(`restart service is invalid: ${service}`);
-    if (knownServices !== undefined && !knownServices.has(service)) {
-      throw new Error(`restart names unknown service: ${service}`);
+    const serviceRoot = `rootfs/etc/s6-overlay/s6-rc.d/${service}`;
+    if (!payloadPaths.has(`${serviceRoot}/run`) || !payloadPaths.has(`${serviceRoot}/type`)) {
+      throw new Error(`restart names a service without a tree longrun: ${service}`);
     }
     if (!Array.isArray(paths)) throw new Error(`restart.${service} must be an array`);
     for (const dependency of paths) {

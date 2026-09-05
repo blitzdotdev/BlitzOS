@@ -1,0 +1,12 @@
+{
+  "version": "20260904T2130Z-9f3c1a2b",
+  "createdAt": 1788550000000,
+  "minUpdater": 2,
+  "files": [
+    {"path": "rootfs/etc/s6-overlay/s6-rc.d/cgroups/type", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mode": "0644"},
+    {"path": "rootfs/etc/s6-overlay/s6-rc.d/cgroups/up", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "mode": "0644"}
+  ],
+  "directories": [],
+  "archive": {"url": "https://cp.example/payload.tar.gz", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "bytes": 1},
+  "restart": {"gateway": ["rootfs/etc/s6-overlay/s6-rc.d/cgroups/up"]}
+}

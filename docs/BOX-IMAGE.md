@@ -1,12 +1,12 @@
 # The box image: build, publish, and ship it to workspaces
 
 Every workspace VM starts from one OCI image — the box — containing SSH,
-Docker-in-Docker, the service graph, and the in-place payload updater
-([packages/box](../packages/box/README.md)). The image carries a baked payload
-for first boot; the control plane then pins the current scripts, Blitz binaries,
-service implementations, and Lody daemon as a separately published payload.
-This page covers both artifacts, the ways to serve the image, and how upgrades
-behave.
+Docker-in-Docker, a baked service graph, and the base-owned in-place payload
+updater ([packages/box](../packages/box/README.md)). The image carries a baked
+payload for first boot. The control plane then pins the current scripts, Blitz
+binaries, complete s6 service set, service implementations, four `/etc` files,
+and Lody daemon as a separately published payload. This page covers both
+artifacts, the ways to serve the image, and how upgrades behave.
 
 Part of the [self-host guide](SELF-HOST.md) (step 9).
 
@@ -45,6 +45,8 @@ The in-place payload has two inseparable vars:
 
 Set both from one validated release or set `BOX_PAYLOAD_REF = ""` to disable
 payload delivery. Never mix the ref from one release with another version.
+The publisher emits protocol 2 releases. A protocol 2 box refuses a protocol 1
+release before downloading it, including for rollback.
 Canary publishes this payload today. Client prod remains image-only until the
 owner chooses an architecture contract for its amd64/arm64 fleet; see the
 [production plan](DEPLOY-RUNBOOK.md#how-client-prod-is-deployed).
@@ -88,16 +90,14 @@ the `canary` environment:
    manifest, a mismatched tag, any other HTTP status, or a network error fails
    the job instead of pretending the release is absent.
 5. For an absent base release, it runs
-   `docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 --build-arg BLITZ_PAYLOAD_VERSION=<planned-payload-version> -f packages/box/Dockerfile -t <imageTag> .`.
+   `docker build --platform linux/amd64 --build-arg BLITZ_PAYLOAD_VERSION=<planned-payload-version> -f packages/box/Dockerfile -t <imageTag> .`.
    The daemon archive was built before the version was planned, so this baked
    stamp is the same daemon-inclusive version the payload publisher will use.
-   The other build argument turns Lody on for canary while the committed
-   `env.defaults` stays off for self-hosters; the Dockerfile rejects any
-   non-empty value other than `0` or `1`.
-6. It boots that enabled image through its real `/init` entrypoint with
+   Feature flags are deployment config and do not change image bytes.
+6. It boots the image through its real `/init` entrypoint with
    `IMAGE=<imageTag> LODY_BOOT_ONLY=1 packages/box/test/smoke.sh`. The smoke has
-   a 180-second wall-clock readiness deadline and must pass before any archive
-   object is published.
+   a 180-second wall-clock readiness deadline. It seeds Lody in the container's
+   updater state before start. It must pass before any archive object is published.
 7. It runs
    `node packages/control-plane/scripts/publish-box-image.mjs --image <imageTag> --prefix <prefix> --app-url <APP_URL> --json publish.json`.
    The publisher uploads every part before `manifest.json`, so a release is
@@ -115,17 +115,16 @@ the `canary` environment:
    expected box-image tag.
 
 The base release id deliberately excludes payload-owned files, the gateway
-binary, and the daemon; it includes the base-owned credential broker sources.
-It also includes `env.defaults`: environment is fixed when the container is
-created, so changing that file requires an image rather than an in-place
-payload. A payload-only merge therefore reuses the current image rather than
-rebuilding it. Its baked stamp names only the bytes in the baked payload and
-is unaffected by the later canary-only `env.defaults` mutation; it may name the payload current
-when that base was built; that is informational boot state, not the rollout
-pin. A fresh machine starts there and the updater converges it to
+binary, the daemon, and the repository `env.defaults`. It includes the
+base-owned credential broker sources. The Dockerfile owns the box defaults and
+writes a comment-only `/etc/blitz/env.defaults` for deployed hosts that still
+pass it with `--env-file`. A payload-only merge therefore reuses the current image. Its baked stamp
+names only the bytes in the baked payload and may name the payload current when
+that base was built. That is informational boot state, not the rollout pin. A
+fresh machine starts there and the updater converges it to
 `BOX_PAYLOAD_VERSION`. When a base input changes, the new image is stamped with
-the daemon-inclusive payload version published by the same run. The Dockerfile,
-the updater, and the s6 service set/topology remain image inputs.
+the daemon-inclusive payload version published by the same run. The Dockerfile
+and updater remain image inputs. The s6 service set belongs to the payload.
 
 **Lody release identity.** The daemon is a payload input, not a base input.
 `vendor/lody`, the reviewed adapter snapshots and the shared Lody build scripts
@@ -341,34 +340,39 @@ copy; it carries the `--privileged` and long-`--mount` reasoning with it.
 
 `packages/box/test/smoke.sh` exercises the whole surface: s6 service graph,
 key-only SSH, ttyd/tmux, files, ports, previews, DinD, and the
-unprivileged degradation path. It builds both the default-disabled image and
-the same `BLITZ_LODY_SESSIONS=1` variant canary ships, then boots the enabled
-variant. The Lody checks use a 180-second wall-clock deadline with bounded host
-commands while waiting for the supervised daemon and bridge, probe bridge
-health and `/lody/platform`, require the packaged `dist/BUILD.json`, inspect
-the live daemon environment and cgroup, and require its
-built-in-MCP-disable log. In CI the smoke also requires memory, pids, and CPU
-delegation and proves that the `blitz` user can create and remove a child under
-`lody-sessions` with `memory.max`, `pids.max`, and `cpu.max`. The shipping CLI
-has no credential-free adapter, so real session limits and cleanup are instead
+unprivileged degradation path. It builds one image and copies
+`BLITZ_LODY_SESSIONS=1` into the updater-owned feature file before boot. The
+Lody checks use a 180-second wall-clock deadline with bounded host commands
+while waiting for the supervised daemon and bridge, probe bridge health and
+`/lody/platform`, require the packaged `dist/BUILD.json`, inspect the live
+daemon environment and cgroup, and require its built-in-MCP-disable log. In CI
+the smoke also requires memory, pids, and CPU delegation and proves that the
+`blitz` user can create and remove a child under `lody-sessions` with
+`memory.max`, `pids.max`, and `cpu.max`. The shipping CLI has no
+credential-free adapter, so real session limits and cleanup are instead
 exercised by the vendor sandbox suite in the daemon pair gate.
+
+The same boot runs live payload steps E17–E20. They add and remove a service,
+refuse a release that removes the recovery floor, and flip Lody off and on.
+The steps keep unrelated service pids stable, post machine stats, and prove an
+established SSH session survives an sshd listener restart.
 
 ```sh
 # Builds a throwaway blitz-box:smoke from this tree, then tests it:
 packages/box/test/smoke.sh
 
-# Tests an already-built Lody-enabled image, and never builds:
+# Tests an already-built image, and never builds:
 IMAGE=blitz-box:local packages/box/test/smoke.sh
 ```
 
 Building is the default on purpose. This is the only gate that runs the s6
 service graph, so a run that silently adopted an existing tag could pass an
 edit to `rootfs/` or an s6 unit against an image that predates it. `IMAGE=`
-skips the build, requires that tag's baked default to enable Lody, and leaves
-the freshness of that tag yours to guarantee. Canary runs this form with
-`LODY_BOOT_ONLY=1` immediately after its enabled build and before publishing any
-archive parts, exiting after the Lody and cgroup checks rather than repeating
-the later terminal/files/preview checks already owned by PR CI.
+skips the build, seeds the feature record into that container before boot, and
+leaves the freshness of the tag yours to guarantee. Canary runs this form with
+`LODY_BOOT_ONLY=1` immediately after its build and before publishing any archive
+parts, exiting after the Lody and cgroup checks rather than repeating the later
+terminal/files/preview checks already owned by PR CI.
 
 ## Upgrade and rollback
 
@@ -379,14 +383,39 @@ owner or admin requests an update through the box-config v1 routes in
 `packages/control-plane/core/bootstrap.ts` polls, replaces the container, and
 reports the installed ref.
 
+Updater state and downloaded releases live under `/opt/blitz/payload` in the
+container image layer, not on the `/var/lib/blitz` state volume. Restarting the
+same container keeps them. Recreating it starts from the baked payload, then
+downloads the deployment pin on the first supervised tick five seconds after
+boot.
+
 `BOX_PAYLOAD_REF` and `BOX_PAYLOAD_VERSION` affect existing machines. Their
 updaters poll box config, verify and apply the content-addressed release, and
-report the running payload and daemon versions. An unacknowledged report is
-kept in updater state and retried before the next poll does new work. To roll
-back, restore **both** vars from the previous immutable payload release and
-redeploy. A lower version is an ordinary target, so machines apply it on their
-next poll. Do not replace objects under the current version; publish another
-content hash.
+report the running payload and daemon versions. Protocol 2 lets the payload add,
+remove, or redefine services while four recovery definitions remain frozen.
+An unacknowledged report is kept in updater state and retried before the next
+poll does new work. To roll back, restore **both** vars from the previous
+immutable protocol 2 payload release and redeploy. A lower version is an
+ordinary target, so machines apply it on their next poll. Do not replace objects
+under the current version; publish another content hash.
+
+To apply a new pin immediately, stop the supervised updater, run one tick, then
+start the service again inside the box:
+
+```sh
+/command/s6-svc -d /run/service/payload
+/usr/local/libexec/blitz-payload tick
+/command/s6-svc -u /run/service/payload
+```
+
+The command performs one complete tick. It shares
+`/run/blitz-payload.lock` with the supervised updater and exits 75 when that
+process holds the `flock`. The supervised launcher waits up to 300 seconds for
+an operator tick; s6 retries if the lock remains held. The command also exits
+nonzero when pending rollback recovery fails. After every successful
+authenticated tick, the updater posts the used percentage for the filesystem
+containing `BLITZ_STATE_DIR`. A stats failure is logged and never fails the
+tick.
 
 Hold one machine on its current payload with the session-authenticated,
 workspace-admin route:

@@ -142,4 +142,4 @@ mark stale creates as errors.
 Do not use `teeny deploy` for Target A until the existing live D1 has a
 separately reviewed teeny migration baseline. Library users install the core
 routes on a teenybase-owned router with `installControlPlaneRoutes` and supply
-a `RuntimeFactory`. Design records: `TODO.md` and `../../plans/PORT-DESIGN.md`.
+a `RuntimeFactory`. Design records: `RECORD.md` and `../../plans/PORT-DESIGN.md`.

@@ -1,0 +1,9 @@
+{
+  "version": "v2",
+  "createdAt": 1,
+  "minUpdater": 2,
+  "files": [{"path": "rootfs/a", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mode": "0644"}],
+  "directories": ["rootfs/a/../empty"],
+  "archive": {"url": "https://cp.example/payload.tar.gz", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "bytes": 1},
+  "restart": {}
+}

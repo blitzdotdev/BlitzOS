@@ -1,5 +1,10 @@
 #!/command/with-contenv bash
-# The updater and this launcher are base-owned: a payload that failed midway
-# must not be able to replace the recovery mechanism that rolls it back. The
-# node loop fails open on every poll so this longrun never makes s6 spin.
+# The updater is base-owned. This payload-owned launcher is frozen during live
+# updates, so changing the launcher requires a base image. An active operator
+# tick can delay startup for its full remaining runtime. Each launcher attempt
+# waits at most 300 seconds; s6 restarts the launcher and retries while the lock
+# stays held.
+# The node loop fails open so updater errors do not make the longrun spin.
+exec 9>/run/blitz-payload.lock
+flock -w 300 9 || exit 1
 exec /usr/local/libexec/blitz-payload

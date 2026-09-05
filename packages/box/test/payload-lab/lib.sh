@@ -529,20 +529,20 @@ wait_payload_deferred() {
 }
 
 payload_state() {
-  box_ssh "$1" 'cat /var/lib/blitz/payload/state.json'
+  box_ssh "$1" 'cat /opt/blitz/payload/state/state.json'
 }
 
 payload_log_size() {
-  box_ssh "$1" 'wc -c </var/lib/blitz/payload/log'
+  box_ssh "$1" 'wc -c </opt/blitz/payload/state/log'
 }
 
 payload_log_since() {
   local workspace_id=$1 offset=$2
-  box_ssh "$workspace_id" "tail -c +$((offset + 1)) /var/lib/blitz/payload/log"
+  box_ssh "$workspace_id" "tail -c +$((offset + 1)) /opt/blitz/payload/state/log"
 }
 
 payload_apply_in_progress() {
-  box_ssh "$1" 'test -n "$(find /var/lib/blitz/payload/versions /opt/blitz/lody -mindepth 1 -maxdepth 1 -name "*.staging" -print -quit 2>/dev/null)" || jq -e '\''has("pending")'\'' /var/lib/blitz/payload/state.json >/dev/null'
+  box_ssh "$1" 'test -n "$(find /opt/blitz/payload/versions /opt/blitz/lody -mindepth 1 -maxdepth 1 -name "*.staging" -print -quit 2>/dev/null)" || jq -e '\''has("pending")'\'' /opt/blitz/payload/state/state.json >/dev/null'
 }
 
 payload_current() {
@@ -565,7 +565,7 @@ wait_payload_current() {
 
 assert_payload_state_consistent() {
   box_ssh "$1" 'set -e
-state=/var/lib/blitz/payload/state.json
+state=/opt/blitz/payload/state/state.json
 jq -e '\''(.current | type == "string") and (.currentTarget | type == "string") and (has("pending") | not)'\'' "$state" >/dev/null
 target=$(jq -r .currentTarget "$state")
 test -d "$target"
@@ -574,18 +574,18 @@ test "$(readlink -f /opt/blitz/payload/current)" = "$(readlink -f "$target")"'
 
 payload_version_count() {
   box_ssh "$1" \
-    'find /var/lib/blitz/payload/versions -mindepth 1 -maxdepth 1 -type d ! -name "*.staging" -print 2>/dev/null | wc -l'
+    'find /opt/blitz/payload/versions -mindepth 1 -maxdepth 1 -type d ! -name "*.staging" -print 2>/dev/null | wc -l'
 }
 
 payload_staging_count() {
   box_ssh "$1" \
-    'find /var/lib/blitz/payload/versions /opt/blitz/lody -mindepth 1 -maxdepth 1 -name "*.staging" -print 2>/dev/null | wc -l'
+    'find /opt/blitz/payload/versions /opt/blitz/lody -mindepth 1 -maxdepth 1 -name "*.staging" -print 2>/dev/null | wc -l'
 }
 
 payload_cache_identity() {
   local workspace_id=$1 version=$2
   box_ssh "$workspace_id" \
-    "stat -c '%i:%y:%s' /var/lib/blitz/payload/versions/$version/.manifest.json"
+    "stat -c '%i:%y:%s' /opt/blitz/payload/versions/$version/.manifest.json"
 }
 
 payload_reported_at() {

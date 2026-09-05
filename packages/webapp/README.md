@@ -34,4 +34,4 @@ The built app calls the control plane on its own origin. Set
 `VITE_CONTROL_PLANE_URL` at build time (read in `src/main.tsx`) only when the
 control plane lives on a different origin.
 
-Design record: `TODO.md`.
+Design record: `RECORD.md`.

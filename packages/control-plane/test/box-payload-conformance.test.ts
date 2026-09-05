@@ -1,6 +1,5 @@
 import {
   BOX_PAYLOAD_OUTCOMES,
-  BOX_PAYLOAD_RESTART_SERVICES,
   isJsonObject,
   isJsonString,
   parseBoxPayloadManifest,
@@ -11,14 +10,6 @@ import { describe, expect, it } from "vitest";
 
 const fixtureSources = import.meta.glob<string>(
   "../../schema/fixtures/box-payload/**/*.json",
-  { eager: true, import: "default", query: "?raw" },
-);
-
-// Vite inlines the real s6 type markers before the Worker isolate starts. The
-// restart vocabulary is exactly payload-owned longruns: oneshots wait for the
-// next boot, and the base-owned payload updater cannot restart itself.
-const serviceTypeSources = import.meta.glob<string>(
-  "../../box/rootfs/etc/s6-overlay/s6-rc.d/*/type",
   { eager: true, import: "default", query: "?raw" },
 );
 
@@ -73,7 +64,7 @@ const resultValidPaths = [
   "payload-result/valid/verify-failed.json",
 ];
 
-describe("box-payload v1 fixture conformance", () => {
+describe("box-payload v2 fixture conformance", () => {
   it("accepts every valid manifest, including a valid but unsupported updater version", () => {
     const entries = fixtureEntries("valid/");
     expect(entries.map(([fixturePath]) => fixturePath)).toEqual(manifestValidPaths);
@@ -84,7 +75,12 @@ describe("box-payload v1 fixture conformance", () => {
       expect(manifest.files.every((entry) => /^[a-f0-9]{64}$/u.test(entry.sha256)), fixturePath)
         .toBe(true);
       if (fixturePath.endsWith("min-updater-unsupported.json")) {
-        expect(manifest.minUpdater).toBe(2);
+        expect(manifest.minUpdater).toBe(3);
+      }
+      if (manifest.minUpdater === 2) {
+        expect(manifest.directories).toContain(
+          "rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d",
+        );
       }
       if (fixturePath.endsWith("no-daemon.json")) {
         expect(manifest.daemon).toBeUndefined();
@@ -117,22 +113,5 @@ describe("box-payload v1 fixture conformance", () => {
         : parseBoxPayloadManifest;
       expect(() => parse(parseJson(source)), fixturePath).toThrow(expectedField);
     }
-  });
-
-  it("keeps the restart vocabulary equal to payload-owned longruns", () => {
-    const serviceNames = Object.entries(serviceTypeSources)
-      .filter(([markerPath, source]) =>
-        source.trim() === "longrun" && !markerPath.endsWith("/payload/type"))
-      .map(([markerPath]) => {
-        const marker = "/s6-rc.d/";
-        const markerIndex = markerPath.indexOf(marker);
-        if (markerIndex < 0) throw new Error(`s6 service marker is outside rootfs: ${markerPath}`);
-        const serviceName = markerPath.slice(markerIndex + marker.length).split("/")[0];
-        if (serviceName === undefined || serviceName === "") {
-          throw new Error(`s6 service marker has no service name: ${markerPath}`);
-        }
-        return serviceName;
-      }).sort();
-    expect([...BOX_PAYLOAD_RESTART_SERVICES]).toEqual(serviceNames);
   });
 });

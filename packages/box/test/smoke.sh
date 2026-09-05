@@ -9,7 +9,6 @@ set -euo pipefail
 script_dir=$(realpath "$(dirname "$0")")
 repo_root=$(realpath "$script_dir/../../..")
 image="${IMAGE:-blitz-box:smoke}"
-lody_sessions_image="blitz-box:smoke-lody-sessions-on-$$"
 runtime_image="$image"
 container="blitz-box-smoke-$$"
 state_volume="blitz-box-smoke-state-$$"
@@ -29,7 +28,6 @@ cleanup() {
   timeout --kill-after=1s 10s docker rm -f "$unprivileged_container" >/dev/null 2>&1 || true
   timeout --kill-after=1s 10s docker volume rm "$state_volume" >/dev/null 2>&1 || true
   timeout --kill-after=1s 10s docker volume rm "$unprivileged_volume" >/dev/null 2>&1 || true
-  timeout --kill-after=1s 10s docker image rm "$lody_sessions_image" >/dev/null 2>&1 || true
   if [ "$preserve_test_dir" != true ]; then
     rm -rf "$test_dir"
   fi
@@ -98,25 +96,7 @@ if [ -z "${IMAGE:-}" ]; then
     --file "$repo_root/packages/box/Dockerfile" \
     --tag "$image" \
     "$repo_root"
-  docker run --rm --entrypoint grep "$image" \
-    -x 'BLITZ_LODY_SESSIONS=0' /etc/blitz/env.defaults
-  docker build --progress=plain \
-    --build-arg BLITZ_LODY_SESSIONS=1 \
-    --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
-    --file "$repo_root/packages/box/Dockerfile" \
-    --tag "$lody_sessions_image" \
-    "$repo_root"
-  docker run --rm --entrypoint grep "$lody_sessions_image" \
-    -x 'BLITZ_LODY_SESSIONS=1' /etc/blitz/env.defaults
-  runtime_image="$lody_sessions_image"
 fi
-
-# IMAGE is used by canary after its enabled build and before publication. Make
-# that contract fail closed instead of silently forcing a disabled image on at
-# runtime and claiming its baked default was exercised.
-docker run --rm --entrypoint grep "$runtime_image" \
-  -x 'BLITZ_LODY_SESSIONS=1' /etc/blitz/env.defaults \
-  || fail "$runtime_image was not built with BLITZ_LODY_SESSIONS=1"
 
 install -d -m 0755 "$test_dir/workspace"
 ssh-keygen -q -t ed25519 -N '' -C 'blitz-box-smoke' -f "$test_dir/id_ed25519"
@@ -124,13 +104,13 @@ ssh-keygen -q -t ed25519 -N '' -C 'blitz-box-wrong-key' -f "$test_dir/wrong_ed25
 umask 077
 sentinel=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 printf '%s\n' "$sentinel" >"$test_dir/secret"
+printf '%s\n' 'BLITZ_LODY_SESSIONS=1' >"$test_dir/features"
+chmod 0644 "$test_dir/features"
 docker volume create "$state_volume" >/dev/null
 
-docker run -d \
+docker create \
   --name "$container" \
   --privileged \
-  --env-file "$repo_root/env.defaults" \
-  --env BLITZ_LODY_SESSIONS=1 \
   --env "BLITZ_UID=$(id -u)" \
   --env "BLITZ_GID=$(id -g)" \
   --mount "type=volume,source=$state_volume,target=/var/lib/blitz" \
@@ -139,6 +119,8 @@ docker run -d \
   --mount "type=bind,source=$test_dir/secret,target=/run/blitz/smoke-secret,readonly" \
   --publish 127.0.0.1::22 \
   "$runtime_image" >/dev/null
+docker cp "$test_dir/features" "$container:/opt/blitz/payload/state/features" >/dev/null
+docker start "$container" >/dev/null
 
 ready=false
 platform_json=''
@@ -191,6 +173,33 @@ services=$(docker exec "$container" /command/s6-rc -a list)
 for service in init-state register payload sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
+if grep -qx machine-stats <<<"$services"; then
+  fail "machine-stats remains in the live service set"
+fi
+echo "PASS machine-stats is absent from the live service set"
+docker exec "$container" test -L /etc/s6-overlay/s6-rc.d \
+  || fail "/etc/s6-overlay/s6-rc.d is not a payload indirection"
+s6_tree_target=$(docker exec "$container" readlink /etc/s6-overlay/s6-rc.d)
+[ "$s6_tree_target" = /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d ] \
+  || fail "the s6 tree points at $s6_tree_target"
+docker exec "$container" sh -c 'command -v flock' >/dev/null \
+  || fail "the box image is missing util-linux flock"
+echo "PASS the s6 service tree follows the current payload"
+user_services=$(docker exec "$container" /command/s6-rc -l /run/s6-rc listall user)
+while IFS= read -r service; do
+  [ "$service" = user ] && continue
+  [ "$service" = user2 ] && continue
+  grep -qx "$service" <<<"$user_services" || fail "the live user bundle is missing $service"
+done < <(find "$repo_root/packages/box/rootfs/etc/s6-overlay/s6-rc.d" \
+  -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+echo "PASS the live user bundle lists every repository service"
+docker exec "$container" test -d \
+  /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d \
+  || fail "the user2 bundle has no contents.d directory"
+user2_entry=$(docker exec "$container" sh -c \
+  'find /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d -mindepth 1 -maxdepth 1 -print -quit')
+[ -z "$user2_entry" ] || fail "the user2 bundle contents.d directory is not empty"
+echo "PASS the user2 bundle has an empty contents.d directory"
 for service in payload sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
@@ -199,8 +208,7 @@ docker exec "$container" test -f /opt/blitz/lody/current/lib/node_modules/lody/d
   || fail "the packaged Lody BUILD.json is missing"
 docker exec "$container" /opt/blitz/lody/current/bin/lody --help >/dev/null \
   || fail "the tree-built Lody CLI does not answer --help"
-# The image's /etc/s6-overlay/s6-rc.d/lody-daemon/run is a wrapper that execs
-# the payload-owned run script; that script is the one that names the daemon.
+# The payload-owned run script names the current daemon.
 docker exec "$container" grep -Eq '^[[:space:]]*/opt/blitz/lody/current/bin/lody start$' \
   /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run \
   || fail "the lody daemon service no longer points at /opt/blitz/lody/current/bin/lody"
@@ -224,6 +232,21 @@ grep -q '\[mcp\] built-in server disabled via LODY_MCP_BUILTIN_DISABLED' "$test_
 echo "PASS enabled Lody daemon, bridge, platform catalog, provenance, service environment, and MCP-disable log"
 dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
 [ "$dufs_version" = 'dufs 0.46.0' ] || fail "unexpected dufs version: $dufs_version"
+gh_version=$(docker exec "$container" /usr/local/bin/gh --version | head -1)
+grep -Eq '^gh version 2\.100\.0([[:space:]]|$)' <<<"$gh_version" \
+  || fail "unexpected gh version: $gh_version"
+if docker exec "$container" dpkg -s xz-utils >/dev/null 2>&1; then
+  fail "xz-utils remains installed in the final image"
+fi
+if docker exec "$container" sh -c 'command -v xz' >/dev/null 2>&1; then
+  fail "xz remains on PATH in the final image"
+fi
+if docker exec "$container" sh -c 'command -v nano' >/dev/null 2>&1; then
+  fail "nano remains installed beside vim"
+fi
+docker exec "$container" sh -c 'command -v vi >/dev/null && command -v vim >/dev/null' \
+  || fail "vim no longer provides the box editor and vi fallback"
+echo "PASS gh 2.100.0 is pinned; xz-utils, xz, and nano are absent; vim provides vi"
 # dufs must NOT publish the agent HOME. The symlink that used to sit beside
 # /workspace exposed ~/.claude/.credentials.json and ~/.codex/auth.json to
 # anyone the workspace was shared with; da54646 removed it on purpose. Assert
@@ -237,6 +260,10 @@ docker exec "$container" sh -c 'test "$(readlink /opt/blitz/payload/current)" = 
 docker exec "$container" sh -c 'test "$(readlink /opt/blitz/lody/current)" = baked' \
   || fail "the baked lody prefix is not current"
 for payload_path in \
+  /etc/blitz/sshd_config \
+  /etc/gitconfig \
+  /etc/profile.d/blitz-npm.sh \
+  /etc/tmux.conf \
   /usr/local/bin/blitz \
   /usr/local/bin/blitz-box-gateway \
   /usr/local/libexec/blitz-term \
@@ -244,10 +271,6 @@ for payload_path in \
   docker exec "$container" test -L "$payload_path" \
     || fail "$payload_path is not indirected through the current payload"
 done
-docker exec "$container" grep -qx \
-  'exec /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/gateway/run "$@"' \
-  /etc/s6-overlay/s6-rc.d/gateway/run \
-  || fail "the gateway service does not delegate to the current payload"
 docker exec "$container" test ! -L /usr/local/libexec/blitz-payload \
   || fail "the base-owned payload updater is indirected through the payload"
 docker exec "$container" test ! -L /usr/local/bin/blitz-cred \
@@ -269,9 +292,222 @@ daemon_stamp=$(docker exec "$container" cat /opt/blitz/lody/baked/daemon-version
   || fail "the baked daemon has no version"
 docker exec "$container" grep -qx '7' /opt/blitz/lody/baked/daemon-protocol-version \
   || fail "the baked daemon has no protocol version"
-docker exec --user blitz "$container" test -r /var/lib/blitz/payload/log \
+docker exec --user blitz "$container" test -r /opt/blitz/payload/state/log \
   || fail "the payload updater log is not readable by uid 1000"
+docker exec "$container" test ! -e /var/lib/blitz/payload \
+  || fail "the payload updater still owns storage under /var/lib/blitz"
 echo "PASS baked payload and daemon indirections"
+
+# ---- live payload service-tree updates ------------------------------------
+
+payload_state=$(docker exec "$container" /command/s6-svstat /run/service/payload)
+grep -q '^up' <<<"$payload_state" || fail "the supervised payload updater is not up"
+payload_lock_status=0
+payload_lock_stderr=$(docker exec "$container" /usr/local/libexec/blitz-payload tick \
+  2>&1 >/dev/null) || payload_lock_status=$?
+[ "$payload_lock_status" -eq 75 ] \
+  || fail "contended payload tick exited $payload_lock_status instead of 75"
+[ "$payload_lock_stderr" = \
+  'another updater holds /run/blitz-payload.lock; stop the payload service (s6-svc -d /run/service/payload) or wait for the running tick' ] \
+  || fail "contended payload tick returned unexpected stderr: $payload_lock_stderr"
+echo "PASS supervised payload service holds the updater lock"
+
+docker exec "$container" /command/s6-svc -d /run/service/payload
+for _attempt in $(seq 1 50); do
+  payload_state=$(docker exec "$container" /command/s6-svstat /run/service/payload 2>/dev/null || true)
+  grep -q '^down' <<<"$payload_state" && break
+  sleep 0.1
+done
+grep -q '^down' <<<"$payload_state" || fail "the supervised payload updater did not stop"
+
+live_release_root="$test_dir/live-releases"
+live_binaries="$test_dir/live-binaries"
+mkdir -p "$live_release_root" "$live_binaries"
+docker cp \
+  "$container:/opt/blitz/payload/current/rootfs/usr/local/bin/blitz-box-gateway" \
+  "$live_binaries/blitz-box-gateway" >/dev/null
+chmod 0755 "$live_binaries/blitz-box-gateway"
+payload_origin_port=18446
+payload_origin="http://127.0.0.1:$payload_origin_port"
+
+build_live_release() {
+  local variant=$1
+  local output="$test_dir/live-$variant"
+  local release_json
+  local version
+  release_json=$(node "$script_dir/payload-live-release.mjs" \
+    "$repo_root" "$variant" "$live_binaries" "$output" "$payload_origin")
+  version=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).version)' "$release_json")
+  mv "$output" "$live_release_root/$version"
+  printf '%s\n' "$version"
+}
+
+e17_version=$(build_live_release E17)
+e18_version=$(build_live_release E18)
+e19_version=$(build_live_release E19)
+docker exec "$container" mkdir -p /tmp/payload-live/releases
+docker cp "$live_release_root/." "$container:/tmp/payload-live/releases" >/dev/null
+docker cp "$script_dir/payload-live-origin.mjs" \
+  "$container:/tmp/payload-live/origin.mjs" >/dev/null
+docker cp "$script_dir/payload-live-cred.sh" "$container:/tmp/payload-live/blitz-cred" >/dev/null
+docker exec "$container" sh -c \
+  'cp -p /usr/local/bin/blitz-cred /tmp/payload-live/blitz-cred.real && cp /tmp/payload-live/blitz-cred /usr/local/bin/blitz-cred.smoke && chmod 0755 /usr/local/bin/blitz-cred.smoke && mv /usr/local/bin/blitz-cred.smoke /usr/local/bin/blitz-cred'
+docker exec "$container" sh -c "printf '%s\n' 1 >/tmp/payload-live/features"
+docker exec "$container" sh -c \
+  "node /tmp/payload-live/origin.mjs $payload_origin_port /tmp/payload-live/releases /tmp/payload-live/config /tmp/payload-live/features /tmp/payload-live/results.ndjson /tmp/payload-live/machine-stats.ndjson /tmp/payload-live/ready >/tmp/payload-live/origin.log 2>&1 &"
+origin_ready=false
+for _attempt in $(seq 1 50); do
+  if docker exec "$container" test -f /tmp/payload-live/ready; then
+    origin_ready=true
+    break
+  fi
+  sleep 0.1
+done
+[ "$origin_ready" = true ] || fail "the live payload origin did not start"
+docker exec "$container" sh -c "printf '%s\\n' '$payload_origin' >/tmp/payload-live/updater-origin"
+payload_test_config='{"originFile":"/tmp/payload-live/updater-origin"}'
+sshd_pid_before=$(docker exec "$container" /command/s6-svstat -o pid /run/service/sshd)
+gateway_pid_before=$(docker exec "$container" /command/s6-svstat -o pid /run/service/gateway)
+
+latest_payload_outcome() {
+  docker exec "$container" node -e '
+    const lines = require("node:fs").readFileSync(process.argv[1], "utf8").trim().split("\n");
+    process.stdout.write(JSON.parse(lines.at(-1)).outcome);
+  ' /tmp/payload-live/results.ndjson
+}
+
+latest_payload_detail() {
+  docker exec "$container" node -e '
+    const lines = require("node:fs").readFileSync(process.argv[1], "utf8").trim().split("\n");
+    process.stdout.write(JSON.parse(lines.at(-1)).detail);
+  ' /tmp/payload-live/results.ndjson
+}
+
+wait_for_lody_feature_restarts() {
+  local label=$1
+  local bridge_before=$2 daemon_before=$3 projects_before=$4 watchdog_before=$5
+  local bridge_after daemon_after projects_after watchdog_after
+  for _attempt in $(seq 1 100); do
+    bridge_after=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-bridge)
+    daemon_after=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-daemon)
+    projects_after=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-projects)
+    watchdog_after=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-watchdog)
+    if [ "$bridge_after" != 0 ] && [ "$daemon_after" != 0 ] \
+      && [ "$projects_after" != 0 ] && [ "$watchdog_after" != 0 ] \
+      && [ "$bridge_after" != "$bridge_before" ] \
+      && [ "$daemon_after" != "$daemon_before" ] \
+      && [ "$projects_after" != "$projects_before" ] \
+      && [ "$watchdog_after" != "$watchdog_before" ]; then
+      return
+    fi
+    sleep 0.1
+  done
+  fail "E20 did not restart every Lody feature reader while $label Lody"
+}
+
+docker exec "$container" sh -c "printf '%s\\n' '$e17_version' >/tmp/payload-live/config"
+docker exec --env "BLITZ_PAYLOAD_TEST_CONFIG=$payload_test_config" \
+  "$container" /usr/local/libexec/blitz-payload tick
+[ "$(latest_payload_outcome)" = applied ] || fail "E17 did not report applied"
+echo "PASS E17 reports applied"
+machine_stats_body=$(docker exec "$container" tail -n 1 /tmp/payload-live/machine-stats.ndjson)
+docker exec "$container" node -e '
+  const body = JSON.parse(process.argv[1]);
+  if (Object.keys(body).join(",") !== "diskUsedPercent"
+      || !Number.isInteger(body.diskUsedPercent)
+      || body.diskUsedPercent < 0
+      || body.diskUsedPercent > 100) process.exit(1);
+' "$machine_stats_body" || fail "E17 machine-stats body is invalid: $machine_stats_body"
+echo "PASS E17 tick posts one machine-stats percentage in 0..100"
+docker exec "$container" /command/s6-svstat /run/service/hello | grep -q '^up' \
+  || fail "E17 hello is not up"
+echo "PASS E17 adds and starts hello"
+[ "$(docker exec "$container" /command/s6-svstat -o pid /run/service/sshd)" = "$sshd_pid_before" ] \
+  || fail "E17 restarted sshd"
+[ "$(docker exec "$container" /command/s6-svstat -o pid /run/service/gateway)" = "$gateway_pid_before" ] \
+  || fail "E17 restarted gateway"
+echo "PASS E17 keeps sshd and gateway pids"
+
+docker exec "$container" sh -c "printf '%s\\n' '$e18_version' >/tmp/payload-live/config"
+docker exec --env "BLITZ_PAYLOAD_TEST_CONFIG=$payload_test_config" \
+  "$container" /usr/local/libexec/blitz-payload tick
+[ "$(latest_payload_outcome)" = applied ] || fail "E18 did not report applied"
+echo "PASS E18 reports applied"
+if docker exec "$container" /command/s6-rc -l /run/s6-rc listall user | grep -qx hello; then
+  fail "E18 left hello in the live service set"
+fi
+docker exec "$container" test ! -e /run/service/hello || fail "E18 left hello supervised"
+echo "PASS E18 removes hello from the live service set"
+[ "$(docker exec "$container" /command/s6-svstat -o pid /run/service/sshd)" = "$sshd_pid_before" ] \
+  || fail "E18 restarted sshd"
+[ "$(docker exec "$container" /command/s6-svstat -o pid /run/service/gateway)" = "$gateway_pid_before" ] \
+  || fail "E18 restarted gateway"
+echo "PASS E18 keeps sshd and gateway pids"
+
+payload_link_before=$(docker exec "$container" readlink /opt/blitz/payload/current)
+daemon_link_before=$(docker exec "$container" readlink /opt/blitz/lody/current)
+docker exec "$container" sh -c "printf '%s\\n' '$e19_version' >/tmp/payload-live/config"
+docker exec --env "BLITZ_PAYLOAD_TEST_CONFIG=$payload_test_config" \
+  "$container" /usr/local/libexec/blitz-payload tick
+[ "$(latest_payload_outcome)" = verify-failed ] || fail "E19 did not report verify-failed"
+echo "PASS E19 reports verify-failed"
+[[ "$(latest_payload_detail)" == *"service floor is missing payload/type"* ]] \
+  || fail "E19 did not report the missing payload/type floor entry"
+echo "PASS E19 names the missing payload/type floor entry"
+[ "$(docker exec "$container" readlink /opt/blitz/payload/current)" = "$payload_link_before" ] \
+  || fail "E19 changed the payload current link"
+[ "$(docker exec "$container" readlink /opt/blitz/lody/current)" = "$daemon_link_before" ] \
+  || fail "E19 changed the daemon current link"
+echo "PASS E19 leaves current links unchanged"
+[ "$(docker exec "$container" /command/s6-svstat -o pid /run/service/sshd)" = "$sshd_pid_before" ] \
+  || fail "E19 restarted sshd"
+[ "$(docker exec "$container" /command/s6-svstat -o pid /run/service/gateway)" = "$gateway_pid_before" ] \
+  || fail "E19 restarted gateway"
+echo "PASS E19 keeps sshd and gateway pids"
+
+feature_lody_bridge_pid=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-bridge)
+feature_lody_daemon_pid=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-daemon)
+feature_lody_projects_pid=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-projects)
+feature_lody_watchdog_pid=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-watchdog)
+docker exec "$container" sh -c "printf '%s\n' 0 >/tmp/payload-live/features"
+docker exec --env "BLITZ_PAYLOAD_TEST_CONFIG=$payload_test_config" \
+  "$container" /usr/local/libexec/blitz-payload tick
+docker exec "$container" grep -qx 'BLITZ_LODY_SESSIONS=0' /opt/blitz/payload/state/features \
+  || fail "E20 did not materialize the disabled Lody feature"
+echo "PASS E20 materializes BLITZ_LODY_SESSIONS=0"
+wait_for_lody_feature_restarts disabling \
+  "$feature_lody_bridge_pid" "$feature_lody_daemon_pid" \
+  "$feature_lody_projects_pid" "$feature_lody_watchdog_pid"
+echo "PASS E20 restarts all four Lody feature readers while disabling Lody"
+feature_lody_bridge_pid=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-bridge)
+feature_lody_daemon_pid=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-daemon)
+feature_lody_projects_pid=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-projects)
+feature_lody_watchdog_pid=$(docker exec "$container" /command/s6-svstat -o pid /run/service/lody-watchdog)
+docker exec "$container" sh -c "printf '%s\n' 1 >/tmp/payload-live/features"
+docker exec --env "BLITZ_PAYLOAD_TEST_CONFIG=$payload_test_config" \
+  "$container" /usr/local/libexec/blitz-payload tick
+docker exec "$container" grep -qx 'BLITZ_LODY_SESSIONS=1' /opt/blitz/payload/state/features \
+  || fail "E20 did not materialize the enabled Lody feature"
+echo "PASS E20 materializes BLITZ_LODY_SESSIONS=1"
+wait_for_lody_feature_restarts enabling \
+  "$feature_lody_bridge_pid" "$feature_lody_daemon_pid" \
+  "$feature_lody_projects_pid" "$feature_lody_watchdog_pid"
+echo "PASS E20 restarts all four Lody feature readers while enabling Lody"
+lody_pid=''
+for _attempt in $(seq 1 100); do
+  lody_pid=$(docker exec "$container" pgrep -f '/opt/blitz/lody/current/bin/lody start$' \
+    2>/dev/null | head -1 || true)
+  [ -n "$lody_pid" ] && break
+  sleep 0.1
+done
+[ -n "$lody_pid" ] || fail "E20 left no enabled Lody daemon process"
+[ "$(docker exec "$container" /command/s6-svstat -o pid /run/service/sshd)" = "$sshd_pid_before" ] \
+  || fail "E20 restarted sshd"
+[ "$(docker exec "$container" /command/s6-svstat -o pid /run/service/gateway)" = "$gateway_pid_before" ] \
+  || fail "E20 restarted gateway"
+echo "PASS E20 keeps sshd and gateway pids across both feature flips"
+docker exec "$container" cp -p /tmp/payload-live/blitz-cred.real /usr/local/bin/blitz-cred
+docker exec "$container" /command/s6-svc -u /run/service/payload
 
 # ---- the memory boundary ----
 # This is the only gate that runs the real s6 graph, so it is the only place
@@ -475,6 +711,53 @@ if ssh "${ssh_common[@]}" -o PubkeyAuthentication=no -o PasswordAuthentication=y
 fi
 echo "PASS sshd key-only authentication"
 
+sshd_restart_output="$test_dir/sshd-restart-session.out"
+sshd_restart_error="$test_dir/sshd-restart-session.err"
+docker exec "$container" rm -f /workspace/sshd-restart-release
+ssh "${ssh_common[@]}" -i "$test_dir/id_ed25519" blitz@127.0.0.1 \
+  'printf "ready\n"; while [ ! -e /workspace/sshd-restart-release ]; do sleep 0.1; done; printf "survived\n"' \
+  >"$sshd_restart_output" 2>"$sshd_restart_error" &
+sshd_session_pid=$!
+sshd_session_ready=false
+for _attempt in $(seq 1 50); do
+  if grep -qx ready "$sshd_restart_output" 2>/dev/null; then
+    sshd_session_ready=true
+    break
+  fi
+  kill -0 "$sshd_session_pid" 2>/dev/null || break
+  sleep 0.1
+done
+[ "$sshd_session_ready" = true ] || fail "the SSH restart probe session did not become ready"
+sshd_listener_before=$(docker exec "$container" /command/s6-svstat -o pid /run/service/sshd)
+docker exec "$container" /command/s6-svc -r /run/service/sshd
+sshd_listener_restarted=false
+for _attempt in $(seq 1 50); do
+  sshd_listener_after=$(docker exec "$container" /command/s6-svstat -o pid /run/service/sshd)
+  if [ "$sshd_listener_after" != 0 ] && [ "$sshd_listener_after" != "$sshd_listener_before" ]; then
+    sshd_listener_restarted=true
+    break
+  fi
+  sleep 0.1
+done
+[ "$sshd_listener_restarted" = true ] || fail "sshd did not restart its listener"
+sshd_listener_accepting=false
+for _attempt in $(seq 1 50); do
+  if ssh "${ssh_common[@]}" -i "$test_dir/id_ed25519" blitz@127.0.0.1 true \
+    >/dev/null 2>&1; then
+    sshd_listener_accepting=true
+    break
+  fi
+  sleep 0.1
+done
+[ "$sshd_listener_accepting" = true ] || fail "the restarted sshd listener did not accept connections"
+docker exec "$container" touch /workspace/sshd-restart-release
+if ! wait "$sshd_session_pid"; then
+  fail "the established SSH session died during sshd restart: $(cat "$sshd_restart_error")"
+fi
+grep -qx survived "$sshd_restart_output" \
+  || fail "the established SSH session did not finish after sshd restart"
+echo "PASS an established SSH session survives s6-svc -r /run/service/sshd"
+
 # An SSH session is user work. sshd itself belongs in the reservation — it is
 # the rescue path — so its children start there and would otherwise be the one
 # workload with no ceiling at all. A ForceCommand moves each session out.
@@ -633,8 +916,6 @@ echo "PASS privilege boundary, DinD, and inspect secret check"
 docker volume create "$unprivileged_volume" >/dev/null
 docker run -d \
   --name "$unprivileged_container" \
-  --env-file "$repo_root/env.defaults" \
-  --env BLITZ_LODY_SESSIONS=1 \
   --env "BLITZ_UID=$(id -u)" \
   --env "BLITZ_GID=$(id -g)" \
   --mount "type=volume,source=$unprivileged_volume,target=/var/lib/blitz" \
@@ -643,7 +924,8 @@ docker run -d \
   "$runtime_image" >/dev/null
 unprivileged_ready=false
 for _attempt in $(seq 1 50); do
-  if docker logs "$unprivileged_container" 2>&1 | grep -q 'dockerd: skipped (container is not privileged)'; then
+  unprivileged_logs=$(docker logs "$unprivileged_container" 2>&1 || true)
+  if grep -q 'dockerd: skipped (container is not privileged)' <<<"$unprivileged_logs"; then
     unprivileged_ready=true
     break
   fi

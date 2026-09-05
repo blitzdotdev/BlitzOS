@@ -97,8 +97,9 @@ const payloadManifest: SharedShape<
 > = {
   version: "20260904T2130Z-9f3c1a2b",
   createdAt: 1_788_550_000_000,
-  minUpdater: 1,
+  minUpdater: 2,
   files: [payloadFile],
+  directories: ["rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d"],
   archive: payloadArchive,
   daemon: payloadDaemon,
   restart: payloadRestart,
@@ -127,6 +128,7 @@ const boxConfigResponse: SharedShape<
   controlPlaneOrigin: "https://cp.example",
   updateRequested: true,
   payload: payloadConfig,
+  features: { lodySessions: true },
 };
 
 const boxUpdateResult: SharedShape<
@@ -961,8 +963,6 @@ describe("local wire copies", () => {
     expectTypeOf<wire.WorkspaceEnvironment>().toEqualTypeOf<schema.WorkspaceEnvironment>();
     expectTypeOf<wire.WorkspaceEnvironmentResponse>().toEqualTypeOf<schema.WorkspaceEnvironmentResponse>();
     expectTypeOf<wire.AgentRulesResponse>().toEqualTypeOf<schema.AgentRulesResponse>();
-    expectTypeOf<wire.BoxPayloadRestartService>()
-      .toEqualTypeOf<schema.BoxPayloadRestartService>();
     expectTypeOf<wire.BoxPayloadFile>().toEqualTypeOf<schema.BoxPayloadFile>();
     expectTypeOf<wire.BoxPayloadArchive>().toEqualTypeOf<schema.BoxPayloadArchive>();
     expectTypeOf<wire.BoxPayloadDaemonArchive>()
@@ -1049,7 +1049,6 @@ describe("local wire copies", () => {
       }
     }
     expect(wire.BOX_UPDATE_OUTCOMES).toEqual(schema.BOX_UPDATE_OUTCOMES);
-    expect(wire.BOX_PAYLOAD_RESTART_SERVICES).toEqual(schema.BOX_PAYLOAD_RESTART_SERVICES);
     expect(wire.BOX_PAYLOAD_OUTCOMES).toEqual(schema.BOX_PAYLOAD_OUTCOMES);
     expect(wire.PHASES).toEqual(schema.PHASES);
     expect(wire.WORKSPACE_MEMBER_ROLES).toEqual(schema.WORKSPACE_MEMBER_ROLES);

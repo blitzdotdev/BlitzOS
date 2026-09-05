@@ -1,0 +1,11 @@
+{
+  "response": {
+    "boxImageRef": "ghcr.io/blitzdotdev/blitz-box:v2",
+    "controlPlaneOrigin": "https://cp.example",
+    "updateRequested": false,
+    "features": {
+      "lodySessions": false
+    }
+  },
+  "accepts": true
+}

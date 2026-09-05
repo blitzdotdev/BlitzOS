@@ -67,7 +67,7 @@ So the image and the Worker always ship together, in that order. **Never deploy
 the control plane alone for a release, and never publish an image by hand for
 one.**
 
-Client-prod payload publishing is not enabled yet. The v1 payload publisher
+Client-prod payload publishing is not enabled yet. The payload publisher
 produces amd64 Go binaries, while the GHCR box release is a multi-architecture
 amd64/arm64 image. Pinning that archive deployment-wide would offer amd64 bytes
 to an arm64 machine. Before enabling it, the owner must choose and implement
@@ -76,9 +76,10 @@ config, or an amd64-only production catalog. The intended workflow after that
 decision is: build each daemon/binary archive, derive the matching content
 version with `--daemon`, stamp the corresponding image, publish the payload to
 client prod's own R2 bucket before deployment, then pass
-`BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF` and `_VERSION` exactly as canary does. Until
-then `release.yml` remains image-only and must not copy canary's payload URL;
-the Cloudflare account boundary applies to artifacts too.
+`BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF`, `BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION`, and
+`BLITZ_DEPLOY_VAR_BOX_LODY_SESSIONS` exactly as canary does. Until then
+`release.yml` remains image-only and must not copy canary's payload URL; the
+Cloudflare account boundary applies to artifacts too.
 
 ```sh
 git tag -a v0.3.0 -m "..." && git push origin v0.3.0
@@ -100,14 +101,17 @@ The dependent `payload` job independently rebuilds those deterministic inputs,
 refuses a version different from the image job's plan, then probes
 `box-payload/<version>/manifest.json`. It reuses a valid manifest for that
 version or publishes `payload.tar.gz`, `daemon.tar.gz`, and finally the
-manifest. The deploy pins the image ref/tag/digest and payload ref/version, and
-verifies the merged commit and box-image tag through `/version`.
+manifest. The deploy pins the image ref/tag/digest and payload ref/version. It
+also sets `BOX_LODY_SESSIONS=1` beside the payload pins; only `1` enables that
+box-config feature. The deploy verifies the merged commit and box-image tag
+through `/version`.
 
 Payload-only changes do not derive another base-image release. The image may
 therefore retain the payload stamp baked when its base was built; that stamp is
 boot state, while `BOX_PAYLOAD_VERSION` is desired state. A fresh machine boots
-the baked copy and converges to the deployment pin. Dockerfile changes, the
-updater, and s6 service-set/topology changes do derive a new image.
+the baked copy and converges to the deployment pin. Dockerfile and updater
+changes derive a new image. Service-set and topology changes publish a payload
+and reuse the base image.
 
 It **queues** rather than cancels concurrent runs. A cancelled deploy can leave
 migrations applied while the old Worker still serves.
@@ -227,13 +231,40 @@ generated, and the deploy rewrites it on every run.
 A Worker version carries its own vars, so a rollback restores the previous
 `BOX_IMAGE_REF` and both `BOX_PAYLOAD_*` vars along with the previous code. New
 workspaces return to the old box image with no second step, and existing canary
-machines converge to the restored payload version.
+machines converge to the restored payload version. Do not roll back to a
+Worker version whose payload pin is protocol 1 once protocol 2 boxes exist.
 
 For a payload-only rollback, do not roll back Worker code. Take the previous
 immutable release's manifest URL and version from the last known-good canary
-workflow, set `BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF` and
-`BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION` together, and deploy. Downgrades use the
-normal updater path. Never replace the bytes under a published version.
+workflow, then run:
+
+```sh
+BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF='<previous-protocol-2-manifest-url>' \
+BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION='<previous-protocol-2-version>' \
+npm run deploy -w packages/control-plane
+```
+
+Downgrades use the normal updater path. A protocol 2 box refuses a protocol 1
+release, so the rollback pin must name a protocol 2 release. Never replace the
+bytes under a published version.
+
+A host image update recreates the box container. The new container starts from
+its baked payload and loses prior downloads, which are not on the state volume.
+Its first supervised tick starts five seconds after boot and downloads the pin
+again.
+
+To apply the current pin by hand, stop the supervised updater, run one tick,
+then start it again:
+
+```sh
+docker exec blitz-box /command/s6-svc -d /run/service/payload
+docker exec blitz-box /usr/local/libexec/blitz-payload tick
+docker exec blitz-box /command/s6-svc -u /run/service/payload
+```
+
+`blitz-payload tick` exits 75 if the supervised updater still holds
+`/run/blitz-payload.lock`. Wait, or stop the service before retrying. It exits
+nonzero when pending rollback recovery fails.
 
 To keep one machine on what it currently runs while the rest of the deployment
 advances, issue the session-authenticated workspace-admin request:
@@ -251,8 +282,11 @@ roll the machine back. Send `{"payloadHold":false}` to resume the current pin.
 Read a workspace fleet with authenticated `GET /workspaces/<workspace-id>`.
 For each `workspace.members[].machine`, compare `payloadVersion` with the
 deployment pin and inspect `daemonVersion`, `payloadOutcome`, and
-`payloadReportedAt`. Null means the machine has not reported since payload
-updates shipped, not that it is current.
+`payloadReportedAt`. The two versions name what runs after the attempt. The
+outcome names the result, and the report time shows when the control plane
+accepted it. In the raw updater result, a failure's `detail` names the attempted
+target. Null means the machine has not reported since payload updates shipped,
+not that it is current.
 
 **D1 does not roll back.** Read the migration list before you answer the plan.
 
@@ -270,11 +304,11 @@ There is no traffic ramp. A deploy goes to full traffic at once.
   `core/bootstrap.ts` leaves it identical. Two deployments running different
   commits can serve the same bundle name. Ask `/version` instead.
 - **Base-image and payload changes have different reach.** Dockerfile/base OS,
-  the payload updater, and the s6 service set require a new image and normally
-  reach new workspaces only. Payload-owned scripts, gateway/credential binaries,
-  existing service implementations, agent-rules bytes, env defaults, and the
-  Lody daemon update existing boxes in place. Webapp and control-plane changes
-  ride the Worker and reach everything at once.
+  the payload updater, `blitz-cred`, and the four Docker defaults require a new
+  image and normally reach new workspaces only. Payload-owned scripts, gateway,
+  the complete s6 service set, agent-rules bytes, four `/etc` files, and the Lody
+  daemon update existing boxes in place. Webapp and control-plane changes ride
+  the Worker and reach everything at once.
 - **A core route absent from `assets.run_worker_first` is served the SPA shell
   with status 200**, not the route. Nothing errors. The list is derived from
   core's route registrations now, and `packages/control-plane/test/route-prefixes.test.ts`

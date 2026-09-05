@@ -32,7 +32,6 @@ import { validateBoxPayloadManifest } from "./lib/box-payload-manifest.mjs";
 import { createDeterministicTarGzip, hashFile } from "./lib/deterministic-archive.mjs";
 import {
   copyPayloadSources,
-  PAYLOAD_SERVICES,
 } from "./lib/box-payload-files.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
@@ -264,6 +263,17 @@ export async function stageBoxPayloadRelease({
   if (version !== undefined && version !== prepared.version) {
     throw new Error(`provided payload version ${version} does not match ${prepared.version}`);
   }
+  for (const service of Object.keys(prepared.restart)) {
+    const typePath = path.join(
+      stagingDirectory,
+      "rootfs/etc/s6-overlay/s6-rc.d",
+      service,
+      "type",
+    );
+    if ((await readFile(typePath, "utf8")).trim() !== "longrun") {
+      throw new Error(`restart service is not an extracted tree longrun: ${service}`);
+    }
+  }
   const releaseVersion = prepared.version;
   const releasePrefix = prefix ?? boxPayloadPrefix(releaseVersion);
   const payloadArchivePath = path.join(outputDirectory, "payload.tar.gz");
@@ -288,8 +298,9 @@ export async function stageBoxPayloadRelease({
   const manifest = {
     version: releaseVersion,
     createdAt,
-    minUpdater: 1,
+    minUpdater: 2,
     files: prepared.files,
+    directories: prepared.directories,
     archive: {
       url: `${appUrl}/${releasePrefix}/payload.tar.gz`,
       ...payloadArchive,
@@ -309,7 +320,7 @@ export async function stageBoxPayloadRelease({
     };
   }
   manifest.restart = prepared.restart;
-  validateBoxPayloadManifest(manifest, new Set(PAYLOAD_SERVICES));
+  validateBoxPayloadManifest(manifest);
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return {
     version: releaseVersion,

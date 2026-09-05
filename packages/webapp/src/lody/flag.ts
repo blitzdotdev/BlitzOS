@@ -8,13 +8,11 @@
  * graph — so this gates a dynamic import, the `window.ipc` install, and the
  * compensation stylesheet alike.
  *
- * ONE NAME ON BOTH SIDES. The box reads `BLITZ_LODY_SESSIONS` (the s6 run
- * scripts for `lody-daemon` and `lody-bridge`, and `env.defaults`), and phase 1
- * shipped it under that name. The webapp reads `VITE_BLITZ_LODY_SESSIONS`, which
+ * ONE NAME ON BOTH SIDES. Box config writes `BLITZ_LODY_SESSIONS` as data for
+ * the four Lody run scripts. The webapp reads `VITE_BLITZ_LODY_SESSIONS`, which
  * is the same name with the prefix Vite requires to expose a variable to the
- * browser. They are deliberately the same word: a member turning sessions on for
- * a workspace should not have to learn that the box and the app disagree about
- * what the feature is called.
+ * browser. They are deliberately the same word: a member turning sessions on
+ * for a workspace should not have to learn two feature names.
  *
  * The two are still SEPARATE switches, and that is correct: the flag on the box
  * decides whether the daemon runs (it costs ~300 MiB resident), the flag in the

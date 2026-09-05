@@ -2,12 +2,15 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -26,6 +29,9 @@ import { afterEach, describe, expect, it } from "vitest";
 const updater = fileURLToPath(
   new URL("../../rootfs/usr/local/libexec/blitz-payload", import.meta.url),
 );
+const serviceTreeSource = fileURLToPath(
+  new URL("../../rootfs/etc/s6-overlay/s6-rc.d", import.meta.url),
+);
 const deferredFixture = fileURLToPath(
   new URL(
     "../../../schema/fixtures/box-payload/payload-result/valid/deferred.json",
@@ -39,6 +45,12 @@ interface Archive {
   body: Buffer;
   sha256: string;
   bytes: number;
+}
+
+interface PayloadFile {
+  path: string;
+  sha256: string;
+  mode: string;
 }
 
 interface PayloadResult {
@@ -94,6 +106,16 @@ function writeExecutable(filePath: string, source: string): void {
   chmodSync(filePath, 0o755);
 }
 
+function regularFiles(root: string, relative = ""): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(path.join(root, relative), { withFileTypes: true })) {
+    const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...regularFiles(root, child));
+    else if (entry.isFile()) files.push(child);
+  }
+  return files;
+}
+
 function sendJson(response: ServerResponse, status: number, value: object): void {
   response.writeHead(status, { "Content-Type": "application/json" });
   response.end(JSON.stringify(value));
@@ -120,19 +142,27 @@ function listenUnix(server: Server, socketPath: string): Promise<void> {
 class DaemonHarness {
   readonly root = temporaryDirectory("blitz-payload-daemon-");
   readonly payloadRoot = path.join(this.root, "opt/payload");
-  readonly payloadState = path.join(this.root, "state/payload");
+  readonly payloadState = path.join(this.payloadRoot, "state");
+  readonly payloadVersions = path.join(this.payloadRoot, "versions");
   readonly lodyRoot = path.join(this.root, "opt/lody");
   readonly originFile = path.join(this.root, "state/origin");
+  readonly featuresFile = path.join(this.payloadState, "features");
+  readonly featuresAppliedFile = path.join(this.payloadState, "features.applied");
   readonly serviceRoot = path.join(this.root, "run/service");
   readonly bin = path.join(this.root, "bin");
   readonly s6Log = path.join(this.root, "s6.log");
   readonly pidFile = path.join(this.root, "daemon.pid");
   readonly daemonSocket = path.join(this.root, "run/lody-probe.sock");
   readonly missingControlSocket = path.join(this.root, "run/missing-control.sock");
+  readonly s6DbRoot = path.join(this.root, "run/s6");
+  readonly s6LiveCompiled = path.join(this.root, "run/s6-rc/compiled");
+  readonly s6SourcesRoot = path.join(this.root, "package/admin");
+  readonly lockPath = path.join(this.root, "run/blitz-payload.lock");
   readonly results: PayloadResult[] = [];
   readonly requests: string[] = [];
   readonly stateRequestsAt: number[] = [];
   readonly payloadArchive: Archive;
+  readonly payloadFiles: PayloadFile[];
   readonly daemonArchive: Archive;
   readonly options: DaemonOptions;
   origin = "";
@@ -140,9 +170,19 @@ class DaemonHarness {
 
   constructor(options: DaemonOptions = {}) {
     this.options = options;
-    const bakedPayload = path.join(this.payloadRoot, "baked/rootfs/usr/local/bin");
+    const bakedRoot = path.join(this.payloadRoot, "baked");
+    const bakedPayload = path.join(bakedRoot, "rootfs/usr/local/bin");
     mkdirSync(bakedPayload, { recursive: true });
     writeFileSync(path.join(bakedPayload, "tool"), "old\n", { mode: 0o755 });
+    cpSync(
+      serviceTreeSource,
+      path.join(bakedRoot, "rootfs/etc/s6-overlay/s6-rc.d"),
+      { recursive: true },
+    );
+    mkdirSync(
+      path.join(bakedRoot, "rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d"),
+      { recursive: true },
+    );
     writeFileSync(path.join(this.payloadRoot, "baked/payload-version"), `${BAKED_PAYLOAD_VERSION}\n`);
     const bakedDaemon = path.join(this.lodyRoot, "baked");
     mkdirSync(path.join(bakedDaemon, "bin"), { recursive: true });
@@ -154,14 +194,40 @@ class DaemonHarness {
     symlinkSync("baked", path.join(this.payloadRoot, "current"));
     symlinkSync("baked", path.join(this.lodyRoot, "current"));
     mkdirSync(this.payloadState, { recursive: true });
+    // Feature behavior has its own harness; keep daemon cases on unchanged defaults.
+    writeFileSync(this.featuresFile, "BLITZ_LODY_SESSIONS=0\n", { mode: 0o644 });
+    writeFileSync(this.featuresAppliedFile, "BLITZ_LODY_SESSIONS=0\n", { mode: 0o644 });
     mkdirSync(this.serviceRoot, { recursive: true });
     mkdirSync(this.bin, { recursive: true });
+    mkdirSync(path.join(this.s6SourcesRoot, "s6-overlay-3.2.1.0/etc/s6-rc/sources"), {
+      recursive: true,
+    });
+    mkdirSync(path.join(this.s6DbRoot, "db"), { recursive: true });
+    mkdirSync(path.dirname(this.s6LiveCompiled), { recursive: true });
+    symlinkSync(path.join(this.s6DbRoot, "db"), this.s6LiveCompiled);
 
     const payloadBuild = temporaryDirectory("blitz-payload-daemon-payload-");
+    cpSync(
+      serviceTreeSource,
+      path.join(payloadBuild, "rootfs/etc/s6-overlay/s6-rc.d"),
+      { recursive: true },
+    );
+    mkdirSync(
+      path.join(payloadBuild, "rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d"),
+      { recursive: true },
+    );
     const payloadFile = path.join(payloadBuild, "rootfs/usr/local/bin/tool");
     mkdirSync(path.dirname(payloadFile), { recursive: true });
     writeFileSync(payloadFile, "new\n", { mode: 0o755 });
     writeFileSync(path.join(payloadBuild, "payload-version"), "v2\n");
+    this.payloadFiles = regularFiles(path.join(payloadBuild, "rootfs")).sort().map((relative) => {
+      const filePath = path.join(payloadBuild, "rootfs", relative);
+      return {
+        path: `rootfs/${relative}`,
+        sha256: sha256(readFileSync(filePath)),
+        mode: (statSync(filePath).mode & 0o7777).toString(8).padStart(4, "0"),
+      };
+    });
     this.payloadArchive = archive(payloadBuild, "payload.tar.gz", ["payload-version", "rootfs"]);
 
     const daemonBuild = temporaryDirectory("blitz-payload-daemon-archive-");
@@ -178,7 +244,7 @@ class DaemonHarness {
     writeExecutable(path.join(this.bin, "blitz-cred"), "#!/bin/sh\nprintf 'machine-bearer\\n'\n");
     writeExecutable(
       path.join(this.bin, "s6-svstat"),
-      "#!/bin/sh\ncat \"$BLITZ_TEST_DAEMON_PID\"\n",
+      "#!/bin/sh\nprintf 'true %s\\n' \"$(cat \"$BLITZ_TEST_DAEMON_PID\")\"\n",
     );
     writeExecutable(
       path.join(this.bin, "s6-svc"),
@@ -190,6 +256,20 @@ class DaemonHarness {
         + "fi\n"
         + "if [ \"$1\" = -k ]; then printf '999\\n' >\"$BLITZ_TEST_DAEMON_PID\"; fi\n",
     );
+    writeExecutable(
+      path.join(this.bin, "s6-rc-compile"),
+      "#!/bin/sh\nmkdir -p \"$2\"\n",
+    );
+    writeExecutable(
+      path.join(this.bin, "s6-rc-update"),
+      "#!/bin/sh\ndatabase=\nfor argument do database=$argument; done\n"
+        + "[ -d \"$database\" ] || exit 1\n"
+        + "temporary=\"$BLITZ_TEST_S6_LIVE_COMPILED.new-$$\"\n"
+        + "rm -f \"$temporary\"\nln -s \"$database\" \"$temporary\"\n"
+        + "rm -f \"$BLITZ_TEST_S6_LIVE_COMPILED\"\n"
+        + "mv \"$temporary\" \"$BLITZ_TEST_S6_LIVE_COMPILED\"\n",
+    );
+    writeExecutable(path.join(this.bin, "s6-rc"), "#!/bin/sh\nexit 0\n");
     writeFileSync(this.pidFile, "100\n");
   }
 
@@ -247,12 +327,9 @@ class DaemonHarness {
       sendJson(response, 200, {
         version: "v2",
         createdAt: 1,
-        minUpdater: 1,
-        files: [{
-          path: "rootfs/usr/local/bin/tool",
-          sha256: sha256("new\n"),
-          mode: "0755",
-        }],
+        minUpdater: 2,
+        files: this.payloadFiles,
+        directories: ["rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d"],
         archive: {
           url: `${this.origin}/payload.tar.gz`,
           sha256: this.payloadArchive.sha256,
@@ -292,6 +369,11 @@ class DaemonHarness {
       });
       return;
     }
+    if (request.url === "/workspaces/self/machine-stats" && request.method === "POST") {
+      request.resume();
+      request.on("end", () => response.writeHead(204).end());
+      return;
+    }
     response.writeHead(404);
     response.end();
   }
@@ -311,6 +393,19 @@ class DaemonHarness {
         serviceRoot: this.serviceRoot,
         s6Svc: path.join(this.bin, "s6-svc"),
         s6Svstat: path.join(this.bin, "s6-svstat"),
+        s6RcCompile: path.join(this.bin, "s6-rc-compile"),
+        s6RcUpdate: path.join(this.bin, "s6-rc-update"),
+        s6Rc: path.join(this.bin, "s6-rc"),
+        s6SourcesRoot: this.s6SourcesRoot,
+        s6DbRoot: this.s6DbRoot,
+        s6LiveCompiled: this.s6LiveCompiled,
+        lockPath: this.lockPath,
+        payloadState: this.payloadState,
+        payloadVersions: this.payloadVersions,
+        featuresFile: this.featuresFile,
+        featuresAppliedFile: this.featuresAppliedFile,
+        featuresOwnerUid: process.getuid?.() ?? 0,
+        featuresOwnerGid: process.getgid?.() ?? 0,
         gatewayHealthUrl: `${this.origin}/healthz`,
         daemonSocket: this.daemonSocket,
         daemonControlSocket: this.options.controlSocket === false
@@ -320,14 +415,17 @@ class DaemonHarness {
         daemonIdleProbeTimeoutMs: 30,
         daemonKillGraceMs: 60,
         daemonKillPollMs: 10,
-        healthTimeoutMs: 90,
+        serviceRestartTimeoutMs: 100,
+        serviceRestartPollMs: 10,
+        healthTimeoutMs: 2000,
         healthIntervalMs: 10,
-        requestTimeoutMs: 250,
+        requestTimeoutMs: 1000,
         ...testOverrides,
       }),
       BLITZ_PAYLOAD_ONCE: "1",
       BLITZ_TEST_DAEMON_PID: this.pidFile,
       BLITZ_TEST_S6_LOG: this.s6Log,
+      BLITZ_TEST_S6_LIVE_COMPILED: this.s6LiveCompiled,
       ...environmentOverrides,
     };
   }
@@ -366,7 +464,7 @@ function runUpdater(
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error(`blitz-payload timed out: ${stderr}`));
-    }, 5000);
+    }, 10_000);
     child.once("error", (error) => {
       clearTimeout(timeout);
       reject(error);
@@ -401,7 +499,7 @@ afterEach(async () => {
 });
 
 describe("blitz-payload daemon activation", () => {
-  it("restarts immediately when every session is idle", async () => {
+  it("activates an idle protocol 2 daemon release immediately", async () => {
     const harness = new DaemonHarness({ activeCounts: [0] });
 
     const result = await apply(harness);
@@ -509,7 +607,7 @@ describe("blitz-payload daemon activation", () => {
     expect(harness.currentDaemon()).toBe("baked");
     expect(harness.calls()).toEqual([]);
     expect(harness.requests.filter((entry) => entry === "GET /manifest.json")).toHaveLength(2);
-    expect(existsSync(path.join(harness.payloadState, "versions/v2"))).toBe(false);
+    expect(existsSync(path.join(harness.payloadVersions, "v2"))).toBe(false);
   });
 
   it("rolls payload and daemon back as one unit and suppresses the failed pin", async () => {

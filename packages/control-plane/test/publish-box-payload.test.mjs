@@ -22,7 +22,7 @@ import {
   stageBoxPayloadRelease,
 } from "../scripts/publish-box-payload.mjs";
 import { validateBoxPayloadManifest } from "../scripts/lib/box-payload-manifest.mjs";
-import { PAYLOAD_FILES, PAYLOAD_SERVICES } from "../scripts/lib/box-payload-files.mjs";
+import { PAYLOAD_DIRECTORIES, PAYLOAD_FILES } from "../scripts/lib/box-payload-files.mjs";
 import {
   lodyDaemonVersion,
   readLodyDaemonMetadata,
@@ -50,12 +50,59 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+const V1_RESTART_SERVICES = new Set([
+  "box-credential", "cloudflared", "dockerd", "dufs", "gateway", "lody-bridge",
+  "lody-daemon", "lody-projects", "lody-watchdog", "remote-control", "sshd", "ttyd", "watch",
+]);
+
+// Frozen protocol 1 grammar. Unknown top-level fields are deliberately ignored.
+function validateWithFrozenV1Grammar(manifest) {
+  const requiredRecord = (value, label) => {
+    assert.ok(value !== null && typeof value === "object" && !Array.isArray(value), label);
+    return value;
+  };
+  const validVersion = (value) => String(value) === value
+    && /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u.test(value);
+  const validDigest = (value) => String(value) === value && /^[a-f0-9]{64}$/u.test(value);
+  assert.ok(Number.isSafeInteger(manifest.createdAt) && manifest.createdAt > 0);
+  assert.ok(Number.isSafeInteger(manifest.minUpdater) && manifest.minUpdater > 0);
+  assert.ok(validVersion(manifest.version));
+  assert.ok(Array.isArray(manifest.files) && manifest.files.length > 0);
+  const validPath = (value) => String(value) === value
+    && value.startsWith("rootfs/")
+    && !value.split("/").some((segment) => segment === "" || segment === "." || segment === "..");
+  const validArchive = (value, label) => {
+    const archive = requiredRecord(value, label);
+    assert.ok(String(archive.url) === archive.url && /^https?:\/\/[^/\s?#]+(?:[/?][^\s#]*)?$/u.test(archive.url));
+    assert.ok(validDigest(archive.sha256));
+    assert.ok(Number.isSafeInteger(archive.bytes) && archive.bytes > 0);
+  };
+  for (const entry of manifest.files) {
+    requiredRecord(entry, "file");
+    assert.ok(validPath(entry.path));
+    assert.ok(validDigest(entry.sha256));
+    assert.match(entry.mode, /^[0-7]{4}$/u);
+  }
+  validArchive(manifest.archive, "archive");
+  if (manifest.daemon !== undefined) {
+    const daemon = requiredRecord(manifest.daemon, "daemon");
+    assert.ok(validVersion(daemon.version));
+    assert.ok(Number.isSafeInteger(daemon.protocolVersion) && daemon.protocolVersion > 0);
+    validArchive(daemon, "daemon archive");
+  }
+  for (const [service, dependencies] of Object.entries(requiredRecord(manifest.restart, "restart"))) {
+    assert.ok(V1_RESTART_SERVICES.has(service), service);
+    assert.ok(Array.isArray(dependencies));
+    for (const dependency of dependencies) assert.ok(validPath(dependency));
+  }
+}
+
 test("publisher manifest validation matches the entire shared corpus", () => {
   for (const accepted of [true, false]) {
     const directory = path.join(fixtureRoot, accepted ? "valid" : "invalid");
     for (const name of readdirSync(directory).filter((entry) => entry.endsWith(".json"))) {
       const manifest = JSON.parse(readFileSync(path.join(directory, name), "utf8"));
-      const validate = () => validateBoxPayloadManifest(manifest, new Set(PAYLOAD_SERVICES));
+      const validate = () => validateBoxPayloadManifest(manifest);
       if (accepted) assert.doesNotThrow(validate, name);
       else assert.throws(validate, undefined, name);
     }
@@ -100,10 +147,13 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
   assert.equal(validateBoxPayloadManifest(manifest), manifest);
   assert.equal(manifest.version, boxPayloadVersion({
     files: manifest.files,
+    directories: manifest.directories,
     restart: manifest.restart,
   }));
   assert.equal(first.version, second.version);
   assert.deepEqual(manifest.files.map((entry) => entry.path), PAYLOAD_FILES);
+  assert.deepEqual(manifest.directories, PAYLOAD_DIRECTORIES);
+  assert.equal(manifest.minUpdater, 2);
   assert.equal(manifest.daemon, undefined);
   assert.equal(manifest.files.some((entry) => entry.path === "rootfs/etc/blitz/env.defaults"), false);
   assert.equal(
@@ -140,7 +190,15 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
       entry.path,
     );
   }
+  for (const directory of manifest.directories) {
+    const extractedPath = path.join(extracted, directory);
+    assert.ok(statSync(extractedPath).isDirectory(), directory);
+    assert.equal(statSync(extractedPath).mode & 0o777, 0o755, directory);
+    assert.deepEqual(readdirSync(extractedPath), [], directory);
+  }
   assert.ok(manifest.restart.gateway.includes("rootfs/usr/local/bin/blitz-box-gateway"));
+  assert.ok(manifest.restart.sshd.includes("rootfs/etc/blitz/sshd_config"));
+  assert.equal(manifest.restart["machine-stats"], undefined);
   assert.equal(
     manifest.restart.ttyd.includes("rootfs/usr/local/libexec/blitz-term"),
     false,
@@ -148,6 +206,17 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
   for (const oneshot of ["cgroups", "init-state", "register", "rules"]) {
     assert.equal(manifest.restart[oneshot], undefined);
   }
+});
+
+test("publisher protocol 2 output remains valid under the frozen protocol 1 grammar", async () => {
+  const staged = await stage(
+    temporaryDirectory("blitz-payload-v1-grammar-release-"),
+    temporaryDirectory("blitz-payload-v1-grammar-stage-"),
+  );
+
+  validateWithFrozenV1Grammar(staged.manifest);
+  assert.equal(staged.manifest.minUpdater, 2);
+  assert.deepEqual(staged.manifest.directories, PAYLOAD_DIRECTORIES);
 });
 
 /** A prefix the way the Dockerfile's daemon stage leaves it, stamped with the
@@ -182,6 +251,7 @@ test("an optional daemon archive fills all daemon contract fields", async () => 
   const manifest = JSON.parse(readFileSync(staged.manifestPath, "utf8"));
   assert.equal(manifest.version, boxPayloadVersion({
     files: manifest.files,
+    directories: manifest.directories,
     daemonSha256: sha256(readFileSync(staged.daemonArchivePath)),
     restart: manifest.restart,
   }));

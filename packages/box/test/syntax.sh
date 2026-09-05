@@ -11,6 +11,7 @@ box_dir=$(realpath "$script_dir/..")
 for shim in blitz claude codex; do
   sh -n "$box_dir/rootfs/usr/local/bin/$shim"
 done
+sh -n "$box_dir/rootfs/etc/profile.d/blitz-npm.sh"
 
 # libexec is no longer all bash: blitz-lody-bridge and blitz-lody-projects are
 # node. Dispatch on the shebang rather than the name, so a checker is never
@@ -29,5 +30,9 @@ done < <(
 )
 
 node --check "$script_dir/payload-lab/session-driver/drive.mjs"
+node --check "$script_dir/payload-live-origin.mjs"
+node --check "$script_dir/payload-live-release.mjs"
+grep -qx bundle "$box_dir/rootfs/etc/s6-overlay/s6-rc.d/user/type"
+grep -qx bundle "$box_dir/rootfs/etc/s6-overlay/s6-rc.d/user2/type"
 
 echo "PASS box shell syntax"

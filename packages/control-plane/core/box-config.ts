@@ -23,6 +23,7 @@ import {
   BOX_PAYLOAD_OUTCOMES,
   BOX_UPDATE_OUTCOMES,
   type BoxConfigResponse,
+  type BoxFeatures,
   type BoxPayloadConfig,
   type BoxPayloadOutcome,
   type BoxPayloadResultRequest,
@@ -83,6 +84,19 @@ export function boxPayloadConfigFromEnv(
     throw new Error("BOX_PAYLOAD_VERSION must be a version token when BOX_PAYLOAD_REF is set");
   }
   return { version: versionValue, manifestUrl: manifestUrlValue };
+}
+
+/** Parses the deployment feature switch at the Worker boundary. Only the
+ * literal string "1" enables Lody; absent and every other value are the safe
+ * off default. */
+export function boxFeaturesFromEnv(value: string | null | undefined): BoxFeatures {
+  return { lodySessions: value === "1" };
+}
+
+function boxLodySessionsBinding(context: CoreContext): string | undefined {
+  const value = Object.entries(context.env)
+    .find(([name]) => name === "BOX_LODY_SESSIONS")?.[1];
+  return isString(value) ? value : undefined;
 }
 
 function boxUpdateOutcome(value: string): BoxUpdateOutcome {
@@ -198,6 +212,9 @@ export function addBoxConfigRoutes(
             runtime.vars.boxPayloadRef,
             runtime.vars.boxPayloadVersion,
           ),
+      features: boxFeaturesFromEnv(
+        boxLodySessionsBinding(context),
+      ),
     };
     return context.json(response);
   });

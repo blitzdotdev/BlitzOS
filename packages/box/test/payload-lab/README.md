@@ -81,7 +81,7 @@ missing config is never a deploy input.
 No experiment forces an updater transaction. After a pin, every experiment
 waits for the box's supervised payload service, whose default poll interval is
 five minutes. Failure attribution comes from the world-readable
-`/var/lib/blitz/payload/log` and `state.json`; a failure result's version names
+`/opt/blitz/payload/state/log` and `state.json`; a failure result's version names
 what remains running, while `state.failed.version` and the log name the
 attempted target. `LAB_OUTCOME_TIMEOUT` therefore defaults to 420 seconds.
 E8 likewise waits for the host image updater's normal timer after requesting
@@ -89,7 +89,8 @@ E8 likewise waits for the host image updater's normal timer after requesting
 Session waits pass
 `--timeout "$LAB_TURN_TIMEOUT"` to the driver; that value defaults to 900
 seconds. E4 uses separate windows to observe the scheduled deferred report and
-the first idle tick after its 60-second turn.
+the first idle tick after its 60-second turn. The loop's first tick starts five
+seconds after boot.
 
 Useful tuning variables are `LAB_OUTCOME_TIMEOUT`, `LAB_PAYLOAD_INTERVAL`,
 `LAB_TURN_TIMEOUT`, `LAB_TURN_AGENT`, `LAB_TURN_PROJECT`, `LAB_E1_PROMPT`,

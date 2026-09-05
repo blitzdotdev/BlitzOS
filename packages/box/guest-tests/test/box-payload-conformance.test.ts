@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-/** Manifest-consumer side of box-payload v1. This invokes the real base-image
+/** Manifest-consumer side of box-payload v2. This invokes the real base-image
  * updater rather than copying its parser. Result bodies are exercised at the
  * real updater's POST boundary in blitz-payload.test.ts. */
 
@@ -61,7 +61,7 @@ describe("blitz-payload fixture conformance", () => {
     const names = readdirSync(configFixtures)
       .filter((name) => name.startsWith("config-") && name.endsWith(".json"))
       .sort();
-    expect(names).toHaveLength(13);
+    expect(names).toHaveLength(15);
     const temporary = mkdtempSync(path.join(tmpdir(), "blitz-payload-config-"));
     try {
       for (const name of names) {
@@ -85,7 +85,7 @@ describe("blitz-payload fixture conformance", () => {
     }
   });
 
-  it("accepts every valid manifest, including an unsupported updater version", () => {
+  it("accepts every valid manifest, including v1 compatibility and an unsupported updater version", () => {
     const names = fixtureNames("valid");
     expect(names).toEqual([
       "valid/full-manifest.json",

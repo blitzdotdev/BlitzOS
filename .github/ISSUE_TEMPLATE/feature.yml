@@ -11,7 +11,6 @@ body:
         - webapp
         - box
         - broker
-        - microvm-host
         - schema / fixtures
         - deploy tooling
         - docs

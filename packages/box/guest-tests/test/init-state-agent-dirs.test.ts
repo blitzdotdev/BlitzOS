@@ -22,6 +22,10 @@ function scriptText(): string {
 }
 
 describe("blitz-init-state agent config dirs", () => {
+  it("accepts the unset control-plane origin now Docker owns box defaults", () => {
+    expect(scriptText()).toContain('if [ -n "${BLITZ_CP_ORIGIN:-}" ]; then');
+  });
+
   it("creates ~/.claude and ~/.codex with box ownership before installing rule files", () => {
     const text = scriptText();
     const dirLine = text.indexOf(

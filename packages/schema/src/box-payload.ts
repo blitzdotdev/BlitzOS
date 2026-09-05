@@ -6,28 +6,6 @@ import {
   type JsonValue,
 } from "./json.js";
 
-/** Payload-owned longrun services a manifest may ask the updater to restart.
- * Oneshots are updated as files and take effect at next boot; the base-owned
- * updater longrun cannot restart itself during a transaction. */
-export const BOX_PAYLOAD_RESTART_SERVICES = [
-  "box-credential",
-  "cloudflared",
-  "dockerd",
-  "dufs",
-  "gateway",
-  "lody-bridge",
-  "lody-daemon",
-  "lody-projects",
-  "lody-watchdog",
-  "machine-stats",
-  "remote-control",
-  "sshd",
-  "ttyd",
-  "watch",
-] as const;
-
-export type BoxPayloadRestartService = (typeof BOX_PAYLOAD_RESTART_SERVICES)[number];
-
 export interface BoxPayloadFile {
   path: string;
   sha256: string;
@@ -45,7 +23,7 @@ export interface BoxPayloadDaemonArchive extends BoxPayloadArchive {
   protocolVersion: number;
 }
 
-export type BoxPayloadRestart = Partial<Record<BoxPayloadRestartService, string[]>>;
+export type BoxPayloadRestart = Record<string, string[]>;
 
 /** The signed description of one in-place box payload release. The daemon is
  * absent when a release reuses the daemon already selected by the running
@@ -55,6 +33,7 @@ export interface BoxPayloadManifest {
   createdAt: number;
   minUpdater: number;
   files: BoxPayloadFile[];
+  directories: string[];
   archive: BoxPayloadArchive;
   daemon?: BoxPayloadDaemonArchive;
   restart: BoxPayloadRestart;
@@ -96,6 +75,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MODE_PATTERN = /^[0-7]{4}$/u;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 const HTTP_URL_PATTERN = /^https?:\/\/[^/\s?#]+(?:[/?][^\s#]*)?$/u;
+const SERVICE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 
 function invalid(field: string, requirement: string): never {
   throw new Error(`box-payload ${field} ${requirement}`);
@@ -180,17 +160,17 @@ function file(value: JsonValue, index: number): BoxPayloadFile {
   };
 }
 
-function restartService(value: string): BoxPayloadRestartService {
-  const service = BOX_PAYLOAD_RESTART_SERVICES.find((candidate) => candidate === value);
-  if (service === undefined) invalid("manifest.restart service", `is unknown: ${value}`);
-  return service;
-}
-
-function restart(value: JsonValue | undefined) {
+function restart(value: JsonValue | undefined, filePaths: Set<string>) {
   const parsed = requiredObject(value, "manifest.restart");
   const result: BoxPayloadRestart = {};
   for (const [serviceName, dependenciesValue] of Object.entries(parsed)) {
-    const service = restartService(serviceName);
+    if (!SERVICE_PATTERN.test(serviceName)) {
+      invalid("manifest.restart service", `is invalid: ${serviceName}`);
+    }
+    const serviceRoot = `rootfs/etc/s6-overlay/s6-rc.d/${serviceName}`;
+    if (!filePaths.has(`${serviceRoot}/run`) || !filePaths.has(`${serviceRoot}/type`)) {
+      invalid("manifest.restart service", `is not a tree longrun: ${serviceName}`);
+    }
     const dependencies = requiredArray(
       dependenciesValue,
       `manifest.restart.${serviceName}`,
@@ -198,7 +178,7 @@ function restart(value: JsonValue | undefined) {
       dependency,
       `manifest.restart.${serviceName}[${index}]`,
     ));
-    result[service] = dependencies;
+    result[serviceName] = dependencies;
   }
   return result;
 }
@@ -210,6 +190,12 @@ export function parseBoxPayloadManifest(value: JsonValue): BoxPayloadManifest {
   const parsed = requiredObject(value, "manifest");
   const filesValue = requiredArray(parsed.files, "manifest.files");
   if (filesValue.length === 0) invalid("manifest.files", "must not be empty");
+  const files = filesValue.map(file);
+  const filePaths = new Set(files.map((entry) => entry.path));
+  const directories = parsed.directories === undefined
+    ? []
+    : requiredArray(parsed.directories, "manifest.directories")
+      .map((entry, index) => payloadPath(entry, `manifest.directories[${index}]`));
 
   const daemonValue = parsed.daemon;
   const daemonObject = daemonValue === undefined
@@ -230,9 +216,10 @@ export function parseBoxPayloadManifest(value: JsonValue): BoxPayloadManifest {
     version: version(parsed.version, "manifest.version"),
     createdAt: safePositiveInteger(parsed.createdAt, "manifest.createdAt"),
     minUpdater: safePositiveInteger(parsed.minUpdater, "manifest.minUpdater"),
-    files: filesValue.map(file),
+    files,
+    directories,
     archive: archive(parsed.archive, "manifest.archive"),
-    restart: restart(parsed.restart),
+    restart: restart(parsed.restart, filePaths),
   };
   if (daemon !== undefined) manifest.daemon = daemon;
   return manifest;

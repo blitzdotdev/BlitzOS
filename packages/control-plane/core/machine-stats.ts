@@ -4,12 +4,12 @@ import { authenticateBox } from "./oauth.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import type { MachineStatsRequest } from "./wire.js";
 
-// The machine-stats contract (see packages/schema/fixtures/machine-stats/):
-// the guest measures the filesystem holding its state directory every ten
-// minutes and posts `{ diskUsedPercent }` here with its box credential. The
-// producer is `box/rootfs/usr/local/bin/blitz-machine-stats`; both sides are
-// pinned against that corpus. Edit the accept rule below and the guest's copy
-// of it together, never one alone.
+// The machine-stats contract uses packages/schema/fixtures/machine-stats/.
+// The updater at rootfs/usr/local/libexec/blitz-payload measures the filesystem
+// holding its state directory. It posts `{ diskUsedPercent }` here once per
+// successful five-minute tick with its box credential. The guest test is
+// packages/box/guest-tests/test/machine-stats-conformance.test.ts. Edit the
+// accept rule and that test together.
 
 /** The body cap. One integer in one object needs nothing like this much room;
  * the slack is there so a forward-compatible guest can add a field without

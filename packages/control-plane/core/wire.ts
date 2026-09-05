@@ -74,11 +74,16 @@ export interface PutAgentRuleResponse {
  * needs no restart because the gateway re-reads the file per request.
  * `updateRequested` is the per-workspace flag; image updates are request-gated
  * because replacing the container kills every process inside it. */
+export interface BoxFeatures {
+  lodySessions: boolean;
+}
+
 export interface BoxConfigResponse {
   boxImageRef: string;
   controlPlaneOrigin: string;
   updateRequested: boolean;
   payload?: BoxPayloadConfig | null;
+  features?: BoxFeatures;
 }
 
 /** What the host reports after an update attempt, in the order it tries:

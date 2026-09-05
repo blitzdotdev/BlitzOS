@@ -1,6 +1,6 @@
 #!/command/with-contenv bash
 set -euo pipefail
-# BLITZ_STATE_DIR is the seam `blitz-machine-stats` already uses; the guest
+# BLITZ_STATE_DIR is the shared state-volume seam; the guest
 # conformance test drives the real gate through it.
 state_dir="${BLITZ_STATE_DIR:-/var/lib/blitz}"
 tunnel_token_file="$state_dir/tunnel-token"

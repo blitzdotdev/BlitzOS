@@ -7,9 +7,11 @@
 //
 // BASE-OWNED TICK DEPENDENCIES. Node runs this file, /usr/local/bin/blitz-cred
 // obtains the bearer, /var/lib/blitz/origin supplies the endpoint, and Node's
-// built-in HTTP/TLS stack fetches config and reports results. Applying an
-// archive additionally uses the image's tar and s6-svc/s6-svstat tools. None
-// of these paths is payload-owned; the gateway deliberately remains payload.
+// built-in HTTP/TLS stack fetches config and reports results. Updater state and
+// downloaded releases stay in the image layer under /opt/blitz/payload.
+// Applying an archive additionally uses the image's tar and s6 command tools.
+// None of these paths is payload-owned; the gateway deliberately remains
+// payload.
 //
 // DAEMON IDLE DOOR. The updater reads `activeSessionCount` from the daemon's
 // bounded local `/state` probe. Lody holds that count above zero for running,
@@ -25,41 +27,40 @@ const fsp = require('node:fs/promises');
 const http = require('node:http');
 const path = require('node:path');
 
-const UPDATER_VERSION = 1;
+const UPDATER_VERSION = 2;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MODE_PATTERN = /^[0-7]{4}$/u;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 const HTTP_URL_PATTERN = /^https?:\/\/[^/\s?#]+(?:[/?][^\s#]*)?$/u;
+const SERVICE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+const SERVICE_TREE_PATH = 'rootfs/etc/s6-overlay/s6-rc.d';
 const JSON_MAX_BYTES = 1024 * 1024;
 const LOG_MAX_BYTES = 1024 * 1024;
+const COMMAND_MAX_BYTES = 1024 * 1024;
 const FAILED_RETRY_MS = 6 * 60 * 60 * 1000;
 const QUIET_LOG_INTERVAL_MS = 60 * 60 * 1000;
-const RESTART_SERVICES = new Set([
-  'box-credential',
-  'cloudflared',
-  'dockerd',
-  'dufs',
-  'gateway',
-  'lody-bridge',
-  'lody-daemon',
-  'lody-projects',
-  'lody-watchdog',
-  'machine-stats',
-  'remote-control',
-  'sshd',
-  'ttyd',
-  'watch',
-]);
 const FAILED_OUTCOMES = new Set([
   'verify-failed',
   'rolled-back',
   'start-failed',
   'unsupported',
 ]);
+const FEATURE_FLAGS = Object.freeze([
+  Object.freeze({ wire: 'lodySessions', env: 'BLITZ_LODY_SESSIONS' }),
+]);
+const FEATURES_PATH = '/opt/blitz/payload/state/features';
 class FetchFailure extends Error {}
 class VerifyFailure extends Error {}
 
 let payloadLogPath = null;
+let liveServiceDatabase = null;
+const compiledServiceDatabases = new Set();
+let inheritedLockFd9 = false;
+try {
+  inheritedLockFd9 = fs.fstatSync(9).isFile();
+} catch {
+  // Public validation commands and direct test harness calls have no lock fd.
+}
 
 function configureLog(stateRoot) {
   try {
@@ -110,6 +111,13 @@ function requiredArray(value, field) {
 
 function requiredString(value, field) {
   if (typeof value !== 'string') throw new VerifyFailure(`box-payload ${field} must be a string`);
+  return value;
+}
+
+function requiredBoolean(value, field) {
+  if (value !== true && value !== false) {
+    throw new VerifyFailure(`box-payload ${field} must be a boolean`);
+  }
   return value;
 }
 
@@ -172,6 +180,7 @@ function archive(value, field) {
 
 function parseManifest(value) {
   const parsed = record(value, 'manifest');
+  const minUpdater = positiveInteger(parsed.minUpdater, 'manifest.minUpdater');
   const filesValue = requiredArray(parsed.files, 'manifest.files');
   if (filesValue.length === 0) {
     throw new VerifyFailure('box-payload manifest.files must not be empty');
@@ -191,11 +200,21 @@ function parseManifest(value) {
       mode,
     };
   });
+  const filePaths = new Set(files.map((entry) => entry.path));
+  const directories = parsed.directories === undefined
+    ? []
+    : requiredArray(parsed.directories, 'manifest.directories')
+      .map((entry, index) => payloadPath(entry, `manifest.directories[${index}]`));
   const restartObject = record(parsed.restart, 'manifest.restart');
   const restart = {};
   for (const [service, dependenciesValue] of Object.entries(restartObject)) {
-    if (!RESTART_SERVICES.has(service)) {
-      throw new VerifyFailure(`box-payload manifest.restart service is unknown: ${service}`);
+    const serviceRoot = `${SERVICE_TREE_PATH}/${service}`;
+    const treeService = SERVICE_PATTERN.test(service)
+      && filePaths.has(`${serviceRoot}/run`);
+    if (!treeService) {
+      throw new VerifyFailure(
+        `box-payload manifest.restart service is not a tree longrun: ${service}`,
+      );
     }
     restart[service] = requiredArray(
       dependenciesValue,
@@ -208,8 +227,9 @@ function parseManifest(value) {
   const result = {
     version: version(parsed.version, 'manifest.version'),
     createdAt: positiveInteger(parsed.createdAt, 'manifest.createdAt'),
-    minUpdater: positiveInteger(parsed.minUpdater, 'manifest.minUpdater'),
+    minUpdater,
     files,
+    directories,
     archive: archive(parsed.archive, 'manifest.archive'),
     restart,
   };
@@ -227,13 +247,32 @@ function parseManifest(value) {
   return result;
 }
 
-function parsePayloadConfig(value) {
+function parseBoxConfig(value) {
   const envelope = record(value, 'box-config');
-  if (envelope.payload === undefined || envelope.payload === null) return null;
-  const payload = record(envelope.payload, 'box-config.payload');
+  let payload = null;
+  if (envelope.payload !== undefined && envelope.payload !== null) {
+    const payloadObject = record(envelope.payload, 'box-config.payload');
+    payload = {
+      version: version(payloadObject.version, 'box-config.payload.version'),
+      manifestUrl: httpUrl(
+        payloadObject.manifestUrl,
+        'box-config.payload.manifestUrl',
+      ),
+    };
+  }
+  let features = { lodySessions: false };
+  if (envelope.features !== undefined) {
+    const featureObject = record(envelope.features, 'box-config.features');
+    features = {
+      lodySessions: requiredBoolean(
+        featureObject.lodySessions,
+        'box-config.features.lodySessions',
+      ),
+    };
+  }
   return {
-    version: version(payload.version, 'box-config.payload.version'),
-    manifestUrl: httpUrl(payload.manifestUrl, 'box-config.payload.manifestUrl'),
+    payload,
+    features,
   };
 }
 
@@ -263,14 +302,35 @@ function settings() {
     ? {}
     : JSON.parse(process.env.BLITZ_PAYLOAD_TEST_CONFIG);
   const configured = (key, fallback) => test[key] ?? fallback;
+  const payloadRoot = configured('payloadRoot', '/opt/blitz/payload');
+  const payloadState = configured('payloadState', path.join(payloadRoot, 'state'));
   return {
-    payloadRoot: configured('payloadRoot', '/opt/blitz/payload'),
-    payloadState: path.join(stateRoot, 'payload'),
+    stateDir: stateRoot,
+    payloadRoot,
+    payloadState,
+    payloadVersions: configured('payloadVersions', path.join(payloadRoot, 'versions')),
     lodyRoot: configured('lodyRoot', '/opt/blitz/lody'),
-    originFile: path.join(stateRoot, 'origin'),
+    originFile: configured('originFile', path.join(stateRoot, 'origin')),
     serviceRoot: configured('serviceRoot', '/run/service'),
     s6Svc: configured('s6Svc', '/command/s6-svc'),
     s6Svstat: configured('s6Svstat', '/command/s6-svstat'),
+    s6RcCompile: configured('s6RcCompile', '/command/s6-rc-compile'),
+    s6RcUpdate: configured('s6RcUpdate', '/command/s6-rc-update'),
+    s6Rc: configured('s6Rc', '/command/s6-rc'),
+    s6SourcesRoot: configured('s6SourcesRoot', '/package/admin'),
+    s6DbRoot: configured('s6DbRoot', '/run/s6'),
+    s6LiveCompiled: configured('s6LiveCompiled', '/run/s6-rc/compiled'),
+    s6TransitionTimeoutMs: configured('s6TransitionTimeoutMs', 65_000),
+    lockPath: configured('lockPath', '/run/blitz-payload.lock'),
+    inheritedLockFd9,
+    featuresFile: configured('featuresFile', path.join(payloadState, 'features')),
+    featuresAppliedFile: configured(
+      'featuresAppliedFile',
+      path.join(payloadState, 'features.applied'),
+    ),
+    featuresOwnerUid: configured('featuresOwnerUid', 0),
+    featuresOwnerGid: configured('featuresOwnerGid', 0),
+    eventLog: configured('eventLog', null),
     gatewayHealthUrl: configured('gatewayHealthUrl', 'http://127.0.0.1:7445/healthz'),
     daemonSocket: configured(
       'daemonSocket',
@@ -284,9 +344,15 @@ function settings() {
       positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_WAIT', 4 * 60 * 60)),
     daemonIdleProbeTimeoutMs: configured('daemonIdleProbeTimeoutMs', 2000),
     daemonKillGraceMs: configured('daemonKillGraceMs', 30_000),
-    daemonKillPollMs: configured('daemonKillPollMs', 5000),
-    intervalMs: positiveSeconds('BLITZ_PAYLOAD_INTERVAL', 300),
-    firstDelayMs: configured('firstDelayMs', 60_000),
+    daemonKillPollMs: configured('daemonKillPollMs', 500),
+    serviceRestartTimeoutMs: configured('serviceRestartTimeoutMs', 30_000),
+    serviceRestartPollMs: configured('serviceRestartPollMs', 500),
+    intervalMs: configured(
+      'intervalMs',
+      positiveSeconds('BLITZ_PAYLOAD_INTERVAL', 300),
+    ),
+    firstDelayMs: configured('firstDelayMs', 5000),
+    fastFirstContactMs: configured('fastFirstContactMs', 15_000),
     healthTimeoutMs: configured('healthTimeoutMs', 60_000),
     healthIntervalMs: configured('healthIntervalMs', 1000),
     requestTimeoutMs: configured('requestTimeoutMs', 30_000),
@@ -304,26 +370,64 @@ function testKillAt(config, stage) {
   }
 }
 
-function runCommand(command, args, timeoutMs) {
+function runCommand(config, command, args, timeoutMs) {
   return new Promise((resolve, reject) => {
-    childProcess.execFile(
-      command,
-      args,
-      { encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: timeoutMs },
-      (error, stdout, stderr) => {
-        if (error === null) {
-          resolve(stdout);
-          return;
-        }
-        const lastLine = String(stderr).trim().split('\n').at(-1) || error.message;
-        reject(new Error(`${path.basename(command)} failed: ${lastLine}`));
-      },
-    );
+    const options = {};
+    if (config.inheritedLockFd9) {
+      options.stdio = [
+        'pipe', 'pipe', 'pipe',
+        'ignore', 'ignore', 'ignore', 'ignore', 'ignore', 'ignore',
+        9,
+      ];
+    }
+    const child = childProcess.spawn(command, args, options);
+    let stdout = '';
+    let stderr = '';
+    let commandError = null;
+    const stopWithError = (error) => {
+      if (commandError !== null) return;
+      commandError = error;
+      child.kill();
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      if (commandError !== null) return;
+      stdout += chunk;
+      if (Buffer.byteLength(stdout) > COMMAND_MAX_BYTES) {
+        stopWithError(new Error('stdout maxBuffer length exceeded'));
+      }
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      if (commandError !== null) return;
+      stderr += chunk;
+      if (Buffer.byteLength(stderr) > COMMAND_MAX_BYTES) {
+        stopWithError(new Error('stderr maxBuffer length exceeded'));
+      }
+    });
+    const timer = setTimeout(() => {
+      stopWithError(new Error(`timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.once('error', (error) => {
+      if (commandError === null) commandError = error;
+    });
+    child.once('close', (status, signal) => {
+      clearTimeout(timer);
+      if (status === 0 && commandError === null) {
+        resolve(stdout);
+        return;
+      }
+      const fallback = commandError === null
+        ? (status === null ? `terminated by ${signal}` : `exited with status ${status}`)
+        : commandError.message;
+      const lastLine = stderr.trim().split('\n').at(-1) || fallback;
+      reject(new Error(`${path.basename(command)} failed: ${lastLine}`));
+    });
   });
 }
 
 async function accessToken(config) {
-  const output = await runCommand('blitz-cred', ['api-token'], config.requestTimeoutMs);
+  const output = await runCommand(config, 'blitz-cred', ['api-token'], config.requestTimeoutMs);
   const token = output.trim();
   if (token === '') throw new FetchFailure('blitz-cred returned an empty bearer');
   return token;
@@ -408,9 +512,42 @@ async function postResult(origin, token, result, config) {
   }
 }
 
-async function deliverResult(origin, token, state, result, config) {
+function diskUsedPercent(stateDir) {
+  const stats = fs.statfsSync(stateDir);
+  const used = stats.blocks - stats.bfree;
+  const percent = Math.ceil((used * 100) / (used + stats.bavail));
+  if (!Number.isInteger(percent) || percent < 0 || percent > 100) {
+    throw new Error(`statfs produced invalid disk percentage ${String(percent)}`);
+  }
+  return percent;
+}
+
+async function postMachineStats(origin, token, config) {
+  try {
+    const percent = diskUsedPercent(config.stateDir);
+    const response = await fetch(`${origin}/workspaces/self/machine-stats`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ diskUsedPercent: percent }),
+      signal: AbortSignal.timeout(config.requestTimeoutMs),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  } catch (error) {
+    log(`machine-stats report skipped (${errorMessage(error)})`);
+  }
+}
+
+async function queueResult(config, state, result) {
   const queued = { ...state, unsentResult: result };
   await writeState(config, queued);
+  return queued;
+}
+
+async function deliverResult(origin, token, state, result, config) {
+  const queued = await queueResult(config, state, result);
   if (!await postResult(origin, token, result, config)) {
     return { state: queued, delivered: false };
   }
@@ -478,6 +615,58 @@ async function readDaemonIdentity(root) {
   return { version: daemonVersion, protocolVersion };
 }
 
+function matchingEndpointVersion(target, endpoints, fallback) {
+  for (const endpoint of endpoints) {
+    const release = pendingRelease(endpoint);
+    if (
+      release !== null
+      && release.target === target
+      && String(release.version) === release.version
+      && VERSION_PATTERN.test(release.version)
+    ) return release.version;
+  }
+  return fallback;
+}
+
+async function selectedResultVersion(linkPath, stamp, label, endpoints, fallback) {
+  const selected = await linkInfo(linkPath);
+  if (selected.target === null) return fallback;
+  try {
+    return await readVersionStamp(selected.target, stamp, label);
+  } catch (error) {
+    const mapped = matchingEndpointVersion(selected.target, endpoints, fallback);
+    log(`${label} recovery identity stamp is unreadable; using endpoint ${mapped}: ${errorMessage(error)}`);
+    return mapped;
+  }
+}
+
+async function currentResultIdentity(config, state) {
+  const pending = pendingRelease(state.pending);
+  const [payloadVersion, daemonVersion] = await Promise.all([
+    selectedResultVersion(
+      path.join(config.payloadRoot, 'current'),
+      'payload-version',
+      'payload',
+      [pendingRelease(pending?.payload), {
+        version: state.current,
+        target: state.currentTarget,
+      }],
+      state.current,
+    ),
+    selectedResultVersion(
+      path.join(config.lodyRoot, 'current'),
+      'daemon-version',
+      'daemon',
+      [pendingRelease(pending?.daemon), {
+        version: state.daemonVersion,
+        target: state.daemonTarget,
+      }],
+      state.daemonVersion,
+    ),
+  ]);
+  return { version: payloadVersion, daemonVersion };
+}
+
 async function atomicLink(linkPath, target) {
   await fsp.mkdir(path.dirname(linkPath), { recursive: true });
   const temporary = `${linkPath}.new-${process.pid}`;
@@ -508,8 +697,8 @@ async function writeState(config, state) {
   await fsp.rename(temporary, target);
 }
 
-async function removeStaging(config) {
-  const roots = [path.join(config.payloadState, 'versions'), config.lodyRoot];
+async function removeStaging(config, protectedDatabase) {
+  const roots = [config.payloadVersions, config.lodyRoot];
   for (const root of roots) {
     await fsp.mkdir(root, { recursive: true });
     const entries = await fsp.readdir(root, { withFileTypes: true });
@@ -519,11 +708,50 @@ async function removeStaging(config) {
       }
     }
   }
+  const databaseEntries = await fsp.readdir(config.s6DbRoot, { withFileTypes: true })
+    .catch((error) => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  for (const entry of databaseEntries) {
+    const candidate = path.join(config.s6DbRoot, entry.name);
+    if (entry.name.startsWith('.blitz-db-staging-') && candidate !== protectedDatabase) {
+      await fsp.rm(candidate, { recursive: true, force: true });
+    }
+  }
+}
+
+async function resolveLiveServiceDatabase(config) {
+  const resolved = await fsp.realpath(config.s6LiveCompiled).catch(() => null);
+  if (resolved === null) return null;
+  const metadata = await fsp.stat(resolved).catch(() => null);
+  return metadata !== null && metadata.isDirectory() ? resolved : null;
 }
 
 async function recoverPending(config, state) {
-  if (state.pending === null || typeof state.pending !== 'object') return state;
-  return restorePendingRelease(config, state);
+  if (pendingRelease(state.pending) === null) {
+    return { state, failure: null, useBakedFallback: false };
+  }
+  if (String(state.pending.nextDatabase) !== state.pending.nextDatabase) {
+    const recovered = { ...state };
+    delete recovered.pending;
+    delete recovered.current;
+    delete recovered.currentTarget;
+    delete recovered.previous;
+    delete recovered.previousTarget;
+    await writeState(config, recovered);
+    return { state: recovered, failure: null, useBakedFallback: true };
+  }
+  try {
+    return {
+      state: await rollbackPendingRelease(config, state),
+      failure: null,
+      useBakedFallback: false,
+    };
+  } catch (error) {
+    return {
+      state: await readState(config),
+      failure: errorMessage(error),
+      useBakedFallback: false,
+    };
+  }
 }
 
 async function ensureCurrentLink(linkPath, fallbackTarget, label) {
@@ -538,18 +766,31 @@ async function ensureCurrentLink(linkPath, fallbackTarget, label) {
 }
 
 async function initialiseState(config) {
-  await fsp.mkdir(path.join(config.payloadState, 'versions'), { recursive: true });
+  await fsp.mkdir(config.payloadState, { recursive: true, mode: 0o755 });
+  await fsp.chmod(config.payloadState, 0o755);
+  await fsp.mkdir(config.payloadVersions, { recursive: true, mode: 0o755 });
+  await fsp.chmod(config.payloadVersions, 0o755);
   await fsp.mkdir(config.payloadRoot, { recursive: true });
   await fsp.mkdir(config.lodyRoot, { recursive: true });
-  await removeStaging(config);
+  liveServiceDatabase = await resolveLiveServiceDatabase(config);
+  if (liveServiceDatabase !== null) compiledServiceDatabases.add(liveServiceDatabase);
+  await removeStaging(config, liveServiceDatabase);
 
-  let state = await recoverPending(config, await readState(config));
+  const recovery = await recoverPending(config, await readState(config));
+  let state = recovery.state;
+  if (recovery.failure !== null) return recovery;
+  if ('liveDbPath' in state) {
+    state = { ...state };
+    delete state.liveDbPath;
+  }
   const payloadLink = path.join(config.payloadRoot, 'current');
   const daemonLink = path.join(config.lodyRoot, 'current');
-  const payloadFallback = typeof state.previousTarget === 'string'
+  const payloadFallback = !recovery.useBakedFallback
+    && String(state.previousTarget) === state.previousTarget
     ? state.previousTarget
     : path.join(config.payloadRoot, 'baked');
-  const daemonFallback = typeof state.previousDaemonTarget === 'string'
+  const daemonFallback = !recovery.useBakedFallback
+    && String(state.previousDaemonTarget) === state.previousDaemonTarget
     ? state.previousDaemonTarget
     : path.join(config.lodyRoot, 'baked');
   const payloadLinkState = await ensureCurrentLink(payloadLink, payloadFallback, 'payload');
@@ -611,7 +852,7 @@ async function initialiseState(config) {
     };
   }
   await writeState(config, state);
-  return state;
+  return { state, failure: null };
 }
 
 async function downloadArchive(archiveSpec, destination, label, config) {
@@ -650,19 +891,24 @@ async function downloadArchive(archiveSpec, destination, label, config) {
   }
 }
 
-function archiveAncestors(files) {
+function archiveDirectories(manifest) {
   const allowed = new Set();
-  for (const file of files) {
-    const segments = file.path.split('/');
+  for (const archivePath of [
+    ...manifest.files.map((entry) => entry.path),
+    ...manifest.directories,
+  ]) {
+    const segments = archivePath.split('/');
     for (let index = 1; index < segments.length; index += 1) {
       allowed.add(segments.slice(0, index).join('/'));
     }
   }
+  for (const directory of manifest.directories) allowed.add(directory);
   return allowed;
 }
 
 async function inspectPayloadArchive(archivePath, manifest, config) {
   const listing = await runCommand(
+    config,
     'tar',
     ['-tzf', archivePath],
     config.requestTimeoutMs,
@@ -670,13 +916,21 @@ async function inspectPayloadArchive(archivePath, manifest, config) {
     throw new VerifyFailure(`payload archive cannot be listed: ${errorMessage(error)}`);
   });
   const files = new Set(manifest.files.map((entry) => entry.path));
-  const directories = archiveAncestors(manifest.files);
+  const directories = archiveDirectories(manifest);
   for (const rawEntry of listing.split('\n').filter((entry) => entry !== '')) {
     const isDirectory = rawEntry.endsWith('/');
     const entry = isDirectory ? rawEntry.slice(0, -1) : rawEntry;
     if (!isDirectory && entry === 'payload-version') continue;
     if ((isDirectory && directories.has(entry)) || (!isDirectory && files.has(entry))) continue;
     throw new VerifyFailure(`payload archive contains unexpected path ${rawEntry}`);
+  }
+}
+
+async function installPayloadDirectories(root, manifest) {
+  for (const archivePath of manifest.directories) {
+    const directory = path.join(root, archivePath);
+    await fsp.mkdir(directory, { recursive: true, mode: 0o755 });
+    await fsp.chmod(directory, 0o755);
   }
 }
 
@@ -743,12 +997,12 @@ async function verifyPayloadTree(root, manifest) {
 }
 
 async function extractPayload(manifest, config) {
-  const versionsRoot = path.join(config.payloadState, 'versions');
-  const final = path.join(versionsRoot, manifest.version);
+  const final = path.join(config.payloadVersions, manifest.version);
   const existing = await fsp.stat(final).catch(() => null);
   if (existing !== null) {
     try {
       await verifyPayloadTree(final, manifest);
+      await installPayloadDirectories(final, manifest);
       return final;
     } catch {
       await fsp.rm(final, { recursive: true, force: true });
@@ -756,12 +1010,14 @@ async function extractPayload(manifest, config) {
   }
   const staging = `${final}.staging`;
   await fsp.rm(staging, { recursive: true, force: true });
-  await fsp.mkdir(staging, { recursive: true });
+  await fsp.mkdir(staging, { recursive: true, mode: 0o755 });
+  await fsp.chmod(staging, 0o755);
   const archivePath = path.join(staging, '.payload.tar.gz');
   try {
     await downloadArchive(manifest.archive, archivePath, 'payload archive', config);
     await inspectPayloadArchive(archivePath, manifest, config);
     await runCommand(
+      config,
       'tar',
       ['-xzf', archivePath, '-C', staging, '--no-same-owner', '--same-permissions'],
       config.requestTimeoutMs,
@@ -770,6 +1026,7 @@ async function extractPayload(manifest, config) {
     });
     await fsp.rm(archivePath, { force: true });
     await verifyPayloadTree(staging, manifest);
+    await installPayloadDirectories(staging, manifest);
     await fsp.writeFile(
       path.join(staging, '.manifest.json'),
       `${JSON.stringify(manifest)}\n`,
@@ -846,11 +1103,12 @@ async function extractDaemon(daemon, config) {
   }
   const staging = `${final}.staging`;
   await fsp.rm(staging, { recursive: true, force: true });
-  await fsp.mkdir(staging, { recursive: true });
+  await fsp.mkdir(staging, { recursive: true, mode: 0o755 });
+  await fsp.chmod(staging, 0o755);
   const archivePath = path.join(staging, '.daemon.tar.gz');
   try {
     await downloadArchive(daemon, archivePath, 'daemon archive', config);
-    const listing = await runCommand('tar', ['-tzf', archivePath], config.requestTimeoutMs)
+    const listing = await runCommand(config, 'tar', ['-tzf', archivePath], config.requestTimeoutMs)
       .catch((error) => {
         throw new VerifyFailure(`daemon archive cannot be listed: ${errorMessage(error)}`);
       });
@@ -860,6 +1118,7 @@ async function extractDaemon(daemon, config) {
       }
     }
     await runCommand(
+      config,
       'tar',
       ['-xzf', archivePath, '-C', staging, '--no-same-owner', '--same-permissions'],
       config.requestTimeoutMs,
@@ -899,6 +1158,216 @@ async function changedPayloadPaths(state, manifest) {
   return changed;
 }
 
+function serviceTree(root) {
+  return path.join(root, SERVICE_TREE_PATH);
+}
+
+async function serviceDefinitionFiles(root, service) {
+  const directory = path.join(serviceTree(root), service);
+  const metadata = await fsp.stat(directory).catch(() => null);
+  if (metadata === null || !metadata.isDirectory()) return null;
+  const files = new Map();
+  for (const entry of await walkTree(directory)) {
+    if (entry.metadata.isDirectory()) continue;
+    if (!entry.metadata.isFile()) {
+      throw new VerifyFailure(`service definition has a special file: ${service}/${entry.relative}`);
+    }
+    const filePath = path.join(directory, entry.relative);
+    files.set(entry.relative, {
+      mode: entry.metadata.mode & 0o7777,
+      sha256: await hashFile(filePath),
+    });
+  }
+  return files;
+}
+
+function definitionFilesEqual(left, right) {
+  if (left === null || right === null || left.size !== right.size) return false;
+  for (const [relative, recordValue] of left) {
+    const candidate = right.get(relative);
+    if (
+      candidate === undefined
+      || candidate.mode !== recordValue.mode
+      || candidate.sha256 !== recordValue.sha256
+    ) return false;
+  }
+  return true;
+}
+
+async function serviceNames(root) {
+  const entries = await fsp.readdir(serviceTree(root), { withFileTypes: true }).catch((error) => {
+    throw new VerifyFailure(`service tree is unreadable: ${errorMessage(error)}`);
+  });
+  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+}
+
+async function changedServiceDefinitions(currentRoot, nextRoot) {
+  const [currentNames, nextNames] = await Promise.all([
+    serviceNames(currentRoot),
+    serviceNames(nextRoot),
+  ]);
+  const changed = new Set();
+  const names = [...new Set([...currentNames, ...nextNames])].sort();
+  for (const service of names) {
+    const [currentFiles, nextFiles] = await Promise.all([
+      serviceDefinitionFiles(currentRoot, service),
+      serviceDefinitionFiles(nextRoot, service),
+    ]);
+    if (!definitionFilesEqual(currentFiles, nextFiles)) changed.add(service);
+  }
+  return changed;
+}
+
+async function requireRegularFile(root, relative) {
+  const filePath = path.join(serviceTree(root), relative);
+  const metadata = await fsp.stat(filePath).catch(() => null);
+  if (metadata === null || !metadata.isFile()) {
+    throw new VerifyFailure(`service floor is missing ${relative}`);
+  }
+  return filePath;
+}
+
+async function requireServiceType(root, service, expected) {
+  const relative = `${service}/type`;
+  const filePath = await requireRegularFile(root, relative);
+  const actual = (await fsp.readFile(filePath, 'utf8')).trim();
+  if (expected !== null && actual !== expected) {
+    throw new VerifyFailure(`service floor ${relative} must read ${expected}`);
+  }
+}
+
+async function compareFrozenService(currentRoot, nextRoot, service) {
+  const [currentFiles, nextFiles] = await Promise.all([
+    serviceDefinitionFiles(currentRoot, service),
+    serviceDefinitionFiles(nextRoot, service),
+  ]);
+  if (currentFiles === null || nextFiles === null) {
+    throw new VerifyFailure(`frozen service floor changed ${service}`);
+  }
+  const names = [...new Set([...currentFiles.keys(), ...nextFiles.keys()])].sort();
+  for (const relative of names) {
+    const current = currentFiles.get(relative);
+    const next = nextFiles.get(relative);
+    if (
+      current === undefined
+      || next === undefined
+      || current.mode !== next.mode
+      || current.sha256 !== next.sha256
+    ) {
+      throw new VerifyFailure(`frozen service floor changed ${service}/${relative}`);
+    }
+  }
+}
+
+async function verifyServiceFloor(currentRoot, nextRoot, manifest) {
+  await Promise.all([
+    requireServiceType(nextRoot, 'cgroups', null),
+    requireServiceType(nextRoot, 'init-state', null),
+    requireServiceType(nextRoot, 'register', null),
+    requireServiceType(nextRoot, 'payload', 'longrun'),
+    requireServiceType(nextRoot, 'user', 'bundle'),
+    requireServiceType(nextRoot, 'user2', 'bundle'),
+    requireRegularFile(nextRoot, 'user/contents.d/payload'),
+  ]);
+  const launcher = await fsp.readFile(
+    await requireRegularFile(nextRoot, 'payload/run'),
+    'utf8',
+  );
+  if (!/(?:^|\n)[\t ]*exec[\t ]+\/usr\/local\/libexec\/blitz-payload(?:[\t \n]|$)/u.test(launcher)) {
+    throw new VerifyFailure(
+      'service floor payload/run must exec /usr/local/libexec/blitz-payload',
+    );
+  }
+  for (const service of Object.keys(manifest.restart)) {
+    const typePath = await requireRegularFile(nextRoot, `${service}/type`);
+    if ((await fsp.readFile(typePath, 'utf8')).trim() !== 'longrun') {
+      throw new VerifyFailure(`manifest.restart service is not a tree longrun: ${service}`);
+    }
+  }
+  // s6-rc-update would re-run a changed oneshot and take every dependent down
+  // with it. register has nine dependents; init-state and cgroups have the
+  // whole graph. A changed payload definition would restart the updater in
+  // the middle of its own switch. Their bodies live in payload libexec
+  // scripts, which can still change freely.
+  for (const service of ['cgroups', 'init-state', 'register', 'payload']) {
+    await compareFrozenService(currentRoot, nextRoot, service);
+  }
+}
+
+async function findS6Sources(config) {
+  const entries = await fsp.readdir(config.s6SourcesRoot, { withFileTypes: true })
+    .catch((error) => {
+      throw new VerifyFailure(`s6-overlay sources cannot be listed: ${errorMessage(error)}`);
+    });
+  const matches = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('s6-overlay-')) continue;
+    const candidate = path.join(config.s6SourcesRoot, entry.name, 'etc/s6-rc/sources');
+    const metadata = await fsp.stat(candidate).catch(() => null);
+    if (metadata !== null && metadata.isDirectory()) matches.push(candidate);
+  }
+  if (matches.length !== 1) {
+    throw new VerifyFailure(`expected exactly one s6-overlay sources directory; found ${matches.length}`);
+  }
+  return matches[0];
+}
+
+function serviceDatabasePath(config, versionValue) {
+  return path.join(config.s6DbRoot, `db-${versionValue}`);
+}
+
+async function traceEvent(config, event) {
+  if (config.eventLog === null) return;
+  await fsp.appendFile(config.eventLog, `${event}\n`);
+}
+
+async function compileServiceDatabase(config, target, versionValue, replace) {
+  const database = serviceDatabasePath(config, versionValue);
+  const existing = await fsp.stat(database).catch(() => null);
+  if (existing !== null && !replace && compiledServiceDatabases.has(database)) return database;
+  await fsp.mkdir(config.s6DbRoot, { recursive: true });
+  const sources = await findS6Sources(config);
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const staging = path.join(
+    config.s6DbRoot,
+    `.blitz-db-staging-${process.pid}-${nonce}`,
+  );
+  await runCommand(
+    config,
+    config.s6RcCompile,
+    ['-v1', staging, serviceTree(target), sources],
+    config.s6TransitionTimeoutMs,
+  ).catch((error) => {
+    return fsp.rm(staging, { recursive: true, force: true }).then(() => {
+      throw new VerifyFailure(`service tree compile failed: ${errorMessage(error)}`);
+    });
+  });
+  if (existing !== null) await fsp.rm(database, { recursive: true, force: true });
+  await fsp.rename(staging, database);
+  compiledServiceDatabases.add(database);
+  await traceEvent(config, 'compile');
+  return database;
+}
+
+async function updateServiceDatabase(config, database) {
+  await runCommand(
+    config,
+    config.s6RcUpdate,
+    ['-v1', '-t', '60000', database],
+    config.s6TransitionTimeoutMs,
+  );
+  liveServiceDatabase = await resolveLiveServiceDatabase(config);
+}
+
+async function reconvergeUserBundle(config) {
+  await runCommand(
+    config,
+    config.s6Rc,
+    ['-v1', '-u', '-t', '60000', 'change', 'user'],
+    config.s6TransitionTimeoutMs,
+  );
+}
+
 function servicesToRestart(manifest, changed, daemonChanged) {
   const services = new Set();
   for (const [service, dependencies] of Object.entries(manifest.restart)) {
@@ -908,17 +1377,65 @@ function servicesToRestart(manifest, changed, daemonChanged) {
   return [...services].sort();
 }
 
-async function switchRelease(config, state, nextPayload, nextDaemon) {
+async function rollbackRestartServices(services, previousTarget) {
+  const filtered = [];
+  for (const service of services) {
+    if (await treeHasLongrun(previousTarget, service)) filtered.push(service);
+  }
+  return filtered;
+}
+
+async function treeHasLongrun(target, service) {
+  if (!SERVICE_PATTERN.test(service)) return false;
+  const serviceRoot = path.join(serviceTree(target), service);
+  const [runMetadata, typeSource] = await Promise.all([
+    fsp.stat(path.join(serviceRoot, 'run')).catch(() => null),
+    fsp.readFile(path.join(serviceRoot, 'type'), 'utf8').catch(() => null),
+  ]);
+  return runMetadata !== null
+    && runMetadata.isFile()
+    && typeSource?.trim() === 'longrun';
+}
+
+async function captureReleaseServicePids(services, currentTarget, config) {
+  const pids = new Map();
+  for (const service of services) {
+    pids.set(
+      service,
+      await treeHasLongrun(currentTarget, service)
+        ? await supervisedServicePid(service, config)
+        : null,
+    );
+  }
+  return pids;
+}
+
+async function switchRelease(
+  config,
+  state,
+  nextPayload,
+  nextDaemon,
+  nextDatabase,
+  previousDatabase,
+  rollbackServices,
+  rollbackCheckDaemon,
+) {
   const pending = {
     payload: nextPayload,
     daemon: nextDaemon,
+    nextDatabase,
+    previousDatabase,
+    services: rollbackServices,
+    checkDaemon: rollbackCheckDaemon,
   };
   const switching = { ...state, pending };
   await writeState(config, switching);
+  await traceEvent(config, 'pending');
   if (nextDaemon.target !== state.daemonTarget) {
     await atomicLink(path.join(config.lodyRoot, 'current'), nextDaemon.target);
   }
   await atomicLink(path.join(config.payloadRoot, 'current'), nextPayload.target);
+  await traceEvent(config, 'links');
   return switching;
 }
 
@@ -941,30 +1458,72 @@ async function commitRelease(config, state) {
     previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
       ? state.daemonProtocolVersion
       : null,
+    lastCommittedUpdateDatabase: state.pending.nextDatabase,
+    previousDbPath: state.pending.previousDatabase,
   };
   delete committed.pending;
   await writeState(config, committed);
+  await traceEvent(config, 'commit');
   return committed;
 }
 
-async function restorePendingRelease(config, state) {
-  if (typeof state.currentTarget === 'string') {
-    await atomicLink(path.join(config.payloadRoot, 'current'), state.currentTarget);
+async function supervisedServicePid(service, config, timeoutMs = config.requestTimeoutMs) {
+  const output = await runCommand(
+    config,
+    config.s6Svstat,
+    ['-o', 'up,pid', path.join(config.serviceRoot, service)],
+    timeoutMs,
+  );
+  const fields = output.trim().split(/\s+/u);
+  if (fields.length !== 2 || (fields[0] !== 'true' && fields[0] !== 'false')) {
+    throw new Error(`s6-svstat returned invalid state for ${service}`);
   }
-  if (typeof state.daemonTarget === 'string') {
-    await atomicLink(path.join(config.lodyRoot, 'current'), state.daemonTarget);
-  }
-  const restored = { ...state };
-  delete restored.pending;
-  await writeState(config, restored);
-  return restored;
+  if (fields[0] === 'false' && fields[1] === '-1') return null;
+  if (fields[0] === 'true' && /^[1-9][0-9]*$/u.test(fields[1])) return fields[1];
+  throw new Error(`s6-svstat returned invalid state for ${service}`);
 }
 
-async function restartOrdinaryService(service, config) {
+async function waitForNewServicePid(service, before, config, timeoutMs, pollMs) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    try {
+      const remaining = Math.max(1, deadline - Date.now());
+      const after = await supervisedServicePid(
+        service,
+        config,
+        Math.min(config.requestTimeoutMs, remaining),
+      );
+      if (after !== null && after !== before) return after;
+    } catch {
+      // s6-rc-update may create a new supervise directory during this window.
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+  } while (Date.now() < deadline);
+  throw new Error(
+    `${service} did not report up with a new PID within ${timeoutMs / 1000}s`,
+  );
+}
+
+async function requestServiceRestart(service, config) {
   await runCommand(
+    config,
     config.s6Svc,
     ['-r', path.join(config.serviceRoot, service)],
     config.requestTimeoutMs,
+  );
+}
+
+async function restartOrdinaryService(service, config, restartPids) {
+  const before = await supervisedServicePid(service, config);
+  restartPids.set(service, before);
+  await requestServiceRestart(service, config);
+  await waitForNewServicePid(
+    service,
+    before,
+    config,
+    config.serviceRestartTimeoutMs,
+    config.serviceRestartPollMs,
   );
 }
 
@@ -1039,52 +1598,164 @@ async function daemonActiveSessionCount(config) {
   }
 }
 
-async function daemonPid(config) {
+async function restartLodyDaemon(config, activationDetail, restartPids) {
+  const before = await supervisedServicePid('lody-daemon', config);
+  restartPids.set('lody-daemon', before);
+  await requestServiceRestart('lody-daemon', config);
   try {
-    const output = await runCommand(
-      config.s6Svstat,
-      ['-o', 'pid', path.join(config.serviceRoot, 'lody-daemon')],
-      config.requestTimeoutMs,
+    await waitForNewServicePid(
+      'lody-daemon',
+      before,
+      config,
+      config.daemonKillGraceMs,
+      config.daemonKillPollMs,
     );
-    const pid = output.trim();
-    return /^[0-9]+$/u.test(pid) ? pid : null;
+    return activationDetail;
   } catch {
-    return null;
-  }
-}
-
-async function restartLodyDaemon(config, activationDetail) {
-  const before = await daemonPid(config);
-  await restartOrdinaryService('lody-daemon', config);
-  if (before === null) return activationDetail;
-  let waitedMs = 0;
-  while (waitedMs < config.daemonKillGraceMs) {
-    const after = await daemonPid(config);
-    if (after === null || after !== before) return activationDetail;
-    const pause = Math.min(config.daemonKillPollMs, config.daemonKillGraceMs - waitedMs);
-    await sleep(pause);
-    waitedMs += pause;
+    // The watchdog uses the same bounded TERM/PID/KILL sequence.
   }
   log(`lody-daemon ignored SIGTERM for ${config.daemonKillGraceMs / 1000}s; sending SIGKILL`);
   await runCommand(
+    config,
     config.s6Svc,
     ['-k', path.join(config.serviceRoot, 'lody-daemon')],
     config.requestTimeoutMs,
   );
+  await waitForNewServicePid(
+    'lody-daemon',
+    before,
+    config,
+    config.serviceRestartTimeoutMs,
+    config.serviceRestartPollMs,
+  );
   return activationDetail;
 }
 
-async function restartServices(services, config, daemonActivationDetail = null) {
+async function restartServices(
+  services,
+  config,
+  daemonActivationDetail = null,
+  restartPids = new Map(),
+) {
   let daemonDetail = null;
   for (const service of services) {
     if (service === 'lody-daemon') {
       daemonDetail = await restartLodyDaemon(
         config,
         daemonActivationDetail ?? 'restarted without an idle check during rollback',
+        restartPids,
       );
-    } else await restartOrdinaryService(service, config);
+    } else await restartOrdinaryService(service, config, restartPids);
   }
   return daemonDetail;
+}
+
+function featureFileBytes(features) {
+  return FEATURE_FLAGS.map(({ wire, env }) =>
+    `${env}=${features[wire] ? '1' : '0'}\n`).join('');
+}
+
+async function featureReaderServices(config) {
+  const currentTree = path.join(config.payloadRoot, 'current', SERVICE_TREE_PATH);
+  const entries = await fsp.readdir(currentTree, { withFileTypes: true });
+  const readers = [];
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || !SERVICE_PATTERN.test(entry.name)) continue;
+    const serviceRoot = path.join(currentTree, entry.name);
+    const [typeSource, runMetadata] = await Promise.all([
+      fsp.readFile(path.join(serviceRoot, 'type'), 'utf8').catch(() => null),
+      fsp.stat(path.join(serviceRoot, 'run')).catch(() => null),
+    ]);
+    if (
+      typeSource?.trim() !== 'longrun'
+      || runMetadata === null
+      || !runMetadata.isFile()
+    ) continue;
+    const runSource = await fsp.readFile(path.join(serviceRoot, 'run'), 'utf8');
+    if (runSource.includes(FEATURES_PATH)) readers.push(entry.name);
+  }
+  return readers;
+}
+
+async function enforceFeatureFileMetadata(filePath, config) {
+  await fsp.chmod(filePath, 0o644);
+  await fsp.chown(
+    filePath,
+    config.featuresOwnerUid,
+    config.featuresOwnerGid,
+  );
+}
+
+async function readOptionalFile(filePath) {
+  return fsp.readFile(filePath, 'utf8').catch((error) => {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  });
+}
+
+async function atomicFeatureFile(filePath, bytes, config, event) {
+  await fsp.mkdir(path.dirname(filePath), { recursive: true, mode: 0o755 });
+  const temporary = `${filePath}.new-${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+  try {
+    await fsp.writeFile(temporary, bytes, { flag: 'wx', mode: 0o644 });
+    await enforceFeatureFileMetadata(temporary, config);
+    await fsp.rename(temporary, filePath);
+    await traceEvent(config, event);
+  } finally {
+    await fsp.rm(temporary, { force: true });
+  }
+}
+
+async function materializeFeatures(features, config) {
+  const bytes = featureFileBytes(features);
+  const previous = await readOptionalFile(config.featuresFile);
+  if (previous === bytes) {
+    await enforceFeatureFileMetadata(config.featuresFile, config);
+  } else {
+    await atomicFeatureFile(config.featuresFile, bytes, config, 'features-rename');
+    testKillAt(config, 'after-features-rename');
+  }
+
+  const applied = await readOptionalFile(config.featuresAppliedFile);
+  if (applied === bytes) {
+    await enforceFeatureFileMetadata(config.featuresAppliedFile, config);
+    return { bytes, pending: false };
+  }
+
+  return { bytes, pending: true };
+}
+
+async function applyMaterializedFeatures(materialized, config, releaseRestartPids = new Map()) {
+  if (!materialized.pending) return [];
+  const readers = await featureReaderServices(config);
+  const directReaders = readers.filter((service) => !releaseRestartPids.has(service));
+  log(readers.length === 0
+    ? 'features pending; no reader restart required'
+    : `features pending; restarting ${directReaders.join(', ') || 'no additional readers'}`);
+  // A feature flip is a deliberate operator action. Restart its readers now;
+  // unlike payload rollout, active Lody sessions do not defer this decision.
+  await restartServices(
+    directReaders,
+    config,
+    'feature flag changed by deliberate operator action',
+  );
+  for (const service of readers) {
+    if (!releaseRestartPids.has(service)) continue;
+    await waitForNewServicePid(
+      service,
+      releaseRestartPids.get(service),
+      config,
+      config.serviceRestartTimeoutMs,
+      config.serviceRestartPollMs,
+    );
+  }
+  await atomicFeatureFile(
+    config.featuresAppliedFile,
+    materialized.bytes,
+    config,
+    'features-applied',
+  );
+  return readers;
 }
 
 function probeDaemon(socketPath, timeoutMs) {
@@ -1138,13 +1809,104 @@ async function waitForHealth(checkDaemon, config) {
   return last;
 }
 
-async function recordOutcome(config, state, outcome, detail, attemptedVersion = null) {
+function pendingRelease(value) {
+  if (value === null || Object(value) !== value || Array.isArray(value)) return null;
+  return value;
+}
+
+function pendingRestartServices(pending) {
+  if (!Array.isArray(pending.services)) return [];
+  return pending.services.filter((service) => (
+    String(service) === service && SERVICE_PATTERN.test(service)
+  ));
+}
+
+async function ensureLinkTarget(linkPath, target) {
+  const current = await linkInfo(linkPath);
+  if (current.target === target) return;
+  await atomicLink(linkPath, target);
+}
+
+async function prepareRollbackDatabase(config, state, pending, target, versionValue) {
+  const database = serviceDatabasePath(config, versionValue);
+  const metadata = await fsp.stat(database).catch(() => null);
+  const trusted = metadata !== null
+    && metadata.isDirectory()
+    && (
+      pending.rollbackDatabase === database
+      || state.lastCommittedUpdateDatabase === database
+      || compiledServiceDatabases.has(database)
+    );
+  if (!trusted) {
+    await compileServiceDatabase(config, target, versionValue, true);
+  }
+  if (pending.rollbackDatabase === database) return { state, database };
+  const prepared = {
+    ...state,
+    pending: { ...pending, rollbackDatabase: database },
+  };
+  await writeState(config, prepared);
+  return { state: prepared, database };
+}
+
+async function rollbackPendingRelease(config, state) {
+  const pending = pendingRelease(state.pending);
+  if (pending === null) return state;
+  const previousTarget = requiredString(state.currentTarget, 'state.currentTarget');
+  const previousVersion = version(state.current, 'state.current');
+  const prepared = await prepareRollbackDatabase(
+    config,
+    state,
+    pending,
+    previousTarget,
+    previousVersion,
+  );
+  state = prepared.state;
+  const previousDatabase = prepared.database;
+  if (String(state.daemonTarget) === state.daemonTarget) {
+    await ensureLinkTarget(path.join(config.lodyRoot, 'current'), state.daemonTarget);
+  }
+  testKillAt(config, 'after-first-restored-link');
+  await ensureLinkTarget(path.join(config.payloadRoot, 'current'), previousTarget);
+  testKillAt(config, 'after-restored-links');
+  testKillAt(config, 'before-rollback-database-update');
+  await updateServiceDatabase(config, previousDatabase);
+  testKillAt(config, 'after-rollback-database-update');
+  await reconvergeUserBundle(config);
+  const services = pendingRestartServices(state.pending);
+  await restartServices(services, config);
+  const checkDaemon = state.pending.checkDaemon === true;
+  const health = await waitForHealth(checkDaemon, config);
+  if (!health.gatewayHealthy || !health.daemonHealthy) {
+    throw new Error('previous release health check failed');
+  }
+  const restored = {
+    ...state,
+    lastCommittedUpdateDatabase: previousDatabase,
+  };
+  delete restored.pending;
+  await writeState(config, restored);
+  return restored;
+}
+
+async function recordOutcome(
+  config,
+  state,
+  outcome,
+  detail,
+  attemptedVersion = null,
+  reportOptions = null,
+) {
   const recordedAt = Date.now();
   const next = { ...state };
   const reportedDetail = attemptedVersion === null || attemptedVersion === state.current
     ? detail
     : `attempted ${attemptedVersion}; ${detail}`;
-  if (FAILED_OUTCOMES.has(outcome) && attemptedVersion !== null) {
+  if (
+    reportOptions?.rememberFailure !== false
+    && FAILED_OUTCOMES.has(outcome)
+    && attemptedVersion !== null
+  ) {
     next.failed = {
       version: attemptedVersion,
       outcome,
@@ -1166,15 +1928,27 @@ async function recordOutcome(config, state, outcome, detail, attemptedVersion = 
       next.quietLog = { version: next.current, at: recordedAt };
     }
   } else {
-    log(`${outcome} ${next.current}: ${reportedDetail}`);
+    log(`${outcome} ${reportOptions?.version ?? next.current}: ${reportedDetail}`);
   }
   await writeState(config, next);
   return { state: next, result: {
-    version: next.current,
-    daemonVersion: next.daemonVersion,
+    version: reportOptions?.version ?? next.current,
+    daemonVersion: reportOptions?.daemonVersion ?? next.daemonVersion,
     outcome,
     detail: reportedDetail,
   } };
+}
+
+async function recordPendingFailure(config, state, detail, attemptedVersion) {
+  const identity = await currentResultIdentity(config, state);
+  return recordOutcome(
+    config,
+    state,
+    'start-failed',
+    detail,
+    attemptedVersion,
+    { ...identity, rememberFailure: false },
+  );
 }
 
 function failedRelease(state) {
@@ -1286,7 +2060,7 @@ async function reconcileFailedPin(config, state, pin) {
   return next;
 }
 
-async function applyPayload(pin, manifest, config, initialState) {
+async function applyPayload(pin, manifest, config, initialState, trackFeatureRestarts) {
   let state = { ...initialState };
   if (manifest.version !== pin.version) {
     return recordOutcome(
@@ -1306,13 +2080,32 @@ async function applyPayload(pin, manifest, config, initialState) {
       pin.version,
     );
   }
+  if (manifest.minUpdater < 2) {
+    return recordOutcome(
+      config,
+      state,
+      'unsupported',
+      'manifest protocol 1 predates this box\'s service tree; pin a protocol 2 release',
+      pin.version,
+    );
+  }
   let payloadTarget;
   let daemonTarget = state.daemonTarget;
+  let nextDatabase;
+  let changedDefinitions;
   const daemonChanged = manifest.daemon !== undefined
     && manifest.daemon.version !== state.daemonVersion;
   try {
     payloadTarget = await extractPayload(manifest, config);
     if (daemonChanged) daemonTarget = await extractDaemon(manifest.daemon, config);
+    changedDefinitions = await changedServiceDefinitions(state.currentTarget, payloadTarget);
+    await verifyServiceFloor(state.currentTarget, payloadTarget, manifest);
+    nextDatabase = await compileServiceDatabase(
+      config,
+      payloadTarget,
+      manifest.version,
+      true,
+    );
   } catch (error) {
     const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
     return recordOutcome(config, state, outcome, errorMessage(error), pin.version);
@@ -1320,8 +2113,14 @@ async function applyPayload(pin, manifest, config, initialState) {
 
   const changed = await changedPayloadPaths(state, manifest);
   const services = servicesToRestart(manifest, changed, daemonChanged);
+  const mapServices = services.filter((service) => !changedDefinitions.has(service));
+  const rollbackServices = await rollbackRestartServices(services, state.currentTarget);
+  const daemonRestarted = services.includes('lody-daemon')
+    || changedDefinitions.has('lody-daemon');
+  const rollbackCheckDaemon = daemonRestarted
+    && await treeHasLongrun(state.currentTarget, 'lody-daemon');
   let daemonActivationDetail = null;
-  if (services.includes('lody-daemon')) {
+  if (daemonRestarted) {
     const decision = await prepareDaemonActivation(
       config,
       state,
@@ -1342,7 +2141,19 @@ async function applyPayload(pin, manifest, config, initialState) {
     state = { ...state };
     delete state.deferred;
   }
+  const previousDatabase = serviceDatabasePath(config, state.current);
+  let activationFailure = null;
+  let daemonRestartDetail = null;
+  let releaseSwitched = false;
+  let releaseRestartPids = new Map();
   try {
+    if (trackFeatureRestarts) {
+      releaseRestartPids = await captureReleaseServicePids(
+        [...new Set([...changedDefinitions, ...mapServices])].sort(),
+        state.currentTarget,
+        config,
+      );
+    }
     state = await switchRelease(
       config,
       state,
@@ -1354,32 +2165,31 @@ async function applyPayload(pin, manifest, config, initialState) {
           ? manifest.daemon.protocolVersion
           : state.daemonProtocolVersion,
       },
+      nextDatabase,
+      previousDatabase,
+      rollbackServices,
+      rollbackCheckDaemon,
     );
+    releaseSwitched = true;
     testKillAt(config, 'after-switch');
-  } catch (error) {
-    state = await initialiseState(config);
-    return recordOutcome(
+    await updateServiceDatabase(config, nextDatabase);
+    await traceEvent(config, 's6-rc-update');
+    daemonRestartDetail = await restartServices(
+      mapServices,
       config,
-      state,
-      'start-failed',
-      `atomic switch failed: ${errorMessage(error)}`,
-      pin.version,
+      daemonActivationDetail,
+      releaseRestartPids,
     );
-  }
-
-  let activationFailure = null;
-  let daemonRestartDetail = null;
-  const daemonRestarted = services.includes('lody-daemon');
-  try {
-    daemonRestartDetail = await restartServices(services, config, daemonActivationDetail);
+    await traceEvent(config, 'map-restarts');
     testKillAt(config, 'before-health');
   } catch (error) {
-    activationFailure = `service restart failed: ${errorMessage(error)}`;
+    activationFailure = `activation failed: ${errorMessage(error)}`;
   }
   if (activationFailure === null) {
     const health = await waitForHealth(daemonRestarted, config);
     if (!health.gatewayHealthy) activationFailure = 'gateway health check failed';
     else if (!health.daemonHealthy) activationFailure = 'daemon health check failed';
+    else await traceEvent(config, 'health');
   }
   if (activationFailure === null) {
     try {
@@ -1390,74 +2200,165 @@ async function applyPayload(pin, manifest, config, initialState) {
   }
   if (activationFailure === null) {
     const detail = [
-      services.length === 0
+      mapServices.length === 0
         ? 'healthy; no service restart required'
-        : `healthy; restarted ${services.join(', ')}`,
-      daemonRestartDetail,
+        : `healthy; restarted ${mapServices.join(', ')}`,
+      daemonRestartDetail ?? daemonActivationDetail,
+      changedDefinitions.size === 0
+        ? null
+        : `s6-rc updated ${[...changedDefinitions].sort().join(', ')}`,
       daemonChanged ? `daemon protocol ${manifest.daemon.protocolVersion}` : null,
     ].filter((part) => part !== null).join('; ');
-    return recordOutcome(
+    const applied = await recordOutcome(
       config,
       state,
       'applied',
       detail,
     );
+    return { ...applied, releaseRestartPids };
   }
 
   try {
-    state = await restorePendingRelease(config, state);
-    await restartServices(services, config);
-    const rollbackHealth = await waitForHealth(daemonRestarted, config);
-    if (!rollbackHealth.gatewayHealthy || !rollbackHealth.daemonHealthy) {
-      throw new Error('previous release health check failed');
+    const persisted = await readState(config);
+    state = persisted;
+    if (pendingRelease(persisted.pending) === null) {
+      const failed = await recordOutcome(
+        config,
+        state,
+        'start-failed',
+        activationFailure,
+        pin.version,
+      );
+      return releaseSwitched ? { ...failed, releaseRestartPids } : failed;
     }
+    state = await rollbackPendingRelease(config, persisted);
   } catch (error) {
-    state = await initialiseState(config);
-    return recordOutcome(
+    state = await readState(config);
+    const failed = await recordPendingFailure(
       config,
       state,
-      'start-failed',
       `${activationFailure}; rollback failed: ${errorMessage(error)}`,
       pin.version,
     );
+    return releaseSwitched ? { ...failed, releaseRestartPids } : failed;
   }
-  return recordOutcome(
+  const rolledBack = await recordOutcome(
     config,
     state,
     'rolled-back',
     `${activationFailure}; previous payload restored`,
     pin.version,
   );
+  return releaseSwitched ? { ...rolledBack, releaseRestartPids } : rolledBack;
 }
 
 async function garbageCollect(config, state) {
   const deferred = deferredRelease(state.deferred);
-  const payloadKeep = new Set([state.current, state.previous, deferred?.version].filter((item) =>
-    typeof item === 'string'));
-  const versionsRoot = path.join(config.payloadState, 'versions');
-  for (const entry of await fsp.readdir(versionsRoot, { withFileTypes: true })) {
-    if (!payloadKeep.has(entry.name)) {
-      await fsp.rm(path.join(versionsRoot, entry.name), { recursive: true, force: true });
+  const pending = pendingRelease(state.pending);
+  const pendingPayload = pendingRelease(pending?.payload);
+  const pendingDaemon = pendingRelease(pending?.daemon);
+  const [payloadCurrent, daemonCurrent] = await Promise.all([
+    linkInfo(path.join(config.payloadRoot, 'current')),
+    linkInfo(path.join(config.lodyRoot, 'current')),
+  ]);
+  const payloadKeep = new Set([
+    state.current,
+    state.previous,
+    deferred?.version,
+  ].filter((item) => String(item) === item).map((item) => path.join(config.payloadVersions, item)));
+  for (const target of [payloadCurrent.target, pendingPayload?.target]) {
+    if (String(target) === target) payloadKeep.add(target);
+  }
+  for (const entry of await fsp.readdir(config.payloadVersions, { withFileTypes: true })) {
+    const candidate = path.join(config.payloadVersions, entry.name);
+    if (!payloadKeep.has(candidate)) {
+      await fsp.rm(candidate, { recursive: true, force: true });
     }
   }
   const daemonKeep = new Set([
-    'baked',
-    'current',
-    state.daemonVersion,
-    state.previousDaemonVersion,
-    deferred?.daemonVersion,
-  ].filter((item) => typeof item === 'string'));
+    path.join(config.lodyRoot, 'baked'),
+    path.join(config.lodyRoot, 'current'),
+    ...[
+      state.daemonVersion,
+      state.previousDaemonVersion,
+      deferred?.daemonVersion,
+    ].filter((item) => String(item) === item).map((item) => path.join(config.lodyRoot, item)),
+  ]);
+  for (const target of [daemonCurrent.target, pendingDaemon?.target]) {
+    if (String(target) === target) daemonKeep.add(target);
+  }
   for (const entry of await fsp.readdir(config.lodyRoot, { withFileTypes: true })) {
-    if (!daemonKeep.has(entry.name)) {
-      await fsp.rm(path.join(config.lodyRoot, entry.name), { recursive: true, force: true });
+    const candidate = path.join(config.lodyRoot, entry.name);
+    if (!daemonKeep.has(candidate)) {
+      await fsp.rm(candidate, { recursive: true, force: true });
+    }
+  }
+  liveServiceDatabase = await resolveLiveServiceDatabase(config);
+  const databaseKeep = new Set([
+    state.lastCommittedUpdateDatabase,
+    state.previousDbPath,
+    pending?.nextDatabase,
+    pending?.previousDatabase,
+    liveServiceDatabase,
+  ].filter((item) => String(item) === item));
+  const databaseEntries = await fsp.readdir(config.s6DbRoot, { withFileTypes: true })
+    .catch(() => []);
+  for (const entry of databaseEntries) {
+    const candidate = path.join(config.s6DbRoot, entry.name);
+    if (entry.isDirectory() && entry.name.startsWith('db-') && !databaseKeep.has(candidate)) {
+      await fsp.rm(candidate, { recursive: true, force: true });
     }
   }
 }
 
 let bootReportPending = true;
+let boxConfigFetchSucceeded = false;
+let fastFirstContactRetry = false;
 
-async function tick(config) {
-  let state = await initialiseState(config);
+async function reportRecoveryFailure(config, state, reason) {
+  const pending = pendingRelease(state.pending);
+  const payload = pendingRelease(pending?.payload);
+  const attemptedVersion = String(payload?.version) === payload?.version
+    && VERSION_PATTERN.test(payload.version)
+    ? payload.version
+    : null;
+  const failure = await recordPendingFailure(
+    config,
+    state,
+    `pending rollback failed: ${reason}`,
+    attemptedVersion,
+  );
+  state = failure.state;
+  let origin = null;
+  try {
+    origin = await readOrigin(config);
+  } catch (error) {
+    log(errorMessage(error));
+  }
+  if (origin === null) {
+    fastFirstContactRetry = !boxConfigFetchSucceeded;
+    state = await queueResult(config, state, failure.result);
+  } else {
+    try {
+      const token = await accessToken(config);
+      state = (await deliverResult(origin, token, state, failure.result, config)).state;
+    } catch (error) {
+      log(`result bearer unavailable: ${errorMessage(error)}`);
+      fastFirstContactRetry = !boxConfigFetchSucceeded;
+      state = await queueResult(config, state, failure.result);
+    }
+  }
+  await garbageCollect(config, state);
+  return failure.result.detail;
+}
+
+async function tickUnlocked(config) {
+  fastFirstContactRetry = false;
+  const initial = await initialiseState(config);
+  let state = initial.state;
+  if (initial.failure !== null) {
+    return reportRecoveryFailure(config, state, initial.failure);
+  }
   let reportedBoot = false;
   let origin;
   try {
@@ -1468,6 +2369,7 @@ async function tick(config) {
   }
   if (origin === null) {
     log('idle (no control-plane origin)');
+    fastFirstContactRetry = !boxConfigFetchSucceeded;
     return;
   }
   let token;
@@ -1475,6 +2377,7 @@ async function tick(config) {
     token = await accessToken(config);
   } catch (error) {
     log(`idle (bearer unavailable: ${errorMessage(error)})`);
+    fastFirstContactRetry = !boxConfigFetchSucceeded;
     return;
   }
   const resent = await resendQueuedResult(origin, token, state, config);
@@ -1484,7 +2387,7 @@ async function tick(config) {
     return;
   }
 
-  let pin;
+  let boxConfig;
   try {
     const response = await fetchJson(
       `${origin}/workspaces/self/box-config`,
@@ -1492,7 +2395,8 @@ async function tick(config) {
       'box-config',
       config.requestTimeoutMs,
     );
-    pin = parsePayloadConfig(response);
+    boxConfig = parseBoxConfig(response);
+    boxConfigFetchSucceeded = true;
   } catch (error) {
     const failure = await recordOutcome(
       config,
@@ -1505,6 +2409,11 @@ async function tick(config) {
     await garbageCollect(config, state);
     return;
   }
+  const finishSuccessfulTick = () => postMachineStats(origin, token, config);
+  const materializedFeatures = await materializeFeatures(boxConfig.features, config);
+  const finishFeatures = (releaseRestartPids = new Map()) =>
+    applyMaterializedFeatures(materializedFeatures, config, releaseRestartPids);
+  const pin = boxConfig.payload;
 
   if (bootReportPending) {
     const bootDetail = pin === null
@@ -1524,14 +2433,18 @@ async function tick(config) {
     bootReportPending = false;
     reportedBoot = true;
     if (!delivered.delivered) {
+      await finishFeatures();
       await garbageCollect(config, state);
+      await finishSuccessfulTick();
       return;
     }
   }
   state = await reconcileDeferredPin(config, state, pin);
   state = await reconcileFailedPin(config, state, pin);
   if (pin === null) {
+    await finishFeatures();
     await garbageCollect(config, state);
+    await finishSuccessfulTick();
     return;
   }
   if (pin.version === state.current) {
@@ -1545,7 +2458,9 @@ async function tick(config) {
       state = current.state;
       state = (await deliverResult(origin, token, state, current.result, config)).state;
     }
+    await finishFeatures();
     await garbageCollect(config, state);
+    await finishSuccessfulTick();
     return;
   }
   const failed = failedRelease(state);
@@ -1554,7 +2469,9 @@ async function tick(config) {
     && failed.version === pin.version
     && Date.now() - failed.at < FAILED_RETRY_MS
   ) {
+    await finishFeatures();
     await garbageCollect(config, state);
+    await finishSuccessfulTick();
     return;
   }
 
@@ -1566,7 +2483,13 @@ async function tick(config) {
       'payload manifest',
       config.requestTimeoutMs,
     );
-    applied = await applyPayload(pin, parseManifest(manifestValue), config, state);
+    applied = await applyPayload(
+      pin,
+      parseManifest(manifestValue),
+      config,
+      state,
+      materializedFeatures.pending,
+    );
   } catch (error) {
     const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
     applied = await recordOutcome(
@@ -1577,9 +2500,15 @@ async function tick(config) {
       pin.version,
     );
   }
+  await finishFeatures(applied.releaseRestartPids);
   state = applied.state;
   state = (await deliverResult(origin, token, state, applied.result, config)).state;
   await garbageCollect(config, state);
+  await finishSuccessfulTick();
+}
+
+async function tick(config) {
+  return tickUnlocked(config);
 }
 
 async function runLoop() {
@@ -1602,14 +2531,49 @@ async function runLoop() {
     } catch (error) {
       log(`tick failed (${errorMessage(error)})`);
     }
-    await sleep(config.intervalMs);
+    await sleep(fastFirstContactRetry ? config.fastFirstContactMs : config.intervalMs);
   }
 }
 
 async function validatorMain(kind, fixturePath) {
   const parsed = JSON.parse(await fsp.readFile(fixturePath, 'utf8'));
   if (kind === 'validate-manifest') parseManifest(parsed);
-  else parsePayloadConfig(parsed);
+  else parseBoxConfig(parsed);
+}
+
+async function tickMain() {
+  const config = settings();
+  configureLog(config.payloadState);
+  const failure = await tick(config);
+  if (String(failure) === failure) throw new Error(failure);
+}
+
+async function tickCommandMain() {
+  const config = settings();
+  const child = childProcess.spawnSync(
+    'bash',
+    [
+      '-c',
+      'exec 9>"$1"; flock -n 9 || exit 75; shift; exec "$@"',
+      'bash',
+      config.lockPath,
+      process.execPath,
+      __filename,
+      'tick-locked',
+    ],
+    { stdio: 'inherit' },
+  );
+  if (child.error !== undefined) throw child.error;
+  if (child.status === 75) {
+    process.stderr.write(
+      'another updater holds /run/blitz-payload.lock; stop the payload service '
+      + '(s6-svc -d /run/service/payload) or wait for the running tick\n',
+    );
+  }
+  if (child.status === null) {
+    throw new Error(`locked tick terminated by ${child.signal ?? 'an unknown signal'}`);
+  }
+  process.exitCode = child.status;
 }
 
 if (require.main === module) {
@@ -1623,14 +2587,28 @@ if (require.main === module) {
       process.stderr.write(`${errorMessage(error)}\n`);
       process.exitCode = 1;
     });
+  } else if (command === 'tick' && fixturePath === undefined && process.argv.length === 3) {
+    tickCommandMain().catch((error) => {
+      process.stderr.write(`${errorMessage(error)}\n`);
+      process.exitCode = 1;
+    });
+  } else if (
+    command === 'tick-locked'
+    && fixturePath === undefined
+    && process.argv.length === 3
+  ) {
+    tickMain().catch((error) => {
+      process.stderr.write(`${errorMessage(error)}\n`);
+      process.exitCode = 1;
+    });
   } else if (command === undefined) {
     void runLoop();
   } else {
     process.stderr.write(
-      'usage: blitz-payload [validate-manifest|validate-config <file>]\n',
+      'usage: blitz-payload [tick|validate-manifest <file>|validate-config <file>]\n',
     );
     process.exitCode = 2;
   }
 }
 
-module.exports = { parseManifest, parsePayloadConfig, probeGateway };
+module.exports = { parseManifest, parseBoxConfig, probeGateway };
