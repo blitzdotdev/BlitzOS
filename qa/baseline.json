@@ -1,0 +1,2930 @@
+{
+  "C1": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C2": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "The failure path could not be forced from the headless browser."
+  },
+  "C3": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C4": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C5": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "The user ruling corrected the expectation; Cmd+Enter submitted as intended."
+  },
+  "C6": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C7": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C8": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C9": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C10": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C11": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C12": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C13": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "The failure path could not be forced from the headless browser."
+  },
+  "C14": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C15": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C16": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #160 changed this row."
+  },
+  "C17": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C18": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C19": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C20": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C21": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C22": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C23": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C24": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C25": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C26": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #151 changed this row."
+  },
+  "C27": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C28": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C29": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C30": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C31": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C32": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #160 changed this row."
+  },
+  "C33": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C34": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C35": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C36": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C37": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C38": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #160 changed this row."
+  },
+  "C39": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C40": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C41": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PRs #156, #163 changed this row."
+  },
+  "C42": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PRs #156, #163 changed this row."
+  },
+  "C43": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PRs #156, #163 changed this row."
+  },
+  "C44": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C45": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C46": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C47": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C48": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C49": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #156 changed this row."
+  },
+  "C50": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C51": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C52": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #156 changed this row."
+  },
+  "C53": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #156 changed this row."
+  },
+  "C54": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C55": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict BLOCKED is stale after PR #151 changed this row."
+  },
+  "C56": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict BLOCKED is stale after PR #151 changed this row."
+  },
+  "C57": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict BLOCKED is stale after PR #151 changed this row."
+  },
+  "C58": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C59": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C60": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C61": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C62": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C63": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C64": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C65": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C66": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C67": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C68": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C69": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C70": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "The failure path could not be forced from the headless browser."
+  },
+  "C71": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C72": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C73": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C74": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C75": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "The required machine or workspace state was not available."
+  },
+  "C76": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "The adversarial check refuted COMPB-2; the first check lost local storage."
+  },
+  "C77": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C78": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C79": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C80": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "No provider or catalog data was available."
+  },
+  "C81": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "No provider or catalog data was available."
+  },
+  "C82": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "No provider or catalog data was available."
+  },
+  "C83": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C84": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "No provider or catalog data was available."
+  },
+  "C85": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "No provider or catalog data was available."
+  },
+  "C86": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #151 changed this row."
+  },
+  "C87": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict BLOCKED is stale after PR #151 changed this row."
+  },
+  "C88": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #151 changed this row."
+  },
+  "C89": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict BLOCKED is stale after PR #151 changed this row."
+  },
+  "C90": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C91": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict BLOCKED is stale after PR #151 changed this row."
+  },
+  "C92": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C93": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C94": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C95": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C96": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C97": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C98": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C99": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C100": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #151 changed this row."
+  },
+  "C101": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C102": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C103": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C104": {
+    "verdict": "PASS",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "C105": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C106": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C107": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C108": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C109": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-composer-b",
+    "date": "2026-09-01",
+    "note": "The failure path could not be forced from the headless browser."
+  },
+  "C110": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C111": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C112": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C113": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C114": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C115": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C116": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C117": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C118": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C119": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "C120": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-composer-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #163 changed this row."
+  },
+  "IC1": {
+    "verdict": "BLOCKED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Claude was signed out, so assistant transcript content was unavailable."
+  },
+  "IC2": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC3": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC4": {
+    "verdict": "BLOCKED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Claude was signed out, so assistant transcript content was unavailable."
+  },
+  "IC5": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC6": {
+    "verdict": "BLOCKED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Claude was signed out, so assistant transcript content was unavailable."
+  },
+  "IC7": {
+    "verdict": "BLOCKED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Claude was signed out, so assistant transcript content was unavailable."
+  },
+  "IC8": {
+    "verdict": "BLOCKED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Claude was signed out, so assistant transcript content was unavailable."
+  },
+  "IC9": {
+    "verdict": "BLOCKED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Claude was signed out, so assistant transcript content was unavailable."
+  },
+  "IC10": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC11": {
+    "verdict": "BLOCKED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Claude was signed out, so assistant transcript content was unavailable."
+  },
+  "IC12": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC13": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC14": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC15": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC16": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC17": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC18": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC19": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC20": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC21": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC22": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC23": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC24": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC25": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC26": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC27": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC28": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC29": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC30": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC31": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC32": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC33": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC34": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC35": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC36": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC37": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC38": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC39": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC40": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC41": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC42": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC43": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC44": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC45": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC46": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC47": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC48": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC49": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC50": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC51": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC52": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC53": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC54": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC55": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC56": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC57": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC58": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC59": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC60": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC61": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC62": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC63": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC64": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #173 changed this row."
+  },
+  "IC65": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #173 changed this row."
+  },
+  "IC66": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC67": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC68": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC69": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC70": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC71": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC72": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC73": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC74": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC75": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC76": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC77": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC78": {
+    "verdict": "FAIL",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "BUG-CR2-02: a no-match search showed 0 / 0 instead of No results."
+  },
+  "IC79": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC80": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC81": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC82": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC83": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC84": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC85": {
+    "verdict": "BLOCKED",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "The QA project did not have a base branch."
+  },
+  "IC86": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC87": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC88": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC89": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC90": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC91": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC92": {
+    "verdict": "FAIL",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "BUG-CR2-01: Archive session skipped the confirmation dialog."
+  },
+  "IC93": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC94": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC95": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC96": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC97": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC98": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC99": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC100": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC101": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC102": {
+    "verdict": "PASS",
+    "run": "qa-convo-rerun2",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "IC103": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC104": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "IC105": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L1": {
+    "verdict": "PASS",
+    "run": "qa-sweep-landing",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "L2": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-landing",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PRs #159, #170 changed this row."
+  },
+  "L3": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-landing",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PRs #159, #170 changed this row."
+  },
+  "L4": {
+    "verdict": "PASS",
+    "run": "qa-sweep-landing",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "L5": {
+    "verdict": "PASS",
+    "run": "qa-sweep-landing",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "L6": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L7": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-landing",
+    "date": "2026-09-01",
+    "note": "The lane did not make the required persisted write."
+  },
+  "L8": {
+    "verdict": "PASS",
+    "run": "qa-sweep-landing",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "L9": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L10": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L11": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L12": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L13": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L14": {
+    "verdict": "PASS",
+    "run": "qa-sweep-landing",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "L15": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-landing",
+    "date": "2026-09-01",
+    "note": "The failure path could not be forced from the headless browser."
+  },
+  "L16": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-convo-rerun",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #155 changed this row."
+  },
+  "L17": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-convo-rerun",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #155 changed this row."
+  },
+  "L18": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L19": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L20": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L21": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "L22": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R1": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #157 changed this row."
+  },
+  "R2": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R3": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R4": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R5": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #157 changed this row."
+  },
+  "R6": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #157 changed this row."
+  },
+  "R7": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R8": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R9": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R10": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R11": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R12": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R13": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R14": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R15": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R16": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R17": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R18": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R19": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "The failure path could not be forced from the headless browser."
+  },
+  "R20": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R21": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R22": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R23": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R24": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R25": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #164 changed this row."
+  },
+  "R26": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R27": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #157 changed this row."
+  },
+  "R28": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R29": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #157 changed this row."
+  },
+  "R30": {
+    "verdict": "PASS",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "R31": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R32": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R33": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R34": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R35": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R36": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R37": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R38": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-rail",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #173 changed this row."
+  },
+  "R39": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R40": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "R41": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "S1": {
+    "verdict": "PASS",
+    "run": "qa-sweep-create",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "S2": {
+    "verdict": "PASS",
+    "run": "qa-sweep-create",
+    "date": "2026-09-01",
+    "note": "The adversarial check refuted S2; memory-history search changed as expected."
+  },
+  "S3": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-create",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #171 changed this row."
+  },
+  "S4": {
+    "verdict": "PASS",
+    "run": "qa-sweep-create",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "S5": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "S6": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-create",
+    "date": "2026-09-01",
+    "note": "The required machine or workspace state was not available."
+  },
+  "S7": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-create",
+    "date": "2026-09-01",
+    "note": "Campaign verdict BLOCKED is stale after PR #151 changed this row."
+  },
+  "S8": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "S9": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-create",
+    "date": "2026-09-01",
+    "note": "Campaign verdict BLOCKED is stale after PR #151 changed this row."
+  },
+  "S10": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "S11": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-create",
+    "date": "2026-09-01",
+    "note": "No provider or catalog data was available."
+  },
+  "S12": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH1": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH2": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH3": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH4": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH5": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH6": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH7": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH8": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH9": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH10": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH11": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH12": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH13": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH14": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH15": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH16": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH17": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SH18": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP1": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP2": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP3": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP4": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP5": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP6": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP7": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP8": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP9": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP10": {
+    "verdict": "BLOCKED",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "The code path is not mounted on this surface."
+  },
+  "SP11": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #158 changed this row."
+  },
+  "SP12": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #158 changed this row."
+  },
+  "SP13": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP14": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP15": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP16": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP17": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP18": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP19": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP20": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP21": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #158 changed this row."
+  },
+  "SP22": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP23": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #158 changed this row."
+  },
+  "SP24": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP25": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict BLOCKED is stale after PR #173 changed this row."
+  },
+  "SP26": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #158 changed this row."
+  },
+  "SP27": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP28": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #158 changed this row."
+  },
+  "SP29": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP30": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP31": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP32": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP33": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP34": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP35": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP36": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP37": {
+    "verdict": "PASS",
+    "run": "qa-sweep-panels-b",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "SP38": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP39": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP40": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP41": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP42": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP43": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP44": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP45": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP46": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP47": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP48": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP49": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP50": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP51": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP52": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP53": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP54": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP55": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP56": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP57": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP58": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP59": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP60": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP61": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP62": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP63": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP64": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP65": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #158 changed this row."
+  },
+  "SP66": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP67": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-panels-a",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #158 changed this row."
+  },
+  "SP68": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "SP69": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "T1": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T2": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T3": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T4": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T5": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T6": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T7": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "T8": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T9": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T10": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T11": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T12": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T13": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "T14": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "T15": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T16": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T17": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T18": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #154 changed this row."
+  },
+  "T19": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T20": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #159 changed this row."
+  },
+  "T21": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T22": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T23": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T24": {
+    "verdict": "PASS",
+    "run": "qa-sweep-tabs",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "T27": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "T28": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "T29": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "T30": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "T31": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "T32": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM1": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "TM2": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "TM3": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "TM4": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "TM5": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "TM6": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "TM7": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "TM8": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM9": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM10": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "TM11": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM12": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM13": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM14": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM15": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM16": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM17": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM18": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM19": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM20": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "TM21": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "WT1": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "WT2": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #157 changed this row."
+  },
+  "WT3": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "WT4": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "WT5": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign verdict FAIL is stale after PR #157 changed this row."
+  },
+  "WT6": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "WT7": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "WT8": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "WT9": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "WT10": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "WT11": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "WT12": {
+    "verdict": "PASS",
+    "run": "qa-sweep-wt-term",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "WT13": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "WT14": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "WT15": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X1": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X2": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X3": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X4": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X5": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X6": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X7": {
+    "verdict": "FIXED-UNVERIFIED",
+    "run": "qa-sweep-global",
+    "date": "2026-09-01",
+    "note": "Campaign verdict PASS is stale after PR #151 changed this row."
+  },
+  "X8": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X9": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X10": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X11": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X12": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X13": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X14": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X15": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X16": {
+    "verdict": "PASS",
+    "run": "qa-sweep-global",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "X17": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X18": {
+    "verdict": "PASS",
+    "run": "qa-sweep-global",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "X19": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X20": {
+    "verdict": "PASS",
+    "run": "qa-sweep-global",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "X21": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X22": {
+    "verdict": "FAIL",
+    "run": "qa-sweep-global",
+    "date": "2026-09-01",
+    "note": "X22: the reachable crash fallback hid error and copy details."
+  },
+  "X23": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X24": {
+    "verdict": "PASS",
+    "run": "qa-sweep-global",
+    "date": "2026-09-01",
+    "note": "Campaign sweep passed."
+  },
+  "X25": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X26": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X27": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X28": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X29": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X30": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X31": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X32": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X33": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X34": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  },
+  "X35": {
+    "verdict": "UNTESTED",
+    "run": "",
+    "date": "",
+    "note": "No campaign verdict."
+  }
+}
