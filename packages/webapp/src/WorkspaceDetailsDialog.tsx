@@ -79,7 +79,11 @@ export function WorkspaceDetailsDialog({
   orgName = 'the organization',
   orgWorkspaces = [],
   onClose,
-  onClone,
+  // "New workspace from this one" is disabled (2026-09-05): the clone path is
+  // not finished and has no end-to-end coverage, so the footer does not offer
+  // it. The prop stays in the signature so callers keep passing their handler;
+  // restore the destructure and the button below to bring the verb back.
+  // onClone,
   onDelete,
 }: {
   client: ControlPlaneClient;
@@ -297,13 +301,15 @@ export function WorkspaceDetailsDialog({
             />
           )}
         </div>
-        {(onClone !== null || onDelete !== null) && (
+        {onDelete !== null && (
           <footer className="workspace-details-footer cfg-footer">
+            {/* Disabled with the `onClone` destructure above (2026-09-05).
             {onClone && (
               <button className="webapp-action" type="button" onClick={onClone}>
                 New workspace from this one
               </button>
             )}
+            */}
             {onDelete && (
               <button className="cfg-danger-action" type="button" onClick={onDelete}>
                 Delete workspace
