@@ -38,7 +38,7 @@
 // §6.4 needs for the sidebar to group these under GitHub Worktrees, and it
 // arrives for free.
 //
-// CommonJS with no dependencies, like `blitz-recipe-invocation`: the file has no
+// CommonJS with no dependencies, like `blitz-lody-bridge`: the file has no
 // extension and no package.json above it inside the image, and it talks to a
 // unix socket, which `node:http` does without `ws`.
 "use strict";

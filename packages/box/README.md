@@ -61,12 +61,6 @@ setting to the same run command:
 -e BLITZ_CP_ORIGIN=<your-control-plane-origin>
 ```
 
-On first enrollment, follow the verification URI and user code shown by:
-
-```sh
-docker logs -f blitz-box
-```
-
 Hosted provisioning can instead pre-write the origin and box credential on
 the state volume. Credentials never belong in Docker environment variables or
 arguments.
@@ -115,14 +109,6 @@ the types to persistent tmux sessions named `term-<session-key>`,
 `claude-<session-key>`, and `codex-<session-key>`. `ro` attaches a tmux client
 read-only. Omitting the query entirely opens one non-tmux login shell for
 older webApp clients.
-
-Recipe launches leave `/var/lib/blitz/recipe/{invocation.env,prompt.txt}`
-behind; the first `claude`/`codex` request whose type matches `HARNESS` and
-that CREATES its tmux session consumes them — model/effort flags plus the
-prompt as a final positional argument — renaming both files to `*.delivered`
-before tmux starts (once-only). Attach never re-injects and `ro` never
-consumes. Pinned by `schema/fixtures/recipe-invocation/` +
-`guest-tests/test/recipe-invocation-guest.test.ts`.
 
 ### Ports and preview URL contract
 

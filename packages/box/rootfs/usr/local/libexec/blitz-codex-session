@@ -75,13 +75,6 @@ fallback_shell() {
     exit 1
   fi
   echo "Codex sign-in did not complete. Retry with: codex login --device-auth" >&2
-  # A recipe launch passes its prompt in "$@", and blitz-term has already
-  # renamed the invocation files to .delivered by the time this runs, so the
-  # prompt cannot be re-delivered. Say so rather than dropping it in silence.
-  if [ "$#" -gt 0 ]; then
-    echo "codex: the queued prompt was not delivered. It is reprinted below." >&2
-    printf '%s\n' "$@" >&2
-  fi
   exec "$shell" -l
 }
 

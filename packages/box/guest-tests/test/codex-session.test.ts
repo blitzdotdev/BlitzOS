@@ -212,13 +212,4 @@ describe("blitz-codex-session", () => {
       ["shell", "-l"],
     ]);
   });
-
-  it("reprints a recipe prompt it could not deliver", async () => {
-    // blitz-term renames the invocation files to .delivered before tmux
-    // starts, so a prompt dropped here is gone for good.
-    const result = await runLauncher({ statusExit: 1, deviceExit: 1, args: ["run the tests"] });
-    expect(result.calls.at(-1)).toEqual(["shell", "-l"]);
-    expect(result.stderr).toContain("was not delivered");
-    expect(result.stderr).toContain("run the tests");
-  });
 });

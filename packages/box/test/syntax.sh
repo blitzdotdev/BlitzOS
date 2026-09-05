@@ -15,8 +15,7 @@ done
 # libexec is no longer all bash: blitz-lody-bridge and blitz-lody-projects are
 # node. Dispatch on the shebang rather than the name, so a checker is never
 # chosen by a glob that a later script quietly stops matching. A file with
-# neither shebang is bash — blitz-recipe-invocation is sourced, not executed,
-# and opens with `# shellcheck shell=bash` instead.
+# neither shebang is bash.
 while IFS= read -r script; do
   case "$(head -1 "$script")" in
     *node*) node --check "$script" ;;
