@@ -57,6 +57,7 @@ const expected = [
   "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-config.ts",
+  "core/box-image-manifest-loader.ts",
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",
@@ -166,7 +167,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(117);
+    expect(first.files).toHaveLength(119);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
