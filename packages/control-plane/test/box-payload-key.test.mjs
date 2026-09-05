@@ -19,6 +19,7 @@ test("payload versions hash only canonical installable content", () => {
       { path: "rootfs/b", sha256: B, mode: "0644" },
       { path: "rootfs/a", sha256: A, mode: "0755" },
     ],
+    directories: ["rootfs/empty/z", "rootfs/empty/a"],
     restart: {
       zeta: ["rootfs/b", "rootfs/a"],
       alpha: ["rootfs/b"],
@@ -29,6 +30,7 @@ test("payload versions hash only canonical installable content", () => {
       ["rootfs/a", A, "0755"],
       ["rootfs/b", B, "0644"],
     ],
+    directories: ["rootfs/empty/a", "rootfs/empty/z"],
     daemon: "none",
     restart: [
       ["alpha", ["rootfs/b"]],
@@ -41,6 +43,7 @@ test("payload versions hash only canonical installable content", () => {
   assert.equal(boxPayloadVersion(content), expected);
   assert.equal(boxPayloadVersion({
     files: [...content.files].reverse(),
+    directories: [...content.directories].reverse(),
     restart: { alpha: ["rootfs/b"], zeta: ["rootfs/a", "rootfs/b"] },
   }), expected);
   assert.equal(boxPayloadPrefix(expected), `box-payload/${expected}`);
@@ -53,7 +56,9 @@ test("the daemon archive digest participates and unrelated metadata cannot", () 
   };
   const withoutDaemon = boxPayloadVersion(content);
   const withDaemon = boxPayloadVersion({ ...content, daemonSha256: B });
+  const withDirectory = boxPayloadVersion({ ...content, directories: ["rootfs/empty"] });
   assert.notEqual(withDaemon, withoutDaemon);
+  assert.notEqual(withDirectory, withoutDaemon);
   assert.equal(boxPayloadVersion({ ...content, createdAt: 123 }), withoutDaemon);
 });
 

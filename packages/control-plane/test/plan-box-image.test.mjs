@@ -70,6 +70,14 @@ function manifest(imageTag) {
   };
 }
 
+test("the base-image ownership list excludes payload-owned s6 topology", () => {
+  assert.equal(
+    BOX_IMAGE_INPUTS.some((input) =>
+      input.startsWith("packages/box/rootfs/etc/s6-overlay/s6-rc.d/")),
+    false,
+  );
+});
+
 test("200 with a valid matching manifest reports the published digest", async () => {
   const repository = createInputRepository();
   const expected = await expectedImage(repository);

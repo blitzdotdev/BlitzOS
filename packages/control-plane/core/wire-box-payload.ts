@@ -1,29 +1,9 @@
-/** The local Worker copy of the box-payload v1 contract.
+/** The local Worker copy of the box-payload v2 contract.
  *
  * Split from `core/wire.ts` to keep that public surface below the 700-line
  * house-rule threshold. `core/wire.ts` re-exports every name, so consumers do
  * not know about the seam. The mirror is
  * `packages/schema/src/box-payload.ts`, pinned by `test/wire-drift.test.ts`. */
-
-/** Payload-owned longrun services a manifest may ask the updater to restart.
- * Oneshots take effect at next boot, and the updater cannot restart itself. */
-export const BOX_PAYLOAD_RESTART_SERVICES = [
-  "cloudflared",
-  "dockerd",
-  "dufs",
-  "gateway",
-  "lody-bridge",
-  "lody-daemon",
-  "lody-projects",
-  "lody-watchdog",
-  "machine-stats",
-  "remote-control",
-  "sshd",
-  "ttyd",
-  "watch",
-] as const;
-
-export type BoxPayloadRestartService = (typeof BOX_PAYLOAD_RESTART_SERVICES)[number];
 
 export interface BoxPayloadFile {
   path: string;
@@ -42,13 +22,14 @@ export interface BoxPayloadDaemonArchive extends BoxPayloadArchive {
   protocolVersion: number;
 }
 
-export type BoxPayloadRestart = Partial<Record<BoxPayloadRestartService, string[]>>;
+export type BoxPayloadRestart = Record<string, string[]>;
 
 export interface BoxPayloadManifest {
   version: string;
   createdAt: number;
   minUpdater: number;
   files: BoxPayloadFile[];
+  directories: string[];
   archive: BoxPayloadArchive;
   daemon?: BoxPayloadDaemonArchive;
   restart: BoxPayloadRestart;

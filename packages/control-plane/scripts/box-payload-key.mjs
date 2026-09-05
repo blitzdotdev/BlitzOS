@@ -18,7 +18,8 @@ import { stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  PAYLOAD_FILES,
+  PAYLOAD_DIRECTORIES,
+  payloadFilesForRepo,
   readPayloadRestartMap,
 } from "./lib/box-payload-files.mjs";
 
@@ -41,7 +42,18 @@ function checkedMode(value, label) {
   return value;
 }
 
-function canonicalPayloadContent({ files, daemonSha256, restart }) {
+function checkedDirectory(value, label) {
+  if (
+    String(value) !== value
+    || !value.startsWith("rootfs/")
+    || value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error(`${label} must be a relative path under rootfs/ without dot segments`);
+  }
+  return value;
+}
+
+function canonicalPayloadContent({ files, directories = [], daemonSha256, restart }) {
   const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
   const sortedFiles = [...files].sort((left, right) => compareText(left.path, right.path));
   for (const [index, entry] of sortedFiles.entries()) {
@@ -57,8 +69,17 @@ function canonicalPayloadContent({ files, daemonSha256, restart }) {
   const restartEntries = Object.entries(restart)
     .sort(([left], [right]) => compareText(left, right))
     .map(([service, dependencies]) => [service, [...dependencies].sort()]);
+  const sortedDirectories = [...directories]
+    .map((directory, index) => checkedDirectory(directory, `directories[${index}]`))
+    .sort(compareText);
+  for (let index = 1; index < sortedDirectories.length; index += 1) {
+    if (sortedDirectories[index - 1] === sortedDirectories[index]) {
+      throw new Error(`payload directory path is duplicated: ${sortedDirectories[index]}`);
+    }
+  }
   return {
     files: sortedFiles.map((entry) => [entry.path, entry.sha256, entry.mode]),
+    directories: sortedDirectories,
     daemon: daemonSha256 === undefined ? "none" : checkedDigest(daemonSha256, "daemon sha256"),
     restart: restartEntries,
   };
@@ -86,7 +107,7 @@ export async function readBoxPayloadContent({
 }) {
   if (payloadRoot === undefined) throw new Error("payloadRoot is required");
   const files = [];
-  for (const archivePath of PAYLOAD_FILES) {
+  for (const archivePath of await payloadFilesForRepo(repoRoot)) {
     const filePath = path.join(payloadRoot, archivePath);
     const metadata = await stat(filePath);
     if (!metadata.isFile()) throw new Error(`payload path is not a regular file: ${archivePath}`);
@@ -98,6 +119,7 @@ export async function readBoxPayloadContent({
   }
   return {
     files,
+    directories: [...PAYLOAD_DIRECTORIES],
     daemonSha256: daemonPath === undefined ? undefined : await hashPayloadFile(daemonPath),
     restart: await readPayloadRestartMap(repoRoot),
   };

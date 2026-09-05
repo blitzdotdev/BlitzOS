@@ -2,7 +2,11 @@
   "version": "20260904T2130Z-9f3c1a2b",
   "createdAt": 1788550000000,
   "minUpdater": 1,
-  "files": [{"path": "rootfs/usr/local/bin/blitz-term", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mode": "0755"}],
+  "files": [
+    {"path": "rootfs/usr/local/bin/blitz-term", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mode": "0755"},
+    {"path": "rootfs/etc/s6-overlay/s6-rc.d/gateway/run", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "mode": "0755"},
+    {"path": "rootfs/etc/s6-overlay/s6-rc.d/gateway/type", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "mode": "0644"}
+  ],
   "archive": {"url": "https://cp.example/payload.tar.gz", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "bytes": 1},
   "restart": {"gateway": "rootfs/usr/local/bin/blitz-term"}
 }

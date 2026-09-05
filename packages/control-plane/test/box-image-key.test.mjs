@@ -199,12 +199,14 @@ test("a missing input at the requested revision is a hard error", async () => {
   );
 });
 
-test("payload and daemon-only commits keep the base image release id", async () => {
+test("payload service-tree and daemon commits keep the base image release id", async () => {
   const repository = createInputRepository();
   const before = boxImageReleaseId(await readBoxImageInputIds({ repo: repository }));
   for (const [relativePath, contents] of [
     ["packages/box/rootfs/usr/local/bin/blitz", "payload edit\n"],
     ["packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run", "payload run edit\n"],
+    ["packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/type", "longrun\n"],
+    ["packages/box/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/new-service", ""],
     ["packages/box/gateway/main.go", "gateway edit\n"],
     ["vendor/lody/UPSTREAM.md", "daemon edit\n"],
     ["vendor/lody-adapters/core/package.json", "adapter edit\n"],

@@ -1,7 +1,7 @@
 {
   "version": "20260904T2200Z-a1b2c3d4",
   "createdAt": 1788552000000,
-  "minUpdater": 1,
+  "minUpdater": 2,
   "files": [
     {
       "path": "rootfs/usr/local/bin/blitz-rules",
@@ -14,6 +14,7 @@
       "mode": "0644"
     }
   ],
+  "directories": ["rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d"],
   "archive": {
     "url": "http://thinlab.example/box-payload/20260904T2200Z-a1b2c3d4/payload.tar.gz",
     "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",

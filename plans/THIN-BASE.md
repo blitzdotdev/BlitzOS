@@ -41,46 +41,98 @@ Everything else moves to the payload or leaves.
 
 ### D. The payload owns the service set
 
-Today the set of s6 services, their types and their dependencies are base.
-s6-overlay compiles `/etc/s6-overlay/s6-rc.d` into a database when the
-container starts. A payload can replace a `run` script. It cannot add,
-remove or redefine a service. Fourteen of the base rebuilds above were only
-that.
+The payload now owns every file under `rootfs/etc/s6-overlay/s6-rc.d/`.
+That ownership includes types, dependencies, launchers, and bundle membership.
+The payload also owns its launcher directory.
+The updater binary remains base-owned.
 
-Proven on 2026-09-05 inside the real image (`blitz-box:smoke`, s6-overlay
-3.2.1.0), with tools already in `/command`:
+The repository declares `user` and `user2` as bundles.
+It declares `user2/contents.d` as an empty payload directory.
+The top bundle names `user2`.
+The compiler rejects a bundle without `contents.d`.
 
-1. `s6-rc-compile /run/s6/db-next <tree> <s6-overlay sources>` compiled a
-   tree with a new longrun `hello` in the `user` bundle.
-2. `s6-rc-update /run/s6/db-next` brought `hello` up at once. sshd and the
-   gateway kept their pids.
-3. A compile without `hello` and a second update took it down and removed
-   its scandir. sshd and the gateway kept their pids.
-4. A tree that gave `machine-stats` a new dependency was applied live.
-   `machine-stats` restarted because its definition changed. Nothing else did.
+The image replaces `/etc/s6-overlay/s6-rc.d` with one absolute symlink.
+The symlink targets `/opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d`.
+First boot compiles the baked payload tree.
+Container recreation compiles the restored baked tree.
 
-Design:
+Protocol 2 adds the optional `directories` manifest field.
+The parser defaults an omitted field to an empty list.
+The publisher always writes the field and sets `minUpdater: 2`.
+The content version hashes the directory list.
+The publisher maps source executable bits to `0755` and all other files to `0644`.
+Protocol 2 keeps every archive path below `rootfs/`.
+Protocol 1 therefore parses published manifests and reports `unsupported`.
+Protocol 2 boxes refuse protocol 1 releases.
+The control plane must not pin protocol 1 for rollback on a protocol 2 image.
+The payload publisher now emits only protocol 2 releases.
 
-- The payload ships the whole `s6-rc.d` tree under
-  `/opt/blitz/payload/<version>/services/`. `/etc/s6-overlay/s6-rc.d` in the
-  image is a symlink to `/opt/blitz/payload/current/services`, so first boot
-  compiles whatever payload is current.
-- On a switch, the updater compiles the new tree to `/run/s6/db-<version>`
-  before it flips `current`. A failed compile is `verify-failed` and changes
-  nothing. After the flip it runs `s6-rc-update`. Rollback is an update back
-  to the previous database, which the updater keeps.
-- s6 restarts a service whose definition changed. The manifest's restart map
-  stays for the other case: a binary or libexec file changed under a service
-  whose `run` did not.
-- The floor guard: the updater refuses a payload whose tree lacks
-  `init-state`, `cgroups`, `payload` and the `user` bundle membership of
-  `payload`. A payload cannot remove the updater's own service.
-- The manifest becomes `box-payload v2`: it lists the `services/**` files
-  and sets `minUpdater: 2`. A v1 updater reports `unsupported` and keeps the
-  running payload until its base ships.
+Restart keys no longer use a fixed vocabulary.
+Each key names a longrun in the manifest's own tree.
+The updater verifies the extracted type before activation.
+The restart map handles changed binaries and libexec files.
+`s6-rc-update` handles changed service definitions.
+The updater removes changed definitions from map-driven restarts.
 
-Deletes: the "service set is base" rule, 45 topology entries from
-`BOX_IMAGE_INPUTS`, and the base image as the delivery for a new service.
+The updater freezes four service definitions during live updates.
+They are `cgroups`, `init-state`, `register`, and `payload`.
+Their files must match the running tree by content and mode.
+Their payload-owned executable bodies may still change.
+The guard also requires both bundles and the payload bundle membership.
+The payload launcher must execute the base-owned updater.
+
+The updater compiles into `/run/s6/.blitz-db-staging-<pid>-<nonce>`.
+It renames a successful compile into place on the same filesystem.
+Initialization protects the live database before cleaning that anchored namespace.
+It requires exactly one s6-overlay sources directory.
+A compiler failure reports `verify-failed` and preserves current links.
+After the link flip, the updater runs `s6-rc-update` with a timeout.
+It then applies remaining map-driven restarts and checks health.
+The committed state records current and previous database paths.
+The updater resolves the live compiled pointer instead of persisting it.
+
+Rollback trusts only databases completed by the staging rename.
+It compiles the previous tree when no completed database is available.
+It restores both links and updates s6 to that database.
+It re-converges the `user` bundle before filtered map restarts and health checks.
+A rollback restart set contains only longruns from the previous tree.
+A separate flag preserves every forward cause for Lody daemon health.
+The flag applies only when the previous tree contains the Lody longrun.
+A failed rollback keeps its pending record until every recovery step succeeds.
+A failed recovery reports `start-failed` and retries on the next tick.
+An unreachable control plane leaves that result queued.
+A failed forward `s6-rc-update` uses the same rollback path.
+Garbage collection keeps the committed current and previous databases.
+It also resolves and keeps `/run/s6-rc/compiled` before deleting any database.
+It keeps both actual current link targets and both pending release targets.
+
+`blitz-payload tick` performs one complete poll and exits.
+The supervised launcher and CLI ticks share one kernel-backed `flock` on
+`/run/blitz-payload.lock`.
+The CLI refuses a live lock with exit 75 and tells the operator to stop the
+payload service or wait.
+An active CLI tick can delay payload-service startup for its full remaining
+runtime. Each launcher attempt waits at most 300 seconds. While the lock stays
+held, s6 restarts the launcher and retries.
+The CLI also exits nonzero when pending rollback recovery fails.
+The supervised command keeps its fail-open polling loop.
+Operators and smoke tests use the same tick path.
+
+A container restart compiles the tree selected by `current`.
+The updater persists a random `/opt/blitz/payload/.instance` ID in state.
+Matching IDs make every pending rollback phase resumable even after either
+link or the live database was already restored.
+A container recreate has no instance file, creates a new ID, drops pending
+state from the prior instance, and reconciles the fresh baked links.
+
+The smoke runs three live updates against an in-container origin.
+E17 adds `hello` while sshd and gateway keep their pids.
+E18 removes `hello` while those pids remain stable.
+E19 removes the payload service and receives `verify-failed`.
+E19 leaves both current links and both pids unchanged.
+
+This move removes every s6 topology entry from `BOX_IMAGE_INPUTS`.
+Adding or redefining a service no longer rebuilds the base image.
 
 ### C. The box environment leaves `env.defaults`
 

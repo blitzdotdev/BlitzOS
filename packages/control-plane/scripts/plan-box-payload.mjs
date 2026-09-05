@@ -6,7 +6,6 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { boxPayloadPrefix } from "./box-payload-key.mjs";
 import { validateBoxPayloadManifest } from "./lib/box-payload-manifest.mjs";
-import { PAYLOAD_SERVICES } from "./lib/box-payload-files.mjs";
 import {
   buildGoPayloadBinaries,
   stageBoxPayloadRelease,
@@ -54,9 +53,14 @@ export async function planBoxPayload({
   }
   let manifest;
   try {
-    manifest = validateBoxPayloadManifest(await response.json(), new Set(PAYLOAD_SERVICES));
+    manifest = validateBoxPayloadManifest(await response.json());
   } catch (error) {
     throw new Error(`GET ${ref} returned an invalid box-payload manifest: ${errorMessage(error)}`);
+  }
+  if (manifest.minUpdater !== 2 || manifest.directories === undefined) {
+    throw new Error(
+      `GET ${ref} returned a release outside the publisher protocol 2 shape`,
+    );
   }
   if (manifest.version !== version) {
     throw new Error(`GET ${ref} returned version ${manifest.version}, expected ${version}`);

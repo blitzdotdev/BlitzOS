@@ -179,6 +179,9 @@ RUN set -eux; \
     ln -s baked /opt/blitz/payload/current; \
     ln -s baked /opt/blitz/lody/current; \
     node /tmp/box-payload-files.mjs install /; \
+    test -L /etc/s6-overlay/s6-rc.d; \
+    command -v flock; \
+    test -d /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d; \
     rm /tmp/box-payload-files.mjs; \
     ln -s /opt/blitz/lody/current/bin/lody /usr/local/bin/lody; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \

@@ -481,14 +481,12 @@ test("a base-owned box change requires a rebuild", () => {
   ]);
 });
 
-test("adding an s6 service changes the base image release", () => {
+test("adding an s6 service does not change the base image release", () => {
   const decision = boxImageDecision("abc", [
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/new-service",
   ]);
-  assert.equal(decision.rebuild, true);
-  assert.deepEqual(decision.paths, [
-    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/new-service",
-  ]);
+  assert.equal(decision.rebuild, false);
+  assert.deepEqual(decision.paths, []);
 });
 
 test("payload and daemon inputs do not rebuild the base image", () => {
@@ -521,7 +519,7 @@ test("a path that merely starts with an image path prefix does not count", () =>
   assert.equal(boxImageDecision("abc", ["packages/boxes/thing.ts"]).rebuild, false);
 });
 
-test("IMAGE_PATHS pins the Dockerfile, updater, and s6 service topology", () => {
+test("IMAGE_PATHS pins the Dockerfile and updater but excludes s6 service topology", () => {
   for (const required of [
     "packages/box/Dockerfile",
     "packages/box/Dockerfile.dockerignore",
@@ -529,12 +527,16 @@ test("IMAGE_PATHS pins the Dockerfile, updater, and s6 service topology", () => 
     "packages/broker/go.mod",
     "packages/broker/internal",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
-    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/payload",
-    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user",
     "packages/control-plane/scripts/lib/box-payload-files.mjs",
     "env.defaults",
   ]) {
     assert.ok(IMAGE_PATHS.includes(required), required);
+  }
+  for (const payloadOwned of [
+    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/payload",
+    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user",
+  ]) {
+    assert.equal(IMAGE_PATHS.includes(payloadOwned), false, payloadOwned);
   }
   assert.equal(new Set(IMAGE_PATHS).size, IMAGE_PATHS.length);
 });
