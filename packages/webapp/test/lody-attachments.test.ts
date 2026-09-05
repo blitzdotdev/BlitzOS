@@ -10,6 +10,7 @@
  * `lody` bundle is installed, end to end into a real daemon's blob store.
  */
 import "fake-indexeddb/auto";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -34,6 +35,8 @@ import { seedWorktreeWorkdirDefault } from "../src/lody/workdir-default.js";
 import { lodyDaemonAvailable, startLodyHarness, type LodyHarness } from "./lody-daemon-harness.js";
 
 const FILES_BASE = "https://cp.invalid/workspaces/w1/webapp/7445/workspace/";
+// SAFETY: the harness uses only browser WebSocket members that `ws` implements.
+const NODE_WEBSOCKET_CONSTRUCTOR = NodeWebSocket as unknown as typeof WebSocket;
 
 interface DavCall {
   method: string;
@@ -187,7 +190,7 @@ describe.skipIf(!lodyDaemonAvailable())("the attachment handoff reaches a real d
     handle = await createLodyRuntime({
       endpoints: {
         ...harness.endpoints,
-        webSocketConstructor: NodeWebSocket as unknown as typeof WebSocket,
+        webSocketConstructor: NODE_WEBSOCKET_CONSTRUCTOR,
       },
       snapshot,
     });
@@ -201,15 +204,13 @@ describe.skipIf(!lodyDaemonAvailable())("the attachment handoff reaches a real d
   });
 
   /**
-   * The whole channel, and the reason it is free.
+   * This case covers handoff after the session document exists.
    *
-   * `session/file-send-local` only needs the session DOCUMENT to exist — it reads
-   * `getDocMeta(getSessionRoomId(sessionId))` and refuses `session_not_found`
-   * otherwise (`message-handler.ts:7554`) — so the accept unit `startLodySession`
-   * writes is the whole prerequisite. No `session/create`, no adapter, no turn.
-   * The daemon copies the bytes into its own blob store and answers with the
-   * `transport: 'local'` blocks the composer attaches to the outgoing message,
-   * which is the far end §0.7 asks for.
+   * `session/file-send-local` accepts existing sessions and landing drafts.
+   * It refuses only a deleted document (`message-handler.ts:7638`). This case
+   * calls `startLodySession` to cover the existing-session path. It creates no
+   * adapter and dispatches no turn. The daemon copies the bytes into its blob
+   * store. It returns the `transport: 'local'` blocks for the outgoing message.
    */
   it("stages bytes on the box and hands the daemon a transport:'local' block", async () => {
     const sessionId = `att-${Date.now().toString(36)}`;
@@ -224,7 +225,7 @@ describe.skipIf(!lodyDaemonAvailable())("the attachment handoff reaches a real d
 
     const bridge = createLodyLocalBridge({
       ...harness.endpoints,
-      webSocketConstructor: NodeWebSocket as unknown as typeof WebSocket,
+      webSocketConstructor: NODE_WEBSOCKET_CONSTRUCTOR,
     });
     try {
       const handoff = async (): Promise<{ ok?: boolean; error?: string; files?: unknown[] }> => {
@@ -238,11 +239,9 @@ describe.skipIf(!lodyDaemonAvailable())("the attachment handoff reaches a real d
         // object; the fields below are re-read defensively by the assertions.
         return reply as { ok?: boolean; error?: string; files?: unknown[] };
       };
-      // `startSession` is a LOCAL durable write; the daemon learns about the
-      // session when that write reaches it over the data plane, and until then
-      // its own `getDocMeta` answers `session_not_found`. Polling the real call
-      // is the honest wait — there is no cheaper probe for "the daemon has this
-      // session" than asking it.
+      // `startSession` writes through the local data plane. The poll keeps this
+      // existing-session case stable while that write arrives. Seam patch 25
+      // accepts missing metadata, so `session_not_found` now means deletion.
       let outcome = await handoff();
       const deadline = Date.now() + 30_000;
       while (outcome.error === "session_not_found" && Date.now() < deadline) {
@@ -251,6 +250,8 @@ describe.skipIf(!lodyDaemonAvailable())("the attachment handoff reaches a real d
       }
       expect(outcome.error).toBeUndefined();
       expect(outcome.ok).toBe(true);
+      // SAFETY: a successful channel response contains file objects. These
+      // assertions validate each field this case uses.
       const block = outcome.files?.[0] as
         | { type?: string; transport?: string; fileName?: string; machineId?: string }
         | undefined;
@@ -265,6 +266,51 @@ describe.skipIf(!lodyDaemonAvailable())("the attachment handoff reaches a real d
         SESSION_ATTACHMENTS_DIR,
         sessionId,
         "0-attached.txt",
+      );
+      expect(existsSync(stagedPath)).toBe(false);
+    } finally {
+      bridge.dispose();
+    }
+  }, 120_000);
+
+  /**
+   * This case is the whole landing bug.
+   *
+   * No `startLodySession` call uses this id before the handoff. Restoring the
+   * daemon guard makes this request answer `session_not_found`.
+   */
+  it("accepts a landing draft before startSession creates its document", async () => {
+    const sessionId = `att-draft-${randomUUID()}`;
+    const bridge = createLodyLocalBridge({
+      ...harness.endpoints,
+      webSocketConstructor: NODE_WEBSOCKET_CONSTRUCTOR,
+    });
+    try {
+      const reply = await bridge.ipc.invoke("localProjects.sendSessionFileLocal", {
+        workspaceId: snapshot.workspace.workspaceId,
+        sessionId,
+        machineId: snapshot.machineId,
+        files: [{ fileName: "landing.txt", bytes: bytes("landing attachment") }],
+      });
+      // SAFETY: every response from this channel is a JSON object. The test
+      // reads each optional field defensively.
+      const outcome = reply as { ok?: boolean; error?: string; files?: unknown[] };
+      expect(outcome.error).toBeUndefined();
+      expect(outcome.ok).toBe(true);
+      // SAFETY: the response schema makes each successful file an object. The
+      // assertions validate every field this test uses.
+      const block = outcome.files?.[0] as
+        | { type?: string; transport?: string; machineId?: string }
+        | undefined;
+      expect(block?.type).toBe("file");
+      expect(block?.transport).toBe("local");
+      expect(block?.machineId).toBe(snapshot.machineId);
+
+      const stagedPath = join(
+        harness.endpoints.filesRoot,
+        SESSION_ATTACHMENTS_DIR,
+        sessionId,
+        "0-landing.txt",
       );
       expect(existsSync(stagedPath)).toBe(false);
     } finally {

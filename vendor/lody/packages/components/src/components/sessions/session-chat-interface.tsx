@@ -1788,6 +1788,8 @@ interface SessionChatInterfaceProps {
    * editor whose save has nowhere to land — rather than disappearing.
    */
   hideAgentRoles?: boolean;
+  /** Route images through the file transport when cloud image upload is unavailable. */
+  disableImageUpload?: boolean;
   /**
    * Drop every surface that narrates the connection: the composer status chip's
    * browser-offline and machine-offline states, the ambient catch-up spinner in
@@ -1974,6 +1976,7 @@ export const SessionChatInterface = memo(
       hideCloudMenuItems = false,
       hideNotificationPrompt = false,
       hideAgentRoles = false,
+      disableImageUpload = false,
       hideConnectionStatus = false,
       syncEnabled = !hideMessageArea,
       isVisible = true,
@@ -6074,6 +6077,7 @@ export const SessionChatInterface = memo(
                       ref={inputAreaRef}
                       session={session}
                       hideAgentRoles={hideAgentRoles}
+                      disableImageUpload={disableImageUpload}
                       sessionLocalProjectRootPath={resolvedLocalProjectMeta?.rootPath ?? null}
                       isMachineRemoved={isMachineRemoved}
                       isAgentBusy={isAgentBusy}

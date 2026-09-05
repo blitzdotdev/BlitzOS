@@ -53,6 +53,7 @@ describe("the v1 scope constant", () => {
       // workspace, one member's machine, one box, so the picker offers the
       // machine it already shows.
       machineSelection: false,
+      cloudImageUpload: false,
     });
   });
 
@@ -74,6 +75,7 @@ describe("the v1 scope constant", () => {
       hideSettingsEntry: true,
       hideConnectionStatus: true,
       hideMachineSelector: true,
+      disableImageUpload: true,
     });
   });
 });
@@ -108,13 +110,14 @@ describe("the two mounts hand the suppression to all four mounted components", (
     }
   });
 
-  it("gives ChatLanding the hint, Role and connection suppressions", () => {
+  it("gives ChatLanding every landing suppression", () => {
     const start = router.indexOf("<ChatLanding");
     const landing = router.slice(start, router.indexOf("<SessionDetail"));
     expect(landing).toContain("hideProductHints={V1.hideProductHints}");
     expect(landing).toContain("hideAgentRoles={V1.hideAgentRoles}");
     expect(landing).toContain("hideConnectionStatus={V1.hideConnectionStatus}");
     expect(landing).toContain("hideMachineSelector={V1.hideMachineSelector}");
+    expect(landing).toContain("disableImageUpload={V1.disableImageUpload}");
   });
 
   it("gives ArchiveView the team-scope suppression, and no prop for the PR badge", () => {
@@ -127,7 +130,7 @@ describe("the two mounts hand the suppression to all four mounted components", (
     expect(archive).not.toContain("hidePullRequest");
   });
 
-  it("gives SessionDetail the menu, prompt, Role and keyboard suppressions", () => {
+  it("gives SessionDetail every session suppression", () => {
     const detail = router.slice(router.indexOf("<SessionDetail"), router.length);
     for (const prop of [
       "hideCloudMenuItems",
@@ -138,6 +141,7 @@ describe("the two mounts hand the suppression to all four mounted components", (
       "hideLanguageServiceActions",
       // Seam patch 15's, likewise.
       "hideConnectionStatus",
+      "disableImageUpload",
     ]) {
       expect(detail, `SessionDetail receives ${prop}`).toContain(`${prop}={V1.${prop}}`);
     }
@@ -392,6 +396,84 @@ describe("seam patch 24 is declared where a merge agent reads it", () => {
   it("drops the mobile row with its label rather than leaving it empty", () => {
     const sheet = read(join(vendorSrc, "components/mobile/mobile-new-chat-sheet.tsx"));
     expect(sheet).toContain("{machineNode ? (");
+  });
+});
+
+describe("seam patch 27 routes images through the file transport", () => {
+  const patches = read(join(repoRoot, "vendor/lody/BLITZ-PATCHES.md"));
+  const detail = read(join(vendorSrc, "components/sessions/session-detail.tsx"));
+  const chat = read(join(vendorSrc, "components/sessions/session-chat-interface.tsx"));
+  const landing = read(join(vendorSrc, "components/chat/chat-landing.tsx"));
+
+  it("declares the seam and every vendor file", () => {
+    expect(patches).toContain(
+      "### 27. A host without cloud image upload routes images as files",
+    );
+    for (const file of [
+      "components/sessions/session-detail.tsx",
+      "components/sessions/session-chat-interface.tsx",
+      "components/chat/chat-landing.tsx",
+    ]) {
+      expect(patches, `seam patch 27 declares ${file}`).toContain(file);
+    }
+  });
+
+  it("declares and threads the default-inert prop", () => {
+    for (const [name, source] of [
+      ["session-detail.tsx", detail],
+      ["session-chat-interface.tsx", chat],
+      ["chat-landing.tsx", landing],
+    ]) {
+      expect(source, `${name} declares the prop`).toContain("disableImageUpload?: boolean;");
+      expect(source, `${name} defaults the prop`).toContain("disableImageUpload = false,");
+    }
+    expect(detail).toContain("disableImageUpload={disableImageUpload}");
+    expect(detail).toContain(
+      "hideAgentRoles,\n      disableImageUpload,\n      hideConnectionStatus,",
+    );
+    expect(chat).toContain("disableImageUpload={disableImageUpload}");
+  });
+
+  it("routes pasted and dropped images as files", () => {
+    const paste = landing.slice(
+      landing.indexOf("const handlePromptPaste"),
+      landing.indexOf("const handleImageDrop"),
+    );
+    const drop = landing.slice(
+      landing.indexOf("const handleImageDrop"),
+      landing.indexOf("const handleAttachmentInputChange"),
+    );
+    expect(paste).toContain(
+      "const attachments = disableImageUpload ? pastedFiles : pastedAttachments;",
+    );
+    expect(paste).toContain("const images = disableImageUpload ? [] : pastedImages;");
+    expect(drop).toContain("const attachments = disableImageUpload ? files : droppedAttachments;");
+    expect(drop).toContain("const images = disableImageUpload ? [] : droppedImages;");
+  });
+
+  it("keeps the picker available while file capacity remains", () => {
+    expect(
+      landing.match(
+        /\(!canAddMoreFiles && \(disableImageUpload \|\| !canAddMoreImages\)\)/gu,
+      )?.length,
+    ).toBe(2);
+    const input = landing.slice(
+      landing.indexOf("const handleAttachmentInputChange"),
+      landing.indexOf("const handleOpenAttachmentPicker"),
+    );
+    expect(input).toContain("handleImageDrop(files);");
+  });
+
+  it("passes the prop to both pages in both route assemblies", () => {
+    for (const [name, source] of Object.entries({
+      "router.tsx": ourSource("router.tsx"),
+      "MobileSessionStack.tsx": ourSource("MobileSessionStack.tsx"),
+    })) {
+      expect(
+        source.match(/disableImageUpload=\{V1\.disableImageUpload\}/gu)?.length,
+        `${name} passes the prop twice`,
+      ).toBe(2);
+    }
   });
 });
 

@@ -6,6 +6,8 @@ import type { PersistedMentionRange } from '@/components/mentions/mention-persis
 
 import type { AcpCommandSummary, AgentConfigCliType } from '@lody/shared';
 import { cn } from '@/lib/utils';
+import { hasFileTransfer, getFilesFromDataTransfer } from '@/lib/file-drop';
+import { mergeDropZoneHandlers, useDropZone } from '@/hooks/use-drop-zone';
 import { useSessionMentionDropZone } from '@/hooks/use-session-mention-drag';
 import { Button } from '@/ui/button';
 import {
@@ -242,9 +244,24 @@ export function ChatLandingView({
   errorLabels = {},
 }: ChatLandingViewProps) {
   const isDark = tone === 'dark';
+  const pageDropEnabled = !isMobile && !submissionPending;
   const { mentionActionsRef, dropZone, overlayActive } = useSessionMentionDrop(
-    !isMobile && !submissionPending
+    pageDropEnabled
   );
+  const imageDropZone = useDropZone({
+    enabled: pageDropEnabled && onImageDrop !== undefined,
+    accepts: hasFileTransfer,
+    onDrop: useCallback(
+      (dataTransfer: DataTransfer) => {
+        const files = getFilesFromDataTransfer(dataTransfer);
+        if (files.length > 0) {
+          onImageDrop?.(files);
+        }
+      },
+      [onImageDrop]
+    ),
+  });
+  const pageDropHandlers = mergeDropZoneHandlers(imageDropZone, dropZone);
 
   const {
     somethingWentWrong = 'Something went wrong',
@@ -478,9 +495,9 @@ export function ChatLandingView({
   return (
     <WebChatLandingScreen
       title={title}
-      dropActive={overlayActive}
-      dropKind="session-mention"
-      dropHandlers={dropZone.handlers}
+      dropActive={imageDropZone.isActive || overlayActive}
+      dropKind={overlayActive ? 'session-mention' : 'files'}
+      dropHandlers={pageDropHandlers}
       navRootRef={navRootRef}
       contextSwitch={contextSwitch}
       composer={composerNode}

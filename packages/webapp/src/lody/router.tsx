@@ -252,6 +252,7 @@ function ChatRoute() {
       // lists the machine it already shows and nothing else. Selection keeps
       // flowing from the agent config and the local project.
       hideMachineSelector={V1.hideMachineSelector}
+      disableImageUpload={V1.disableImageUpload}
     />
   );
   // No shell around this mount contributes tabs — a headless render, a router
@@ -365,6 +366,7 @@ function sessionDetailRouteComponent(readOnly: boolean) {
           // "machine removed" state is NOT taken: it blocks sending, and the
           // footer says nothing about it.
           hideConnectionStatus={V1.hideConnectionStatus}
+          disableImageUpload={V1.disableImageUpload}
           {...hostTabs}
           {...sidePanelProps}
         />

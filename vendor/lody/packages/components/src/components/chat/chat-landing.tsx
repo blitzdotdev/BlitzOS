@@ -435,6 +435,15 @@ interface ChatLandingProps {
    * Off by default, so every upstream call site keeps both pickers.
    */
   hideMachineSelector?: boolean;
+  /**
+   * Route images through the file transport instead of Lody cloud.
+   *
+   * Use this for a host without a cloud account. The file path still accepts
+   * images and keeps attachment support available.
+   *
+   * Off by default, so every upstream call site keeps cloud image upload.
+   */
+  disableImageUpload?: boolean;
   resetDraftKey?: string;
   resetDraftOnKeyChange?: boolean;
 }
@@ -617,6 +626,7 @@ function WorkspaceChatLanding({
   hideSettingsEntry = false,
   hideConnectionStatus = false,
   hideMachineSelector = false,
+  disableImageUpload = false,
   resetDraftKey,
   resetDraftOnKeyChange = true,
 }: ChatLandingProps) {
@@ -2860,7 +2870,10 @@ function WorkspaceChatLanding({
 
       if (pastedFiles.length > 0) {
         event.preventDefault();
-        const { images, attachments } = splitImageAndFileAttachments(pastedFiles);
+        const { images: pastedImages, attachments: pastedAttachments } =
+          splitImageAndFileAttachments(pastedFiles);
+        const images = disableImageUpload ? [] : pastedImages;
+        const attachments = disableImageUpload ? pastedFiles : pastedAttachments;
         if (images.length > 0) {
           addFiles(images);
         }
@@ -2872,11 +2885,20 @@ function WorkspaceChatLanding({
 
       handleImagePromptPaste(event);
     },
-    [addFileAttachments, addFiles, handleImagePromptPaste, insertLargePastedTextAtSelection]
+    [
+      addFileAttachments,
+      addFiles,
+      disableImageUpload,
+      handleImagePromptPaste,
+      insertLargePastedTextAtSelection,
+    ]
   );
   const handleImageDrop = useCallback(
     (files: File[]) => {
-      const { images, attachments } = splitImageAndFileAttachments(files);
+      const { images: droppedImages, attachments: droppedAttachments } =
+        splitImageAndFileAttachments(files);
+      const images = disableImageUpload ? [] : droppedImages;
+      const attachments = disableImageUpload ? files : droppedAttachments;
       if (images.length > 0) {
         addFiles(images);
       }
@@ -2884,7 +2906,7 @@ function WorkspaceChatLanding({
         addFileAttachments(attachments);
       }
     },
-    [addFileAttachments, addFiles]
+    [addFileAttachments, addFiles, disableImageUpload]
   );
   const handleAttachmentInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -6169,7 +6191,9 @@ function WorkspaceChatLanding({
             onMentionRangesChange={handleMentionRangesChange}
             persistedMentions={persistedMentionRanges}
             imageItems={submitting ? [] : imageItems}
-            attachmentAddDisabled={submitting || (!canAddMoreImages && !canAddMoreFiles)}
+            attachmentAddDisabled={
+              submitting || (!canAddMoreFiles && (disableImageUpload || !canAddMoreImages))
+            }
             onAttachmentAddClick={handleOpenAttachmentPicker}
             onImageRemove={submitting ? undefined : handleRemoveImage}
             onImageRetry={submitting ? undefined : handleRetryImage}
@@ -6620,7 +6644,9 @@ function WorkspaceChatLanding({
         onMentionRangesChange={handleMentionRangesChange}
         persistedMentions={persistedMentionRanges}
         imageItems={imageItems}
-        attachmentAddDisabled={submitting || (!canAddMoreImages && !canAddMoreFiles)}
+        attachmentAddDisabled={
+          submitting || (!canAddMoreFiles && (disableImageUpload || !canAddMoreImages))
+        }
         onAttachmentAddClick={handleOpenAttachmentPicker}
         onImageRemove={handleRemoveImage}
         onImageRetry={handleRetryImage}

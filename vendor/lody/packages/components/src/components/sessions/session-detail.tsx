@@ -786,6 +786,7 @@ const SessionDetail = ({
   hideCloudMenuItems = false,
   hideNotificationPrompt = false,
   hideAgentRoles = false,
+  disableImageUpload = false,
   hideConnectionStatus = false,
   hideLanguageServiceActions = false,
   keyboardShortcutsAvailable = true,
@@ -817,6 +818,9 @@ const SessionDetail = ({
   /** Passed to every chat surface this page mounts; see
    * `SessionChatInterfaceProps.hideAgentRoles`. */
   hideAgentRoles?: boolean;
+  /** Passed to every chat surface this page mounts; see
+   * `SessionChatInterfaceProps.disableImageUpload`. */
+  disableImageUpload?: boolean;
   /**
    * Whether the host reports connectivity itself.
    *
@@ -5501,6 +5505,7 @@ const SessionDetail = ({
                   hideCloudMenuItems={hideCloudMenuItems}
                   hideNotificationPrompt={hideNotificationPrompt}
                   hideAgentRoles={hideAgentRoles}
+                  disableImageUpload={disableImageUpload}
                   hideConnectionStatus={hideConnectionStatus}
                   syncEnabled={isActive || pendingForkSourceId !== undefined}
                   isVisible={isActive}
@@ -6167,6 +6172,7 @@ const SessionDetail = ({
       hideCloudMenuItems,
       hideNotificationPrompt,
       hideAgentRoles,
+      disableImageUpload,
       hideConnectionStatus,
       syncEnabled: isActive || pendingForkSourceId !== undefined,
       isVisible,

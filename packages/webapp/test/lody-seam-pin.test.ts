@@ -1,15 +1,15 @@
 /**
  * The seam pin: every vendored file BlitzOS patches, against pristine upstream.
  *
- * WHY THIS IS ITS OWN FILE, AND IT IS NOT TIDINESS. These assertions read seven
- * text files off disk and import nothing. They used to live in
+ * WHY THIS IS ITS OWN FILE, AND IT IS NOT TIDINESS. These assertions read text
+ * files off disk and import nothing. They used to live in
  * `lody-surface-tabs.test.tsx`, whose file-level `beforeAll` imports the route
  * tree — Monaco, shiki, three, the Loro WASM — and that import is the slowest
  * thing in the suite. When the machine is loaded it exceeds the hook budget,
  * and vitest then reports EVERY test in the file as skipped, the pin included.
  * A check that is meant to fail loudly on an undeclared vendor edit must not be
- * the first thing a slow machine turns off, so it now costs five `readFileSync`
- * calls and nothing else.
+ * the first thing a slow machine turns off, so it costs a handful of
+ * `readFileSync` calls and nothing else.
  *
  * TWO KINDS OF CLAIM.
  *
@@ -57,6 +57,41 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     expect(processor).toContain("case 'machine/acp-authenticate':");
     expect(processor).toContain(
       "return message.action === 'start' ? `acp-auth:${message.configId}` : null;",
+    );
+  });
+
+  it("only replaces the declared landing-draft guard in message-handler.ts", () => {
+    expectSeamAgainstBaseline(
+      "lib/message-handler.ts",
+      [
+        [
+          7636,
+          "    if (!sessionMetaRecord?.meta || isLoroRepoDocDeleted(sessionMetaRecord)) {",
+        ],
+      ],
+      "cli",
+    );
+    const handler = readFileSync(
+      join(repoRoot, "vendor/lody/apps/cli/src/lib/message-handler.ts"),
+      "utf8",
+    );
+    expect(handler).toContain(
+      "// An absent document is a landing draft. `startSession` will claim its id.",
+    );
+    expect(handler).toContain(
+      "// Refuse deleted documents. See the early-backfill comment below.",
+    );
+    expect(handler).toContain(
+      [
+        "    if (sessionMetaRecord && isLoroRepoDocDeleted(sessionMetaRecord)) {",
+        "      respond({",
+        "        success: false,",
+        "        error: 'session_not_found',",
+        "        message: `Session not found: ${sessionId}`,",
+        "      });",
+        "      return;",
+        "    }",
+      ].join("\n"),
     );
   });
 
