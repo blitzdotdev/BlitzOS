@@ -91,7 +91,7 @@ function buttonNamed(root: ParentNode, text: string): HTMLButtonElement {
 }
 
 describe('OrgCredentialsPanel', () => {
-  it('lists names, comments, creators and grant chips — never a value', async () => {
+  it('lists names, comments, creators and access chips — never a value', async () => {
     const view = await render(<OrgCredentialsPanel client={client()} viewer={viewer} />);
     await settle();
 
@@ -99,8 +99,8 @@ describe('OrgCredentialsPanel', () => {
     expect(view.container.textContent).toContain('test-mode key, safe for CI');
     expect(view.container.textContent).toContain('added by you');
     expect(view.container.textContent).toContain('added by Dana Reyes');
-    // Grant chips name the kind, the receiver and the level, in words.
-    const chips = [...view.container.querySelectorAll('.org-grant-chip')].map((chip) => chip.textContent);
+    // Access chips name the kind, the subject and the level, in words.
+    const chips = [...view.container.querySelectorAll('.org-access-chip')].map((chip) => chip.textContent);
     expect(chips).toEqual(['workspace payments · read', 'member You · write']);
     // A plain reader's row has no audience and no controls.
     expect(view.container.querySelector('button[aria-label="Rotate SENTRY_DSN"]')).toBeNull();
@@ -112,7 +112,7 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
-  it('adds a credential with a picked grant set, and warns on an org-wide write', async () => {
+  it('adds a credential with a picked access list, and warns on an org-wide write', async () => {
     const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
     const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
     await settle();
@@ -123,28 +123,42 @@ describe('OrgCredentialsPanel', () => {
       typeInto(field(form, '[aria-label="Credential value"]'), 'postgres://secret');
       typeInto(field(form, '[aria-label="Credential comment"]'), 'staging postgres');
     });
-    // A workspace grant: the picker lists the org's workspaces by name.
-    const workspaceSelect = field<HTMLSelectElement>(form, '[aria-label="Grant workspace"]');
+    // THE PICKER IS BEHIND THE `+`, and the list is what a member reads first.
+    expect(form.querySelector('[aria-label="Access subject kind"]')).toBeNull();
+    const openPicker = () => field<HTMLButtonElement>(form, 'button[aria-label="Add access"]').click();
+
+    // A workspace: the picker lists the org's workspaces by name.
+    await act(async () => openPicker());
+    const workspaceSelect = field<HTMLSelectElement>(form, '[aria-label="Access workspace"]');
     expect([...workspaceSelect.options].map((option) => option.textContent)).toEqual(['payments', 'api-v2']);
     await act(async () => choose(workspaceSelect, 'workspace-two'));
-    await act(async () => buttonNamed(form, 'Add grant').click());
-    // A member grant: only active members are offered, and the viewer is "You".
-    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Grant subject kind"]'), 'membership'));
-    const memberSelect = field<HTMLSelectElement>(form, '[aria-label="Grant member"]');
+    await act(async () => buttonNamed(form, 'Add access').click());
+    // Adding closes the picker again: it is a step, not a permanent fixture.
+    expect(form.querySelector('[aria-label="Access subject kind"]')).toBeNull();
+
+    // A member: only active members are offered, and the viewer is "You".
+    await act(async () => openPicker());
+    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Access subject kind"]'), 'membership'));
+    const memberSelect = field<HTMLSelectElement>(form, '[aria-label="Access member"]');
     expect([...memberSelect.options].map((option) => option.textContent)).toEqual(['You', 'Dana Reyes']);
     await act(async () => choose(memberSelect, 'membership-2'));
-    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Grant access"]'), 'write'));
-    await act(async () => buttonNamed(form, 'Add grant').click());
+    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Access level"]'), 'write'));
+    await act(async () => buttonNamed(form, 'Add access').click());
     expect(form.textContent).toContain('api-v2');
     expect(form.textContent).toContain('Dana Reyes');
 
-    // Org-wide read is quiet; org-wide write is said out loud (decision 3).
-    expect(form.querySelector('.org-grants-warning')).toBeNull();
-    await act(async () => field<HTMLInputElement>(form, 'input[type="checkbox"]').click());
-    expect(form.querySelector('.org-grants-warning')).toBeNull();
+    // Everyone in the org is a row like the others, not a checkbox above them:
+    // the broadest audience of all belongs in the list that states the
+    // audience. Org-wide read is quiet; org-wide write is said out loud
+    // (decision 3).
+    expect(form.querySelector('.org-access-warning')).toBeNull();
+    await act(async () => openPicker());
+    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Access subject kind"]'), 'org'));
+    await act(async () => buttonNamed(form, 'Add access').click());
+    expect(form.querySelector('.org-access-warning')).toBeNull();
     const orgToggle = field<HTMLElement>(form, '[aria-label="Org-wide access"]');
     await act(async () => buttonNamed(orgToggle, 'write').click());
-    expect(form.querySelector('.org-grants-warning')?.textContent).toBe('Anyone in the org can rotate this.');
+    expect(form.querySelector('.org-access-warning')?.textContent).toBe('Anyone in the org can rotate this.');
 
     await act(async () => buttonNamed(form, 'Save credential').click());
     expect(putOrgCredential).toHaveBeenCalledWith({
@@ -162,7 +176,7 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
-  it('rotates with a write-only value field and touches neither comment nor grants', async () => {
+  it('rotates with a write-only value field and touches neither comment nor access', async () => {
     const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
     const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
     await settle();
@@ -172,9 +186,10 @@ describe('OrgCredentialsPanel', () => {
     const name = field<HTMLInputElement>(form, '[aria-label="Credential name"]');
     expect(name.value).toBe('STRIPE_API_KEY');
     expect(name.readOnly).toBe(true);
-    // No comment field and no grant picker: rotation changes the secret only.
+    // No comment field and no access card: rotation changes the secret only.
     expect(form.querySelector('[aria-label="Credential comment"]')).toBeNull();
-    expect(form.querySelector('.org-grants-editor')).toBeNull();
+    expect(form.querySelector('.org-access-editor')).toBeNull();
+    expect(form.textContent).not.toContain('Members with access');
 
     await act(async () => typeInto(field(form, '[aria-label="Credential value"]'), 'sk_live_new'));
     await act(async () => buttonNamed(form, 'Rotate').click());
@@ -197,24 +212,24 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
-  it('edits a grant set and saves the whole audience', async () => {
+  it('edits an access list and saves the whole audience', async () => {
     const replaceOrgCredentialGrants = vi.fn().mockResolvedValue({ credential: stripe });
     const view = await render(<OrgCredentialsPanel client={client({ replaceOrgCredentialGrants })} viewer={viewer} />);
     await settle();
 
-    await act(async () => field<HTMLButtonElement>(view.container, 'button[aria-label="Edit grants for STRIPE_API_KEY"]').click());
-    const editor = field<HTMLElement>(view.container, '[aria-label="Grants for STRIPE_API_KEY"]');
+    await act(async () => field<HTMLButtonElement>(view.container, 'button[aria-label="Edit access for STRIPE_API_KEY"]').click());
+    const editor = field<HTMLElement>(view.container, '[aria-label="Access to STRIPE_API_KEY"]');
     expect(editor.textContent).toContain('payments');
-    // Widen the workspace to write, and drop the viewer's own grant.
+    // Widen the workspace to write, and drop the viewer's own access.
     const level = field<HTMLElement>(editor, '[aria-label="Access for payments"]');
     await act(async () => buttonNamed(level, 'write').click());
-    await act(async () => field<HTMLButtonElement>(editor, 'button[aria-label="Remove grant for You"]').click());
-    await act(async () => buttonNamed(editor, 'Save grants').click());
+    await act(async () => field<HTMLButtonElement>(editor, 'button[aria-label="Remove access for You"]').click());
+    await act(async () => buttonNamed(editor, 'Save access').click());
     expect(replaceOrgCredentialGrants).toHaveBeenCalledWith('STRIPE_API_KEY', {
       grants: [{ subjectKind: 'workspace', subjectId: 'workspace-one', access: 'write' }],
     });
     await settle();
-    expect(view.container.querySelector('[aria-label="Grants for STRIPE_API_KEY"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).toBeNull();
     await view.unmount();
   });
 

@@ -9,13 +9,13 @@ import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
 import {
-  grantSubjectLabel,
-  grantSubjectTag,
+  accessSubjectLabel,
+  accessSubjectTag,
   hasOrgWideWrite,
   ORG_WIDE_WRITE_WARNING,
-  type GrantSubjects,
-} from '../org-credential-grants';
-import { GrantListEditor, OrgCredentialForm } from './OrgCredentialForm';
+  type AccessSubjects,
+} from '../org-credential-access';
+import { AccessListEditor, OrgCredentialForm } from './OrgCredentialForm';
 import { OrgCredentialImport } from './OrgCredentialImport';
 import { PanelHeader } from './primitives';
 
@@ -23,21 +23,21 @@ function dateLabel(at: number): string {
   return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-/** The grant chips on a list row: one pill per receiver, kind and level in
+/** The access chips on a list row: one pill per subject, kind and level in
  * words. Empty for a plain reader, whose wire view carries no audience. */
-export function GrantChips({
+export function AccessChips({
   grants,
   subjects,
 }: {
   grants: ReadonlyArray<OrgCredentialGrantView>;
-  subjects: GrantSubjects;
+  subjects: AccessSubjects;
 }) {
   if (grants.length === 0) return null;
   return (
-    <div className="org-grant-chips" aria-label="Grants">
+    <div className="org-access-chips" aria-label="Access">
       {grants.map((grant) => (
-        <span className="machine-chip org-grant-chip" key={`${grant.subjectKind}:${grant.subjectId ?? ''}`}>
-          {grantSubjectTag(grant.subjectKind)} {grantSubjectLabel(grant, subjects)} · {grant.access}
+        <span className="machine-chip org-access-chip" key={`${grant.subjectKind}:${grant.subjectId ?? ''}`}>
+          {accessSubjectTag(grant.subjectKind)} {accessSubjectLabel(grant, subjects)} · {grant.access}
         </span>
       ))}
     </div>
@@ -46,8 +46,8 @@ export function GrantChips({
 
 /** Settings → Credentials (plans/ORG-CREDENTIALS.md §9): the org's static
  * secrets behind an explicit allowlist. Names and comments only — a value is
- * write-only and never comes back. Any active member may add one; the grant
- * set is edited by its writers and by org admins. */
+ * write-only and never comes back. Any active member may add one; the access
+ * list is edited by its writers and by org admins. */
 export function OrgCredentialsPanel({
   client,
   viewer,
@@ -61,8 +61,8 @@ export function OrgCredentialsPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rotating, setRotating] = useState<string | null>(null);
-  const [grantsEditor, setGrantsEditor] = useState<{ name: string; grants: OrgCredentialGrantView[] } | null>(null);
-  const [savingGrants, setSavingGrants] = useState(false);
+  const [accessEditor, setAccessEditor] = useState<{ name: string; grants: OrgCredentialGrantView[] } | null>(null);
+  const [savingAccess, setSavingAccess] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<OrgCredentialView | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
 
@@ -99,7 +99,7 @@ export function OrgCredentialsPanel({
     return () => abort.abort();
   }, [client, reload]);
 
-  const subjects = useMemo<GrantSubjects>(() => ({
+  const subjects = useMemo<AccessSubjects>(() => ({
     orgName: viewer.org.name || viewer.org.slug,
     viewerMembershipId: viewer.membership.id,
     workspaces,
@@ -112,7 +112,7 @@ export function OrgCredentialsPanel({
     return member === undefined ? 'a member' : (member.name || member.email);
   };
 
-  /** The wire sends the full grant set to writers and admins and `[]` to
+  /** The wire sends the full access list to writers and admins and `[]` to
    * plain readers, so a visible audience is the edit permission. */
   const canEdit = (credential: OrgCredentialView) => admin || credential.grants.length > 0;
 
@@ -122,18 +122,20 @@ export function OrgCredentialsPanel({
     await reload();
   };
 
-  const saveGrants = async () => {
-    if (grantsEditor === null || savingGrants) return;
-    setSavingGrants(true);
+  const saveAccess = async () => {
+    if (accessEditor === null || savingAccess) return;
+    setSavingAccess(true);
     setError(null);
     try {
-      await client.replaceOrgCredentialGrants(grantsEditor.name, { grants: grantsEditor.grants });
-      setGrantsEditor(null);
+      // The client method keeps the wire's name: the route it calls is
+      // `.../grants`, and only what a member reads changed.
+      await client.replaceOrgCredentialGrants(accessEditor.name, { grants: accessEditor.grants });
+      setAccessEditor(null);
       await reload();
     } catch (caught) {
-      setError(caughtErrorMessage(caught, 'The grants were not saved.'));
+      setError(caughtErrorMessage(caught, 'The access list was not saved.'));
     } finally {
-      setSavingGrants(false);
+      setSavingAccess(false);
     }
   };
 
@@ -144,7 +146,7 @@ export function OrgCredentialsPanel({
     setError(null);
     try {
       await client.revokeOrgCredential(credential.name);
-      if (grantsEditor?.name === credential.name) setGrantsEditor(null);
+      if (accessEditor?.name === credential.name) setAccessEditor(null);
       if (rotating === credential.name) setRotating(null);
       await reload();
     } catch (caught) {
@@ -159,17 +161,16 @@ export function OrgCredentialsPanel({
       <PanelHeader
         eyebrow="Organization"
         title="Credentials"
-        detail="Static secrets agents pull at the moment of use. Each one reaches exactly who it is granted to."
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
       <section className="cfg-section" aria-label="Stored credentials">
         <div className="settings-section-heading">
           <div className="cfg-section-head">
-            <h2 className="cfg-title">Stored</h2>
-            <p className="cfg-desc">Names and comments only. A value never comes back out.</p>
+            <h2 className="cfg-title">
+              Stored{credentials.length > 0 && ` · ${String(credentials.length)}`}
+            </h2>
           </div>
-          {credentials.length > 0 && <span>{credentials.length} total</span>}
         </div>
         {loading ? (
           <p className="settings-credential-state">Loading credentials…</p>
@@ -187,9 +188,9 @@ export function OrgCredentialsPanel({
                   </div>
                   {credential.comment !== null && <p>{credential.comment}</p>}
                   <small>added by {creatorLabel(credential)} · {dateLabel(credential.createdAt)}</small>
-                  <GrantChips grants={credential.grants} subjects={subjects} />
+                  <AccessChips grants={credential.grants} subjects={subjects} />
                   {hasOrgWideWrite(credential.grants) && (
-                    <p className="org-grants-warning">{ORG_WIDE_WRITE_WARNING}</p>
+                    <p className="org-access-warning">{ORG_WIDE_WRITE_WARNING}</p>
                   )}
                 </div>
                 {canEdit(credential) && (
@@ -197,9 +198,9 @@ export function OrgCredentialsPanel({
                     <button
                       className="webapp-action"
                       type="button"
-                      aria-label={`Edit grants for ${credential.name}`}
-                      onClick={() => setGrantsEditor({ name: credential.name, grants: [...credential.grants] })}
-                    >Grants</button>
+                      aria-label={`Edit access for ${credential.name}`}
+                      onClick={() => setAccessEditor({ name: credential.name, grants: [...credential.grants] })}
+                    >Access</button>
                     <button
                       className="webapp-action"
                       type="button"
@@ -221,51 +222,43 @@ export function OrgCredentialsPanel({
         )}
       </section>
 
-      {grantsEditor !== null && (
-        <section className="cfg-section" aria-label={`Grants for ${grantsEditor.name}`}>
+      {accessEditor !== null && (
+        <section className="cfg-section" aria-label={`Access to ${accessEditor.name}`}>
           <div className="cfg-section-head">
-            <h2 className="cfg-title">Grants for <code>{grantsEditor.name}</code></h2>
-            <p className="cfg-desc">What is saved is the whole audience: every receiver listed here, and no one else.</p>
+            <h2 className="cfg-title">Access to <code>{accessEditor.name}</code></h2>
           </div>
-          <GrantListEditor
-            grants={grantsEditor.grants}
+          <AccessListEditor
+            grants={accessEditor.grants}
             subjects={subjects}
-            onChange={(grants) => setGrantsEditor({ name: grantsEditor.name, grants })}
+            onChange={(grants) => setAccessEditor({ name: accessEditor.name, grants })}
           />
           <div className="cfg-actions">
             <button
               className="webapp-action webapp-action--primary"
               type="button"
-              disabled={savingGrants}
-              onClick={() => { void saveGrants(); }}
-            >{savingGrants ? 'Saving…' : 'Save grants'}</button>
+              disabled={savingAccess}
+              onClick={() => { void saveAccess(); }}
+            >{savingAccess ? 'Saving…' : 'Save access'}</button>
             <button
               className="webapp-action"
               type="button"
-              disabled={savingGrants}
-              onClick={() => setGrantsEditor(null)}
+              disabled={savingAccess}
+              onClick={() => setAccessEditor(null)}
             >Cancel</button>
           </div>
         </section>
       )}
 
-      <section className="cfg-section" aria-label={rotating === null ? 'Add a credential' : `Rotate ${rotating}`}>
-        <div className="cfg-section-head">
-          <h2 className="cfg-title">{rotating === null ? 'Add a credential' : <>Rotate <code>{rotating}</code></>}</h2>
-          <p className="cfg-desc">
-            {rotating === null
-              ? 'One name, one value. Agents read the comment, so say what the key is for.'
-              : 'The new value replaces the old one on the next pull. The comment and the grants stay.'}
-          </p>
-        </div>
-        <OrgCredentialForm
-          key={rotating ?? 'add'}
-          mode={rotating === null ? { kind: 'add' } : { kind: 'rotate', name: rotating }}
-          subjects={subjects}
-          onSubmit={put}
-          onCancel={rotating === null ? undefined : () => setRotating(null)}
-        />
-      </section>
+      {/* The form draws its own two cards and their headings, so it is mounted
+          bare: a section around it would be a section around a section, and
+          the settings surface draws one divider between two of those. */}
+      <OrgCredentialForm
+        key={rotating ?? 'add'}
+        mode={rotating === null ? { kind: 'add' } : { kind: 'rotate', name: rotating }}
+        subjects={subjects}
+        onSubmit={put}
+        onCancel={rotating === null ? undefined : () => setRotating(null)}
+      />
 
       <section className="cfg-section" aria-label="Import a .env file">
         <OrgCredentialImport

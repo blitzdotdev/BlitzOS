@@ -421,6 +421,7 @@ describe('v2 credential surfaces', () => {
       <WorkspaceRailStrip
         sidePanel={null}
         connectionsOpen={false}
+        landingSessionId={null}
         pendingRequestCount={2}
         onQuickAction={() => undefined}
       />,

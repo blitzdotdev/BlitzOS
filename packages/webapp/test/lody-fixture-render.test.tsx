@@ -103,7 +103,7 @@ describe("vendored Lody leaves", () => {
     // listing every tab twice (2026-09-03).
     expect(text).toContain("fix the login redirect");
     expect(text).toContain("rail swap");
-    expect(text).toContain("GitHub Worktrees");
+    expect(text).toContain("Projects");
     expect(text).not.toContain("Terminals");
 
     // Everything Lody renders stays inside the surface boundary the

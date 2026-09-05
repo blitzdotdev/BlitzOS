@@ -36,6 +36,9 @@ export function LodySurfaceRailPortal(props: {
         {...(rail.onShareSession === undefined
           ? {}
           : { onShareSession: rail.onShareSession })}
+        {...(rail.onMostRecentSessionChange === undefined
+          ? {}
+          : { onMostRecentSessionChange: rail.onMostRecentSessionChange })}
         {...(rail.sharedSessions === undefined
           ? {}
           : { sharedSessions: rail.sharedSessions })}

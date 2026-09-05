@@ -63,18 +63,16 @@ export function ConnectionsPanel({ client }: { client: ControlPlaneClient }) {
       <PanelHeader
         eyebrow="Your identities"
         title="Connections"
-        detail="Agents in workspaces you own act as you on these providers."
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
-      {/* Account scope: a grant authorizes, it does not connect. Connecting
+      {/* Account scope: an authorization is not a connection. Connecting
         * happens inside a workspace, in its connections panel — the one place
         * a lease can be minted. This page only takes things away. */}
       <section className="cfg-section" aria-label="Authorized providers">
         <div className="settings-section-heading">
           <div className="cfg-section-head">
             <h2 className="cfg-title">Authorized</h2>
-            <p className="cfg-desc">Personal grants</p>
           </div>
           <span>{grants.length} total</span>
         </div>

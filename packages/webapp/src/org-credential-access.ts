@@ -4,29 +4,35 @@ import type {
   OrgCredentialView,
 } from '@blitzos/schema';
 
-/** What the webapp already holds about the people and places a grant can
- * name (plans/ORG-CREDENTIALS.md §5). The wire carries ids; every surface
- * that shows a grant resolves them through this. */
-export type GrantSubjects = {
+/** What the webapp already holds about the people and places an access row
+ * can name (plans/ORG-CREDENTIALS.md §5). The wire carries ids; every surface
+ * that shows access resolves them through this.
+ *
+ * THE WIRE STILL SAYS "GRANT" and this file does not. `OrgCredentialGrantView`
+ * and the `grants` field are the control plane's names for the same thing, and
+ * they are imported here unchanged — renaming the wire would break every
+ * deployed box and agent reading `/agent/credentials`. What a member reads,
+ * and what this webapp calls it, is access. */
+export type AccessSubjects = {
   orgName: string;
-  /** The signed-in member, so their own grant reads "You". */
+  /** The signed-in member, so their own row reads "You". */
   viewerMembershipId: string | null;
   workspaces: ReadonlyArray<{ id: string; name: string }>;
   members: ReadonlyArray<{ id: string; name: string; email: string }>;
 };
 
-/** The pill every grant receiver wears. Kind is never conveyed by colour
+/** The pill everyone with access wears. Kind is never conveyed by colour
  * alone, so the word is on the row. */
-export type GrantSubjectTag = 'workspace' | 'member' | 'org';
+export type AccessSubjectTag = 'workspace' | 'member' | 'org';
 
-export function grantSubjectTag(kind: OrgCredentialGrantSubjectKind): GrantSubjectTag {
+export function accessSubjectTag(kind: OrgCredentialGrantSubjectKind): AccessSubjectTag {
   if (kind === 'membership') return 'member';
   return kind;
 }
 
 type Subject = Pick<OrgCredentialGrantView, 'subjectKind' | 'subjectId'>;
 
-export function grantSubjectLabel(subject: Subject, subjects: GrantSubjects): string {
+export function accessSubjectLabel(subject: Subject, subjects: AccessSubjects): string {
   if (subject.subjectKind === 'org') return `everyone in ${subjects.orgName}`;
   if (subject.subjectId === null) return 'unknown';
   if (subject.subjectKind === 'workspace') {
@@ -38,13 +44,13 @@ export function grantSubjectLabel(subject: Subject, subjects: GrantSubjects): st
   return member === undefined ? subject.subjectId : (member.name || member.email);
 }
 
-export function sameGrantSubject(left: Subject, right: Subject): boolean {
+export function sameAccessSubject(left: Subject, right: Subject): boolean {
   return left.subjectKind === right.subjectKind && left.subjectId === right.subjectId;
 }
 
-/** Why an org credential shows in one workspace's Credentials tab (§9): a
- * grant on the workspace, an org-wide grant, or the viewer's own membership
- * grant. A plain reader gets `grants: []` on the wire — the credential is
+/** Why an org credential shows in one workspace's Credentials tab (§9):
+ * access given to the workspace, to the whole org, or to the viewer's own
+ * membership. A plain reader gets `grants: []` on the wire — the credential is
  * readable, the path is not told — which is `'unknown'`. */
 export type WorkspaceReadPath = 'workspace' | 'org' | 'membership' | 'unknown';
 
@@ -62,8 +68,8 @@ export function workspaceReadPath(
   return 'unknown';
 }
 
-/** Decision 3 of the plan: an org-wide `write` is allowed, and the UI says
- * out loud what it means. */
+/** Decision 3 of the plan: org-wide `write` is allowed, and the UI says out
+ * loud what it means. */
 export function hasOrgWideWrite(grants: ReadonlyArray<OrgCredentialGrantView>): boolean {
   return grants.some(({ subjectKind, access }) => subjectKind === 'org' && access === 'write');
 }

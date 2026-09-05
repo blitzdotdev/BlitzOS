@@ -51,6 +51,7 @@ describe('WorkspaceRailStrip', () => {
       <WorkspaceRailStrip
         sidePanel={sessionState()}
         connectionsOpen={false}
+        landingSessionId={null}
         pendingRequestCount={0}
         onQuickAction={() => undefined}
       />,
@@ -66,6 +67,7 @@ describe('WorkspaceRailStrip', () => {
       <WorkspaceRailStrip
         sidePanel={sessionState({ activeTabId: 'changes', openedTabIds: ['files', 'changes'] })}
         connectionsOpen={false}
+        landingSessionId={null}
         pendingRequestCount={0}
         onQuickAction={onQuickAction}
       />,
@@ -84,6 +86,7 @@ describe('WorkspaceRailStrip', () => {
       <WorkspaceRailStrip
         sidePanel={sessionState({ open: false, activeTabId: 'files', openedTabIds: ['files'] })}
         connectionsOpen={false}
+        landingSessionId={null}
         pendingRequestCount={0}
         onQuickAction={() => undefined}
       />,
@@ -105,6 +108,7 @@ describe('WorkspaceRailStrip', () => {
           ],
         })}
         connectionsOpen={false}
+        landingSessionId={null}
         pendingRequestCount={0}
         onQuickAction={() => undefined}
       />,
@@ -115,12 +119,13 @@ describe('WorkspaceRailStrip', () => {
     await view.unmount();
   });
 
-  it('with no session on screen offers Connections alone, on the native tab', async () => {
+  it('with no session on screen and none to open, offers Connections alone', async () => {
     const onQuickAction = vi.fn();
     const view = await render(
       <WorkspaceRailStrip
         sidePanel={null}
         connectionsOpen
+        landingSessionId={null}
         pendingRequestCount={2}
         onQuickAction={onQuickAction}
       />,
@@ -134,6 +139,59 @@ describe('WorkspaceRailStrip', () => {
     expect(connections.querySelector('.workspace-pending-badge')?.textContent).toBe('2');
     await act(async () => connections.click());
     expect(onQuickAction).toHaveBeenCalledWith(CONNECTIONS_SIDE_PANEL_ID);
+    // The one case where a disabled button is the honest answer, and it says
+    // what to do about it rather than naming the state.
+    expect(button(view.container, 'Files').title).toBe('Files — start a session first');
+    await view.unmount();
+  });
+
+  it('offers every panel on the landing once there is a session to open one in', async () => {
+    // THE CHAT LANDING WITH SESSIONS BEHIND IT is where a member spends the
+    // moment before they send: the composer is on screen, the panels are not,
+    // and the four buttons used to be dead there whatever they had open.
+    const onQuickAction = vi.fn();
+    const view = await render(
+      <WorkspaceRailStrip
+        sidePanel={null}
+        connectionsOpen={false}
+        landingSessionId="session-1"
+        pendingRequestCount={0}
+        onQuickAction={onQuickAction}
+      />,
+    );
+    expect(buttons(view.container).some((b) => b.disabled)).toBe(false);
+    expect(button(view.container, 'Files').title).toBe('Files — in your most recent session');
+    // Connections keeps its own title: it opens here, not in a session.
+    expect(button(view.container, 'Connections').title).toBe('Connections');
+    await act(async () => button(view.container, 'Files').click());
+    expect(onQuickAction).toHaveBeenCalledWith('files');
+    await view.unmount();
+  });
+
+  it('says what a Side Chat waits for, rather than that the session refuses it', async () => {
+    // A side chat forks an assistant turn, so before the agent's first reply
+    // there is nothing to fork. The button stays disabled — upstream's own
+    // launcher answers a click with an error toast — and the tooltip is what
+    // separates "wait" from "never".
+    const view = await render(
+      <WorkspaceRailStrip
+        sidePanel={sessionState({
+          availableOptions: [
+            { id: 'side-session', disabled: true },
+            { id: 'files', disabled: false },
+            { id: 'changes', disabled: false },
+            { id: BROWSER_SIDE_PANEL_ID, disabled: false },
+            { id: CONNECTIONS_SIDE_PANEL_ID, disabled: false },
+          ],
+        })}
+        connectionsOpen={false}
+        landingSessionId={null}
+        pendingRequestCount={0}
+        onQuickAction={() => undefined}
+      />,
+    );
+    expect(button(view.container, 'Side Chat').title)
+      .toBe("Side Chat — after the agent's first reply");
     await view.unmount();
   });
 });

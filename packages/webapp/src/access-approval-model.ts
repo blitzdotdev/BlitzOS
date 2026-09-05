@@ -5,16 +5,20 @@ import type {
   OrgCredentialGrantSubjectKind,
   OrgCredentialView,
 } from '@blitzos/schema';
-import { sameGrantSubject } from './org-credential-grants';
+import { sameAccessSubject } from './org-credential-access';
 
 /**
- * The editable diff behind the grant-approval dialog
+ * The editable diff behind the access-approval dialog
  * (plans/ORG-CREDENTIALS.md §7a, mock `plans/mockups/grant-approval.html`).
  *
- * The proposal is a change list; the person sees one merged grant list per
+ * The proposal is a change list; the person sees one merged access list per
  * credential and edits the changes in place. This module holds the state of
  * those edits and derives the rows and the resolve payload from it, so the
  * dialog only draws.
+ *
+ * `GrantChange` and `GrantProposalView` are the wire's names, imported
+ * unchanged: the agent plane's route and payload keep the word "grant", and
+ * only what a member reads is access.
  */
 
 /** One proposed change's edit state, aligned by index with
@@ -33,11 +37,11 @@ export type ApprovalRow = {
   subjectId: string | null;
   access: OrgCredentialAccess;
 } & (
-  /** A grant the proposal leaves alone. */
+  /** An access row the proposal leaves alone. */
   | { kind: 'kept' }
   /** A removal, live: the row goes if approved. */
   | { kind: 'removal'; changeIndex: number }
-  /** A removal the person skipped: the grant stays, with an undo. */
+  /** A removal the person skipped: the access stays, with an undo. */
   | { kind: 'removal-skipped'; changeIndex: number }
   /** An addition, live, at the access the person chose. */
   | { kind: 'addition'; changeIndex: number; hint: string | null }
@@ -51,8 +55,8 @@ export type ApprovalGroup = {
   rows: ApprovalRow[];
 };
 
-/** A redundant addition gets a hint rather than a silent drop: an org-wide
- * grant at the same or a higher level already covers the subject. */
+/** A redundant addition gets a hint rather than a silent drop: org-wide
+ * access at the same or a higher level already covers the subject. */
 function coverageHint(
   addition: GrantChange,
   current: ReadonlyArray<OrgCredentialView['grants'][number]>,
@@ -67,9 +71,9 @@ function coverageHint(
 }
 
 /** The merged list: only the credentials the proposal touches, in the order
- * it first names them; kept grants first, then the additions. A credential
- * the viewer cannot see (revoked meanwhile, or no read) still gets its rows
- * from the proposal alone, with no kept grants to show. */
+ * it first names them; kept rows first, then the additions. A credential the
+ * viewer cannot see (revoked meanwhile, or no read) still gets its rows from
+ * the proposal alone, with nothing kept to show. */
 export function approvalGroups(
   proposal: Pick<GrantProposalView, 'proposed'>,
   edits: ReadonlyArray<ProposalEdit>,
@@ -93,16 +97,16 @@ export function approvalGroups(
 
     const rows: ApprovalRow[] = current.map((grant) => {
       const removal = removals.find(({ change }) =>
-        sameGrantSubject(change, grant) && change.access === grant.access);
+        sameAccessSubject(change, grant) && change.access === grant.access);
       if (removal === undefined) return { kind: 'kept', ...grant };
       return removal.edit.skipped
         ? { kind: 'removal-skipped', changeIndex: removal.changeIndex, ...grant }
         : { kind: 'removal', changeIndex: removal.changeIndex, ...grant };
     });
     // A removal the viewer's list does not hold (a plain reader's `[]`, or a
-    // grant gone meanwhile) still shows, so nothing in the proposal is hidden.
+    // row gone meanwhile) still shows, so nothing in the proposal is hidden.
     for (const { change, changeIndex, edit } of removals) {
-      if (current.some((grant) => sameGrantSubject(change, grant) && change.access === grant.access)) continue;
+      if (current.some((grant) => sameAccessSubject(change, grant) && change.access === grant.access)) continue;
       rows.push(edit.skipped
         ? { kind: 'removal-skipped', changeIndex, subjectKind: change.subjectKind, subjectId: change.subjectId, access: change.access }
         : { kind: 'removal', changeIndex, subjectKind: change.subjectKind, subjectId: change.subjectId, access: change.access });
@@ -125,7 +129,7 @@ export function approvalGroups(
 
 /** What Approve sends: the proposal minus the skipped rows, additions at the
  * access the person chose. Removals keep the access they named — a removal
- * deletes exactly the grant it names. */
+ * deletes exactly the row it names. */
 export function approvedChanges(
   proposal: Pick<GrantProposalView, 'proposed'>,
   edits: ReadonlyArray<ProposalEdit>,

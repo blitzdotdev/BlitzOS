@@ -248,6 +248,10 @@ function ChatRoute() {
       // whether the box is reachable, for the whole workspace rather than for
       // this surface.
       hideConnectionStatus={V1.hideConnectionStatus}
+      // Seam patch 24. One workspace, one member's machine, one box: the chip
+      // lists the machine it already shows and nothing else. Selection keeps
+      // flowing from the agent config and the local project.
+      hideMachineSelector={V1.hideMachineSelector}
     />
   );
   // No shell around this mount contributes tabs — a headless render, a router

@@ -11,7 +11,9 @@ export function PanelHeader({
 }: {
   eyebrow: string;
   title: string;
-  detail: ReactNode;
+  /** Absent where the title says it. A panel description that restates the
+   * heading is narration, and the surface does not carry any. */
+  detail?: ReactNode;
   action?: ReactNode;
 }) {
   return (
@@ -19,7 +21,7 @@ export function PanelHeader({
       <div>
         <p>{eyebrow}</p>
         <h1>{title}</h1>
-        <span>{detail}</span>
+        {detail !== undefined && <span>{detail}</span>}
       </div>
       {action}
     </header>

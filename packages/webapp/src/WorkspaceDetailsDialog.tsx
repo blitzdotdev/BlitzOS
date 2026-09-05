@@ -64,10 +64,10 @@ export function WorkspaceDetailsDialog({
   workspace: CloudWorkspaceModel;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   /** The signed-in member, so the Credentials tab can tell their own
-   * membership grant from the rest. */
+   * own membership from the rest. */
   viewerMembershipId?: string | null;
   orgName?: string;
-  /** The org's workspaces, for the grant picker in the credential form. */
+  /** The org's workspaces, for the access picker in the credential form. */
   orgWorkspaces?: ReadonlyArray<{ id: string; name: string }>;
   commitWorkspaceMutation: (action: WorkspaceAction) => void;
   initialTab?: WorkspaceDetailsTab;

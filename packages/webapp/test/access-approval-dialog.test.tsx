@@ -3,16 +3,16 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
 import {
-  GrantApprovalDialog,
+  AccessApprovalDialog,
   proposalOrigin,
   type ApprovalWorkspace,
-} from '../src/GrantApprovalDialog.js';
+} from '../src/AccessApprovalDialog.js';
 import {
   approvalGroups,
   approvedChanges,
   initialEdits,
   isEdited,
-} from '../src/grant-approval-model.js';
+} from '../src/access-approval-model.js';
 import { render, settle } from './dom.js';
 
 /** The mock's scenario (plans/mockups/grant-approval.html), on the wire. */
@@ -105,9 +105,9 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
   } as unknown as ControlPlaneClient;
 }
 
-function dialog(overrides: Partial<Parameters<typeof GrantApprovalDialog>[0]> = {}) {
+function dialog(overrides: Partial<Parameters<typeof AccessApprovalDialog>[0]> = {}) {
   return (
-    <GrantApprovalDialog
+    <AccessApprovalDialog
       client={client()}
       proposal={proposal}
       viewer={{ membershipId: 'me', orgName: 'acme' }}
@@ -120,7 +120,7 @@ function dialog(overrides: Partial<Parameters<typeof GrantApprovalDialog>[0]> = 
 }
 
 function group(root: ParentNode, name: string): HTMLElement {
-  const found = root.querySelector<HTMLElement>(`[aria-label="Grants on ${name}"]`);
+  const found = root.querySelector<HTMLElement>(`[aria-label="Access to ${name}"]`);
   if (found === null) throw new Error(`no group for ${name}`);
   return found;
 }
@@ -139,8 +139,8 @@ function approveButton(root: ParentNode): HTMLButtonElement {
   return found;
 }
 
-describe('grant-approval model', () => {
-  it('merges kept grants with the changes and flags a redundant addition', () => {
+describe('access-approval model', () => {
+  it('merges the access a credential already has with the changes, and flags a redundant addition', () => {
     const groups = approvalGroups(proposal, initialEdits(proposal), credentials);
     expect(groups.map(({ name }) => name)).toEqual(['STRIPE_API_KEY', 'STRIPE_WEBHOOK_SECRET', 'SENTRY_DSN']);
     expect(groups[0]?.rows.map(({ kind }) => kind)).toEqual(['kept', 'kept', 'addition', 'addition']);
@@ -164,7 +164,7 @@ describe('grant-approval model', () => {
   });
 });
 
-describe('GrantApprovalDialog', () => {
+describe('AccessApprovalDialog', () => {
   it('draws the request card and one merged list per credential', async () => {
     const view = await render(dialog());
     await settle();
@@ -194,7 +194,7 @@ describe('GrantApprovalDialog', () => {
     await settle();
 
     // Skip the redundant SENTRY_DSN addition; it fades to an outlined no-op.
-    await act(async () => button(group(view.container, 'SENTRY_DSN'), 'Skip the grant for api-v2').click());
+    await act(async () => button(group(view.container, 'SENTRY_DSN'), 'Skip the access for api-v2').click());
     expect(group(view.container, 'SENTRY_DSN').querySelector('.ga-row--skip')).not.toBeNull();
     // Dana gets read, not write.
     const dana = group(view.container, 'STRIPE_API_KEY').querySelector('[aria-label="Access for Dana Reyes"]');
@@ -222,7 +222,7 @@ describe('GrantApprovalDialog', () => {
     const view = await render(dialog());
     await settle();
 
-    await act(async () => button(group(view.container, 'STRIPE_WEBHOOK_SECRET'), 'Keep the grant for Priya N').click());
+    await act(async () => button(group(view.container, 'STRIPE_WEBHOOK_SECRET'), 'Keep the access for Priya N').click());
     // The kept row is plain again, with an undo.
     expect(group(view.container, 'STRIPE_WEBHOOK_SECRET').querySelector('.ga-row--del')).toBeNull();
     expect(group(view.container, 'STRIPE_WEBHOOK_SECRET').querySelector('[aria-label="Re-apply removal of Priya N"]')).not.toBeNull();
@@ -231,11 +231,11 @@ describe('GrantApprovalDialog', () => {
     await act(async () => button(view.container, 'Restore proposal').click());
     expect(approveButton(view.container).textContent).toBe('Approve 4 changes');
 
-    for (const label of ['Skip the grant for api-v2', 'Skip the grant for Dana Reyes']) {
+    for (const label of ['Skip the access for api-v2', 'Skip the access for Dana Reyes']) {
       await act(async () => button(group(view.container, 'STRIPE_API_KEY'), label).click());
     }
-    await act(async () => button(group(view.container, 'STRIPE_WEBHOOK_SECRET'), 'Keep the grant for Priya N').click());
-    await act(async () => button(group(view.container, 'SENTRY_DSN'), 'Skip the grant for api-v2').click());
+    await act(async () => button(group(view.container, 'STRIPE_WEBHOOK_SECRET'), 'Keep the access for Priya N').click());
+    await act(async () => button(group(view.container, 'SENTRY_DSN'), 'Skip the access for api-v2').click());
     expect(approveButton(view.container).textContent).toBe('Nothing to approve');
     expect(approveButton(view.container).disabled).toBe(true);
     await view.unmount();
