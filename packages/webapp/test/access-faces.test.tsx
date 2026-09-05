@@ -189,6 +189,32 @@ describe('AccessFaces', () => {
     await view.unmount();
   });
 
+  it('leaves out a subject it cannot name, in the faces and in the count', async () => {
+    // A grant outlives what it points at. Rendered, the deleted workspace was
+    // a raw UUID in a list of names, and it counted toward `+N`.
+    const view = await render(
+      <AccessFaces
+        grants={[
+          { subjectKind: 'workspace', subjectId: 'ws-1', access: 'read' },
+          { subjectKind: 'workspace', subjectId: 'ws-deleted', access: 'read' },
+          { subjectKind: 'membership', subjectId: 'membership-gone', access: 'write' },
+        ]}
+        subjects={subjects}
+        expanded={false}
+        onToggle={() => undefined}
+        credentialName="STRIPE_API_KEY"
+      />,
+    );
+
+    // One workspace face, no member class at all, and no counter for either.
+    expect(view.container.querySelectorAll('.org-access-face')).toHaveLength(1);
+    expect(view.container.querySelector('.org-access-face--member')).toBeNull();
+    expect(view.container.querySelector('.org-access-more')).toBeNull();
+    // The chevron stays: it is the only way into the editor.
+    expect(view.container.querySelector('.org-access-chevron')).not.toBeNull();
+    await view.unmount();
+  });
+
   it('takes at most two initials, from the words of the label', () => {
     expect(accessFaceInitials('payments')).toBe('P');
     expect(accessFaceInitials('Dana Reyes')).toBe('DR');

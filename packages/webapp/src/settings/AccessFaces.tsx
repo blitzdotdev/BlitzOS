@@ -1,6 +1,11 @@
 import type { OrgCredentialGrantSubjectKind, OrgCredentialGrantView } from '@blitzos/schema';
 import { squareAvatarUrl } from '../avatar-url';
-import { accessSubjectLabel, accessSubjectTag, type AccessSubjects } from '../org-credential-access';
+import {
+  accessSubjectLabel,
+  accessSubjectTag,
+  namedAccessSubjects,
+  type AccessSubjects,
+} from '../org-credential-access';
 import { WorkspaceSigilIcon } from '../shell/WorkspaceStrip';
 
 /* Who can use a credential, as a strip of stacked faces. Styles and the
@@ -178,11 +183,20 @@ export function AccessFaces({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  // A subject this viewer cannot name is left out of the strip AND out of the
+  // count beside it: `+2` has to mean two more faces of the same kind, and a
+  // deleted workspace is not one. See `isNamedAccessSubject`.
+  //
+  // THE EMPTINESS THAT MATTERS IS THE WIRE'S. A credential with no audience on
+  // it is a plain reader's view and draws nothing; one whose whole audience
+  // this viewer cannot name still draws the chevron, because that chevron is
+  // the only way into the editor and an admin has to be able to add somebody.
+  const named = namedAccessSubjects(grants, subjects);
   if (grants.length === 0) return null;
   return (
     <div className="org-access-strip">
       {FACE_CLASSES.map((kind) => (
-        <AccessStack key={kind} kind={kind} grants={grants} subjects={subjects} />
+        <AccessStack key={kind} kind={kind} grants={named} subjects={subjects} />
       ))}
       <button
         className="org-access-chevron"
