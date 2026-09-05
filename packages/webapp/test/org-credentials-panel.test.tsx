@@ -29,6 +29,7 @@ const stripe: OrgCredentialView = {
   grants: [
     { subjectKind: 'workspace', subjectId: 'workspace-one', access: 'read' },
     { subjectKind: 'membership', subjectId: 'membership-1', access: 'write' },
+    { subjectKind: 'workspace', subjectId: 'workspace-deleted', access: 'read' },
   ],
 };
 
@@ -272,7 +273,10 @@ describe('OrgCredentialsPanel', () => {
     await act(async () => field<HTMLButtonElement>(editor, 'button[aria-label="Remove access for You"]').click());
     await act(async () => buttonNamed(editor, 'Save access').click());
     expect(replaceOrgCredentialGrants).toHaveBeenCalledWith('STRIPE_API_KEY', {
-      grants: [{ subjectKind: 'workspace', subjectId: 'workspace-one', access: 'write' }],
+      grants: [
+        { subjectKind: 'workspace', subjectId: 'workspace-deleted', access: 'read' },
+        { subjectKind: 'workspace', subjectId: 'workspace-one', access: 'write' },
+      ],
     });
     await settle();
     expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).toBeNull();
@@ -289,6 +293,63 @@ describe('OrgCredentialsPanel', () => {
     await act(async () => field<HTMLButtonElement>(
       view.container, 'button[aria-label="Hide who has access to STRIPE_API_KEY"]').click());
     expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it('adds a workspace while carrying hidden access and shows a refused save in place', async () => {
+    const message = 'grant subject is not in this organization: workspace:workspace-deleted';
+    const replaceOrgCredentialGrants = vi.fn().mockRejectedValue(new Error(message));
+    const view = await render(
+      <OrgCredentialsPanel client={client({ replaceOrgCredentialGrants })} viewer={viewer} />,
+    );
+    await settle();
+
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Show who has access to STRIPE_API_KEY"]').click());
+    const editor = field<HTMLElement>(view.container, '[aria-label="Access to STRIPE_API_KEY"]');
+    expect(editor.textContent).not.toContain('workspace-deleted');
+    await act(async () => field<HTMLButtonElement>(editor, 'button[aria-label="Add access"]').click());
+    await act(async () => choose(field<HTMLSelectElement>(editor, '[aria-label="Access workspace"]'), 'workspace-two'));
+    await act(async () => buttonNamed(editor, 'Add access').click());
+    await act(async () => buttonNamed(editor, 'Save access').click());
+    await settle();
+
+    expect(replaceOrgCredentialGrants).toHaveBeenCalledWith('STRIPE_API_KEY', {
+      grants: [
+        { subjectKind: 'workspace', subjectId: 'workspace-one', access: 'read' },
+        { subjectKind: 'membership', subjectId: 'membership-1', access: 'write' },
+        { subjectKind: 'workspace', subjectId: 'workspace-deleted', access: 'read' },
+        { subjectKind: 'workspace', subjectId: 'workspace-two', access: 'read' },
+      ],
+    });
+    const alert = field<HTMLElement>(editor, '[role="alert"]');
+    expect(alert.textContent).toBe(message);
+    expect(alert.nextElementSibling).toBe(field(editor, '.cfg-actions'));
+    await view.unmount();
+  });
+
+  it('keeps a refused access draft open and clears its error after a fresh toggle', async () => {
+    const message = 'Access update refused.';
+    const replaceOrgCredentialGrants = vi.fn().mockRejectedValue(new Error(message));
+    const view = await render(
+      <OrgCredentialsPanel client={client({ replaceOrgCredentialGrants })} viewer={viewer} />,
+    );
+    await settle();
+
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Show who has access to STRIPE_API_KEY"]').click());
+    const editor = field<HTMLElement>(view.container, '[aria-label="Access to STRIPE_API_KEY"]');
+    await act(async () => buttonNamed(editor, 'Save access').click());
+    await settle();
+    expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).not.toBeNull();
+
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Hide who has access to STRIPE_API_KEY"]').click());
+    expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).toBeNull();
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Show who has access to STRIPE_API_KEY"]').click());
+    expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).not.toBeNull();
+    expect(view.container.textContent).not.toContain(message);
     await view.unmount();
   });
 

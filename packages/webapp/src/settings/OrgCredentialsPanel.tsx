@@ -43,6 +43,7 @@ function CredentialBlock({
   canEdit,
   draft,
   saving,
+  saveError,
   revoking,
   onToggleAccess,
   onDraftChange,
@@ -57,6 +58,7 @@ function CredentialBlock({
   canEdit: boolean;
   draft: AccessDraft | null;
   saving: boolean;
+  saveError: string | null;
   revoking: string | null;
   onToggleAccess: () => void;
   onDraftChange: (grants: OrgCredentialGrantView[]) => void;
@@ -108,6 +110,9 @@ function CredentialBlock({
       {draft !== null && (
         <div className="org-credential-access" aria-label={`Access to ${credential.name}`}>
           <AccessListEditor grants={draft.grants} subjects={subjects} onChange={onDraftChange} />
+          {saveError !== null && (
+            <p className="webapp-form-message" role="alert">{saveError}</p>
+          )}
           <div className="cfg-actions">
             <button
               className="webapp-action webapp-action--primary"
@@ -155,6 +160,7 @@ export function OrgCredentialsPanel({
   const [rotating, setRotating] = useState<string | null>(null);
   const [accessDraft, setAccessDraft] = useState<AccessDraft | null>(null);
   const [savingAccess, setSavingAccess] = useState(false);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<OrgCredentialView | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
 
@@ -224,6 +230,7 @@ export function OrgCredentialsPanel({
   };
 
   const toggleAccess = (credential: OrgCredentialView) => {
+    setAccessError(null);
     setAccessDraft((open) => open?.name === credential.name
       ? null
       : { name: credential.name, grants: [...credential.grants] });
@@ -232,7 +239,7 @@ export function OrgCredentialsPanel({
   const saveAccess = async () => {
     if (accessDraft === null || savingAccess) return;
     setSavingAccess(true);
-    setError(null);
+    setAccessError(null);
     try {
       // The client method keeps the wire's name: the route it calls is
       // `.../grants`, and only what a member reads changed.
@@ -240,7 +247,7 @@ export function OrgCredentialsPanel({
       setAccessDraft(null);
       await reload();
     } catch (caught) {
-      setError(caughtErrorMessage(caught, 'The access list was not saved.'));
+      setAccessError(caughtErrorMessage(caught, 'The access list was not saved.'));
     } finally {
       setSavingAccess(false);
     }
@@ -295,6 +302,7 @@ export function OrgCredentialsPanel({
               canEdit={canEdit(credential)}
               draft={accessDraft?.name === credential.name ? accessDraft : null}
               saving={savingAccess}
+              saveError={accessDraft?.name === credential.name ? accessError : null}
               revoking={revoking}
               onToggleAccess={() => toggleAccess(credential)}
               onDraftChange={(grants) => setAccessDraft({ name: credential.name, grants })}
