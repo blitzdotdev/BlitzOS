@@ -5,6 +5,7 @@ import {
   readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,6 +14,20 @@ import { afterEach, describe, expect, it } from "vitest";
 
 /** Drives the real updater against a stand-in plane and real tar archives. */
 const updater = fileURLToPath(new URL("../../rootfs/usr/local/libexec/blitz-payload", import.meta.url));
+interface CredentialRepairModule {
+  repairCredentialOwnership(
+    config: { stateDir: string; credentialOwnerUid: number; credentialOwnerGid: number },
+    operations: {
+      getuid(): number;
+      lstat(filePath: string): { uid: number; gid: number; isFile(): boolean };
+      chown(filePath: string, uid: number, gid: number): void;
+      writeLog(message: string): void;
+    },
+  ): void;
+}
+// SAFETY: blitz-payload's checked-in CommonJS export names the repair helper;
+// these tests exercise its filesystem-operation contract before relying on it.
+const { repairCredentialOwnership } = createRequire(import.meta.url)(updater) as CredentialRepairModule;
 const payloadLauncher = fileURLToPath(
   new URL("../../rootfs/etc/s6-overlay/s6-rc.d/payload/run", import.meta.url),
 );
@@ -574,7 +589,7 @@ class Harness {
     response.end();
   }
 
-  environment(once = true, testOverrides: Record<string, string | number | null> = {}): NodeJS.ProcessEnv {
+  environment(once = true, testOverrides: Record<string, unknown> = {}): NodeJS.ProcessEnv {
     return {
       ...process.env,
       PATH: `${this.bin}:${process.env.PATH ?? ""}`,
@@ -599,6 +614,9 @@ class Harness {
         featuresAppliedFile: this.featuresAppliedFile,
         featuresOwnerUid: process.getuid?.() ?? 0,
         featuresOwnerGid: process.getgid?.() ?? 0,
+        credentialOwnerUid: process.getuid?.() ?? 0,
+        credentialOwnerGid: process.getgid?.() ?? 0,
+        credentialCommand: [path.join(this.bin, "blitz-cred"), "api-token"],
         s6TransitionTimeoutMs: 1000,
         eventLog: this.eventLog,
         gatewayHealthUrl: `${this.origin}/healthz`,
@@ -661,7 +679,7 @@ class Harness {
 function runUpdater(
   harness: Harness,
   timeoutMs = 3000,
-  environmentOverrides: Record<string, string | number | null> = {},
+  environmentOverrides: Record<string, unknown> = {},
   updaterArguments: string[] = ["tick-locked"],
 ): Promise<RunResult> {
   const startedAt = Date.now();
@@ -691,7 +709,7 @@ function runUpdater(
 async function expectOneOutcome(
   harness: Harness,
   outcome: string,
-  environmentOverrides: Record<string, string | number | null> = {},
+  environmentOverrides: Record<string, unknown> = {},
 ): Promise<PayloadResult> {
   const run = await runUpdater(harness, 15_000, environmentOverrides);
   expect(run.status, run.stderr).toBe(0);
@@ -748,6 +766,56 @@ afterEach(async () => {
 });
 
 describe("blitz-payload", () => {
+  it("repairs only the two credential files when running as root", () => {
+    const stateDir = temporaryDirectory("blitz-credential-repair-");
+    const credential = path.join(stateDir, "box-credential.json");
+    const lock = path.join(stateDir, "box-credential.lock");
+    const unrelated = path.join(stateDir, "origin");
+    for (const filePath of [credential, lock, unrelated]) writeFileSync(filePath, "state\n");
+    const currentUid = statSync(credential).uid;
+    const currentGid = statSync(credential).gid;
+    const expectedUid = currentUid + 1;
+    const expectedGid = currentGid + 1;
+    const chowns: string[] = [];
+    const logs: string[] = [];
+
+    repairCredentialOwnership(
+      { stateDir, credentialOwnerUid: expectedUid, credentialOwnerGid: expectedGid },
+      {
+        getuid: () => 0,
+        lstat: (filePath) => lstatSync(filePath),
+        chown: (filePath, uid, gid) => { chowns.push(`${filePath}:${uid}:${gid}`); },
+        writeLog: (message) => { logs.push(message); },
+      },
+    );
+
+    expect(chowns).toEqual([
+      `${credential}:${expectedUid}:${expectedGid}`,
+      `${lock}:${expectedUid}:${expectedGid}`,
+    ]);
+    expect(logs).toEqual([
+      `repaired box-credential.json ownership (was ${currentUid}:${currentGid})`,
+      `repaired box-credential.lock ownership (was ${currentUid}:${currentGid})`,
+    ]);
+  });
+
+  it("does not inspect credential ownership when it is not root", () => {
+    let inspected = false;
+    repairCredentialOwnership(
+      { stateDir: "/unused", credentialOwnerUid: 1000, credentialOwnerGid: 1000 },
+      {
+        getuid: () => 501,
+        lstat: () => {
+          inspected = true;
+          throw new Error("unexpected inspection");
+        },
+        chown: () => { throw new Error("unexpected chown"); },
+        writeLog: () => { throw new Error("unexpected log"); },
+      },
+    );
+    expect(inspected).toBe(false);
+  });
+
   it("pins the bash payload launcher and its three flock/exec lines", () => {
     execFileSync("bash", ["-n", payloadLauncher]);
     const executableLines = [
@@ -2074,18 +2142,28 @@ describe("blitz-payload", () => {
     expect(harness.currentTarget()).toBe(path.join(harness.payloadRoot, "baked"));
   });
 
-  it("obtains the bearer only by spawning blitz-cred api-token", async () => {
+  it("obtains the bearer only through the configured blitz-cred api-token command", async () => {
     const release = makePayloadArchive([
       { path: "rootfs/usr/local/bin/tool", content: "new\n" },
     ]);
-    const harness = new Harness({ release });
+    const harness = new Harness({ release, expectedToken: "configured-bearer" });
     await harness.start();
+    const configuredCredential = path.join(harness.bin, "configured-blitz-cred");
+    writeExecutable(
+      configuredCredential,
+      "#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$BLITZ_TEST_CREDENTIAL_LOG\"\n"
+        + "[ \"$#\" -eq 1 ] && [ \"$1\" = api-token ] || exit 2\n"
+        + "[ \"$HOME\" = \"$BLITZ_STATE_DIR/home\" ] || exit 3\n"
+        + "printf 'configured-bearer\\n'\n",
+    );
 
-    await expectOneOutcome(harness, "applied");
+    await expectOneOutcome(harness, "applied", {
+      credentialCommand: [configuredCredential, "api-token"],
+    });
 
     expect(harness.calls(harness.credentialLog)).toEqual(["api-token"]);
     expect(harness.requests).toContain("POST /workspaces/self/payload-result");
-    expect(existsSync(path.join(harness.root, "box-credential.json"))).toBe(false);
+    expect(existsSync(path.join(harness.root, "state/box-credential.json"))).toBe(false);
   });
 
   it.each([

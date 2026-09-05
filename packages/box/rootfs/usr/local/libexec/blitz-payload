@@ -49,6 +49,13 @@ const FEATURE_FLAGS = Object.freeze([
   Object.freeze({ wire: 'lodySessions', env: 'BLITZ_LODY_SESSIONS' }),
 ]);
 const FEATURES_PATH = '/opt/blitz/payload/state/features';
+const CREDENTIAL_FILES = Object.freeze(['box-credential.json', 'box-credential.lock']);
+const DEFAULT_CREDENTIAL_COMMAND = Object.freeze([
+  '/command/s6-setuidgid',
+  'blitz',
+  '/usr/local/bin/blitz-cred',
+  'api-token',
+]);
 class FetchFailure extends Error {}
 class VerifyFailure extends Error {}
 
@@ -296,6 +303,28 @@ function safeAbsolutePath(name, fallback) {
   return candidate;
 }
 
+function credentialOwnerId(test, key, environmentName) {
+  const source = test[key] ?? process.env[environmentName] ?? 1000;
+  const parsed = typeof source === 'string' && /^[0-9]+$/u.test(source)
+    ? Number(source)
+    : source;
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${key} must be a non-negative safe integer`);
+  }
+  return parsed;
+}
+
+function credentialCommand(value) {
+  if (
+    !Array.isArray(value)
+    || value.length === 0
+    || value.some((argument) => typeof argument !== 'string' || argument === '')
+  ) {
+    throw new Error('credentialCommand must be a non-empty array of argv strings');
+  }
+  return [...value];
+}
+
 function settings() {
   const stateRoot = safeAbsolutePath('BLITZ_STATE_DIR', '/var/lib/blitz');
   const test = process.env.BLITZ_PAYLOAD_TEST_CONFIG === undefined
@@ -330,6 +359,12 @@ function settings() {
     ),
     featuresOwnerUid: configured('featuresOwnerUid', 0),
     featuresOwnerGid: configured('featuresOwnerGid', 0),
+    credentialOwnerUid: credentialOwnerId(test, 'credentialOwnerUid', 'BLITZ_UID'),
+    credentialOwnerGid: credentialOwnerId(test, 'credentialOwnerGid', 'BLITZ_GID'),
+    credentialCommand: credentialCommand(configured(
+      'credentialCommand',
+      DEFAULT_CREDENTIAL_COMMAND,
+    )),
     eventLog: configured('eventLog', null),
     gatewayHealthUrl: configured('gatewayHealthUrl', 'http://127.0.0.1:7445/healthz'),
     daemonSocket: configured(
@@ -370,9 +405,9 @@ function testKillAt(config, stage) {
   }
 }
 
-function runCommand(config, command, args, timeoutMs) {
+function runCommand(config, command, args, timeoutMs, environment = undefined) {
   return new Promise((resolve, reject) => {
-    const options = {};
+    const options = environment === undefined ? {} : { env: environment };
     if (config.inheritedLockFd9) {
       options.stdio = [
         'pipe', 'pipe', 'pipe',
@@ -426,8 +461,41 @@ function runCommand(config, command, args, timeoutMs) {
   });
 }
 
+const credentialOwnershipOperations = Object.freeze({
+  getuid: () => process.getuid(),
+  lstat: (filePath) => fs.lstatSync(filePath),
+  chown: (filePath, uid, gid) => fs.lchownSync(filePath, uid, gid),
+  writeLog: (message) => log(message),
+});
+
+function repairCredentialOwnership(config, operations = credentialOwnershipOperations) {
+  if (operations.getuid() !== 0) return;
+  for (const name of CREDENTIAL_FILES) {
+    const filePath = path.join(config.stateDir, name);
+    let metadata;
+    try {
+      metadata = operations.lstat(filePath);
+    } catch (error) {
+      if (error !== null && typeof error === 'object' && error.code === 'ENOENT') continue;
+      throw error;
+    }
+    if (!metadata.isFile()) continue;
+    if (metadata.uid === config.credentialOwnerUid && metadata.gid === config.credentialOwnerGid) {
+      continue;
+    }
+    operations.chown(filePath, config.credentialOwnerUid, config.credentialOwnerGid);
+    operations.writeLog(`repaired ${name} ownership (was ${metadata.uid}:${metadata.gid})`);
+  }
+}
+
 async function accessToken(config) {
-  const output = await runCommand(config, 'blitz-cred', ['api-token'], config.requestTimeoutMs);
+  repairCredentialOwnership(config);
+  const [command, ...args] = config.credentialCommand;
+  const output = await runCommand(config, command, args, config.requestTimeoutMs, {
+    ...process.env,
+    HOME: path.join(config.stateDir, 'home'),
+    BLITZ_STATE_DIR: config.stateDir,
+  });
   const token = output.trim();
   if (token === '') throw new FetchFailure('blitz-cred returned an empty bearer');
   return token;
@@ -2611,4 +2679,9 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseManifest, parseBoxConfig, probeGateway };
+module.exports = {
+  parseManifest,
+  parseBoxConfig,
+  probeGateway,
+  repairCredentialOwnership,
+};

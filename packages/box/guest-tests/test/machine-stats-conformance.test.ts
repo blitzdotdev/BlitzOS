@@ -135,6 +135,7 @@ class TickHarness {
       featuresAppliedFile: path.join(this.payloadState, "features.applied"),
       featuresOwnerUid: process.getuid?.() ?? 0,
       featuresOwnerGid: process.getgid?.() ?? 0,
+      credentialCommand: [path.join(this.bin, "blitz-cred"), "api-token"],
       requestTimeoutMs: 3000,
     };
     return new Promise((resolve, reject) => {

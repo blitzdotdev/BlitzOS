@@ -9,7 +9,9 @@ package filelock
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -26,11 +28,16 @@ var ErrBusy = errors.New("another process holds the lock")
 // across the WHOLE of fn, which for a token rotation means read, refresh and
 // write — the window that matters is the rotation, not the moment of storing.
 func With(ctx context.Context, path string, wait time.Duration, fn func() error) error {
-	lock, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	lock, created, err := open(path)
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
+	if created && os.Geteuid() == 0 {
+		if err := chownToDirectoryOwner(lock, path); err != nil {
+			return errors.Join(err, removeCreatedLock(lock, path))
+		}
+	}
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	ticker := time.NewTicker(50 * time.Millisecond)
@@ -52,4 +59,55 @@ func With(ctx context.Context, path string, wait time.Duration, fn func() error)
 		case <-ticker.C:
 		}
 	}
+}
+
+func removeCreatedLock(lock *os.File, path string) error {
+	created, err := lock.Stat()
+	if err != nil {
+		return err
+	}
+	current, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(created, current) {
+		return errors.New("created lock path was replaced before cleanup")
+	}
+	return os.Remove(path)
+}
+
+func open(path string) (*os.File, bool, error) {
+	for {
+		lock, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+		if err == nil {
+			return lock, true, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, false, err
+		}
+		lock, err = os.OpenFile(path, os.O_RDWR, 0o600)
+		if err == nil {
+			return lock, false, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, false, err
+		}
+	}
+}
+
+func chownToDirectoryOwner(lock *os.File, path string) error {
+	directory, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("stat lock directory: %w", err)
+	}
+	// SAFETY: os.Stat returns the platform's syscall.Stat_t on supported Unix
+	// systems. Refuse to retain the created lock if that invariant fails.
+	stat, ok := directory.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("read lock directory ownership: unexpected stat type %T", directory.Sys())
+	}
+	if err := lock.Chown(int(stat.Uid), int(stat.Gid)); err != nil {
+		return fmt.Errorf("chown created lock: %w", err)
+	}
+	return nil
 }

@@ -82,6 +82,9 @@ A control-plane connection needs an origin and a box credential.
 
 Provisioned hosts write `/var/lib/blitz/box-credential.json` after phone-home.
 Do not put credentials in Docker environment variables or arguments.
+Root never writes the box credential. The updater fetches its bearer through
+`blitz-cred` as the box user, and both the updater and credential refresher
+repair the credential and lock ownership before access.
 
 ### Managed host layout
 

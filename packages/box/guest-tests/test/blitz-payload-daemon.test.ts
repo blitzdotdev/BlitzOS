@@ -379,7 +379,7 @@ class DaemonHarness {
   }
 
   environment(
-    testOverrides: Record<string, string | number | null> = {},
+    testOverrides: Record<string, unknown> = {},
     environmentOverrides: NodeJS.ProcessEnv = {},
   ): NodeJS.ProcessEnv {
     return {
@@ -406,6 +406,7 @@ class DaemonHarness {
         featuresAppliedFile: this.featuresAppliedFile,
         featuresOwnerUid: process.getuid?.() ?? 0,
         featuresOwnerGid: process.getgid?.() ?? 0,
+        credentialCommand: [path.join(this.bin, "blitz-cred"), "api-token"],
         gatewayHealthUrl: `${this.origin}/healthz`,
         daemonSocket: this.daemonSocket,
         daemonControlSocket: this.options.controlSocket === false
