@@ -52,14 +52,20 @@ export type WorkspaceAction =
   | { type: 'workspace_create_started'; workspace: CloudWorkspaceModel }
   | { type: 'workspace_create_committed'; temporaryId: string; record: WorkspaceRecord; agentDefault: Agent }
   | { type: 'workspace_create_rolled_back'; temporaryId: string }
-  | { type: 'workspace_records_refreshed'; records: WorkspaceRecord[] }
+  | { type: 'workspace_records_refreshed'; records: WorkspaceRecord[]; heldWorkspaceIds?: string[] }
   | { type: 'workspace_record_updated'; record: WorkspaceRecord }
   | { type: 'workspace_resume_failed'; workspaceId: string; errorDetail: string }
   | { type: 'workspace_deleted'; workspaceId: string }
   | { type: 'workspace_delete_rolled_back'; workspace: CloudWorkspaceModel; index: number }
   | { type: 'workspace_member_upserted'; workspaceId: string; member: WorkspaceMemberView }
   | { type: 'workspace_member_removed'; workspaceId: string; membershipId: string }
-  | { type: 'workspace_member_machine_updated'; workspaceId: string; membershipId: string; machine: MachineView | null }
+  | {
+      type: 'workspace_member_machine_updated';
+      workspaceId: string;
+      membershipId: string;
+      machine: MachineView | null;
+      lifecycleStatus?: RestWorkspaceStatus;
+    }
   | {
       type: 'workspace_settings_updated';
       workspaceId: string;
@@ -70,7 +76,8 @@ export type WorkspaceAction =
     }
   | { type: 'workspace_renamed'; workspaceId: string; title: string }
   | { type: 'agent_default_changed'; workspaceId: string; agent: Agent }
-  | { type: 'workspace_reordered'; sourceId: string; targetId: string };
+  | { type: 'workspace_reordered'; sourceId: string; targetId: string }
+  | { type: 'workspace_order_reconciled'; order: string[] };
 
 export const initialWorkspaceStore: WorkspaceStoreState = { workspaces: [], viewer: null };
 
@@ -276,11 +283,15 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
       };
     case 'workspace_records_refreshed': {
       const recordsById = new Map(action.records.map((record) => [record.id, record]));
+      const heldWorkspaceIds = new Set(action.heldWorkspaceIds ?? []);
       return {
         ...state,
         workspaces: state.workspaces.flatMap((workspace) => {
           // The control plane cannot list a create it has not answered yet.
           if (workspace.pendingCreate) return [workspace];
+          // A lifecycle mutation can activate the fast poll before its write
+          // settles. Keep that exact row until the mutation has an answer.
+          if (heldWorkspaceIds.has(workspace.id)) return [workspace];
           const record = recordsById.get(workspace.id);
           // Same rule as `workspaces_loaded`: a poll that catches the member's
           // machine mid-replacement must not evict the workspace from the rail.
@@ -292,6 +303,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
     case 'workspace_record_updated':
       return mapWorkspace(state, action.record.id, (workspace) => ({
         ...workspace,
+        serverName: action.record.name,
         machineType: action.record.machineType ?? workspace.machineType,
         volumeId: action.record.volumeId ?? null,
         lifecycleStatus: lifecycleStatusFor(action.record, state.viewer?.membership.id ?? null),
@@ -342,6 +354,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
     case 'workspace_member_machine_updated':
       return mapWorkspace(state, action.workspaceId, (workspace) => ({
         ...workspace,
+        lifecycleStatus: action.lifecycleStatus ?? workspace.lifecycleStatus,
         members: workspace.members.map((member) => member.membershipId === action.membershipId
           ? { ...member, machine: action.machine }
           : member),
@@ -364,6 +377,16 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
       if (!moved) return state;
       workspaces.splice(targetIndex, 0, moved);
       return { ...state, workspaces };
+    }
+    case 'workspace_order_reconciled': {
+      const order = new Map(action.order.map((id, index) => [id, index]));
+      return {
+        ...state,
+        workspaces: [...state.workspaces].sort((left, right) => (
+          (order.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+          - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+        )),
+      };
     }
   }
 }

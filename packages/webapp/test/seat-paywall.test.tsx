@@ -146,14 +146,43 @@ describe('the seat paywall', () => {
       .find((button) => button.textContent === 'Creating…');
     expect(create?.disabled).toBe(true);
     expect(email.value).toBe(canonical.email);
+    expect(text(view.container)).toContain('nia@example.commember · creating');
+    expect(view.container.querySelector('[aria-label="Invite link"]')).toBeNull();
 
     request.resolve({ invite: canonical, code: 'one-time', ttlDays: 14 });
     await settle();
     expect(text(view.container)).toContain(canonical.email);
+    expect(text(view.container)).toContain('member · ready');
+    expect(text(view.container)).not.toContain('member · creating');
     expect(view.container.querySelector<HTMLInputElement>('[aria-label="Invite link"]')?.value)
       .toContain('one-time');
     expect(email.value).toBe('');
     expect(listInvites).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it('removes a rejected pending invite row and shows the refusal', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['createInvite']>>>();
+    const view = await render(<InvitesPanel client={client({
+      createInvite: vi.fn(() => request.promise),
+    })} />);
+    await settle();
+    const email = view.container.querySelector<HTMLInputElement>('input[type="email"]');
+    if (email === null) throw new Error('invite email field is missing');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        ?.set?.call(email, 'rejected@example.com');
+      email.dispatchEvent(new Event('input', { bubbles: true }));
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(text(view.container)).toContain('rejected@example.commember · creating');
+
+    request.reject(new Error('invite refused'));
+    await settle();
+    expect(text(view.container)).not.toContain('rejected@example.commember · creating');
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe('invite refused');
     await view.unmount();
   });
 

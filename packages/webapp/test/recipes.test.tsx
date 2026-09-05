@@ -13,7 +13,7 @@ import { RecipesHome } from '../src/files/RecipesHome.js';
 import { TemplatesHome } from '../src/files/TemplatesHome.js';
 import { SettingsPage } from '../src/SettingsPage.js';
 import { standaloneResolver } from '../src/resolver.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 import { workspaceViewFixture } from './workspace-fixtures.js';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -574,6 +574,31 @@ describe('usage capture settings', () => {
     )?.checked).toBe(true);
     expect(view.container.querySelector<HTMLAnchorElement>('a[href="/folder/folder-usage"]'))
       .not.toBeNull();
+    await view.unmount();
+  });
+
+  it('flips usage capture immediately and restores it with an error on rejection', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['putUsageCapture']>>>();
+    const wire = client({
+      getUsageCapture: vi.fn(async () => ({ enabled: false, folderId: null })),
+      putUsageCapture: vi.fn(() => request.promise),
+    });
+    const view = await render(settingsPage(wire, 'admin'));
+    await settle();
+    const toggle = view.container.querySelector<HTMLInputElement>('input[role="switch"]');
+    if (toggle === null) throw new Error('usage switch is missing');
+
+    await act(async () => toggle.click());
+    expect(toggle.checked).toBe(true);
+    expect(toggle.disabled).toBe(true);
+    expect(view.container.textContent).toContain('Capture is on');
+
+    request.reject(new Error('capture refused'));
+    await settle();
+    expect(toggle.checked).toBe(false);
+    expect(toggle.disabled).toBe(false);
+    expect(view.container.textContent).toContain('Capture is off');
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe('capture refused');
     await view.unmount();
   });
 });

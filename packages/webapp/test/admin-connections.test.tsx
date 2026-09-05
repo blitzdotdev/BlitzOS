@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
 import { WorkspaceProviderRows } from '../src/connections/WorkspaceProviderRows.js';
 import { ConnectionsPanel } from '../src/settings/ConnectionsPanel.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
@@ -221,6 +221,43 @@ describe('settings connections panel (revoke-only)', () => {
     const revokes = [...view.container.querySelectorAll('button')]
       .filter((button) => button.textContent === 'Revoke');
     expect(revokes.length).toBe(2);
+    await view.unmount();
+  });
+
+  it('removes a personal grant immediately and restores its index on rejection', async () => {
+    const grant = {
+      provider: 'linear',
+      manifestId: 'linear',
+      kind: 'oauth' as const,
+      label: null,
+      scopes: ['read'],
+      createdAt: 1,
+      updatedAt: 1,
+      accessExpiresAt: null,
+    };
+    const revoke = deferred<void>();
+    const view = await render(<ConnectionsPanel client={client({
+      listConnectionGrants: vi.fn(async () => ({ grants: [grant, { ...grant, provider: 'notion' }] })),
+      deleteConnectionGrant: vi.fn(() => revoke.promise),
+    })} />);
+    await settle();
+    const linearRow = [...view.container.querySelectorAll<HTMLElement>('.settings-credential-row')]
+      .find((row) => row.textContent?.includes('linear'));
+    if (linearRow === undefined) throw new Error('linear grant row is missing');
+    await act(async () => click([...linearRow.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Revoke')!));
+    await act(async () => click([...document.body.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Revoke connection')!));
+    expect([...view.container.querySelectorAll('.settings-credential-row h3')]
+      .map((heading) => heading.textContent)).toEqual(['notion']);
+
+    revoke.reject(new Error('personal revoke refused'));
+    await settle();
+    const providers = [...view.container.querySelectorAll('.settings-credential-row h3')]
+      .map((heading) => heading.textContent);
+    expect(providers).toEqual(['linear', 'notion']);
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('personal revoke refused');
     await view.unmount();
   });
 });

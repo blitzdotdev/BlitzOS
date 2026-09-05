@@ -1,4 +1,5 @@
 import type {
+  ImportOrgCredentialsResponse,
   OrgCredentialGrantView,
   OrgCredentialView,
   PutOrgCredentialRequest,
@@ -65,6 +66,8 @@ export function OrgCredentialsPanel({
   const [savingGrants, setSavingGrants] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<OrgCredentialView | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [pendingPut, setPendingPut] = useState<PutOrgCredentialRequest | null>(null);
+  const [pendingImport, setPendingImport] = useState<ImportOrgCredentialsResponse | null>(null);
 
   const admin = viewer.membership.role === 'admin';
 
@@ -117,20 +120,47 @@ export function OrgCredentialsPanel({
   const canEdit = (credential: OrgCredentialView) => admin || credential.grants.length > 0;
 
   const put = async (input: PutOrgCredentialRequest) => {
-    await client.putOrgCredential(input);
-    setRotating(null);
-    await reload();
+    setPendingPut(input);
+    try {
+      const { credential } = await client.putOrgCredential(input);
+      setCredentials((current) => {
+        const index = current.findIndex(({ name }) => name === credential.name);
+        if (index < 0) return [credential, ...current];
+        const next = [...current];
+        next[index] = credential;
+        return next;
+      });
+      setRotating(null);
+    } finally {
+      setPendingPut(null);
+    }
   };
 
   const saveGrants = async () => {
     if (grantsEditor === null || savingGrants) return;
     setSavingGrants(true);
     setError(null);
+    const preceding = credentials.find(({ name }) => name === grantsEditor.name) ?? null;
+    if (preceding !== null) {
+      setCredentials((current) => current.map((credential) => credential.name === grantsEditor.name
+        ? { ...credential, grants: grantsEditor.grants }
+        : credential));
+    }
     try {
-      await client.replaceOrgCredentialGrants(grantsEditor.name, { grants: grantsEditor.grants });
+      const { credential } = await client.replaceOrgCredentialGrants(
+        grantsEditor.name,
+        { grants: grantsEditor.grants },
+      );
+      setCredentials((current) => current.map((entry) => entry.name === credential.name
+        ? credential
+        : entry));
       setGrantsEditor(null);
-      await reload();
     } catch (caught) {
+      if (preceding !== null) {
+        setCredentials((current) => current.map((credential) => credential.name === preceding.name
+          ? preceding
+          : credential));
+      }
       setError(caughtErrorMessage(caught, 'The grants were not saved.'));
     } finally {
       setSavingGrants(false);
@@ -142,17 +172,33 @@ export function OrgCredentialsPanel({
     setRevokeTarget(null);
     setRevoking(credential.name);
     setError(null);
+    const index = credentials.findIndex(({ id }) => id === credential.id);
+    setCredentials((current) => current.filter(({ id }) => id !== credential.id));
     try {
       await client.revokeOrgCredential(credential.name);
       if (grantsEditor?.name === credential.name) setGrantsEditor(null);
       if (rotating === credential.name) setRotating(null);
-      await reload();
     } catch (caught) {
+      setCredentials((current) => {
+        if (current.some(({ id }) => id === credential.id)) return current;
+        const restored = [...current];
+        restored.splice(Math.max(index, 0), 0, credential);
+        return restored;
+      });
       setError(caughtErrorMessage(caught, 'Revoke failed.'));
     } finally {
       setRevoking(null);
     }
   };
+
+  const importingNames = new Set(pendingImport?.results
+    .filter(({ outcome }) => outcome === 'stored' || outcome === 'rotated')
+    .map(({ name }) => name) ?? []);
+  const pendingAddedNames = [...importingNames].filter((name) => (
+    !credentials.some((credential) => credential.name === name)
+  ));
+  const pendingPutAddsRow = pendingPut !== null
+    && !credentials.some(({ name }) => name === pendingPut.name);
 
   return (
     <section className="settings-panel settings-org-credentials" role="tabpanel" aria-label="Credentials">
@@ -173,17 +219,42 @@ export function OrgCredentialsPanel({
         </div>
         {loading ? (
           <p className="settings-credential-state">Loading credentials…</p>
-        ) : credentials.length === 0 ? (
+        ) : credentials.length === 0 && !pendingPutAddsRow && pendingAddedNames.length === 0 ? (
           <p className="settings-credential-state">
             No credentials yet. Add one below, or import a .env file.
           </p>
         ) : (
           <div className="settings-credential-list">
+            {pendingPutAddsRow && pendingPut !== null && (
+              <article className="settings-credential-row org-credential-row" key={`pending:${pendingPut.name}`}>
+                <div>
+                  <div className="settings-credential-row__title">
+                    <h3><code>{pendingPut.name}</code></h3>
+                    <span className="workspace-state-badge workspace-state-badge--pending">saving</span>
+                  </div>
+                  {pendingPut.comment !== undefined && pendingPut.comment !== null && <p>{pendingPut.comment}</p>}
+                  <GrantChips grants={pendingPut.grants ?? []} subjects={subjects} />
+                </div>
+              </article>
+            )}
+            {pendingAddedNames.map((name) => (
+              <article className="settings-credential-row org-credential-row" key={`importing:${name}`}>
+                <div className="settings-credential-row__title">
+                  <h3><code>{name}</code></h3>
+                  <span className="workspace-state-badge workspace-state-badge--pending">importing</span>
+                </div>
+              </article>
+            ))}
             {credentials.map((credential) => (
               <article className="settings-credential-row org-credential-row" key={credential.id}>
                 <div>
                   <div className="settings-credential-row__title">
                     <h3><code>{credential.name}</code></h3>
+                    {(pendingPut?.name === credential.name || importingNames.has(credential.name)) && (
+                      <span className="workspace-state-badge workspace-state-badge--pending">
+                        {importingNames.has(credential.name) ? 'importing' : 'rotating'}
+                      </span>
+                    )}
                   </div>
                   {credential.comment !== null && <p>{credential.comment}</p>}
                   <small>added by {creatorLabel(credential)} · {dateLabel(credential.createdAt)}</small>
@@ -270,7 +341,10 @@ export function OrgCredentialsPanel({
       <section className="cfg-section" aria-label="Import a .env file">
         <OrgCredentialImport
           onImport={client.importOrgCredentials}
-          onImported={() => { void reload(); }}
+          onPendingChange={setPendingImport}
+          onImported={() => {
+            void reload().finally(() => setPendingImport(null));
+          }}
         />
       </section>
 

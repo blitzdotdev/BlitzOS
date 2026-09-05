@@ -109,15 +109,19 @@ export function ComputeCredentialsPanel({
     setDeleteTarget(null);
     setDeleting(provider);
     setError(null);
+    const preceding = credentials[provider];
+    setCredentials((current) => {
+      const next = { ...current };
+      delete next[provider];
+      return next;
+    });
     try {
       await client.deleteComputeCredential(orgId, provider);
-      setCredentials((current) => {
-        const next = { ...current };
-        delete next[provider];
-        return next;
-      });
       if (editing === provider) setEditing(null);
     } catch (caught) {
+      if (preceding !== undefined) {
+        setCredentials((current) => ({ ...current, [provider]: preceding }));
+      }
       setError(caughtErrorMessage(caught, 'Credential deletion failed.'));
     } finally {
       setDeleting(null);
@@ -138,6 +142,9 @@ export function ComputeCredentialsPanel({
         <div className="settings-credential-list" aria-label="Cloud compute providers">
           {COMPUTE_CREDENTIAL_PROVIDER_DETAILS.map((provider) => {
             const stored = credentials[provider.id];
+            const transition = saving === provider.id
+              ? 'validating'
+              : deleting === provider.id ? 'deleting' : null;
             const validated = stored === undefined ? null : validatedTime(stored.validated_at);
             const open = editing === provider.id;
             return (
@@ -147,10 +154,10 @@ export function ComputeCredentialsPanel({
                   <div>
                     <div className="settings-credential-row__title">
                       <h3>{provider.title}</h3>
-                      <span className={stored === undefined
+                      <span className={stored === undefined && transition === null
                         ? 'workspace-state-badge'
-                        : 'workspace-state-badge workspace-state-badge--active'}>
-                        {stored === undefined ? 'not set' : 'validated'}
+                        : `workspace-state-badge workspace-state-badge--${transition === null ? 'active' : 'pending'}`}>
+                        {transition ?? (stored === undefined ? 'not set' : 'validated')}
                       </span>
                     </div>
                     <p>{provider.detail}</p>
@@ -162,8 +169,11 @@ export function ComputeCredentialsPanel({
                     <button
                       className="webapp-action"
                       type="button"
+                      disabled={transition !== null}
                       onClick={() => setEditing(open ? null : provider.id)}
-                    >{open ? 'Cancel' : stored === undefined ? 'Add key' : 'Replace'}</button>
+                    >{deleting === provider.id
+                        ? 'Deleting…'
+                        : open ? 'Cancel' : stored === undefined ? 'Add key' : 'Replace'}</button>
                     {stored !== undefined && (
                       <button
                         className="webapp-action webapp-action--danger"

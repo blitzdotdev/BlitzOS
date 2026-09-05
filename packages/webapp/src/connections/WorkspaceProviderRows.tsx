@@ -6,8 +6,6 @@ import type {
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { caughtErrorMessage } from '../error-message';
-import { ModalOverlay } from '../ModalOverlay';
-import { settingsPath } from '../sessions-page-state';
 import {
   grantInput,
   lockedInstanceBaseUrl,
@@ -106,6 +104,7 @@ export function WorkspaceProviderRows({
   focusVersion,
   readOnly,
   onConnected,
+  onConnectionAcknowledged,
   onDisconnected,
 }: {
   client: ProviderRowsClient;
@@ -118,6 +117,8 @@ export function WorkspaceProviderRows({
   readOnly?: boolean;
   /** This workspace may now pull the provider. */
   onConnected: (connectionName: string) => void;
+  /** The mint succeeded, so any request that asked for it may be approved. */
+  onConnectionAcknowledged?: (connectionName: string) => void;
   /** This workspace may no longer pull the provider. */
   onDisconnected: (connectionName: string) => void;
 }) {
@@ -129,6 +130,8 @@ export function WorkspaceProviderRows({
   const [replacing, setReplacing] = useState<string | null>(null);
   const [formVersion, setFormVersion] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [backedOverrides, setBackedOverrides] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
 
@@ -150,7 +153,14 @@ export function WorkspaceProviderRows({
   useEffect(() => {
     const abort = new AbortController();
     void client.listConnectionGrants(abort.signal).then(
-      (response) => setGrants(response.grants),
+      (response) => {
+        setGrants(response.grants);
+        // Once the refetch contains a pasted grant, its temporary backing can
+        // retire; a later server-side revoke must be able to remove it again.
+        setBackedOverrides((current) => new Set([...current].filter((name) => (
+          !response.grants.some(({ provider }) => provider === name)
+        ))));
+      },
       () => undefined,
     );
     return () => abort.abort();
@@ -196,14 +206,18 @@ export function WorkspaceProviderRows({
   const connectNow = async (row: ProviderRow) => {
     if (saving) return;
     setSaving(true);
+    setConnecting(row.name);
     setError(null);
+    onConnected(row.name);
     try {
       await client.mintWorkspaceConnection(workspaceId, row.name);
-      onConnected(row.name);
+      onConnectionAcknowledged?.(row.name);
       close();
     } catch (caught) {
+      onDisconnected(row.name);
       setError(caughtErrorMessage(caught, 'Connect failed.'));
     } finally {
+      setConnecting(null);
       setSaving(false);
     }
   };
@@ -212,10 +226,11 @@ export function WorkspaceProviderRows({
     if (removing !== null) return;
     setRemoving(row.name);
     setError(null);
+    onDisconnected(row.name);
     try {
       await client.disconnectWorkspaceConnection(workspaceId, row.name);
-      onDisconnected(row.name);
     } catch (caught) {
+      onConnected(row.name);
       setError(caughtErrorMessage(caught, 'Disconnect failed.'));
     } finally {
       setRemoving(null);
@@ -231,20 +246,26 @@ export function WorkspaceProviderRows({
     // A grant is always filed under the catalog id; the control plane refuses
     // any other name, and the form's name field is read-only for that reason.
     const provider = row.name;
+    const wasConnected = row.connected;
     setSaving(true);
+    setConnecting(provider);
     setError(null);
+    if (!wasConnected) onConnected(provider);
     try {
       await client.putConnectionGrant(provider, grantInput(entry, data));
+      setBackedOverrides((current) => new Set([...current, provider]));
       // A key pasted inside a workspace was pasted in order to connect it, so
       // the workspace is connected without a second click.
       await client.mintWorkspaceConnection(workspaceId, provider);
-      onConnected(provider);
+      onConnectionAcknowledged?.(provider);
       form.reset();
       setGrantsVersion((current) => current + 1);
       close();
     } catch (caught) {
+      if (!wasConnected) onDisconnected(provider);
       setError(caughtErrorMessage(caught, 'Connect failed.'));
     } finally {
+      setConnecting(null);
       setSaving(false);
     }
   };
@@ -257,7 +278,7 @@ export function WorkspaceProviderRows({
       {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
       <div className="wsc-list">
         {rows.map((row) => {
-          const backed = isBacked(row);
+          const backed = isBacked(row) || backedOverrides.has(row.name);
           const isOpen = expanded === row.name;
           const showForm = replacing === row.name || (!backed && row.entry !== null);
           const oauthHref = row.entry?.oauthConfigured === true
@@ -270,7 +291,9 @@ export function WorkspaceProviderRows({
             && ((row.entry.personalTokenLabel !== null
               && !(row.entry.personalTokenFallbackOnly && oauthHref !== null))
               || (row.entry.oauthAvailable && oauthHref !== null));
-          const state = tileState(row, backed, memberPath);
+          const state = connecting === row.name
+            ? { kind: 'on' as const, word: 'Connecting' }
+            : tileState(row, backed, memberPath);
           return (
             <article
               className={`wsc-tile wsc-tile--${state.kind}${

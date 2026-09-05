@@ -1430,6 +1430,66 @@ describe("webapp shell smoke", () => {
       .toEqual([{ id: 1, type: "terminal" }]);
   });
 
+  it("shows a workspace-document edit immediately and applies the returned document", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
+    const save = deferred<Awaited<ReturnType<ControlPlaneClient["putWorkspaceWebAppState"]>>>();
+    const wire = {
+      ...runningClient(),
+      putWorkspaceWebAppState: vi.fn(() => save.promise),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    const connections = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Workspace panels"] button[aria-label="Connections"]',
+    );
+    await click(connections);
+    expect(view.container.querySelector('.webapp-workspace-session[data-region="side"]'))
+      .not.toBeNull();
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
+    expect(wire.putWorkspaceWebAppState).toHaveBeenCalledTimes(1);
+
+    const canonical = serverWorkspaceStates.get("workspace-running");
+    if (canonical === undefined) throw new Error("workspace document was not seeded");
+    save.resolve({ doc: canonical, updatedAt: 2 });
+    await settle();
+    expect(view.container.querySelector('.webapp-workspace-session[data-region="side"]'))
+      .toBeNull();
+    await view.unmount();
+  });
+
+  it("restores the acknowledged workspace document with a visible save error", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
+    const save = deferred<Awaited<ReturnType<ControlPlaneClient["putWorkspaceWebAppState"]>>>();
+    const wire = {
+      ...runningClient(),
+      putWorkspaceWebAppState: vi.fn(() => save.promise),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    await click(view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Workspace panels"] button[aria-label="Connections"]',
+    ));
+    expect(view.container.querySelector('.webapp-workspace-session[data-region="side"]'))
+      .not.toBeNull();
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
+
+    save.reject(new Error("workspace document refused"));
+    await settle();
+    expect(view.container.querySelector('.webapp-workspace-session[data-region="side"]'))
+      .toBeNull();
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("workspace document refused");
+    await view.unmount();
+  });
+
 
   it("tears down retained panes when switching workspaces", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
@@ -1546,6 +1606,37 @@ describe("a workspace whose own machine is stopped", () => {
     // The loading pane prints its stage; "Creating workspace" is only its label.
     expect(view.container.textContent).toContain("allocating · cx23@fsn1");
     expect(view.container.textContent).toContain("allocating ·");
+    await view.unmount();
+  });
+
+  it("shows the starting pane immediately and restores stopped with an error on rejection", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-stopped");
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient["startMachine"]>>>();
+    const wire = {
+      ...client(),
+      me: vi.fn(async () => tenantMe),
+      poll: vi.fn(async () => ({ workspaces: [stoppedMine] })),
+      startMachine: vi.fn(() => request.promise),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    const start = view.container.querySelector<HTMLButtonElement>(
+      ".workspace-stopped-state button",
+    );
+    await click(start);
+    expect(view.container.querySelector(".workspace-stopped-state")).toBeNull();
+    expect(view.container.textContent).toContain("allocating · cx23@fsn1");
+
+    request.reject(new Error("start refused"));
+    await settle();
+    expect(view.container.textContent).toContain("is stopped");
+    expect(view.container.querySelector(".workspace-stopped-state button")?.textContent)
+      .toBe("Start machine");
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("start refused");
     await view.unmount();
   });
 });
@@ -1748,6 +1839,161 @@ describe("optimistic workspace creation", () => {
     expect(view.container.querySelector('button[aria-label="Only workspace"]')).toBeNull();
     expect(view.container.querySelector('[aria-current="page"].shell-wtile')).toBeNull();
     expect(view.container.querySelector(".webapp-notice[role=alert]")).not.toBeNull();
+    await view.unmount();
+  });
+});
+
+describe("workspace rail rename", () => {
+  async function renameFromRail(
+    view: Rendered,
+    currentName: string,
+    nextName: string,
+  ): Promise<void> {
+    const tile = view.container.querySelector<HTMLButtonElement>(
+      `button[aria-label="${currentName}"]`,
+    );
+    await act(async () => tile?.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 10,
+      clientY: 10,
+    })));
+    const rename = [...view.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      .find((item) => item.textContent === "Rename");
+    await click(rename);
+    const field = view.container.querySelector<HTMLInputElement>('[aria-label="Workspace name"]');
+    if (field === null) throw new Error("workspace rename field is missing");
+    await typeInto(field, nextName);
+    await act(async () => field.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+    })));
+  }
+
+  it("renames immediately and restores the title with an error on rejection", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient["updateWorkspace"]>>>();
+    const wire = {
+      ...runningClient(),
+      updateWorkspace: vi.fn(() => request.promise),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    await renameFromRail(view, "workspace-running-name", "renamed-now");
+    expect(view.container.querySelector('button[aria-label="renamed-now"]')).not.toBeNull();
+
+    request.reject(new Error("rename refused"));
+    await settle();
+    expect(view.container.querySelector('button[aria-label="workspace-running-name"]'))
+      .not.toBeNull();
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("rename refused");
+    await view.unmount();
+  });
+
+  it("replaces the optimistic title with the canonical workspace response", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient["updateWorkspace"]>>>();
+    const wire = {
+      ...runningClient(),
+      updateWorkspace: vi.fn(() => request.promise),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    await renameFromRail(view, "workspace-running-name", "requested-name");
+    expect(view.container.querySelector('button[aria-label="requested-name"]')).not.toBeNull();
+
+    request.resolve({ workspace: workspaceViewFixture({
+      ...running,
+      id: "workspace-running",
+      name: "canonical-name",
+    }) });
+    await settle();
+    expect(view.container.querySelector('button[aria-label="canonical-name"]')).not.toBeNull();
+    expect(view.container.querySelector('button[aria-label="requested-name"]')).toBeNull();
+    await view.unmount();
+  });
+});
+
+describe("global workspace preferences", () => {
+  const acknowledged = {
+    version: 1 as const,
+    activeWorkspaceId: "workspace-running",
+    order: ["workspace-running", "workspace-two"],
+  };
+
+  function workspaceTileNames(container: ParentNode): Array<string | null> {
+    return [...container.querySelectorAll<HTMLButtonElement>(
+      '.shell-strip__tree > .shell-wtile',
+    )].map((tile) => tile.getAttribute('aria-label'));
+  }
+
+  it("selects immediately and applies the returned active workspace and rail order", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const save = deferred<Awaited<ReturnType<ControlPlaneClient["putGlobalWebAppState"]>>>();
+    const wire = {
+      ...runningClient(),
+      poll: vi.fn(async () => ({ workspaces: [running, runningTwo] })),
+      getGlobalWebAppState: vi.fn(async () => ({ doc: acknowledged, updatedAt: 1 })),
+      putGlobalWebAppState: vi.fn(() => save.promise),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    await click(view.container.querySelector('button[aria-label="workspace-two-name"]'));
+    expect(window.location.pathname).toBe('/workspaces/workspace-two');
+    expect(view.container.querySelector('button[aria-label="workspace-two-name"]')
+      ?.getAttribute('aria-current')).toBe('page');
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
+    save.resolve({
+      doc: {
+        version: 1,
+        activeWorkspaceId: 'workspace-running',
+        order: ['workspace-two', 'workspace-running'],
+      },
+      updatedAt: 2,
+    });
+    await settle();
+
+    expect(window.location.pathname).toBe('/workspaces/workspace-running');
+    expect(workspaceTileNames(view.container))
+      .toEqual(['workspace-two-name', 'workspace-running-name']);
+    await view.unmount();
+  });
+
+  it("restores acknowledged active-workspace and order with a visible error", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const save = deferred<Awaited<ReturnType<ControlPlaneClient["putGlobalWebAppState"]>>>();
+    const wire = {
+      ...runningClient(),
+      poll: vi.fn(async () => ({ workspaces: [running, runningTwo] })),
+      getGlobalWebAppState: vi.fn(async () => ({ doc: acknowledged, updatedAt: 1 })),
+      putGlobalWebAppState: vi.fn(() => save.promise),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    await click(view.container.querySelector('button[aria-label="workspace-two-name"]'));
+    expect(window.location.pathname).toBe('/workspaces/workspace-two');
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
+
+    save.reject(new Error('global preferences refused'));
+    await settle();
+    expect(window.location.pathname).toBe('/workspaces/workspace-running');
+    expect(workspaceTileNames(view.container))
+      .toEqual(['workspace-running-name', 'workspace-two-name']);
+    expect(view.container.querySelector('.webapp-notice[role=alert]')?.textContent)
+      .toContain('global preferences refused');
     await view.unmount();
   });
 });

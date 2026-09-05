@@ -48,10 +48,17 @@ export function ConnectionsPanel({ client }: { client: ControlPlaneClient }) {
     setRevokeTarget(null);
     setRevoking(grant.provider);
     setError(null);
+    const index = grants.findIndex(({ provider }) => provider === grant.provider);
+    setGrants((current) => current.filter(({ provider }) => provider !== grant.provider));
     try {
       await client.deleteConnectionGrant(grant.provider);
-      await reload();
     } catch (caught) {
+      setGrants((current) => {
+        if (current.some(({ provider }) => provider === grant.provider)) return current;
+        const restored = [...current];
+        restored.splice(Math.max(index, 0), 0, grant);
+        return restored;
+      });
       setError(caughtErrorMessage(caught, 'Revoke failed.'));
     } finally {
       setRevoking(null);

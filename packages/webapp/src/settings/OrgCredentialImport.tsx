@@ -31,10 +31,13 @@ function importSummary(response: ImportOrgCredentialsResponse): string {
 export function OrgCredentialImport({
   onImport,
   onImported,
+  onPendingChange,
 }: {
   onImport: (input: ImportOrgCredentialsRequest) => Promise<ImportOrgCredentialsResponse>;
   /** The list to refresh once keys have landed. */
   onImported: () => void;
+  /** The dry-run rows become the optimistic import until the write settles. */
+  onPendingChange?: (preview: ImportOrgCredentialsResponse | null) => void;
 }) {
   const [text, setText] = useState('');
   const [fileName, setFileName] = useState('');
@@ -70,6 +73,8 @@ export function OrgCredentialImport({
   }, [text, onImport]);
 
   const runImport = () => {
+    if (preview === null) return;
+    onPendingChange?.(preview);
     onImport({ text })
       .then((response) => {
         setError(null);
@@ -78,7 +83,10 @@ export function OrgCredentialImport({
         setFileName('');
         onImported();
       })
-      .catch((caught: Error) => setError(caughtErrorMessage(caught, 'The import failed.')));
+      .catch((caught: Error) => {
+        onPendingChange?.(null);
+        setError(caughtErrorMessage(caught, 'The import failed.'));
+      });
   };
 
   const chooseFile = (file: File | undefined) => {

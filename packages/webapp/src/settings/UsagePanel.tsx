@@ -26,12 +26,17 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
   }, [client]);
 
   const toggle = (enabled: boolean) => {
-    if (busy) return;
+    if (busy || state === null) return;
+    const preceding = state;
+    setState({ ...state, enabled });
     setBusy(true);
     setError(null);
     void client.putUsageCapture(enabled)
       .then(setState)
-      .catch((caught: Error) => setError(caught.message))
+      .catch((caught: Error) => {
+        setState(preceding);
+        setError(caught.message);
+      })
       .finally(() => setBusy(false));
   };
 

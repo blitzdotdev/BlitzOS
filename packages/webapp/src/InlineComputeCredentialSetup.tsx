@@ -54,7 +54,12 @@ function InlineProviderCredential({
       <div className="settings-credential-row">
         <KeyIcon className="settings-compute-glyph" />
         <div>
-          <h3>Add your {computeCredentialProviderTitle(provider)} key</h3>
+          <div className="settings-credential-row__title">
+            <h3>Add your {computeCredentialProviderTitle(provider)} key</h3>
+            {saving && (
+              <span className="workspace-state-badge workspace-state-badge--pending">validating</span>
+            )}
+          </div>
           <p>{details?.detail}</p>
         </div>
       </div>

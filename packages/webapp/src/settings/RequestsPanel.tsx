@@ -57,12 +57,15 @@ export function RequestsPanel({
     if (resolving !== null || request.state !== 'pending') return;
     setResolving(request.id);
     setError(null);
+    setRequests((current) => current.map((entry) => entry.id === request.id
+      ? { ...entry, state: 'denied' }
+      : entry));
     try {
       await client.denyCredentialRequest(request.id);
-      setRequests((current) => current.map((entry) => entry.id === request.id
-        ? { ...entry, state: 'denied' }
-        : entry));
     } catch (caught) {
+      setRequests((current) => current.map((entry) => entry.id === request.id
+        ? request
+        : entry));
       setError(caughtErrorMessage(caught, 'Dismiss failed.'));
     } finally {
       setResolving(null);
