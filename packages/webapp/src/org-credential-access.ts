@@ -47,6 +47,40 @@ export function accessSubjectLabel(subject: Subject, subjects: AccessSubjects): 
   return member === undefined ? subject.subjectId : (member.name || member.email);
 }
 
+/**
+ * Whether this viewer can put a NAME to the subject a row names.
+ *
+ * A grant outlives what it points at: a workspace is deleted, a member leaves
+ * the organization, and the row stays behind holding an id nothing resolves.
+ * Rendered, it is a raw UUID in a list of names — and it grants nobody
+ * anything, because the subject it names is gone.
+ *
+ * SO IT IS HIDDEN, AND IT IS NOT TOUCHED. The viewer's own lists are what
+ * resolve a subject, and they are not a census: `subjects.workspaces` holds
+ * the workspaces this member can see, and `subjects.members` the active ones.
+ * An unresolvable subject is therefore "not mine to show", not "proven gone" —
+ * so a surface drops it from what it draws and keeps it in what it saves,
+ * rather than pruning somebody else's access on this viewer's behalf.
+ */
+export function isNamedAccessSubject(subject: Subject, subjects: AccessSubjects): boolean {
+  if (subject.subjectKind === 'org') return true;
+  if (subject.subjectId === null) return false;
+  const id = subject.subjectId;
+  return subject.subjectKind === 'workspace'
+    ? subjects.workspaces.some((workspace) => workspace.id === id)
+    : subjects.members.some((member) => member.id === id);
+}
+
+/** The rows a surface may draw: the audience minus what this viewer cannot
+ * name. Every count beside a list uses it too, so the number and the rows
+ * cannot disagree. */
+export function namedAccessSubjects<T extends Subject>(
+  grants: ReadonlyArray<T>,
+  subjects: AccessSubjects,
+): T[] {
+  return grants.filter((grant) => isNamedAccessSubject(grant, subjects));
+}
+
 export function sameAccessSubject(left: Subject, right: Subject): boolean {
   return left.subjectKind === right.subjectKind && left.subjectId === right.subjectId;
 }

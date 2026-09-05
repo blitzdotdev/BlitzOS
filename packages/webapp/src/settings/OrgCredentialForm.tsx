@@ -9,6 +9,7 @@ import { caughtErrorMessage } from '../error-message';
 import {
   accessSubjectLabel,
   accessSubjectTag,
+  namedAccessSubjects,
   hasOrgWideWrite,
   ORG_WIDE_WRITE_WARNING,
   type AccessSubjects,
@@ -86,13 +87,20 @@ export function AccessListEditor({
       !(candidate.subjectKind === grant.subjectKind && candidate.subjectId === grant.subjectId)));
   };
 
+  // DRAWN, NOT SAVED. A grant whose subject this viewer cannot name — a deleted
+  // workspace, a member who left — is left out of the rows, and stays in
+  // `grants`, so a save carries it back untouched. The editor writes the whole
+  // audience, and pruning somebody's access because this viewer's own lists do
+  // not reach it is not the same act as removing it (`isNamedAccessSubject`).
+  const named = namedAccessSubjects(grants, subjects);
+
   return (
     <div className="org-access-editor">
       <div className="org-access-rows">
-        {grants.length === 0 && (
+        {named.length === 0 && (
           <p className="org-access-empty">Nobody yet</p>
         )}
-        {grants.map((grant) => {
+        {named.map((grant) => {
           const label = accessSubjectLabel(grant, subjects);
           return (
             <div className="org-access-row" key={`${grant.subjectKind}:${grant.subjectId ?? ''}`}>
@@ -348,7 +356,10 @@ export function OrgCredentialForm({
               {/* The count is on the label because the answer to "who may use
                   this" is a number before it is a list, and an empty list is
                   the one state a member must not miss. */}
-              <span>Members with access{grants.length > 0 && ` · ${String(grants.length)}`}</span>
+              {/* The count is what the rows below show, so a grant nobody can
+                  name is absent from both. */}
+              <span>Members with access{namedAccessSubjects(grants, subjects).length > 0
+                && ` · ${String(namedAccessSubjects(grants, subjects).length)}`}</span>
               <AccessListEditor grants={grants} subjects={subjects} onChange={setGrants} />
             </div>
           </>
