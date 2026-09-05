@@ -169,7 +169,7 @@ describe('AccessFaces', () => {
         grants={[
           { subjectKind: 'workspace', subjectId: 'ws-1', access: 'read' },
           { subjectKind: 'membership', subjectId: 'membership-2', access: 'read' },
-          { subjectKind: 'membership', subjectId: 'membership-1', access: 'read' },
+          { subjectKind: 'membership', subjectId: 'membership-3', access: 'read' },
         ]}
         subjects={subjects}
         expanded={false}
@@ -181,11 +181,11 @@ describe('AccessFaces', () => {
     const workspace = view.container.querySelector('.org-access-face--workspace');
     expect(workspace?.querySelector('svg')).not.toBeNull();
     const faces = [...view.container.querySelectorAll('.org-access-face--member')];
-    // Dana has a photo; Ada does not and keeps her initials.
+    // Dana has a photo; Priya has none and keeps her initials.
     const photo = faces.find((face) => face.querySelector('img') !== null);
     expect(photo?.querySelector('img')?.getAttribute('src')).toContain('=s128-c');
     const lettered = faces.find((face) => face.querySelector('img') === null);
-    expect(lettered?.textContent).toBe('AO');
+    expect(lettered?.textContent).toBe('PN');
     await view.unmount();
   });
 
