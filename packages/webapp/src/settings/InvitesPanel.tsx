@@ -57,7 +57,7 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
 
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Invites">
-      <PanelHeader eyebrow="Organization" title="Invite links" detail={<>Links expire after {INVITE_TTL_DAYS} days.</>} />
+      <PanelHeader eyebrow="Organization" title="Invite links" />
       {seatLimit !== null && (
         <div className="settings-seats">
           <span><b>{seatsUsed}</b> of <b>{seatLimit}</b> {seatLimit === 1 ? 'seat' : 'seats'} used</span>

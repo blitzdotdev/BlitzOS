@@ -4,7 +4,7 @@ import type {
   OrgCredentialGrantView,
   PutOrgCredentialRequest,
 } from '@blitzos/schema';
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { caughtErrorMessage } from '../error-message';
 import {
   accessSubjectLabel,
@@ -89,9 +89,7 @@ export function AccessListEditor({
     <div className="org-access-editor">
       <div className="org-access-rows">
         {grants.length === 0 && (
-          <p className="org-access-empty">
-            Nobody yet. Add a workspace, a member, or everyone in {subjects.orgName}.
-          </p>
+          <p className="org-access-empty">Nobody yet</p>
         )}
         {grants.map((grant) => {
           const label = accessSubjectLabel(grant, subjects);
@@ -245,15 +243,11 @@ export type OrgCredentialFormMode =
 export function OrgCredentialForm({
   mode,
   subjects,
-  description,
   onSubmit,
   onCancel,
 }: {
   mode: OrgCredentialFormMode;
   subjects: AccessSubjects;
-  /** The sentence under the first card's heading. Each surface says something
-   * different about where a key lands, so the surface supplies it. */
-  description?: ReactNode;
   onSubmit: (input: PutOrgCredentialRequest) => Promise<void>;
   onCancel?: () => void;
 }) {
@@ -300,7 +294,6 @@ export function OrgCredentialForm({
           <h2 className="cfg-title">
             {mode.kind === 'add' ? 'Add a credential' : <>Rotate <code>{mode.name}</code></>}
           </h2>
-          {description !== undefined && <p className="cfg-desc">{description}</p>}
         </div>
         <label className="cfg-field">
           <span>Name</span>
@@ -342,7 +335,6 @@ export function OrgCredentialForm({
                   the one state a member must not miss. */}
               <span>Members with access{grants.length > 0 && ` · ${String(grants.length)}`}</span>
               <AccessListEditor grants={grants} subjects={subjects} onChange={setGrants} />
-              <p className="cfg-help">You keep write access.</p>
             </div>
           </>
         )}

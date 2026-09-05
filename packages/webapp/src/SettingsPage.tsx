@@ -112,7 +112,6 @@ function ProfilePanel({
       <PanelHeader
         eyebrow="Account surface"
         title="Profile"
-        detail="Identity from the BlitzOS control plane."
         action={(
           <button
             className="webapp-action"

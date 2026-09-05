@@ -40,7 +40,7 @@ export function MembersPanel({
 
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Members">
-      <PanelHeader eyebrow="Organization" title="Members" detail="People who can work in this organization." />
+      <PanelHeader eyebrow="Organization" title="Members" />
       {admin && (
         <form className="settings-form" onSubmit={(event) => {
           event.preventDefault();

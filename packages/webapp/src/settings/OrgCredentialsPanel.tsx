@@ -161,17 +161,16 @@ export function OrgCredentialsPanel({
       <PanelHeader
         eyebrow="Organization"
         title="Credentials"
-        detail="Static secrets, pulled at the moment of use. Each reaches only who it gives access to."
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
       <section className="cfg-section" aria-label="Stored credentials">
         <div className="settings-section-heading">
           <div className="cfg-section-head">
-            <h2 className="cfg-title">Stored</h2>
-            <p className="cfg-desc">Names and comments only. A value never comes back out.</p>
+            <h2 className="cfg-title">
+              Stored{credentials.length > 0 && ` · ${String(credentials.length)}`}
+            </h2>
           </div>
-          {credentials.length > 0 && <span>{credentials.length} total</span>}
         </div>
         {loading ? (
           <p className="settings-credential-state">Loading credentials…</p>
@@ -227,7 +226,6 @@ export function OrgCredentialsPanel({
         <section className="cfg-section" aria-label={`Access to ${accessEditor.name}`}>
           <div className="cfg-section-head">
             <h2 className="cfg-title">Access to <code>{accessEditor.name}</code></h2>
-            <p className="cfg-desc">Saved whole: everyone listed here, nobody else.</p>
           </div>
           <AccessListEditor
             grants={accessEditor.grants}
@@ -258,9 +256,6 @@ export function OrgCredentialsPanel({
         key={rotating ?? 'add'}
         mode={rotating === null ? { kind: 'add' } : { kind: 'rotate', name: rotating }}
         subjects={subjects}
-        description={rotating === null
-          ? 'Organization-level. Agents read the comment.'
-          : 'Replaces the value on the next pull. Comment and access stay.'}
         onSubmit={put}
         onCancel={rotating === null ? undefined : () => setRotating(null)}
       />

@@ -76,7 +76,6 @@ export function RequestsPanel({
       <PanelHeader
         eyebrow="Connect inbox"
         title="Requests"
-        detail="Connections agents asked for and did not find, across every workspace."
         action={<span className="settings-count-badge">{pendingCount} pending</span>}
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
@@ -84,7 +83,6 @@ export function RequestsPanel({
         <section className="cfg-section" aria-label="Access proposals">
           <div className="cfg-section-head">
             <h2 className="cfg-title">Access proposals</h2>
-            <p className="cfg-desc">Credential access changes an agent proposed and nobody has decided on yet.</p>
           </div>
           <div className="settings-credential-list">
             {proposals.map((proposal) => (

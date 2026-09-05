@@ -92,7 +92,6 @@ export function WorkspaceCredentialsTab({
       <div className="cfg-section">
         <div className="cfg-section-head">
           <h2 className="cfg-title">Credentials in this workspace</h2>
-          <p className="cfg-desc">Organization credentials readable here. Pulled at the moment of use.</p>
         </div>
         {error !== null && <p className="workspace-details-error" role="alert">{error}</p>}
         <div className="workspace-credential-rows">
@@ -138,9 +137,6 @@ export function WorkspaceCredentialsTab({
             ? { kind: 'add', initialGrants: [{ subjectKind: 'workspace', subjectId: workspaceId, access: 'read' }] }
             : form}
           subjects={subjects}
-          description={form.kind === 'add'
-            ? 'Organization-level. This workspace gets access.'
-            : 'Replaces the value on the next pull.'}
           onSubmit={put}
           onCancel={() => setForm(null)}
         />

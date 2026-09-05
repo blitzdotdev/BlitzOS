@@ -63,7 +63,6 @@ export function ConnectionsPanel({ client }: { client: ControlPlaneClient }) {
       <PanelHeader
         eyebrow="Your identities"
         title="Connections"
-        detail="Agents in workspaces you own act as you on these providers."
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
@@ -74,7 +73,6 @@ export function ConnectionsPanel({ client }: { client: ControlPlaneClient }) {
         <div className="settings-section-heading">
           <div className="cfg-section-head">
             <h2 className="cfg-title">Authorized</h2>
-            <p className="cfg-desc">Providers you authorized</p>
           </div>
           <span>{grants.length} total</span>
         </div>

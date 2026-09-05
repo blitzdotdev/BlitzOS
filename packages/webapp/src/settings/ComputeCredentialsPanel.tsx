@@ -129,7 +129,6 @@ export function ComputeCredentialsPanel({
       <PanelHeader
         eyebrow="Organization"
         title="Compute credentials"
-        detail="Cloud machines are created and billed through your organization’s provider account."
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       {loading ? (

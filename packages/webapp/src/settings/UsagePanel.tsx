@@ -40,7 +40,6 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
       <PanelHeader
         eyebrow="Organization"
         title="Agent usage capture"
-        detail={<>Collect every workspace&rsquo;s agent transcripts for evals.</>}
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       {state === null ? (
