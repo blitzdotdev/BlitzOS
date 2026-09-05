@@ -25,8 +25,6 @@ export const BOX_IMAGE_INPUTS = Object.freeze([
   "packages/box/rootfs/etc/s6-overlay/s6-rc.d/dockerd/type",
   "packages/box/rootfs/etc/s6-overlay/s6-rc.d/dufs/dependencies.d",
   "packages/box/rootfs/etc/s6-overlay/s6-rc.d/dufs/type",
-  "packages/box/rootfs/etc/s6-overlay/s6-rc.d/enroll/dependencies.d",
-  "packages/box/rootfs/etc/s6-overlay/s6-rc.d/enroll/type",
   "packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/dependencies.d",
   "packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/type",
   "packages/box/rootfs/etc/s6-overlay/s6-rc.d/init-state/dependencies.d",

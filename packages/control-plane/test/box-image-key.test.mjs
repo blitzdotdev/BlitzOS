@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -163,6 +164,17 @@ test("every build-context Dockerfile COPY source is a base input or a payload in
     }
   }
   assert.deepEqual(uncovered, []);
+});
+
+// The key reads every declared input's Git object id at the release commit
+// and refuses a missing one. The fixture repositories above are built FROM the
+// list, so only this check notices when a deleted file stays declared: the
+// `enroll` service left the tree in #213 while its two entries stayed here,
+// and the canary image job would have died at the plan step.
+test("every declared input exists in this repository", () => {
+  const missing = [...BOX_IMAGE_INPUTS, ...BOX_PAYLOAD_SOURCE_INPUTS]
+    .filter((input) => !existsSync(path.join(repositoryRoot, input)));
+  assert.deepEqual(missing, []);
 });
 
 test("base inputs and payload source inputs do not overlap", () => {
