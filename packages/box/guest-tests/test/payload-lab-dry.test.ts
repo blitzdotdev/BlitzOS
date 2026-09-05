@@ -38,7 +38,7 @@ describe("thin-image payload lab dry runs", () => {
     expect(result.stderr).toContain("DRY session-driver cancel session-1 on <workspace:workspace-1>");
   });
 
-  it("reads a quoted image pin from the deployment config once", () => {
+  it("preserves and reads the dedicated deployment config", () => {
     const root = mkdtempSync(join(tmpdir(), "payload-lab-config-"));
     try {
       mkdirSync(join(root, "packages/control-plane"), { recursive: true });
@@ -50,12 +50,11 @@ describe("thin-image payload lab dry runs", () => {
         "bash",
         [
           "-c",
-          'source "$1"; PAYLOAD_LAB_REPO=$2; _wrangler_string_var BOX_IMAGE_REF',
+          'source "$1"; _wrangler_string_var BOX_IMAGE_REF',
           "payload-lab",
           `${labDirectory}/lib.sh`,
-          root,
         ],
-        { encoding: "utf8" },
+        { encoding: "utf8", env: { ...process.env, LAB_DEPLOY_REPO: root } },
       );
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toBe("https://control-plane.example/box-image/thin-7/manifest.json\n");

@@ -26,7 +26,7 @@ WORKSPACE_ID=
 MACHINE_ID=
 LAB_FINAL_LINE=false
 LAB_TEMP_ROOT=
-LAB_DEPLOY_REPO=
+LAB_DEPLOY_REPO=${LAB_DEPLOY_REPO:-}
 LAB_REMOTE_CLEANUP_WORKSPACE=
 LAB_REMOTE_CLEANUP_COMMAND=
 LAB_SESSION_CLEANUP_WORKSPACE=
@@ -722,7 +722,7 @@ _r2_put() {
   "$PAYLOAD_LAB_REPO/node_modules/.bin/wrangler" r2 object put \
     "$LAB_R2_BUCKET/$logical_path" \
     --file "$file" --content-type "$content_type" --remote \
-    --config "$PAYLOAD_LAB_REPO/packages/control-plane/wrangler.toml"
+    --config "$LAB_DEPLOY_REPO/packages/control-plane/wrangler.toml"
 }
 
 _mutate_published_variant() {
@@ -794,6 +794,7 @@ publish_variant() {
     PUBLISHED_MARKER="payload-lab-$name"
     return 0
   fi
+  require_thinlab_deploy_config
   run_id=${LAB_RUN_ID:-$(date -u +%Y%m%dT%H%M%S)-$$}
   marker="payload-lab-$EXPERIMENT_ID-$name-$run_id"
   root="$LAB_TEMP_ROOT/variant-$name"
@@ -814,7 +815,7 @@ publish_variant() {
   # metadata (including LODY_PATCHSET_SERIAL) comes from the same tree as the
   # payload sources. Keep the lab deployment config, which is intentionally
   # uncommitted, rather than the clone's tracked production defaults.
-  cp "$PAYLOAD_LAB_REPO/packages/control-plane/wrangler.toml" \
+  cp "$LAB_DEPLOY_REPO/packages/control-plane/wrangler.toml" \
     "$repo/packages/control-plane/wrangler.toml"
   if [[ "$name" = daemon-* ]]; then
     require_env LAB_DAEMON_ARCHIVE
@@ -842,10 +843,10 @@ publish_variant() {
 # Worker `blitz-control-plane` in the SAME Cloudflare account: on 2026-09-05
 # three harness deploys from such checkouts replaced canary's Worker and
 # applied migrations to canary's database. So the deploy runs from
-# LAB_DEPLOY_REPO (default: the repo the harness lives in) and refuses any
-# config whose name is not blitz-thinlab.
-LAB_DEPLOY_REPO=${LAB_DEPLOY_REPO:-$PAYLOAD_LAB_REPO}
+# LAB_DEPLOY_REPO and refuses any config whose name is not blitz-thinlab.
 require_thinlab_deploy_config() {
+  [ -n "$LAB_DEPLOY_REPO" ] \
+    || experiment_fail "LAB_DEPLOY_REPO is required; refusing to deploy from the experiment checkout"
   local config="$LAB_DEPLOY_REPO/packages/control-plane/wrangler.toml"
   [ -r "$config" ] || experiment_fail "no wrangler.toml at $config; refusing to deploy"
   grep -qE '^name = "blitz-thinlab"' "$config" \
@@ -866,6 +867,7 @@ pin_payload_ref() {
     dry_command "verify /version image ref/tag against wrangler.toml or pass LAB_IMAGE_REF/TAG/SHA256; deploy only the payload pin"
     return 0
   fi
+  require_thinlab_deploy_config
 
   version_report=$(curl --silent --show-error --fail-with-body \
     --max-time "$LAB_CP_TIMEOUT" "$THINLAB_ORIGIN/version") \
@@ -907,13 +909,6 @@ pin_payload_ref() {
     assert_equal "$configured_tag" "$deployed_tag" \
       "wrangler.toml BOX_IMAGE_TAG would change the deployment's image pin"
   fi
-  if [ -z "$LAB_DEPLOY_REPO" ]; then
-    LAB_DEPLOY_REPO="$LAB_TEMP_ROOT/deploy-repo"
-    git clone --quiet --no-hardlinks "$PAYLOAD_LAB_REPO" "$LAB_DEPLOY_REPO"
-    ln -s "$PAYLOAD_LAB_REPO/node_modules" "$LAB_DEPLOY_REPO/node_modules"
-    cp "$PAYLOAD_LAB_REPO/packages/control-plane/wrangler.toml" \
-      "$LAB_DEPLOY_REPO/packages/control-plane/wrangler.toml"
-  fi
   (
     cd "$LAB_DEPLOY_REPO"
     env "${image_overrides[@]}" \
@@ -924,7 +919,7 @@ pin_payload_ref() {
 }
 
 _wrangler_string_var() {
-  local name=$1 config="$PAYLOAD_LAB_REPO/packages/control-plane/wrangler.toml"
+  local name=$1 config="$LAB_DEPLOY_REPO/packages/control-plane/wrangler.toml"
   local line value count
   [ -r "$config" ] || return 1
   count=$(grep -Ec "^[[:space:]]*$name[[:space:]]*=" "$config")

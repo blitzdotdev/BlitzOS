@@ -20,9 +20,10 @@ Required for a real run:
   provisioned. `box_ssh` uses the workspace view's host/port/user. It does not
   grant VM-host access. No experiment depends on host SSH, the Docker socket,
   or a forced updater process.
-- A deployable `packages/control-plane/wrangler.toml` for
-  `blitz-thinlab`, plus the Cloudflare credentials used by the existing
-  publisher and deploy scripts.
+- `LAB_DEPLOY_REPO`: the dedicated deploy checkout with a deployable
+  `packages/control-plane/wrangler.toml` for `blitz-thinlab`, plus the
+  Cloudflare credentials used by the existing publisher and deploy scripts.
+  Live runs refuse to fall back to the experiment checkout.
 - `LAB_DAEMON_ARCHIVE`: a daemon archive built by
   `build-box-daemon.mjs`; E3, E4, and E7 use its executable bytes without
   rebuilding Docker. Each daemon experiment re-stamps a temporary copy with
@@ -60,22 +61,21 @@ The production publisher has no test-only overlay flag. `publish_variant`
 therefore clones the current checkout into a temporary directory, copies one
 mutated file from an overlay directory into that clone, and invokes
 that clone's `publish-box-payload.mjs --repo <clone>` so imported release
-metadata and staged sources come from the same commit. The lab's uncommitted
-deployment `wrangler.toml` is copied in only for the R2 upload. E5 and E12 then overwrite one
-versioned test object to make failures that a validating publisher correctly
-refuses to emit.
+metadata and staged sources come from the same commit. The dedicated deploy
+repo's uncommitted `wrangler.toml` is copied in only for the R2 upload. E5 and
+E12 then overwrite one versioned test object to make failures that a validating
+publisher correctly refuses to emit.
 
 Pinning changes only the payload. Before every deploy, `pin_payload` reads the
 deployment's public `/version` report and compares its `boxImageRef` and
 `boxImageTag` with the values in the lab's `wrangler.toml`; it also requires
-that config's `APP_URL` and R2 binding to identify thinlab. It refuses the
-deploy if they differ. A lab that intentionally keeps its image pins outside
+that config's worker name, `APP_URL`, and R2 binding to identify thinlab. It
+refuses the deploy if they differ. A lab that intentionally keeps its image pins outside
 that file may instead set all of `LAB_IMAGE_REF`, `LAB_IMAGE_TAG`, and
 `LAB_IMAGE_SHA256`; the helper checks the reported ref/tag and passes all three
 through to the deploy. It never sends only the two payload vars when doing so.
-The first pin copies the checkout and validated deployment config into the
-experiment's temporary directory, and every later pin in that experiment uses
-that isolated snapshot so another lab process cannot retarget it mid-run.
+Every pin runs from `LAB_DEPLOY_REPO`; the experiment checkout's generated or
+missing config is never a deploy input.
 
 No experiment forces an updater transaction. After a pin, every experiment
 waits for the box's supervised payload service, whose default poll interval is
