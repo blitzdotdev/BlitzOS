@@ -47,9 +47,6 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     environment: canary
-    env:
-      DAEMON_ARCHIVE: ${{ runner.temp }}/daemon.tar.gz
-      PAYLOAD_BINARIES: ${{ runner.temp }}/payload-binaries
     outputs:
       ref: ${{ steps.pin.outputs.ref }}
       tag: ${{ steps.pin.outputs.tag }}
@@ -64,6 +61,13 @@ jobs:
     # gate's notice.
     if: github.ref == 'refs/heads/main' && needs.gate.outputs.configured == 'true'
     steps:
+      # The runner context is not available in a job-level env block, so the
+      # two input paths are named in the first step instead.
+      - name: Name the payload inputs
+        run: |
+          echo "DAEMON_ARCHIVE=$RUNNER_TEMP/daemon.tar.gz" >> "$GITHUB_ENV"
+          echo "PAYLOAD_BINARIES=$RUNNER_TEMP/payload-binaries" >> "$GITHUB_ENV"
+
       # A depth-one checkout is enough: the release key reads the base inputs'
       # Git object ids directly from HEAD and never needs a merge base.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -233,9 +237,6 @@ jobs:
     needs: [gate, image]
     runs-on: ubuntu-latest
     environment: canary
-    env:
-      DAEMON_ARCHIVE: ${{ runner.temp }}/daemon.tar.gz
-      PAYLOAD_BINARIES: ${{ runner.temp }}/payload-binaries
     outputs:
       ref: ${{ steps.pin.outputs.ref }}
       version: ${{ steps.pin.outputs.version }}
@@ -247,6 +248,13 @@ jobs:
     # the image was stamped with.
     if: github.ref == 'refs/heads/main' && needs.gate.outputs.configured == 'true'
     steps:
+      # The runner context is not available in a job-level env block, so the
+      # two input paths are named in the first step instead.
+      - name: Name the payload inputs
+        run: |
+          echo "DAEMON_ARCHIVE=$RUNNER_TEMP/daemon.tar.gz" >> "$GITHUB_ENV"
+          echo "PAYLOAD_BINARIES=$RUNNER_TEMP/payload-binaries" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

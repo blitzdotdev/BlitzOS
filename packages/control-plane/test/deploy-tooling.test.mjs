@@ -653,3 +653,22 @@ test("rollbackTarget refuses when nothing earlier exists", () => {
 test("rollbackTarget rejects an empty list", () => {
   assert.throws(() => rollbackTarget([]), /no deployments/u);
 });
+
+test("no workflow job-level env uses the runner context, which GitHub does not allow there", () => {
+  for (const file of ["canary.yml", "release.yml"]) {
+    const text = readFileSync(path.join(repositoryDirectory, ".github/workflows", file), "utf8");
+    const lines = text.split("\n");
+    let job = null;
+    let inJobEnv = false;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      const jobMatch = /^  ([a-z_-]+):$/u.exec(line);
+      if (jobMatch !== null) { job = jobMatch[1]; inJobEnv = false; continue; }
+      if (line === "    env:") { inJobEnv = true; continue; }
+      if (inJobEnv && !line.startsWith("      ")) inJobEnv = false;
+      if (inJobEnv && line.includes("${{ runner.")) {
+        assert.fail(`${file}:${i + 1} job ${job} uses the runner context in a job-level env`);
+      }
+    }
+  }
+});
