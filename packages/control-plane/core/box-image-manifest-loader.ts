@@ -13,7 +13,8 @@ export const BOX_IMAGE_MANIFEST_LOADER_PATH = "/usr/local/libexec/blitz-box-imag
 export const BOX_IMAGE_MANIFEST_LOADER_INSTALL = String.raw`install -d -m 0755 /usr/local/libexec
 cat >${BOX_IMAGE_MANIFEST_LOADER_PATH} <<'BOX_IMAGE_MANIFEST_LOADER'
 download() {
-  curl --fail --location --retry 10 --retry-all-errors --retry-delay 3 \
+  curl --fail --location --connect-timeout 10 --max-time 300 \
+    --retry 10 --retry-all-errors --retry-delay 3 \
     --silent --show-error --output "$2" "$1"
 }
 

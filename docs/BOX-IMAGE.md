@@ -365,7 +365,8 @@ image until recreation.
 
 `BOX_PAYLOAD_REF` and `BOX_PAYLOAD_VERSION` affect existing machines. Their
 updaters poll box config, verify and apply the content-addressed release, and
-report the running payload and daemon versions. To roll back, restore **both**
+report the running payload and daemon versions. An unacknowledged report is
+kept in updater state and retried before the next poll does new work. To roll back, restore **both**
 vars from the previous immutable payload release and redeploy. A lower version
 is an ordinary target, so machines apply it on their next poll. Do not replace
 objects under the current version; publish another content hash.

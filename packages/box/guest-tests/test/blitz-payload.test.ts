@@ -53,6 +53,7 @@ interface PayloadState {
   current: string;
   daemonVersion: string;
   failed?: FailedPayloadState;
+  unsentResult?: PayloadResult;
 }
 
 interface RunResult {
@@ -69,6 +70,8 @@ interface HarnessOptions {
   manifestStatus?: number;
   expectedToken?: string;
   health?: (currentTarget: string) => boolean;
+  oversizedConfig?: boolean;
+  resultStatus?: number;
 }
 
 const temporaryDirectories: string[] = [];
@@ -267,6 +270,11 @@ class Harness {
         response.end();
         return;
       }
+      if (this.options.oversizedConfig === true) {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        for (let index = 0; index < 17; index += 1) response.write(Buffer.alloc(64 * 1024));
+        return;
+      }
       const pinVersion = this.options.pinVersion === undefined
         ? this.options.release?.version ?? null
         : this.options.pinVersion;
@@ -312,7 +320,7 @@ class Harness {
         // SAFETY: the real updater is the only request producer in this test;
         // each assertion below validates the contract fields it relies on.
         this.results.push(JSON.parse(source) as PayloadResult);
-        response.writeHead(204);
+        response.writeHead(this.options.resultStatus ?? 204);
         response.end();
       });
       return;
@@ -716,6 +724,48 @@ describe("blitz-payload", () => {
     }
   });
 
+  it("aborts a JSON response as soon as it exceeds the one MiB cap", async () => {
+    const harness = new Harness({ oversizedConfig: true });
+    await harness.start();
+
+    const run = await runUpdater(harness, 3000, { BLITZ_PAYLOAD_REQUEST_TIMEOUT: "2" });
+
+    expect(run.status, run.stderr).toBe(0);
+    expect(run.elapsedMs).toBeLessThan(1000);
+    expect(harness.results.at(-1)).toMatchObject({
+      version: BAKED_PAYLOAD_VERSION,
+      outcome: "fetch-failed",
+      detail: "box-config body is too large",
+    });
+  });
+
+  it("retries the last unsent result before doing new work", async () => {
+    const harness = new Harness({
+      pinVersion: BAKED_PAYLOAD_VERSION,
+      resultStatus: 503,
+    });
+    await harness.start();
+
+    await expectOneOutcome(harness, "booted");
+    const queued = harness.state().unsentResult;
+    expect(queued).toMatchObject({
+      version: BAKED_PAYLOAD_VERSION,
+      outcome: "booted",
+    });
+    const requestCount = harness.requests.length;
+
+    harness.options.resultStatus = 204;
+    const retry = await runUpdater(harness);
+    expect(retry.status, retry.stderr).toBe(0);
+
+    expect(harness.requests.slice(requestCount, requestCount + 2)).toEqual([
+      "POST /workspaces/self/payload-result",
+      "GET /workspaces/self/box-config",
+    ]);
+    expect(harness.results[1]).toEqual(queued);
+    expect(harness.state().unsentResult).toBeUndefined();
+  });
+
   it("does no download or restart when the pin is up to date", async () => {
     const harness = new Harness({ pinVersion: BAKED_PAYLOAD_VERSION });
     await harness.start();
@@ -734,7 +784,7 @@ describe("blitz-payload", () => {
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => { stderr += chunk; });
-    await new Promise((resolve) => setTimeout(resolve, 280));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     child.kill("SIGTERM");
     await new Promise<void>((resolve) => child.once("close", () => resolve()));
 

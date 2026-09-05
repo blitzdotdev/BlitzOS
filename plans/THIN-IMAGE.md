@@ -151,6 +151,9 @@ Failed target versions are locally rate-limited. `verify-failed`, `rolled-back`,
 `failed: {version, outcome, at}` in `state.json`; the same pin is not
 attempted or reported again for six hours. A different pin is attempted at
 once, and returning the pin to the running version clears the failure.
+The last unacknowledged result remains in `state.json`; each tick retries it
+before fetching new configuration or replacing it with a newer result.
+JSON responses are streamed into a 1 MiB cap rather than buffered first.
 
 `/var/lib/blitz/payload/log` records the boot report, every outcome transition,
 and an unchanged `tick: up-to-date <version>` heartbeat at most once per hour.

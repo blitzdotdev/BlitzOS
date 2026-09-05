@@ -35,6 +35,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MODE_PATTERN = /^[0-7]{4}$/u;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 const HTTP_URL_PATTERN = /^https?:\/\/[^/\s?#]+(?:[/?][^\s#]*)?$/u;
+const JSON_MAX_BYTES = 1024 * 1024;
 const LOG_MAX_BYTES = 1024 * 1024;
 const FAILED_RETRY_MS = 6 * 60 * 60 * 1000;
 const QUIET_LOG_INTERVAL_MS = 60 * 60 * 1000;
@@ -400,17 +401,22 @@ async function fetchJson(url, options, label, timeoutMs) {
     throw new FetchFailure(`${label} fetch failed: ${errorMessage(error)}`);
   }
   if (!response.ok) throw new FetchFailure(`${label} returned HTTP ${response.status}`);
-  let source;
+  if (response.body === null) throw new FetchFailure(`${label} returned no body`);
+  const chunks = [];
+  let bytes = 0;
   try {
-    source = await response.text();
+    for await (const piece of response.body) {
+      const chunk = Buffer.from(piece);
+      bytes += chunk.length;
+      if (bytes > JSON_MAX_BYTES) throw new VerifyFailure(`${label} body is too large`);
+      chunks.push(chunk);
+    }
   } catch (error) {
+    if (error instanceof VerifyFailure) throw error;
     throw new FetchFailure(`${label} body failed: ${errorMessage(error)}`);
   }
-  if (Buffer.byteLength(source) > 1024 * 1024) {
-    throw new VerifyFailure(`${label} body is too large`);
-  }
   try {
-    return JSON.parse(source);
+    return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8'));
   } catch {
     throw new VerifyFailure(`${label} is not JSON`);
   }
@@ -427,10 +433,40 @@ async function postResult(origin, token, result, config) {
       body: JSON.stringify(parseResult(result)),
       signal: AbortSignal.timeout(config.requestTimeoutMs),
     });
-    if (!response.ok) log(`result report returned HTTP ${response.status}`);
+    if (!response.ok) {
+      log(`result report returned HTTP ${response.status}`);
+      return false;
+    }
+    return true;
   } catch (error) {
     log(`result report failed (${errorMessage(error)})`);
+    return false;
   }
+}
+
+async function deliverResult(origin, token, state, result, config) {
+  const queued = { ...state, unsentResult: result };
+  await writeState(config, queued);
+  if (!await postResult(origin, token, result, config)) {
+    return { state: queued, delivered: false };
+  }
+  const delivered = { ...queued };
+  delete delivered.unsentResult;
+  await writeState(config, delivered);
+  return { state: delivered, delivered: true };
+}
+
+async function resendQueuedResult(origin, token, state, config) {
+  if (state.unsentResult === null || typeof state.unsentResult !== 'object') {
+    return { state, delivered: true };
+  }
+  if (!await postResult(origin, token, state.unsentResult, config)) {
+    return { state, delivered: false };
+  }
+  const delivered = { ...state };
+  delete delivered.unsentResult;
+  await writeState(config, delivered);
+  return { state: delivered, delivered: true };
 }
 
 async function linkInfo(linkPath) {
@@ -1484,6 +1520,12 @@ async function tick(config) {
     log(`idle (bearer unavailable: ${errorMessage(error)})`);
     return;
   }
+  const resent = await resendQueuedResult(origin, token, state, config);
+  state = resent.state;
+  if (!resent.delivered) {
+    await garbageCollect(config, state);
+    return;
+  }
 
   let pin;
   try {
@@ -1502,7 +1544,7 @@ async function tick(config) {
       errorMessage(error),
     );
     state = failure.state;
-    await postResult(origin, token, failure.result, config);
+    state = (await deliverResult(origin, token, state, failure.result, config)).state;
     await garbageCollect(config, state);
     return;
   }
@@ -1520,9 +1562,14 @@ async function tick(config) {
       bootDetail,
     );
     state = boot.state;
-    await postResult(origin, token, boot.result, config);
+    const delivered = await deliverResult(origin, token, state, boot.result, config);
+    state = delivered.state;
     bootReportPending = false;
     reportedBoot = true;
+    if (!delivered.delivered) {
+      await garbageCollect(config, state);
+      return;
+    }
   }
   state = await reconcileFailedPin(config, state, pin);
   if (pin === null) {
@@ -1538,7 +1585,7 @@ async function tick(config) {
         'payload pin is already current',
       );
       state = current.state;
-      await postResult(origin, token, current.result, config);
+      state = (await deliverResult(origin, token, state, current.result, config)).state;
     }
     await garbageCollect(config, state);
     return;
@@ -1573,7 +1620,7 @@ async function tick(config) {
     );
   }
   state = applied.state;
-  await postResult(origin, token, applied.result, config);
+  state = (await deliverResult(origin, token, state, applied.result, config)).state;
   await garbageCollect(config, state);
 }
 

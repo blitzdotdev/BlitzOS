@@ -584,7 +584,9 @@ write_files:
     expect(userData).toContain(`readonly BOX_IMAGE_REF='${imageUrl}'`);
     expect(userData).toContain(`readonly BOX_IMAGE_TAG='${BOX_IMAGE_TAG}'`);
     expect(userData).toContain(`readonly BOX_IMAGE_SHA256='${BOX_IMAGE_SHA256}'`);
-    expect(userData).toContain('curl --fail --location --retry 10 --retry-all-errors');
+    expect(userData).toContain(
+      'curl --fail --location --connect-timeout 10 --max-time 300',
+    );
     expect(userData).toContain('verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"');
     expect(userData).toContain('gunzip -c "$image_archive" | docker load');
     expect(userData).toContain('"$BOX_IMAGE_TAG"');
