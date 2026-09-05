@@ -31,6 +31,23 @@ export function monthlyPriceLabel(price: MachinePrice | null | undefined): strin
   return `${amount}/mo`;
 }
 
+/**
+ * The line under a stand-in card, for example
+ * "stands in for cx33, sold out in hel1".
+ *
+ * The control plane deploys on its own clock, so this reads a field that an
+ * older server never sends. Undefined and null both mean "not a stand-in" and
+ * the caller shows no line at all.
+ */
+export function standInLabel(
+  standsInFor: string | null | undefined,
+  location: string,
+): string | null {
+  if (standsInFor === null || standsInFor === undefined || standsInFor === '') return null;
+  const where = location === '' ? 'sold out here' : `sold out in ${location}`;
+  return `stands in for ${standsInFor}, ${where}`;
+}
+
 function machineGroup(machine: MachineType): string {
   const location = machine.location || machine.id.split('@').at(-1) || 'unknown';
   if (machine.providerId === 'hetzner') return `Hetzner · ${location}`;
@@ -96,6 +113,14 @@ export function MachineCatalogGrid({
                     <span className="blueprint-machine-spec">
                       {machine.cpuCores} vCPU · {machine.memGb} GB RAM · {machine.diskGb} GB disk
                     </span>
+                    {/* A stand-in costs several times what the entry it
+                      * replaces costs, so the card says which entry is sold
+                      * out. A price jump with no reason reads as a mistake. */}
+                    {machine.standsInFor !== null && machine.standsInFor !== undefined && (
+                      <span className="blueprint-machine-standin">
+                        {standInLabel(machine.standsInFor, machine.location)}
+                      </span>
+                    )}
                   </span>
                   <span className="blueprint-machine-facts">
                     <span>{machine.arch}</span>

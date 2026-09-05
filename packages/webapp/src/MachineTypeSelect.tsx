@@ -1,5 +1,5 @@
 import type { MachineType } from '@blitzos/schema';
-import { groupMachineTypes, monthlyPriceLabel } from './MachineCatalogGrid';
+import { groupMachineTypes, monthlyPriceLabel, standInLabel } from './MachineCatalogGrid';
 import { WebAppSelectMenu, type CockpitSelectOption } from './WebAppSelectMenu';
 
 /** The value that means "no per-member override": the machine takes whatever
@@ -16,7 +16,11 @@ function locationOf(machine: MachineType): string {
 function optionDescription(machine: MachineType): string {
   const price = monthlyPriceLabel(machine.monthlyPrice);
   const spec = `${String(machine.cpuCores)} vCPU · ${String(machine.memGb)} GB RAM`;
-  return price === null ? spec : `${spec} · ${price}`;
+  const priced = price === null ? spec : `${spec} · ${price}`;
+  // The same reason the card carries it: a row that costs four times its
+  // neighbour must say why, in the compact picker too.
+  const standIn = standInLabel(machine.standsInFor, locationOf(machine));
+  return standIn === null ? priced : `${priced} · ${standIn}`;
 }
 
 /**

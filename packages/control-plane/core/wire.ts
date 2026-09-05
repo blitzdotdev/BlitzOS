@@ -207,6 +207,20 @@ export interface MachineType {
    * once, and silence let a provider ship a blank price with no decision
    * behind it. */
   monthlyPrice: MachinePrice | null;
+  /** The sold-out server type this machine stands in for, or null when the
+   * machine is offered in its own right.
+   *
+   * A vendor sells more than one line. Hetzner prices its cost-optimized line
+   * (cx) at about a quarter of its regular line (cpx), and sells out of it
+   * often. When a catalog entry has no stock in a location, the provider
+   * offers the regular type with the same RAM in that SAME location and names
+   * the entry it replaces here. The card then says why it costs four times as
+   * much, instead of the entry disappearing with no word.
+   *
+   * The value is the sold-out type's own name, for example "cx33". The
+   * location is not repeated: a stand-in never leaves the location it stands
+   * in for, and `location` already carries it. */
+  standsInFor: string | null;
 }
 
 export interface MachineTypeProviderFailure {

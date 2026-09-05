@@ -16,6 +16,7 @@ const machineType: SharedShape<wire.MachineType, schema.MachineType> = {
   arch: "x86",
   location: "us-east-1",
   monthlyPrice: null,
+  standsInFor: null,
 };
 
 // The machine literal above declares no price, so the priced shape needs its

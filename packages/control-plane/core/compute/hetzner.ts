@@ -4,11 +4,21 @@ import { fetchBoundedJson, type Fetcher } from "./json-fetch.js";
 import {
   HETZNER_STOCK_IMAGE,
   HETZNER_USER_DATA_MAX_BYTES,
+  annotateServerTypeIds,
+  hetznerCatalogWithStandIns,
+  hetznerFailure,
   hetznerMachineTypeAllowlistFromEnv,
   hetznerServerImagesFromEnv,
+  isDeprecated,
   machineId,
+  numberField,
+  records,
+  serverTypeIds,
+  stringField,
   SERVER_TYPE_NAME_PATTERN,
   LOCATION_NAME_PATTERN,
+  type HetznerOffer,
+  type HetznerTypeSpec,
   type HetznerWarningSink,
 } from "./hetzner-config.js";
 import type {
@@ -109,29 +119,6 @@ function abortable<T>(
   });
 }
 
-function records(value: unknown, field: string): Record<string, unknown>[] {
-  if (!isRecord(value) || !Array.isArray(value[field])) {
-    throw new Error(`invalid Hetzner ${field} response`);
-  }
-  return value[field].filter(isRecord);
-}
-
-function stringField(value: Record<string, unknown>, field: string): string {
-  const result = value[field];
-  if (!isString(result)) throw new Error(`invalid Hetzner ${field}`);
-  return result;
-}
-
-function numberField(value: Record<string, unknown>, field: string): number {
-  const result = value[field];
-  if (!isNumber(result)) throw new Error(`invalid Hetzner ${field}`);
-  return result;
-}
-
-function isDeprecated(value: Record<string, unknown>): boolean {
-  return value.deprecated === true || isRecord(value.deprecation);
-}
-
 /** Carries Hetzner's machine-readable error code beside the message, so a
  * caller can tell a definitive pre-creation refusal from anything else.
  * Existing catchers read `.message` only and are unaffected. */
@@ -140,44 +127,6 @@ export class HetznerApiError extends Error {
     super(message);
     this.name = "HetznerApiError";
   }
-}
-
-/** A Hetzner failure body, parsed at the boundary into a named shape. `code`
- * is the machine-readable reason, which tells a definitive pre-creation
- * refusal apart from anything else. Either field is null when the body does
- * not state it. */
-interface HetznerFailure {
-  message: string | null;
-  code: string | null;
-}
-
-function hetznerFailure(value: unknown): HetznerFailure {
-  const error = isRecord(value) && isRecord(value.error) ? value.error : null;
-  if (error === null) return { message: null, code: null };
-  const raw = isString(error.message)
-    ? error.message.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim()
-    : "";
-  return {
-    message: raw === "" ? null : raw.slice(0, 1_024),
-    code: isString(error.code) ? error.code : null,
-  };
-}
-
-function annotateServerTypeIds(
-  message: string,
-  names: ReadonlyMap<number, string>,
-): string {
-  return message.replace(/\bserver type (\d+)\b/giu, (match, rawId: string) => {
-    const name = names.get(Number(rawId));
-    return name === undefined ? match : `${match} (${name})`;
-  });
-}
-
-function serverTypeIds(message: string): number[] {
-  const ids = [...message.matchAll(/\bserver type (\d+)\b/giu)]
-    .map((match) => Number(match[1]))
-    .filter((id) => Number.isSafeInteger(id) && id > 0);
-  return [...new Set(ids)].slice(0, 8);
 }
 
 function volumeFromHetzner(value: Record<string, unknown>): Volume {
@@ -194,12 +143,17 @@ function volumeFromHetzner(value: Record<string, unknown>): Volume {
 
 export {
   DEFAULT_HETZNER_MACHINE_TYPES,
+  HETZNER_COST_OPTIMIZED,
+  HETZNER_REGULAR_PURPOSE,
   HETZNER_STOCK_IMAGE,
   HETZNER_USER_DATA_MAX_BYTES,
+  hetznerCatalogWithStandIns,
   hetznerMachineTypeAllowlistFromEnv,
   hetznerServerImagesFromEnv,
 } from "./hetzner-config.js";
 export type {
+  HetznerOffer,
+  HetznerTypeSpec,
   HetznerMachineTypeCatalogWarning,
   HetznerPriceCurrencyWarning,
   HetznerProviderWarning,
@@ -417,7 +371,27 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
         this.serverTypeNames.set(id, name);
       }
     }
-    return types.flatMap((type) => {
+    // Every type this account could name, whether or not it is in stock. The
+    // stand-in rule needs the sold-out entry's line and size, and the only
+    // place those live is the type Hetzner just sent. `category` is Hetzner's
+    // own name for the line: `cost_optimized` (cx, cax), `regular_purpose`
+    // (cpx) or `general_purpose` (ccx). Absent reads as unknown, and unknown
+    // is deliberately not fatal — every other field here throws on absence
+    // because the card cannot be drawn without it, but this one only decides
+    // whether a type may stand in, so a vendor that stops sending it costs the
+    // stand-in and not the create page.
+    const specs = new Map<string, HetznerTypeSpec>();
+    for (const type of types) {
+      if (isDeprecated(type)) continue;
+      const name = stringField(type, "name");
+      if (name === "") continue;
+      specs.set(name, {
+        category: isString(type.category) ? type.category : "",
+        cpuCores: numberField(type, "cores"),
+        memGb: numberField(type, "memory"),
+      });
+    }
+    const available = types.flatMap((type) => {
       if (isDeprecated(type)) return [];
       const locations = Array.isArray(type.locations)
         ? type.locations
@@ -434,8 +408,8 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
         // string, so it becomes a number here and the browser never parses a
         // price. Number(" ") is 0, so a blank string must not sell a machine
         // for nothing. A malformed row leaves the price out, because a wrong
-        // number costs the customer more than a blank card corner does.
-        // An unnamed currency does the same: an amount with the wrong sign in
+        // number costs the customer more than a blank card corner does. An
+        // unnamed currency does the same: an amount with the wrong sign in
         // front of it is the defect this code exists to stop.
         const monthly = prices.find((price) => price.location === locationName)?.price_monthly;
         const gross = isRecord(monthly) && isString(monthly.gross) ? monthly.gross.trim() : "";
@@ -444,17 +418,23 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
           ? { amount, currency }
           : null;
         return {
-          id: `${name}@${locationName}`,
-          name,
-          cpuCores: numberField(type, "cores"),
-          memGb: numberField(type, "memory"),
-          diskGb: numberField(type, "disk"),
-          arch: architecture === "arm" ? "arm64" : "x86",
-          location: locationName,
-          monthlyPrice,
-        } satisfies ProviderMachineType;
+          category: isString(type.category) ? type.category : "",
+          machineType: {
+            id: `${name}@${locationName}`,
+            name,
+            cpuCores: numberField(type, "cores"),
+            memGb: numberField(type, "memory"),
+            diskGb: numberField(type, "disk"),
+            arch: architecture === "arm" ? "arm64" : "x86",
+            location: locationName,
+            monthlyPrice,
+            // A card is a stand-in only when the rule below makes it one.
+            standsInFor: null,
+          } satisfies ProviderMachineType,
+        } satisfies HetznerOffer;
       });
-    }).filter((machineType) => this.machineTypeAllowlist.has(machineType.id));
+    });
+    return hetznerCatalogWithStandIns(available, specs, this.machineTypeAllowlist);
   }
 
   async createVm(input: CreateVmInput): Promise<CreatedVm> {

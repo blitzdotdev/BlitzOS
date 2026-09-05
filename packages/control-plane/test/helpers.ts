@@ -115,6 +115,7 @@ export class FakeProviders implements VmProvider, VolumeProvider {
         arch: "x86",
         location: "test",
         monthlyPrice: null,
+        standsInFor: null,
       },
     ];
   }

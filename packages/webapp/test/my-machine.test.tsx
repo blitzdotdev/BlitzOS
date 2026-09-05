@@ -25,6 +25,7 @@ const machineTypes: MachineType[] = [
     arch: 'x86',
     location: 'fsn1',
     monthlyPrice: { amount: 6.49, currency: 'USD' },
+    standsInFor: null,
   },
 ];
 
@@ -46,6 +47,7 @@ const catalogResponse: ListMachineTypesResponse = {
     arch: 'x86',
     location: 'hel1',
     monthlyPrice: { amount: 9.99, currency: 'USD' },
+    standsInFor: null,
   }],
   failures: [],
   providerStatuses: [{ providerId: 'hetzner', access: 'deployment' }],
