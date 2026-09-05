@@ -154,8 +154,9 @@ describe('the settings navigation', () => {
       'Profile', 'Members', 'Connections', 'Credentials', 'Compute',
     ]);
     expect(view.container.querySelector('[aria-label="Members"]')).not.toBeNull();
-    // The four sections this page absorbed or retired name nothing here.
-    for (const gone of ['Members', 'Invites', 'Requests', 'Usage']) {
+    // The three sections this page absorbed or retired name nothing here.
+    // `Members` is not among them: it is what the merged page is called.
+    for (const gone of ['Invites', 'Requests', 'Usage']) {
       expect(labels(view.container)).not.toContain(gone);
     }
     await view.unmount();
