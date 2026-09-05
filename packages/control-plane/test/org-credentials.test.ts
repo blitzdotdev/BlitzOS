@@ -346,6 +346,85 @@ describe("org credentials: session plane (§7)", () => {
       ]);
   });
 
+  it("keeps unchanged stale grants and validates every inserted grant", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const teammate = await sameOrgSession("later-grantee");
+    const createdWorkspace = await appRequest(app, "/workspaces", {
+      ...json({ defaultMachineTypeId: "small" }, "POST"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const workspaceId = (
+      await createdWorkspace.json<{ workspace: { id: string } }>()
+    ).workspace.id;
+    const workspaceGrant = {
+      subjectKind: "workspace" as const,
+      subjectId: workspaceId,
+      access: "read" as const,
+    };
+    const teammateGrant = {
+      subjectKind: "membership" as const,
+      subjectId: teammate.membershipId,
+      access: "write" as const,
+    };
+
+    expect((await appRequest(app, "/orgs/self/credentials", {
+      ...json({ name: "STALE_WORKSPACE_KEY", value: "secret", grants: [workspaceGrant] }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    })).status).toBe(201);
+    const deletedAt = Date.now();
+    await env.DB.prepare(
+      `UPDATE workspaces
+       SET deleted_at = ?1, revision = revision + 1, updated_at = ?1
+       WHERE id = ?2`,
+    ).bind(deletedAt, workspaceId).run();
+
+    const replaced = await appRequest(
+      app,
+      "/orgs/self/credentials/STALE_WORKSPACE_KEY/grants",
+      {
+        ...json({ grants: [workspaceGrant, teammateGrant] }),
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+      },
+    );
+    expect(replaced.status).toBe(200);
+    expect((await replaced.json<PutOrgCredentialResponse>()).credential.grants).toEqual([
+      teammateGrant,
+      workspaceGrant,
+    ]);
+
+    const neverInOrgId = "workspace-never-in-org";
+    const outside = await appRequest(
+      app,
+      "/orgs/self/credentials/STALE_WORKSPACE_KEY/grants",
+      {
+        ...json({ grants: [workspaceGrant, teammateGrant, {
+          subjectKind: "workspace",
+          subjectId: neverInOrgId,
+          access: "read",
+        }] }),
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+      },
+    );
+    expect(outside.status).toBe(400);
+    expect((await outside.json<{ error: string }>()).error).toBe(
+      `grant subject is not in this organization: workspace:${neverInOrgId}`,
+    );
+
+    const changed = await appRequest(
+      app,
+      "/orgs/self/credentials/STALE_WORKSPACE_KEY/grants",
+      {
+        ...json({ grants: [{ ...workspaceGrant, access: "write" }, teammateGrant] }),
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+      },
+    );
+    expect(changed.status).toBe(400);
+    expect((await changed.json<{ error: string }>()).error).toBe(
+      `grant subject is not in this organization: workspace:${workspaceId}`,
+    );
+  });
+
   it("enforces the caps and the name rule", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);

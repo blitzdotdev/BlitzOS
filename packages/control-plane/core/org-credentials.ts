@@ -436,6 +436,15 @@ export interface OrgCredentialGrantReplacement {
   grants: readonly OrgCredentialGrantView[];
 }
 
+/** The grants this replacement will INSERT. A grant the credential already
+ * carries at the same level is kept, and is not written again. */
+function addedGrants(replacement: OrgCredentialGrantReplacement): OrgCredentialGrantView[] {
+  const currentByKey = new Set(
+    replacement.credential.grants.map((grant) => grantKey(grantView(grant))),
+  );
+  return replacement.grants.filter((grant) => !currentByKey.has(grantKey(grant)));
+}
+
 function grantReplacementQueries(
   replacement: OrgCredentialGrantReplacement,
   actingMembershipId: string,
@@ -443,13 +452,10 @@ function grantReplacementQueries(
 ): Query[] {
   const { credential, grants } = replacement;
   const nextByKey = new Map(grants.map((grant) => [grantKey(grant), grant]));
-  const currentByKey = new Map(
-    credential.grants.map((grant) => [grantKey(grantView(grant)), grant]),
-  );
   const removed = credential.grants.filter(
     (grant) => !nextByKey.has(grantKey(grantView(grant))),
   );
-  const added = grants.filter((grant) => !currentByKey.has(grantKey(grant)));
+  const added = addedGrants(replacement);
   return [
     ...removed.map((grant): Query => ({
       q: "DELETE FROM org_credential_grants WHERE id = ?1",
@@ -479,9 +485,10 @@ function grantReplacementQueries(
   ];
 }
 
-/** Replaces several credentials' grant sets in one transaction. Validation
- * covers the whole batch before any write; every actual add or remove writes
- * its `credential_events` row, while kept grants retain their provenance. */
+/** Replaces several credentials' grant sets in one transaction. Every actual
+ * add or remove writes its `credential_events` row, while kept grants retain
+ * their provenance. Only the grants this write INSERTS are validated; the cap
+ * still counts the whole set. `assertGrantSubjects` says why. */
 export async function replaceOrgCredentialGrantSets(
   runtime: CoreRuntime,
   orgId: string,
@@ -503,7 +510,7 @@ export async function replaceOrgCredentialGrantSets(
   await assertGrantSubjects(
     runtime.db,
     orgId,
-    replacements.flatMap(({ grants }) => grants),
+    replacements.flatMap(addedGrants),
   );
   const statements = [
     ...replacements.flatMap((replacement) =>
@@ -561,8 +568,17 @@ export async function invalidGrantSubjects(
   return invalid;
 }
 
-/** Subjects validate at write time; the first invalid one refuses the set. A
- * member who leaves later fails resolution at read time regardless. */
+/** Refuses a set that names a subject outside the organization. The caller
+ * passes the grants it will INSERT, and no others.
+ *
+ * A SUBJECT IS CHECKED WHEN IT IS WRITTEN, NOT WHEN IT IS KEPT. Deleting a
+ * workspace leaves its grant rows behind. The access editor hides a subject it
+ * cannot name, and still sends that grant back (`namedAccessSubjects` in the
+ * webapp). Checking a kept grant therefore refused every later edit of that
+ * credential's audience. No row on screen explained the refusal.
+ *
+ * A stale grant gives nobody anything. `orgCredentialAccess` needs a resolved
+ * active membership. A deleted workspace is never a caller's workspace. */
 async function assertGrantSubjects(
   db: Db,
   orgId: string,
