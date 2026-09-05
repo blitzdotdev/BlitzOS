@@ -22,9 +22,6 @@ export interface ListMachineTypesResponse {
 }
 
 export interface CreateWorkspaceRequest {
-  /** Legacy spelling of `defaultMachineTypeId`; either satisfies the
-   * requirement, and `defaultMachineTypeId` wins when both are sent. */
-  machineTypeId?: string;
   /** The default a machine takes when nothing else names one. */
   defaultMachineTypeId?: string;
   /** Provision and start a machine on every member add. Default true. */
@@ -40,12 +37,8 @@ export interface CreateWorkspaceRequest {
   }[];
   /** Copies config — default machine type, agent rule, repos — and neither
    * members nor credentials (credentials are org-scoped now,
-   * plans/ORG-CREDENTIALS.md §3). The workspace is the template now, so this
-   * is "new workspace from existing". */
+   * plans/ORG-CREDENTIALS.md §3). */
   cloneFromWorkspaceId?: string;
-  /** Retired with the template tables (plans/MEMBER-MACHINES.md §0). Sending
-   * one is refused rather than ignored. */
-  templateId?: string;
   /** Optional display name; blank means the server picks a random one. */
   name?: string;
   volumeId?: string;

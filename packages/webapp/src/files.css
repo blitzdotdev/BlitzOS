@@ -157,7 +157,7 @@
     display: none;
   }}
 
-/* ================= blitz additions: identity + drive surfaces ============ */
+/* ================= blitz additions: identity + workspace surfaces ======== */
 
 /* Editorial paper (plans/mockups/workspace-tabs-editorial.html) on the app's
  * neutral palette: sections are soft ink washes, controls are pills, status
@@ -412,10 +412,7 @@
 }
 
 /* ------------------------------------------------------- connection tiles */
-/* The provider list is built from the shapes the create-workspace pages
- * already use: the tile is .template-tile, the state strip under it is
- * .blueprint-machine-facts, the chip is .tplf-chip, and connected wears the
- * 1px inset ring that marks a chosen template tile. Nothing here is new.
+/* The provider list reuses the create-workspace state-strip vocabulary.
  *
  * Every card in the connections column is one of these tiles: the provider
  * row, the request an agent filed, and the credential log entry. They used to

@@ -448,7 +448,7 @@ describe("the reskin reaches nothing outside the vendored zone", () => {
    */
   const NATIVE_PROBES = `
     <div id="root">
-      <div class="drive-shell">
+      <div class="app-shell">
         <aside class="shell-strip"><button class="shell-wtile"></button></aside>
         <aside class="session-rail">
           <div class="shell-rhead"><b>Workspace</b><span class="shell-rhead__sub"></span>

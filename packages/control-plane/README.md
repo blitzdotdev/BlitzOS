@@ -4,14 +4,13 @@ The workspace engine for fleets on your cloud.
 
 Self-hosters set `APP_URL` to their Worker origin.
 
-- The workspace API: create (machine shape + ssh pubkey + optional volume +
-  optional user-data) · poll (the only authoritative read) · destroy
+- The workspace API: create (organization + optional default machine type) ·
+  poll (the only authoritative read) · destroy
   (idempotent, tombstone). The workspace view carries the public SSH endpoint
   and pinned host key.
 - The server owns the workspace view. Clients render it. Monotonic revision.
-- Two provider seams: `VmProvider` and `VolumeProvider`. Hetzner, AWS
-  (EC2/EBS), and microVM pool adapters are included. Your cloud = one adapter
-  file, not a fork.
+- Two provider seams: `VmProvider` and `VolumeProvider`. Hetzner and AWS
+  (EC2/EBS) adapters are included. Your cloud = one adapter file, not a fork.
 - Volumes are raw cloud primitives, passed through — no shadow tables. A
   volume survives workspace destroy.
 - Readiness = the VM bootstrap posts box host keys to a single-use capability
@@ -59,31 +58,6 @@ and have the first admin sign in at
 `/auth/google/start?bootstrap=<OPERATOR_API_KEY>` to claim the legacy
 operator-owned rows and become the platform operator.
 
-`MICROVM_HOSTS` is a non-secret JSON array. The primary production shape is a
-pinned host with exactly `name`, `url`, and `tokenVar`; `tokenVar` names a
-Worker secret binding whose value is the host agent Bearer token. Use this for
-the intended large AWS, Hetzner, or bare-metal host at a stable URL:
-
-```toml
-MICROVM_HOSTS = '[{"name":"lab","url":"https://microvm-lab.example","tokenVar":"MICROVM_LAB_TOKEN"}]'
-```
-
-Only a home-lab/NAT host using a rotating Cloudflare Quick Tunnel should omit
-`url` and instead set exactly `{name,tokenVar,dynamic:true}`. That host reports
-its current HTTPS URL to `POST /hosts/:name/register` with its own Bearer token.
-Pinned hosts reject registration and are refreshed into D1 from configuration
-on every request, so the dynamic path does not alter their behavior.
-
-Set the referenced value as a secret, never inside `MICROVM_HOSTS`:
-
-```sh
-npx wrangler secret put MICROVM_LAB_TOKEN --config packages/control-plane/wrangler.toml
-```
-
-Machine IDs are `mv-<cpu>c<memGb>g@<hostName>`. The included pool sizes are
-`2c2g` and `2c4g`; they appear only while the selected host's live
-`/v1/capacity` response has enough CPU, memory, and a VM slot.
-
 ## AWS provider (EC2 and EBS)
 
 The AWS adapter is optional and joins the VM registry only when its variables
@@ -103,7 +77,7 @@ Machine IDs are `aws-<ec2InstanceType>@<region>`, for example
 `aws-t3.medium@us-east-1`; the curated catalog is `t3.medium`, `t3.large`,
 `m6i.large`, and `m6i.xlarge`, x86_64 only because the published box image is an
 amd64 tag. VM IDs are the raw EC2 instance ID (`i-` plus 8 or 17 hex digits),
-which cannot collide with Hetzner's numeric IDs or microVM's `microvm:` IDs.
+which cannot collide with Hetzner's numeric IDs.
 Requests are signed with a hand-rolled SigV4 on Web Crypto — the control-plane
 core may not import npm packages — and EC2's XML replies are read by a small
 targeted scanner, both under `core/compute/`.

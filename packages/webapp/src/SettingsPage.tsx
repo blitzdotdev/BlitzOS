@@ -9,7 +9,6 @@ import { OrgCredentialsPanel } from './settings/OrgCredentialsPanel';
 import { RequestsPanel } from './settings/RequestsPanel';
 import { MembersPanel } from './settings/MembersPanel';
 import { InvitesPanel } from './settings/InvitesPanel';
-import { UsagePanel } from './settings/UsagePanel';
 import { ComputeCredentialsPanel } from './settings/ComputeCredentialsPanel';
 import { PanelHeader } from './settings/primitives';
 
@@ -60,7 +59,7 @@ function OrganizationsSection({
                     </span>
                   )}
                 </div>
-                {current && <p>Workspaces, Drive and connections act in this organization.</p>}
+                {current && <p>Workspaces and connections act in this organization.</p>}
               </div>
               {!current && (
                 <div className="settings-row-actions">
@@ -250,8 +249,6 @@ export function SettingsPage({
     { id: 'credentials', label: 'Credentials' },
     ...(viewer.membership.role === 'admin' ? [{ id: 'compute' as const, label: 'Compute' }] : []),
     { id: 'requests', label: 'Requests' },
-    // The usage-capture routes are admin-only server-side; the tab matches.
-    ...(viewer.membership.role === 'admin' ? [{ id: 'usage' as const, label: 'Usage' }] : []),
   ];
   const navigation = sections.map((candidate) => (
     <button
@@ -317,9 +314,6 @@ export function SettingsPage({
             onOpenWorkspace={onOpenWorkspace}
             onReviewProposal={onReviewProposal}
           />
-        )}
-        {section === 'usage' && viewer.membership.role === 'admin' && (
-          <UsagePanel client={client} />
         )}
       </div>
     </section>

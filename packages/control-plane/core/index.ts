@@ -21,11 +21,6 @@ export { perSessionResponse } from "./http.js";
 export { runLeaseSweep } from "./connections/leases.js";
 export { runProviderCanary } from "./connections/canary.js";
 export {
-  FILE_SYNC_MAX_BYTES_PER_TICK,
-  FILE_SYNC_MAX_FILES_PER_TICK,
-  runFileSyncSweep,
-} from "./files/sync.js";
-export {
   credentialMasterKeyFor,
   importCredentialMasterKey,
 } from "./connections/root-crypto.js";
@@ -77,20 +72,6 @@ export {
 } from "./webapp-tickets.js";
 export type { WebAppTicketClaims } from "./webapp-tickets.js";
 export type { VmProviderListResult } from "./compute/registry.js";
-export {
-  addMicrovmHostRoutes,
-  isMicrovmProviderId,
-  MicrovmPoolProvider,
-  parseMicrovmHosts,
-  parseMicrovmMachineTypeId,
-} from "./compute/microvm.js";
-export type {
-  DynamicMicrovmHostConfig,
-  MicrovmHostConfig,
-  MicrovmMachineType,
-  MicrovmPoolProviderOptions,
-  StaticMicrovmHostConfig,
-} from "./compute/microvm.js";
 export type {
   ComputeCredentialSource,
   CreatedVm,

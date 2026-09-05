@@ -173,7 +173,7 @@ sockets: `/sync` onto its Loro data plane and `/rpc` onto its control socket's
 A third service, `lody-projects`, registers every git repository directly under
 `/workspace` with the daemon as a Lody local project, so a worktree session has
 something to cut a worktree off (`plans/LODY-SESSIONS.md` §6.4). It polls rather
-than running once, because the template-repo cloner keeps arriving for up to ten
+than running once, because the workspace-repo cloner keeps arriving for up to ten
 minutes after boot and a member may clone by hand on any day after that. It talks
 only to the daemon's own control socket and opens no port.
 

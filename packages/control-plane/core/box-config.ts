@@ -24,9 +24,7 @@ import {
 // replaces the container only when `updateRequested` is set. It then reports
 // { ref, outcome } to POST /workspaces/self/box-update-result, which clears the
 // flag and stores the ref on the workspace row — per-workspace image
-// observability. All of this is the cloud-VM path (Hetzner/AWS user-data); the
-// microVM provider has its own guest lifecycle (packages/microvm-host/) and
-// simply does not support updates yet.
+// observability. This is the Hetzner/AWS user-data path.
 
 /** The character set of a docker image reference or of the R2 tarball https
  * URL BOX_IMAGE_REF may hold — the same alphabet the bootstrap's embedded

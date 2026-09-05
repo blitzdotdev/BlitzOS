@@ -56,8 +56,8 @@ export function manifestJson(value: unknown): string {
  * because they hold it. An explicit ceiling wins on conflict — the provision
  * list can only enable what the ceiling already allows.
  *
- * Every workspace gets a manifest, including a workspace made with no template
- * and no named connections. That workspace allows nothing, which is the honest
+ * Every workspace gets a manifest, including one with no clone source or named
+ * connections. That workspace allows nothing, which is the honest
  * statement of what it was asked for. Writing NULL instead is what made a bare
  * workspace allow every provider its owner had ever authorized. */
 export function enablementManifestJson(
@@ -86,7 +86,7 @@ function ceilingOrEmpty(storedManifest: string | null): CredentialManifest {
 }
 
 /** Connect, applied to one workspace. An entry that is already there keeps its
- * scope ceiling: a template that stipulated a narrow list must not be widened
+ * scope ceiling: an inherited narrow list must not be widened
  * by a click that only meant "turn this on here". */
 export function manifestWithConnection(
   storedManifest: string | null,
@@ -110,8 +110,8 @@ export function manifestWithoutConnection(
 }
 
 /** Connection names a stored ceiling enables; [] for null or unreadable.
- * This is the workspace's stipulated set — what the template named plus what
- * the create request added — independent of whether anything minted yet. */
+ * This is the workspace's stipulated set, independent of whether anything
+ * minted yet. */
 export function manifestConnectionNames(storedManifest: string | null): string[] {
   if (storedManifest === null) return [];
   const manifest = parsedStoredManifest(storedManifest);

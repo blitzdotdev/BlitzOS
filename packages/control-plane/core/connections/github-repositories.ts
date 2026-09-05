@@ -2,7 +2,7 @@ import { fetchBoundedText } from "../compute/json-fetch.js";
 import { HttpError, isBoolean, isNumber, isRecord, isString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "../runtime.js";
-import { TEMPLATE_REPO_PATTERN } from "../template-repos.js";
+import { WORKSPACE_REPO_PATTERN } from "../workspace-repos.js";
 import type {
   GithubInstallationView,
   GithubRepositoryView,
@@ -168,7 +168,7 @@ function parseRepositories(value: JsonValue): GithubRepositoryView[] {
     if (
       !isRecord(entry)
       || !isString(fullName)
-      || !TEMPLATE_REPO_PATTERN.test(fullName)
+      || !WORKSPACE_REPO_PATTERN.test(fullName)
       || !isBoolean(isPrivate)
     ) {
       throw new HttpError(502, "GitHub repositories returned an invalid response");

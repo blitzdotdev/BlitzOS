@@ -26,17 +26,19 @@ interface Draft {
   content: string;
 }
 
-/** Picks the agent-rules document a workspace or template hands its agents.
+/** Picks the agent-rules document a workspace hands its agents.
  * The list the server returns leads with the built-in doc (`id: null`), so
  * "edit the default" is just an edit whose save has no id yet. */
 export function AgentRulesPicker({
   client,
   value,
   onChange,
+  disabled = false,
 }: {
   client: AgentRulesApi;
   value: string | null;
   onChange: (agentRuleId: string | null) => void;
+  disabled?: boolean;
 }) {
   const [rules, setRules] = useState<AgentRuleView[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -135,6 +137,7 @@ export function AgentRulesPicker({
           id={selectId}
           aria-label="Agent rules document"
           value={value ?? ''}
+          disabled={disabled}
           onChange={(event) => {
             const next = event.currentTarget.value;
             if (next === NEW_RULE_OPTION) {
@@ -153,6 +156,7 @@ export function AgentRulesPicker({
         <button
           className="webapp-action blueprint-agent-rules-edit"
           type="button"
+          disabled={disabled}
           onClick={() => openDraft(selected ?? builtIn)}
         >
           Edit

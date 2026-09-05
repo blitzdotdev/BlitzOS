@@ -66,16 +66,18 @@ export function SessionShareDialog({
   const descriptionId = useId();
   const closeButton = useRef<HTMLButtonElement>(null);
   const [shares, setShares] = useState<SessionShareView[] | null>(null);
-  const [busyMembershipId, setBusyMembershipId] = useState<string | null>(null);
+  const [pending, setPending] = useState<{
+    membershipId: string;
+    level: SessionShareLevel | 'none';
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     closeButton.current?.focus();
   }, []);
 
-  /** The grants for this session, re-read after every write: the server is
-   * where a level actually lives, so a row states what it holds rather than
-   * what was just clicked. */
+  /** Read once on open. Each later write either returns its canonical grant or
+   * confirms a revocation, so another list request is not its completion signal. */
   const reload = useCallback(async () => {
     const response = await client.listSessionShares(workspaceId, sessionId);
     setShares(response.granted);
@@ -89,33 +91,41 @@ export function SessionShareDialog({
 
   const setLevel = useCallback(
     async (membershipId: string, level: SessionShareLevel | 'none') => {
-      setBusyMembershipId(membershipId);
+      const existing = (shares ?? []).find((share) => (
+        share.granteeMembershipId === membershipId
+      ));
+      if (level === 'none' && existing === undefined) return;
+      setPending({ membershipId, level });
       setError(null);
       try {
         if (level === 'none') {
-          const existing = (shares ?? []).find((share) => share.granteeMembershipId === membershipId);
-          // Nothing to revoke is a no-op rather than an error: the row already
-          // reads "No access", which is what the member asked for.
-          if (existing !== undefined) await client.revokeSessionShare(workspaceId, existing.id);
+          if (existing === undefined) return;
+          await client.revokeSessionShare(workspaceId, existing.id);
+          setShares((current) => (current ?? []).filter((share) => share.id !== existing.id));
         } else {
-          await client.grantSessionShare(workspaceId, {
+          const grant = await client.grantSessionShare(workspaceId, {
             sessionId,
             granteeMembershipId: membershipId,
             level,
           });
+          setShares((current) => [
+            ...(current ?? []).filter((share) => (
+              share.granteeMembershipId !== membershipId
+            )),
+            grant,
+          ]);
         }
-        await reload();
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
-        setBusyMembershipId(null);
+        setPending(null);
       }
     },
-    [client, reload, sessionId, shares, workspaceId],
+    [client, sessionId, shares, workspaceId],
   );
 
   const others = members.filter((member) => member.membershipId !== viewerMembershipId);
-  const busy = busyMembershipId !== null;
+  const busy = pending !== null;
 
   return (
     <ModalOverlay onDismiss={onClose} dismissible={!busy}>
@@ -142,7 +152,9 @@ export function SessionShareDialog({
             </p>
           )}
           {shares !== null && others.map((member) => {
-            const level = levelFor(shares, member.membershipId);
+            const level = pending?.membershipId === member.membershipId
+              ? pending.level
+              : levelFor(shares, member.membershipId);
             return (
               <div className="webapp-share-row" key={member.membershipId}>
                 <div className="webapp-share-who">

@@ -13,11 +13,11 @@ import {
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
 import {
-  MAX_TEMPLATE_REPOS,
-  TEMPLATE_REPO_PATTERN,
+  MAX_WORKSPACE_REPOS,
+  WORKSPACE_REPO_PATTERN,
   insertWorkspaceRepos,
   workspaceRepos,
-} from "./template-repos.js";
+} from "./workspace-repos.js";
 import {
   legacyRole,
   workspaceAccess,
@@ -66,7 +66,7 @@ export function parseUpdateWorkspace(value: JsonValue): UpdateWorkspaceRequest {
 function parseAddWorkspaceRepo(value: JsonValue): AddWorkspaceRepoRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const repo = requiredString(value.repo, "repo", 256);
-  if (!TEMPLATE_REPO_PATTERN.test(repo)) {
+  if (!WORKSPACE_REPO_PATTERN.test(repo)) {
     throw new HttpError(400, `repo must be "owner/name": ${repo}`);
   }
   return { repo };
@@ -214,10 +214,10 @@ export function addWorkspaceSettingsRoutes(
     if (existing.some((entry) => entry.repo === repo)) {
       throw new HttpError(409, `repository ${repo} is already in this workspace`);
     }
-    if (existing.length >= MAX_TEMPLATE_REPOS) {
+    if (existing.length >= MAX_WORKSPACE_REPOS) {
       throw new HttpError(
         400,
-        `a workspace holds at most ${String(MAX_TEMPLATE_REPOS)} repositories`,
+        `a workspace holds at most ${String(MAX_WORKSPACE_REPOS)} repositories`,
       );
     }
     // Every repo clones into /workspace/<name>, so two repos sharing a name

@@ -34,7 +34,8 @@ function relocate(body, root) {
   return body
     .replaceAll("/usr/local/bin/blitz-box-run", path.join(root, "bin/blitz-box-run"))
     .replaceAll("/etc/blitz", path.join(root, "etc/blitz"))
-    .replaceAll("/var/lib/blitz", path.join(root, "state"));
+    .replaceAll("/var/lib/blitz", path.join(root, "state"))
+    .replaceAll("/proc/meminfo", path.join(root, "proc/meminfo"));
 }
 
 /** A scratch VM host: the emitted blitz-box-run, a docker whose every call is
@@ -47,6 +48,8 @@ function scratchHost({ pullStatus = 0, refuseRun = [], runningRef = RUNNING_REF 
   mkdirSync(path.join(root, "bin"), { recursive: true });
   mkdirSync(path.join(root, "state"), { recursive: true });
   mkdirSync(path.join(root, "etc/blitz"), { recursive: true });
+  mkdirSync(path.join(root, "proc"), { recursive: true });
+  writeFileSync(path.join(root, "proc/meminfo"), "MemTotal:       8388608 kB\n");
   writeFileSync(path.join(root, "etc/blitz/env.defaults"), "BLITZ_FROM=old-image\n");
   if (runningRef !== null) {
     writeFileSync(path.join(root, "container.image"), runningRef);
@@ -227,7 +230,11 @@ test("a requested update pulls, replaces, and reports updated", async () => {
       `pull ${NEXT_REF}`,
       "rm -f blitz-box",
     ]);
-    assert.equal(result.image, NEXT_REF);
+    assert.equal(
+      result.image,
+      NEXT_REF,
+      `${result.report}\ndocker: ${result.dockerCalls.join(" | ")}\nlog: ${result.log}`,
+    );
     // The container env is re-read from the image that is about to run, so a
     // new image's defaults are not shadowed by the old file.
     assert.equal(result.envDefaults, `BLITZ_FROM=${NEXT_REF}\n`);
@@ -268,7 +275,11 @@ test("a new image that refuses to start rolls back to the old ref", async () => 
       assert.equal(result.status, 0, result.report);
       // The rollback start is the last docker run, and it names the old ref.
       const runs = result.dockerCalls.filter((call) => call.startsWith("run --detach"));
-      assert.equal(runs.length, 2);
+      assert.equal(
+        runs.length,
+        2,
+        `${result.report}\ndocker: ${result.dockerCalls.join(" | ")}\nlog: ${result.log}`,
+      );
       assert.match(runs[0], new RegExp(`${NEXT_REF}$`, "u"));
       assert.match(runs[1], new RegExp(`${RUNNING_REF}$`, "u"));
       assert.equal(result.image, RUNNING_REF);

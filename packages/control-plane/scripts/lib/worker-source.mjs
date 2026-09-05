@@ -43,7 +43,6 @@ export const CORE_MANIFEST = Object.freeze([
   "core/connections/user-grants.ts", "core/connections/minters/oauth.ts", "core/connections/minters/grant.ts",
   "core/connections/registry.ts", "core/connections/requests.ts", "core/connections/health.ts", "core/connections/canary.ts", "core/connections/connect.ts", "core/connections/mint.ts", "core/connections/proxy.ts", "core/connections/github-repo-check.ts", "core/connections/github-repositories.ts",
   "core/http.ts",
-  "core/files/access.ts", "core/files/attachments.ts", "core/files/dav.ts", "core/files/folders.ts", "core/files/keys.ts", "core/files/objects.ts", "core/files/readiness.ts", "core/files/routes.ts", "core/files/schedule.ts", "core/files/sync.ts", "core/files/usage-push.ts",
   "core/identity/google.ts", "core/identity/invites.ts", "core/identity/members.ts", "core/identity/orgs.ts", "core/identity/routes.ts",
   "core/janitors.ts",
   "core/machines.ts",
@@ -56,7 +55,6 @@ export const CORE_MANIFEST = Object.freeze([
   "core/org-credential-import.ts", "core/org-credential-routes.ts",
   "core/org-credentials.ts",
   "core/principals.ts",
-  "core/recipes.ts",
   "core/registry.ts",
   "core/session-shares.ts",
   "core/sessions.ts",
@@ -66,7 +64,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/volumes.ts",
   "core/preview.ts",
   "core/webapp-state.ts", "core/webapp-proxy.ts", "core/webapp-surface.ts", "core/webapp-tickets.ts",
-  "core/template-repos.ts",
+  "core/workspace-repos.ts",
   "core/workspace-access.ts",
   "core/workspace-drain.ts", "core/workspace-members.ts",
   "core/workspace-names.ts", "core/workspace-projection.ts", "core/workspace-records.ts",
@@ -74,8 +72,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/workspace-tunnels.ts",
   "core/workspace-volumes.ts",
   "core/workspaces.ts",
-  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner-config.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/org-credentials.ts", "core/compute/workspace-placement.ts", "core/compute/microvm-hosts.js",
-  "core/compute/microvm-config.ts", "core/compute/microvm-agent.ts", "core/compute/microvm-host-registry.ts", "core/compute/microvm.ts",
+  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner-config.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/org-credentials.ts", "core/compute/workspace-placement.ts",
   "core/compute/aws.ts", "core/compute/aws-prices.ts", "core/compute/aws-sigv4.ts",
   "core/compute/aws-xml.ts", "core/compute/cloudflare-tunnels.ts",
 ]);
@@ -163,10 +160,6 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "vm_limit", type: "integer", sqlType: "integer", notNull: true, check: "vm_limit > 0" },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true, check: "created_at >= 0" },
         { name: "updated_at", type: "integer", sqlType: "integer", notNull: true, check: "updated_at >= created_at" },
-        { name: "usage_capture", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "usage_capture IN (0, 1)" },
-        // No folders foreignKey on purpose (migration 0021): a deleted usage
-        // folder may dangle here; the usage-push leg inner-joins folders.
-        { name: "usage_folder_id", type: "text", sqlType: "text" },
       ],
       extensions: [DENY_ALL_RULES],
     },
@@ -232,11 +225,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "manifest", type: "text", sqlType: "text" },
         { name: "org_id", type: "text", sqlType: "text", foreignKey: { table: "orgs", column: "id" } }, { name: "owner_membership_id", type: "text", sqlType: "text", foreignKey: { table: "memberships", column: "id" } },
-        { name: "files_ready", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "files_ready IN (0, 1)" },
         { name: "agent_rule_id", type: "text", sqlType: "text", foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" } },
-        // Forward reference: recipes is created later in this list; SQLite
-        // defers FK resolution to DML.
-        { name: "recipe_id", type: "text", sqlType: "text", foreignKey: { table: "recipes", column: "id" } },
       ],
       indexes: [{ name: "owner", fields: ["owner_id", "created_at"] }, { name: "org", fields: ["org_id", "created_at"] }],
       extensions: [DENY_ALL_RULES],
@@ -270,14 +259,6 @@ export const BLITZDEV_CONFIG = Object.freeze({
       ],
       extensions: [DENY_ALL_RULES],
     },
-    { name: "folders", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }, { name: "org_role", type: "text", sqlType: "text", check: "org_role IN ('editor', 'viewer')" }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
-    { name: "folder_grants", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('editor', 'viewer')" }, { name: "granted_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["folder_id", "membership_id"] }, { name: "membership", fields: ["membership_id", "folder_id"] }], extensions: [DENY_ALL_RULES] },
-    { name: "folder_attachments", fields: [{ name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "attached_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "guest_path", type: "text", sqlType: "text" }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "folder_id"] }, { name: "folder", fields: ["folder_id", "workspace_id"] }], extensions: [DENY_ALL_RULES] },
-    // Flat like agent_rules/broker_members: this file already sits on the
-    // max-lines warn list, so a new table stays terse instead of growing it.
-    // The harness CHECK still admits the retired 'chat' value: narrowing a D1
-    // CHECK needs a table-rebuild migration, and nothing writes it any more.
-    { name: "recipes", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "source_workspace_id", type: "text", sqlType: "text", foreignKey: { table: "workspaces", column: "id" } }, { name: "harness", type: "text", sqlType: "text", notNull: true, check: "harness IN ('claude', 'codex', 'chat')" }, { name: "model", type: "text", sqlType: "text" }, { name: "effort", type: "text", sqlType: "text" }, { name: "prompt", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }, { name: "source_workspace", fields: "source_workspace_id" }], extensions: [DENY_ALL_RULES] },
     {
       name: "webapp_state",
       fields: [
@@ -439,16 +420,6 @@ export const BLITZDEV_CONFIG = Object.freeze({
       extensions: [DENY_ALL_RULES],
     },
     {
-      name: "microvm_hosts",
-      fields: [
-        { name: "name", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
-        { name: "url", type: "text", sqlType: "text" },
-        { name: "updated_at", type: "integer", sqlType: "integer" },
-        { name: "source", type: "text", sqlType: "text", check: "source IN ('static', 'registered')" },
-      ],
-      extensions: [DENY_ALL_RULES],
-    },
-    {
       // Mirrors migration 0034. Only the SHA-256 of an operator token is
       // stored; the plaintext exists once, in the mint response.
       name: "operator_tokens",
@@ -542,10 +513,9 @@ import {
   createSessionPrincipalSource,
   installControlPlaneRoutes,
   isString,
-  MicrovmPoolProvider,
   maybeScheduleLazySweep,
   OrgComputeProviderResolver,
-  runFileSyncSweep, runInvariantSweep, runLeaseSweep, runOrphanSweep,
+  runInvariantSweep, runLeaseSweep, runOrphanSweep,
   runProviderCanary, runSessionSweep, runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
   workspaceTunnelsFromEnv,
@@ -575,7 +545,6 @@ type ManagedBindings = {
   BOX_IMAGE_SHA256: string;
   BOX_IMAGE_TAG: string;
   SESSION_TTL_DAYS: string;
-  MICROVM_HOSTS: string;
   CLOUD_WORKSPACE_CREDENTIAL_POLICY?: string;
   CRED_MASTER_KEY: string;
   // Workspace tunnels and webApp auth, named exactly as self-host names them
@@ -636,21 +605,15 @@ function providersFor(
   const compute = new OrgComputeProviderResolver(db, credentialMasterKey, env, {
     workspaceCredentialPolicy,
   });
-  const microvm = new MicrovmPoolProvider(
-    env.MICROVM_HOSTS,
-    (tokenVar) => dynamicBinding(env, tokenVar),
-    { db },
-  );
   return {
     vmRegistry: new VmProviderRegistry(
-      [...compute.descriptors(), microvm],
+      compute.descriptors(),
       async (provider, orgId, requiredSource) => compute.handles(provider.id)
         ? compute.resolve(provider.id, orgId, requiredSource)
         : null,
     ),
     volume: { forOrg: (orgId, requiredSource) => compute.resolveVolume(orgId, requiredSource) },
     compute,
-    microvm,
     workspaceTunnels: workspaceTunnelsFromEnv(env),
     webAppAuth: workspaceWebAppAuthFromEnv(env),
   };
@@ -739,7 +702,6 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
   return {
     db,
     blobs: managedBlobStore(context.get("$db") as $Database, "box-image"),
-    fileObjects: env.TEENY_PRIMARY_R2 as R2Bucket,
     credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
@@ -776,7 +738,6 @@ const app = teenyHono<ManagedEnv>(
   async (c) => {
     const runtime = runtimeFor(c);
     warnOnceIfWorkspaceTunnelsUnconfigured(runtime);
-    await runtime.providers.microvm?.syncStaticHosts();
     maybeScheduleLazySweep(runtime, c.req.path);
   },
 );
@@ -796,11 +757,9 @@ const worker = Object.assign(app, {
         env, executionCtx: executionContext,
         get: (name) => name === "$db" ? db : key,
       });
-      await runtime.providers.microvm?.syncStaticHosts();
       await runSessionSweep(runtime); await runLeaseSweep(runtime);
       await runInvariantSweep(runtime); await runOrphanSweep(runtime);
       await runWorkspaceTunnelSweep(runtime); await runProviderCanary(runtime);
-      await runFileSyncSweep(runtime);
     })());
   },
 });

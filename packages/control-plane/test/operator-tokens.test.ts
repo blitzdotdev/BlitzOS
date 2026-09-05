@@ -86,7 +86,7 @@ async function workspaceFor(app: TestApp, cookie: string): Promise<WorkspaceView
   const created = await appRequest(app, "/workspaces", {
     method: "POST",
     headers: { Cookie: cookie, "Content-Type": "application/json" },
-    body: JSON.stringify({ machineTypeId: "small" }),
+    body: JSON.stringify({ defaultMachineTypeId: "small" }),
   });
   expect(created.status).toBe(201);
   return (await created.json<{ workspace: WorkspaceView }>()).workspace;
@@ -158,7 +158,7 @@ describe("operator tokens", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "small" }),
+      body: JSON.stringify({ defaultMachineTypeId: "small" }),
     });
     expect(created.status).toBe(403);
     expect(await created.json()).toEqual({

@@ -68,7 +68,7 @@ const orgMembers = [
 
 const machines = [
   { id: "cx23@fsn1", providerId: "hetzner", supportsVolumes: true, name: "CX23", cpuCores: 2, memGb: 4, diskGb: 40, arch: "x86" as const, location: "fsn1", monthlyPrice: { amount: 6.49, currency: "USD" } },
-  { id: "mv-2c2g@lab", providerId: "microvm", supportsVolumes: false, name: "Lab 2C/2G", cpuCores: 2, memGb: 2, diskGb: 20, arch: "x86" as const, location: "lab", monthlyPrice: null },
+  { id: "aws-t3.medium@us-east-1", providerId: "aws", supportsVolumes: true, name: "t3.medium", cpuCores: 2, memGb: 4, diskGb: 40, arch: "x86" as const, location: "us-east-1", monthlyPrice: { amount: 36.81, currency: "USD" } },
 ];
 
 describe("create workspace dialog", () => {
@@ -76,8 +76,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
@@ -88,7 +86,7 @@ describe("create workspace dialog", () => {
     await settle();
 
     expect(view.container.textContent).toContain("Hetzner · fsn1");
-    expect(view.container.textContent).toContain("Local lab");
+    expect(view.container.textContent).toContain("aws · us-east-1");
     expect(view.container.querySelector<HTMLDetailsElement>('.blueprint-advanced')?.open).toBe(false);
     // The SSH key field is GONE. A key reaches a machine through
     // POST /machines/:id/provision|recreate, never through workspace creation.
@@ -103,29 +101,27 @@ describe("create workspace dialog", () => {
     expect(submit).toHaveBeenCalledOnce();
     // Sharing defaults to the members named on the form: an org-wide share
     // gives every active member a machine, which is not a default.
-    expect(submit).toHaveBeenCalledWith({ machineTypeId: "cx23@fsn1" });
+    expect(submit).toHaveBeenCalledWith({ defaultMachineTypeId: "cx23@fsn1" });
     const keylessRequest = submit.mock.calls[0]?.[0];
-    expect(Object.keys(keylessRequest).sort()).toEqual(["machineTypeId"]);
+    expect(Object.keys(keylessRequest).sort()).toEqual(["defaultMachineTypeId"]);
     expect("sshPublicKey" in keylessRequest).toBe(false);
     expect("volumeId" in keylessRequest).toBe(false);
     expect("members" in keylessRequest).toBe(false);
     expect("credentials" in keylessRequest).toBe(false);
-    expect(JSON.stringify(keylessRequest)).toBe('{"machineTypeId":"cx23@fsn1"}');
+    expect(JSON.stringify(keylessRequest)).toBe('{"defaultMachineTypeId":"cx23@fsn1"}');
     await view.unmount();
   });
 
   it("summarizes provider failures when the machine catalog is empty", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({
           machineTypes: [],
           failures: [
             { providerId: "hetzner", error: "Hetzner API request failed with status 403" },
-            { providerId: "microvm", error: "no microVM hosts are reachable" },
+            { providerId: "external", error: "no external hosts are reachable" },
           ],
         })}
         onCancel={() => undefined}
@@ -138,7 +134,7 @@ describe("create workspace dialog", () => {
     expect(view.container.textContent).toContain(
       "hetzner: Hetzner API request failed with status 403",
     );
-    expect(view.container.textContent).toContain("microvm: no microVM hosts are reachable");
+    expect(view.container.textContent).toContain("external: no external hosts are reachable");
     expect(view.container.querySelector(".machine-catalog-groups")).toBeNull();
     expect(view.container.textContent).not.toContain("Some machine types are missing.");
     await view.unmount();
@@ -147,8 +143,6 @@ describe("create workspace dialog", () => {
   it("names the failed provider beside the machine types that did arrive", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({
@@ -177,8 +171,6 @@ describe("create workspace dialog", () => {
   it("keeps the bare empty-catalog message when no provider failed", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: [], failures: [] })}
@@ -200,8 +192,6 @@ describe("create workspace dialog", () => {
     });
     const first = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={client}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
@@ -215,12 +205,9 @@ describe("create workspace dialog", () => {
     )!;
     connect.addEventListener('click', (event) => event.preventDefault());
     await act(async () => connect.click());
-    // templateId null is the member's answer, not a missing one: the picker
-    // only exists in that state, so the draft has to be able to say it.
     expect(JSON.parse(window.sessionStorage.getItem(
       'blitz:github-connect-draft:workspace-new',
     ) ?? '{}')).toEqual({
-      templateId: null,
       agentRuleId: null,
       repos: [],
     });
@@ -230,7 +217,6 @@ describe("create workspace dialog", () => {
     window.sessionStorage.setItem(
       'blitz:github-connect-draft:workspace-new',
       JSON.stringify({
-        templateId: null,
         agentRuleId: null,
         repos: ['acme/app'],
       }),
@@ -238,8 +224,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const returned = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
@@ -270,8 +254,6 @@ describe("create workspace dialog", () => {
     };
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient([BUILT_IN_RULE, orgRule])}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
@@ -309,7 +291,7 @@ describe("create workspace dialog", () => {
     // An untouched picker adds nothing to the body; the first test in this
     // suite pins that exact shape.
     expect(submit).toHaveBeenCalledWith({
-      machineTypeId: "cx23@fsn1",
+      defaultMachineTypeId: "cx23@fsn1",
       agentRuleId: "rule-1",
     });
     await view.unmount();
@@ -334,8 +316,6 @@ describe("create workspace dialog", () => {
     });
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         orgId="org-one"
         admin
@@ -377,8 +357,6 @@ describe("create workspace dialog", () => {
   it("tells a non-admin which cloud key an organization admin must add", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         orgId="org-one"
         client={rulesClient()}
@@ -405,8 +383,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin
         viewerName="Ada Park"
@@ -430,7 +406,7 @@ describe("create workspace dialog", () => {
       search.focus();
       search.dispatchEvent(new Event("focus", { bubbles: true }));
     });
-    const suggestion = [...view.container.querySelectorAll<HTMLButtonElement>(".drive-suggestion")]
+    const suggestion = [...view.container.querySelectorAll<HTMLButtonElement>(".member-suggestion")]
       .find((button) => button.textContent?.includes("Nia Newcomer"))!;
     await act(async () => suggestion.click());
 
@@ -441,7 +417,7 @@ describe("create workspace dialog", () => {
     await act(async () => typeSelect.click());
     const options = [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')];
     expect(options[0]?.textContent).toContain("Workspace default (CX23)");
-    await act(async () => options.find((o) => o.textContent?.includes("Lab 2C/2G"))?.click());
+    await act(async () => options.find((o) => o.textContent?.includes("t3.medium"))?.click());
 
     await act(async () => {
       view.container.querySelector("form")?.dispatchEvent(
@@ -449,8 +425,8 @@ describe("create workspace dialog", () => {
       );
     });
     expect(submit).toHaveBeenCalledWith(expect.objectContaining({
-      machineTypeId: "cx23@fsn1",
-      members: [{ membershipId: "membership-2", role: "member", machineTypeId: "mv-2c2g@lab" }],
+      defaultMachineTypeId: "cx23@fsn1",
+      members: [{ membershipId: "membership-2", role: "member", machineTypeId: "aws-t3.medium@us-east-1" }],
     }));
     await view.unmount();
   });
@@ -459,8 +435,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin
         viewerName="Ada Park"
@@ -478,7 +452,7 @@ describe("create workspace dialog", () => {
       search.focus();
       search.dispatchEvent(new Event("focus", { bubbles: true }));
     });
-    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(".drive-suggestion")]
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(".member-suggestion")]
       .find((button) => button.textContent?.includes("Nia Newcomer"))?.click());
 
     const toggle = view.container.querySelector<HTMLInputElement>(
@@ -507,8 +481,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin
         client={rulesClient()}
@@ -525,7 +497,7 @@ describe("create workspace dialog", () => {
       search.focus();
       search.dispatchEvent(new Event("focus", { bubbles: true }));
     });
-    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(".drive-suggestion")]
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(".member-suggestion")]
       .find((button) => button.textContent?.includes("Nia Newcomer"))?.click());
 
     const roleSelect = view.container.querySelector<HTMLButtonElement>(
@@ -554,8 +526,6 @@ describe("create workspace dialog", () => {
   it("tells a member that creating a workspace is an org-admin power", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin={false}
         client={rulesClient()}
@@ -574,8 +544,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin
         client={rulesClient()}
@@ -591,7 +559,7 @@ describe("create workspace dialog", () => {
 
     expect(view.container.textContent).toContain('New workspace from “engineering”');
     // A clone carries its source's repo list, and a body naming both is a 400.
-    expect(view.container.querySelector(".tplf-repos")).toBeNull();
+    expect(view.container.querySelector(".workspace-repos")).toBeNull();
 
     await act(async () => {
       view.container.querySelector("form")?.dispatchEvent(

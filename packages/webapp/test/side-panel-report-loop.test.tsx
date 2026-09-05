@@ -77,7 +77,6 @@ function shellClient(state: Map<string, unknown>): ControlPlaneClient {
       return { doc, updatedAt: 1 };
     },
     listCredentialRequests: async () => ({ requests: [] }),
-    listWorkspaceFolders: async () => ({ folders: [] }),
     listSessionShares: async () => ({ granted: [], received: [] }),
     listMachineTypes: async () => ({ machineTypes: [], failures: [] }),
   };

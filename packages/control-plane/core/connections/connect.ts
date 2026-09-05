@@ -85,11 +85,7 @@ function returnUrl(
   returnTo: ConnectReturnTo | null = null,
 ): string {
   let path = CONNECT_RETURN_PATH;
-  if (returnTo === "template-new") path = "/templates/new";
   if (returnTo === "workspace-new") path = "/workspaces/new";
-  if (returnTo?.startsWith("template-edit:") === true) {
-    path = `/templates/${encodeURIComponent(returnTo.slice("template-edit:".length))}/edit`;
-  }
   // A workspace id grants a lease after authorization, so it keeps precedence
   // over a return surface even if a caller supplies both query parameters.
   if (workspaceId !== null) path = `/workspaces/${encodeURIComponent(workspaceId)}`;

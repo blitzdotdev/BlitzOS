@@ -128,7 +128,7 @@ describe("machine plane: the allowlist", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "small" }),
+      body: JSON.stringify({ defaultMachineTypeId: "small" }),
     });
     expect(created.status).toBe(401);
 

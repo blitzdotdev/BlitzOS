@@ -114,6 +114,24 @@ describe("production VM bootstrap", () => {
     expect(runBox).toBeGreaterThan(moveHostSsh);
   });
 
+  it("writes persistent host inotify limits before Docker starts", () => {
+    const userData = registryUserData();
+    const dropIn = `cat >/etc/sysctl.d/60-blitz-inotify.conf <<'INOTIFY'
+fs.inotify.max_user_instances = 1024
+fs.inotify.max_user_watches = 524288
+INOTIFY`;
+
+    expect(userData).toContain(dropIn);
+    expect(userData).toContain(
+      "sysctl -q -p /etc/sysctl.d/60-blitz-inotify.conf || "
+        + 'echo "blitz bootstrap: inotify sysctl failed, continuing"',
+    );
+    expect(userData).toContain("blitz_phase inotify-ready");
+    expect(userData.indexOf(dropIn)).toBeLessThan(
+      userData.indexOf("systemctl enable --now docker"),
+    );
+  });
+
   it.each([undefined, "", " \t\n"])(
     "omits cloud-init authorization and PRESERVES an existing mounted key file when no public key is provided",
     (sshPublicKey) => {
@@ -710,7 +728,7 @@ write_files:
     expect(missing.status).toBe(404);
   });
 
-  it("emits the template repo cloner as a detached best-effort loop outside the container spec", () => {
+  it("emits the workspace repo cloner as a detached best-effort loop outside the container spec", () => {
     const base = {
       boxImageSha256: "",
       boxImageRef: BOX_IMAGE_REF,
@@ -724,7 +742,7 @@ write_files:
     });
 
     expect(script).toContain(
-      'echo "blitz bootstrap: template repo cloner starting in the background (best-effort)"',
+      'echo "blitz bootstrap: workspace repo cloner starting in the background (best-effort)"',
     );
     expect(script).toContain(
       "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || git -c http.version=HTTP/1.1 clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
@@ -740,7 +758,7 @@ write_files:
     expect(script).toContain(
       "done' >>/var/lib/blitz/repo-clone.log 2>&1 || true &",
     );
-    const cloner = script.indexOf("template repo cloner starting");
+    const cloner = script.indexOf("workspace repo cloner starting");
     const clonerExec = script.indexOf("nohup docker exec", cloner);
     const clonerUser = script.indexOf("--user 1000:1000", clonerExec);
     expect(cloner).toBeGreaterThan(script.indexOf('[ "$box_healthy" = true ]'));
@@ -764,7 +782,7 @@ write_files:
     // The emitter is the shell-interpolation boundary: anything that is not
     // owner/name shaped is refused outright, never quoted around.
     expect(() => buildBootstrapScript({ ...base, repos: ["bad'; rm -rf /'"] }))
-      .toThrow("template repo is not owner/name shaped");
+      .toThrow("workspace repo is not owner/name shaped");
   });
 
   // ---- Remote Control target name ----
@@ -840,7 +858,7 @@ write_files:
       const response = await appRequest(app, "/workspaces", {
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineTypeId: "small", name }),
+        body: JSON.stringify({ defaultMachineTypeId: "small", name }),
       });
       expect(response.status).toBe(201);
       const { workspace } = await response.json<{ workspace: { id: string } }>();
@@ -949,7 +967,7 @@ write_files:
       {
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineTypeId: "small", sshPublicKey: SSH_PUBLIC_KEY }),
+        body: JSON.stringify({ defaultMachineTypeId: "small" }),
       },
       {
         DB: env.DB,
@@ -984,7 +1002,7 @@ write_files:
       {
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineTypeId: "small", sshPublicKey: SSH_PUBLIC_KEY }),
+        body: JSON.stringify({ defaultMachineTypeId: "small" }),
       },
       {
         DB: env.DB,
@@ -1009,8 +1027,7 @@ write_files:
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
         body: JSON.stringify({
-          machineTypeId: "small",
-          sshPublicKey: SSH_PUBLIC_KEY,
+          defaultMachineTypeId: "small",
         }),
       },
       {
