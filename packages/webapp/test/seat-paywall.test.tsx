@@ -1,13 +1,15 @@
 import type { OrgUsageResponse } from '@blitzos/schema';
+import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { ApiRequestError, type ControlPlaneClient } from '../src/api.js';
-import { InvitesPanel } from '../src/settings/InvitesPanel.js';
+import { PeoplePanel } from '../src/settings/PeoplePanel.js';
 import { render, settle } from './dom.js';
 
 /** Only what this panel calls. The panel takes the whole client, but a stub
- * that lists seventy unused methods hides which four matter here. */
+ * that lists seventy unused methods hides which six matter here. */
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
+    listMembers: vi.fn(async () => ({ members: [] })),
     listInvites: vi.fn(async () => ({ invites: [], ttlDays: 14 })),
     createInvite: vi.fn(async () => { throw new Error('unused'); }),
     revokeInvite: vi.fn(async () => undefined),
@@ -27,45 +29,67 @@ function text(container: HTMLElement): string {
   return container.textContent ?? '';
 }
 
-async function submit(container: HTMLElement): Promise<void> {
+function seatsAction(container: HTMLElement): HTMLButtonElement | null {
+  return [...container.querySelectorAll<HTMLButtonElement>('.settings-panel-header button')]
+    .find((candidate) => candidate.textContent === 'Manage seats') ?? null;
+}
+
+/** The invite fields are the last row of the members card, behind the `+`. */
+async function invite(container: HTMLElement): Promise<void> {
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>('.settings-person-open')?.click();
+  });
   container.querySelector('form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
   await settle();
 }
 
 describe('the seat paywall', () => {
   it('shows no seat counter where no billing service is attached', async () => {
-    const view = await render(<InvitesPanel client={client()} />);
+    const view = await render(<PeoplePanel client={client()} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
     expect(view.container.querySelector('.settings-seats')).toBeNull();
+    // No cap, nothing to manage: the header carries no action either.
+    expect(seatsAction(view.container)).toBeNull();
     await view.unmount();
   });
 
   it('counts the seats in use against the cap', async () => {
-    const view = await render(<InvitesPanel client={client({
+    const view = await render(<PeoplePanel client={client({
       orgUsage: vi.fn(async () => ({ seatsUsed: 2, seatLimit: 3, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
-    })} />);
+    })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
     expect(text(view.container)).toContain('2');
     expect(text(view.container)).toContain('3');
-    // One control, one word, whichever side of the limit the organization is
-    // on. The billing service decides what it opens.
-    expect(text(view.container)).toContain('Manage');
+    // One control, one destination, whichever side of the limit the
+    // organization is on. The billing service decides what it opens.
+    expect(seatsAction(view.container)).not.toBeNull();
     expect(text(view.container)).not.toContain('Upgrade');
     await view.unmount();
   });
 
   it('keeps the same control when the seats are full', async () => {
     const billing = vi.fn(async () => ({ url: 'https://billing.example/checkout#token=abc' }));
-    const view = await render(<InvitesPanel client={client({
+    const view = await render(<PeoplePanel client={client({
       billing,
       orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: 1, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
-    })} />);
+    })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
 
-    const control = view.container.querySelector('.settings-seats button');
-    expect(control?.textContent).toBe('Manage');
+    const control = seatsAction(view.container);
+    expect(control?.textContent).toBe('Manage seats');
     // Emphasis changes with the limit; the word and the destination do not.
     expect(control?.className).toContain('webapp-action--primary');
+    await view.unmount();
+  });
+
+  it('leaves the seat meter and its action to admins', async () => {
+    const orgUsage = vi.fn(async () => ({ seatsUsed: 2, seatLimit: 3, vmsUsed: 0, vmLimit: 10, platformCompute: false }));
+    const view = await render(<PeoplePanel client={client({ orgUsage })} admin={false} orgName="Example" onLeft={() => undefined} />);
+    await settle();
+    // A member cannot buy a seat, so the panel does not ask what the cap is.
+    expect(orgUsage).not.toHaveBeenCalled();
+    expect(view.container.querySelector('.settings-seats')).toBeNull();
+    expect(seatsAction(view.container)).toBeNull();
     await view.unmount();
   });
 
@@ -78,12 +102,12 @@ describe('the seat paywall', () => {
         'https://billing.example/checkout#token=abc',
       );
     });
-    const view = await render(<InvitesPanel client={client({
+    const view = await render(<PeoplePanel client={client({
       createInvite,
       orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: 1, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
-    })} />);
+    })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
-    await submit(view.container);
+    await invite(view.container);
 
     const offer = view.container.querySelector('.settings-paywall');
     expect(offer).not.toBeNull();
@@ -101,9 +125,9 @@ describe('the seat paywall', () => {
     const createInvite = vi.fn(async () => {
       throw new ApiRequestError('organization admin required', 403, null);
     });
-    const view = await render(<InvitesPanel client={client({ createInvite })} />);
+    const view = await render(<PeoplePanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
-    await submit(view.container);
+    await invite(view.container);
 
     expect(view.container.querySelector('.settings-paywall')).toBeNull();
     expect(text(view.container)).toContain('organization admin required');

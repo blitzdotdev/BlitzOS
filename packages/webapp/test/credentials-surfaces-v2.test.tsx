@@ -7,14 +7,9 @@ import type {
 import { act, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
-import type { WorkspaceDrawerSegment } from '../src/storage.js';
-import {
-  WorkspaceConnectionsPanel,
-  WorkspaceDrawer,
-} from '../src/WorkspaceDrawer.js';
+import { WorkspaceConnectionsPanel } from '../src/WorkspaceDrawer.js';
 import { buildRows } from '../src/connections/WorkspaceProviderRows.js';
-import { WorkspaceRailStrip } from '../src/WorkspaceRailStrip.js';
-import { MembersPanel } from '../src/settings/MembersPanel.js';
+import { PeoplePanel } from '../src/settings/PeoplePanel.js';
 import { render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -223,7 +218,7 @@ function connectionsPanel(
 }
 
 describe('v2 credential surfaces', () => {
-  it('mints an email-pinned invite from the members panel and shows its link once', async () => {
+  it('mints an email-pinned invite from the people panel and shows its link once', async () => {
     const createInvite = vi.fn(async () => ({
       invite: {
         id: 'invite-one',
@@ -237,8 +232,12 @@ describe('v2 credential surfaces', () => {
       code: 'one-time-code',
       ttlDays: 7,
     }));
-    const view = await render(<MembersPanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
+    const view = await render(<PeoplePanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
+    // The fields are the last row of the members card, revealed by the `+`.
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.settings-person-open')?.click();
+    });
     const input = view.container.querySelector<HTMLInputElement>('input[type="email"]')!;
     const setInputValue = Object.getOwnPropertyDescriptor(
       HTMLInputElement.prototype,
@@ -255,39 +254,14 @@ describe('v2 credential surfaces', () => {
     await settle();
 
     expect(createInvite).toHaveBeenCalledWith({ email: 'person@example.com', role: 'member' });
-    expect(view.container.querySelector<HTMLInputElement>('[aria-label="Member invite link"]')?.value)
+    expect(view.container.querySelector<HTMLInputElement>('[aria-label="Invite link"]')?.value)
       .toBe(`${window.location.origin}/invite/one-time-code`);
     await view.unmount();
   });
 
-  /** Connections is the one section left in the sheet since the Files and
-   * teenyapps panels retired, so there is no segment strip to switch. */
-  it('hosts connections as its only section and draws no segment strip', async () => {
-    const wire = client();
-    const segment: WorkspaceDrawerSegment = 'connections';
-    const view = await render(
-      <WorkspaceDrawer
-        client={wire}
-        workspaceId="workspace-one"
-        mobile={false}
-        open
-        width={264}
-        segment={segment}
-        pendingRequests={[]}
-        onWidthChange={() => undefined}
-        onSegmentChange={() => undefined}
-        onResolveRequest={async () => undefined}
-      />,
-    );
-    expect(view.container.querySelector('[role="tablist"]')).toBeNull();
-    expect(view.container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    const panels = [...view.container.querySelectorAll('[role="tabpanel"]')];
-    expect(panels).toHaveLength(1);
-    expect(panels[0]?.hasAttribute('hidden')).toBe(false);
-    expect(panels[0]?.querySelector('.workspace-connections')).not.toBeNull();
-    await view.unmount();
-  });
-
+  /** The pane panel a persisted layout still holds. The off-canvas sheet that
+   * used to host it is gone — connections are a tab of the workspace-details
+   * dialog — but the panel body is unchanged where it is still mounted. */
   it('reads a pending request as a connect prompt and dismisses it', async () => {
     const request: CredentialRequestView = {
       id: 'request-one',
@@ -301,16 +275,10 @@ describe('v2 credential surfaces', () => {
     function Harness() {
       const [requests, setRequests] = useState([request]);
       return (
-        <WorkspaceDrawer
+        <WorkspaceConnectionsPanel
           client={client()}
           workspaceId="workspace-one"
-          mobile={false}
-          open
-          width={264}
-          segment="connections"
           pendingRequests={requests}
-          onWidthChange={() => undefined}
-          onSegmentChange={() => undefined}
           onResolveRequest={async (entry, action) => {
             if (action === 'deny') await dismiss(entry.id);
             setRequests((current) => current.filter(({ id }) => id !== entry.id));
@@ -320,9 +288,8 @@ describe('v2 credential surfaces', () => {
     }
     const view = await render(<Harness />);
     await settle();
-    // The count lives on the strip's Connections button and the mobile sheet
-    // toggle, outside this panel; the sheet's own segment strip is gone with
-    // the other segments.
+    // No count rides on this panel: the ask pops `ConnectApprovalDialog` in
+    // the workspace, and nothing draws a pending badge any more.
     expect(view.container.querySelector('.workspace-pending-badge')).toBeNull();
     // The inbox states what an agent wanted, not a decision awaiting approval.
     expect(view.container.textContent).toContain('@github');
@@ -356,23 +323,6 @@ describe('v2 credential surfaces', () => {
       .toBe('Connect inbox failed to load.');
     await view.unmount();
   });
-
-  /** The panel hides an empty inbox, so the count on the rail icon is the only
-   * thing telling a person a request is waiting while the panel is closed. */
-  it('keeps the pending count on the rail while the panel is closed', async () => {
-    const view = await render(
-      <WorkspaceRailStrip
-        sidePanel={null}
-        connectionsOpen={false}
-        landingSessionId={null}
-        pendingRequestCount={2}
-        onQuickAction={() => undefined}
-      />,
-    );
-    expect(view.container.querySelector('.workspace-pending-badge')?.textContent).toBe('2');
-    await view.unmount();
-  });
-
 
 });
 

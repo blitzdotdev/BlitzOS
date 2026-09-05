@@ -11,7 +11,6 @@ import type { TenantMe } from '../src/api-adapter.js';
 import { CreateRecipeScreen } from '../src/files/CreateRecipeScreen.js';
 import { RecipesHome } from '../src/files/RecipesHome.js';
 import { TemplatesHome } from '../src/files/TemplatesHome.js';
-import { SettingsPage } from '../src/SettingsPage.js';
 import { standaloneResolver } from '../src/resolver.js';
 import { render, settle } from './dom.js';
 import { workspaceViewFixture } from './workspace-fixtures.js';
@@ -509,74 +508,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     ...overrides,
   };
 }
-
-describe('usage capture settings', () => {
-  function settingsPage(wire: ControlPlaneClient, role: 'admin' | 'member', section: 'usage' | 'profile' = 'usage') {
-    const viewer: TenantMe = {
-      ...tenantMe,
-      membership: { ...tenantMe.membership, role },
-    };
-    return (
-      <SettingsPage
-        client={wire}
-        viewer={viewer}
-        pendingAccessProposals={[]}
-        section={section}
-        onNavigate={() => undefined}
-        onOpenWorkspace={() => undefined}
-        onReviewProposal={() => undefined}
-        onSignOut={async () => undefined}
-        onLeftOrg={() => undefined}
-        onSwitchOrg={() => undefined}
-        onCreateOrg={() => undefined}
-      />
-    );
-  }
-
-  it('hides the Usage tab and panel from members', async () => {
-    const wire = client();
-    const view = await render(settingsPage(wire, 'member'));
-    await settle();
-
-    expect(view.container.textContent).not.toContain('Usage');
-    expect(view.container.textContent).not.toContain('Agent usage capture');
-    expect(wire.getUsageCapture).not.toHaveBeenCalled();
-    await view.unmount();
-  });
-
-  it('shows the state to admins and reflects the enable response', async () => {
-    const getUsageCapture = vi.fn(async () => ({ enabled: false, folderId: null }));
-    // The first enable lazy-creates the folder server-side; the panel shows
-    // whatever the response carries rather than assuming.
-    const putUsageCapture = vi.fn(async (enabled: boolean) => ({
-      enabled,
-      folderId: 'folder-usage',
-    }));
-    const wire = client({ getUsageCapture, putUsageCapture });
-    const view = await render(settingsPage(wire, 'admin'));
-    await settle();
-
-    // The switch's accessible name comes from its wrapping label
-    // (SettingsSwitch), so the query pins the role instead.
-    const toggle = view.container.querySelector<HTMLInputElement>(
-      'input[role="switch"]',
-    )!;
-    expect(toggle.checked).toBe(false);
-    expect(view.container.textContent).toContain('created the first time you turn it on');
-
-    await act(async () => {
-      toggle.click();
-    });
-    await settle();
-    expect(putUsageCapture).toHaveBeenCalledWith(true);
-    expect(view.container.querySelector<HTMLInputElement>(
-      'input[role="switch"]',
-    )?.checked).toBe(true);
-    expect(view.container.querySelector<HTMLAnchorElement>('a[href="/folder/folder-usage"]'))
-      .not.toBeNull();
-    await view.unmount();
-  });
-});
 
 describe('recipe run flow', () => {
   let deviceStorageValues: Map<string, string>;

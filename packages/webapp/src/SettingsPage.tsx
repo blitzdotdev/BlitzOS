@@ -1,4 +1,3 @@
-import type { GrantProposalView } from '@blitzos/schema';
 import { useCallback, useState } from 'react';
 import type { TenantMe } from './api-adapter';
 import type { ControlPlaneClient } from './api';
@@ -6,10 +5,7 @@ import { appliedTheme, chooseTheme, type ThemeChoice } from './theme';
 import type { SettingsSection } from './sessions-page-state';
 import { ConnectionsPanel } from './settings/ConnectionsPanel';
 import { OrgCredentialsPanel } from './settings/OrgCredentialsPanel';
-import { RequestsPanel } from './settings/RequestsPanel';
-import { MembersPanel } from './settings/MembersPanel';
-import { InvitesPanel } from './settings/InvitesPanel';
-import { UsagePanel } from './settings/UsagePanel';
+import { PeoplePanel } from './settings/PeoplePanel';
 import { ComputeCredentialsPanel } from './settings/ComputeCredentialsPanel';
 import { PanelHeader } from './settings/primitives';
 
@@ -214,11 +210,8 @@ export function SettingsHeader({
 export function SettingsPage({
   client,
   viewer,
-  pendingAccessProposals,
   section,
   onNavigate,
-  onOpenWorkspace,
-  onReviewProposal,
   onSignOut,
   onLeftOrg,
   onSwitchOrg,
@@ -226,32 +219,25 @@ export function SettingsPage({
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
-  pendingAccessProposals: readonly GrantProposalView[];
   section: SettingsSection;
   onNavigate: (section: SettingsSection) => void;
-  /** A request row's Connect opens the workspace that wants the connection:
-   * connecting happens there, not in settings, since the flow inversion. */
-  onOpenWorkspace: (workspaceId: string) => void;
-  /** Reopens the grant-approval dialog on a pending proposal the person
-   * closed without deciding (plans/ORG-CREDENTIALS.md §7a). */
-  onReviewProposal: (proposalId: string) => void;
   onSignOut: () => Promise<void>;
   onLeftOrg: () => void;
   onSwitchOrg: (orgId: string) => void;
   onCreateOrg: () => void;
 }) {
+  // Five entries, and Members and Invites are one of them: they were two
+  // pages of one question (see PeoplePanel). Requests moved to the popup an
+  // agent's ask raises, and the usage-capture routes kept their server side
+  // and lost their tab.
   const sections: Array<{ id: SettingsSection; label: string }> = [
     { id: 'profile', label: 'Profile' },
-    { id: 'members', label: 'Members' },
-    ...(viewer.membership.role === 'admin' ? [{ id: 'invites' as const, label: 'Invites' }] : []),
+    { id: 'people', label: 'People' },
     { id: 'connections', label: 'Connections' },
     // Org credentials (plans/ORG-CREDENTIALS.md §9): any active member may
     // store one, so the tab is not admin-gated.
     { id: 'credentials', label: 'Credentials' },
     ...(viewer.membership.role === 'admin' ? [{ id: 'compute' as const, label: 'Compute' }] : []),
-    { id: 'requests', label: 'Requests' },
-    // The usage-capture routes are admin-only server-side; the tab matches.
-    ...(viewer.membership.role === 'admin' ? [{ id: 'usage' as const, label: 'Usage' }] : []),
   ];
   const navigation = sections.map((candidate) => (
     <button
@@ -294,32 +280,20 @@ export function SettingsPage({
             onCreateOrg={onCreateOrg}
           />
         )}
-        {section === 'members' && (
-          <MembersPanel
+        {section === 'people' && (
+          <PeoplePanel
             client={client}
             admin={viewer.membership.role === 'admin'}
             orgName={viewer.org.name || viewer.org.slug}
             onLeft={onLeftOrg}
           />
         )}
-        {section === 'invites' && viewer.membership.role === 'admin' && <InvitesPanel client={client} />}
         {section === 'connections' && <ConnectionsPanel client={client} />}
         {section === 'credentials' && (
           <OrgCredentialsPanel client={client} viewer={viewer} />
         )}
         {section === 'compute' && viewer.membership.role === 'admin' && (
           <ComputeCredentialsPanel client={client} orgId={viewer.org.id} />
-        )}
-        {section === 'requests' && (
-          <RequestsPanel
-            client={client}
-            proposals={pendingAccessProposals}
-            onOpenWorkspace={onOpenWorkspace}
-            onReviewProposal={onReviewProposal}
-          />
-        )}
-        {section === 'usage' && viewer.membership.role === 'admin' && (
-          <UsagePanel client={client} />
         )}
       </div>
     </section>

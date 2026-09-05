@@ -1,12 +1,38 @@
 export type SettingsSection =
   | 'profile'
-  | 'members'
-  | 'invites'
+  | 'people'
   | 'connections'
   | 'credentials'
-  | 'compute'
-  | 'requests'
-  | 'usage';
+  | 'compute';
+
+/**
+ * The section an address names, including the four spellings this surface no
+ * longer has. A settings link is pasted into chats and bookmarked, so a
+ * retired one resolves rather than blanks:
+ *
+ * - `members` and `invites` were two pages of one question and are one People
+ *   page (`settings/PeoplePanel.tsx`).
+ * - `requests` and `usage` have no panel left — an agent's ask raises a popup,
+ *   and usage capture kept its routes and lost its tab — so they land on the
+ *   index, which is where an unknown address already lands.
+ * - `integrations` is the pre-rename spelling of Connections.
+ */
+function settingsSection(segment: string | undefined): SettingsSection {
+  switch (segment) {
+    case 'people':
+    case 'connections':
+    case 'credentials':
+    case 'compute':
+      return segment;
+    case 'members':
+    case 'invites':
+      return 'people';
+    case 'integrations':
+      return 'connections';
+    default:
+      return 'profile';
+  }
+}
 
 export type DriveScope = 'mine' | 'shared';
 
@@ -110,16 +136,12 @@ export type AppRoute =
 const HOME: AppRoute = { workspaceId: null, page: 'drive' };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|credentials|compute|requests|usage))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|people|members|invites|connections|integrations|credentials|compute|requests|usage))?\/?$/u);
   if (settings) {
-    // '/settings/integrations' is the pre-rename address; old bookmarks
-    // canonicalize to the connections section.
-    const section = settings[1] === 'integrations' ? 'connections' : settings[1];
     return {
       workspaceId: null,
       page: 'settings',
-      // SAFETY: After the fold, group 1 holds only SettingsSection literals.
-      settingsSection: (section as SettingsSection | undefined) ?? 'profile',
+      settingsSection: settingsSection(settings[1]),
     };
   }
   // Templates and recipes are disabled product-wide (2026-08-29): their

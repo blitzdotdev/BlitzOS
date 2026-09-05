@@ -173,6 +173,9 @@ describe("the side-panel report does not rebuild its shell inputs", () => {
     expect(binding).toBeDefined();
     if (binding === undefined) throw new Error("the surface has no side-panel binding");
     const hostTabs = binding.hostTabs;
+    // One host tab. Connections was the second and is a tab of the
+    // workspace-details dialog now, so nothing about it reaches this binding.
+    expect(hostTabs.map((tab) => tab.id)).toEqual(["host:browser"]);
     const renderCountBeforeReport = mounted.surface.renderCount;
     const report = {
       open: true,

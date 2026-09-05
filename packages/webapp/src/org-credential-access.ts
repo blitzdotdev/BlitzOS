@@ -75,3 +75,28 @@ export function hasOrgWideWrite(grants: ReadonlyArray<OrgCredentialGrantView>): 
 }
 
 export const ORG_WIDE_WRITE_WARNING = 'Anyone in the org can rotate this.';
+
+/**
+ * Which of the two sections a credential belongs in on a member's own
+ * Credentials panel: mine, or shared with me.
+ *
+ * MINE MEANS THE VIEWER IS NAMED, not that the viewer can read it. Two facts
+ * put a credential in the first list — the viewer created it, or an access row
+ * names their own membership — and both are things they did or something
+ * somebody did to them by name. Everything else that reaches them arrives
+ * through a place or a crowd (a workspace row, an org-wide row, or a plain
+ * reader's empty `grants`), which is the second list.
+ *
+ * An admin sees neither list: `role === 'admin'` reads the whole store, so the
+ * split would put most of the org's keys under "shared with me" on the word of
+ * a permission nobody granted them personally.
+ */
+export function isOwnOrgCredential(
+  credential: Pick<OrgCredentialView, 'grants' | 'createdByMembershipId'>,
+  viewerMembershipId: string | null,
+): boolean {
+  if (viewerMembershipId === null) return false;
+  if (credential.createdByMembershipId === viewerMembershipId) return true;
+  return credential.grants.some(({ subjectKind, subjectId }) =>
+    subjectKind === 'membership' && subjectId === viewerMembershipId);
+}

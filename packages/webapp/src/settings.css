@@ -228,16 +228,6 @@
   border-radius: 7px;
 }
 
-.settings-panel-header > .settings-count-badge {
-  display: inline-flex;
-  margin: 0;
-  padding: 4px 7px;
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  font: 700 9px/1.2 var(--font-ui);
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
 
 /* ---------------------------------------------------------------- profile */
 
@@ -547,37 +537,27 @@
   background: color-mix(in oklab, var(--ansi-red) 12%, transparent);
 }
 
-.settings-request-row time {
-  margin-top: 5px;
-}
 
 .files-library-toolbar .webapp-action input {
   display: none;
 }
 
-/* ------------------------------------------------------ members + invites */
+/* ---------------------------------------------------------------- people */
 
-.settings-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 12px;
-  margin-top: 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--mod-12);
-  border-radius: var(--r-card);
-  background: var(--surface-0);
-}
+/* `.settings-form` — the standalone invite card — is gone with the two panels
+ * that drew one each: the invite fields are a row of the members list now
+ * (`.settings-person-add`, below). */
 
-
-/* The seat counter, above the invite form. It answers "how many can I add"
+/* The seat counter, under the panel header. It answers "how many can I add"
  * before a person finds out by being refused. Only rendered where a billing
  * service is attached; without one there is no cap to draw. */
 .settings-seats {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 0 0 8px;
+  /* The panel header's own rhythm, so the first section sits the same
+   * distance below the meter as it does below a header without one. */
+  margin: 0 0 16px;
   padding: 9px 16px;
   border: 1px solid var(--mod-12);
   border-radius: var(--r-card);
@@ -608,11 +588,6 @@
 
 .settings-seats b {
   font-weight: 600;
-}
-
-.settings-seats .webapp-action {
-  padding: 2px 10px;
-  font-size: 11px;
 }
 
 /* The seat refusal, which is the one error that carries a way out. It borrows
@@ -679,9 +654,10 @@
   font: 12px/1 var(--font-ui);
 }
 
+/* The list card. It sits inside a `.cfg-section` under that section's own
+ * heading, so the section's grid gap is the space above it. */
 .settings-people {
   display: grid;
-  margin-top: 24px;
   overflow: hidden;
   border: 1px solid var(--mod-12);
   border-radius: var(--r-card);
@@ -693,10 +669,6 @@
   align-items: center;
   gap: 12px;
   padding: 11px 16px;
-}
-
-.settings-person + .settings-person {
-  border-top: 1px solid var(--mod-8);
 }
 
 .settings-person--disabled .settings-person-copy {
@@ -747,6 +719,59 @@
   color: var(--ink);
   background: var(--paper);
   font: 12px/1 var(--font-ui);
+}
+
+/* The `+` row and the fields it reveals, which are rows of the list for
+ * `.org-access-open`'s reason: pressing `+` turns the last row into the row
+ * being added, in place, rather than opening a form under the card. */
+.settings-person-open {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
+  color: var(--faint);
+  background: transparent;
+  font: 12px/1 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-person-open:hover,
+.settings-person-open:focus-visible {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+/* Wraps rather than widening the card: a smaller basis than a standalone
+ * form's fields, and `min-width: 0` so a long placeholder cannot push the
+ * row past the panel either. */
+.settings-person-add {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.settings-person-add > .cfg-field {
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.settings-person-add .webapp-action {
+  min-height: var(--cfg-control-height);
+}
+
+/* ONE SEPARATOR FOR EVERY CHILD OF THE CARD, because the `+` and the fields
+ * are rows of the list too.
+ * BELOW EVERY ROW RULE ON PURPOSE, the way org-credentials.css keeps its own
+ * copy last: this ties with `.settings-person-open`'s `border: 0` on
+ * specificity, so whichever is written later wins. Keep it last. */
+.settings-people > * + * {
+  border-top: 1px solid var(--mod-8);
 }
 
 

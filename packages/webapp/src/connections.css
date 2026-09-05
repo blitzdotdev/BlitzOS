@@ -1,0 +1,60 @@
+/* Connections, in the two places a member meets them: the account panel in
+ * settings (rows for what is connected, tiles for what is not) and the connect
+ * dialog an agent raises. Both borrow their card, row and grid geometry from
+ * settings.css and settings-surface.css — what lives here is the provider mark
+ * and the one chip, which neither of those files has a reason to know about.
+ *
+ * The workspace side of connections is a tab of the workspace-details dialog
+ * and is styled there, beside the frame that holds it. */
+
+/* A connected row is the settings credential row with a mark in front. The
+ * mark is a column, not an inline glyph: the name and the state line under it
+ * hang off one edge whatever the mark is. */
+.settings-connections .conn-row {
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.conn-mark {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--soft-ink);
+}
+
+/* oauth / token: which kind of credential stands behind the row. */
+.conn-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* An available tile is `.connect-card` with the mark above its title, so the
+ * grid reads as marks first and the how-it-connects line last. */
+.connect-card .conn-mark {
+  margin-bottom: 2px;
+}
+
+.connect-card:disabled {
+  cursor: default;
+  opacity: .6;
+}
+
+.connect-card:disabled:hover {
+  background: transparent;
+}
+
+/* The tile is an anchor for an OAuth provider, so it needs the grid item's
+ * own layout rather than the browser's link defaults. */
+a.connect-card {
+  text-decoration: none;
+}
+
+/* The connect ask (`ConnectApprovalDialog`) is the approval dialog's frame
+ * with no body between the request card and the footer, so the card carries
+ * the gap the body would have and the error line takes the frame's inset. */
+.connect-approval-dialog .ga-req { margin-bottom: 14px; }
+.connect-approval-dialog .workspace-details-error { margin: 0 22px 14px; }

@@ -94,10 +94,6 @@ function GalleryHeader() {
 /** One full settings page in a bounded frame, left-rail navigation live. */
 function SettingsFrame({ viewer }: { viewer: TenantMe }) {
   const [section, setSection] = useState<SettingsSection>('profile');
-  const [reviewing, setReviewing] = useState<GrantProposalView | null>(null);
-  // Requests → Review opens the grant-approval dialog on the pending
-  // proposal, as the shell does; a decision takes it off the list.
-  const pending = accessProposals.filter(({ state }) => state === 'pending');
   return (
     <div className="pv-frame">
       <div className="settings-shell">
@@ -105,28 +101,48 @@ function SettingsFrame({ viewer }: { viewer: TenantMe }) {
         <SettingsPage
           client={previewClient}
           viewer={viewer}
-          pendingAccessProposals={pending}
           section={section}
           onNavigate={setSection}
-          onOpenWorkspace={noop}
-          onReviewProposal={(id) => setReviewing(pending.find((row) => row.id === id) ?? null)}
           onSignOut={signOutSlowly}
           onLeftOrg={noop}
           onSwitchOrg={noop}
           onCreateOrg={noop}
         />
       </div>
+    </div>
+  );
+}
+
+/** The grant-approval dialog, opened on its own. It hung off the Requests
+ * panel's Review until that panel went; the shell raises it from an agent's
+ * ask now, and the gallery raises it from a button. */
+function AccessApprovalSection() {
+  const [reviewing, setReviewing] = useState<GrantProposalView | null>(null);
+  const pending = accessProposals.filter(({ state }) => state === 'pending');
+  return (
+    <Section
+      title="Access approval dialog"
+      caption="One pending grant proposal, as a member is asked to decide it."
+    >
+      <div className="pv-row">
+        <button
+          className="webapp-action"
+          type="button"
+          disabled={pending.length === 0}
+          onClick={() => setReviewing(pending[0] ?? null)}
+        >Review a proposal…</button>
+      </div>
       {reviewing !== null && (
         <AccessApprovalDialog
           client={previewClient}
           proposal={reviewing}
-          viewer={{ membershipId: viewer.membership.id, orgName: viewer.org.name }}
+          viewer={{ membershipId: adminViewer.membership.id, orgName: adminViewer.org.name }}
           workspaces={[{ id: previewWorkspace.id, name: previewWorkspace.title, members: previewWorkspace.members }]}
           onClose={() => setReviewing(null)}
           onResolved={() => setReviewing(null)}
         />
       )}
-    </div>
+    </Section>
   );
 }
 
@@ -314,13 +330,13 @@ function Gallery() {
       <GalleryHeader />
       <Section
         title="Settings page (admin)"
-        caption="All eight panels behind a live left rail: Profile, Members, Invites, Connections, Credentials, Compute, Requests, Usage."
+        caption="All five panels behind a live left rail: Profile, People, Connections, Credentials, Compute."
       >
         <SettingsFrame viewer={adminViewer} />
       </Section>
       <Section
         title="Settings page (member view)"
-        caption="The same page as a non-admin: Invites, Compute and Usage disappear, Members loses its controls."
+        caption="The same page as a non-admin: Compute disappears, and People keeps the list and the danger zone with no invite row."
       >
         <SettingsFrame viewer={memberViewer} />
       </Section>
@@ -328,6 +344,7 @@ function Gallery() {
       <MyMachineSection />
       <CreateWorkspaceSection />
       <ConfirmationSection />
+      <AccessApprovalSection />
       <AgentRulesSection />
       <DrawerConnectionsSection />
       <ShareFolderSection />

@@ -144,8 +144,8 @@ function shellClient(state: Map<string, unknown>): ControlPlaneClient {
 
 interface ShellOptions {
   /** Whether the stand-in surface reports a session detail's side panel, as the
-   * real page does once one is on screen. Off, the shell falls back to the
-   * native panel tab, which is what the Connections cases pin. */
+   * real page does once one is on screen. Off, there is no side panel to open
+   * a host tab in, which is the landing the S4 cases mount on. */
   sidePanelOnScreen?: boolean;
   path: string;
   tabs: WorkspaceTab[];
@@ -421,45 +421,36 @@ describe("S3 — a spawn selects the tab the spawn created", () => {
   });
 });
 
-describe("S4 — opening a utility panel shows it", () => {
+describe("S4 — the utility panel that had the defect is gone", () => {
   // THE SAME DEFECT, TWO DOORS. Cmd/Ctrl+B was the one the audit named first
   // (it opened the Files panel, retired with it); the right icon strip and the
   // box's own `blitz connections open` marker took the identical pane-only
-  // route and were identically dead. `togglePanelTab` wrote a pane selection
-  // the strip does not read, so each added a tab nobody could see.
-  it.each(["Connections"] as const)(
-    "selects the panel the right icon strip's %s button opens",
-    async (label) => {
-      const mounted = await mountShell({
-        path: "/workspaces/ws-1/chat/terminal/7",
-        tabs: [{ id: 7, type: "terminal" }],
-        activeId: 7,
-      });
-      const button = mounted.view.container.querySelector<HTMLButtonElement>(
-        `.webapp-rail-strip button[aria-label="${label}"]`,
-      );
-      expect(button, "the right icon strip is mounted").not.toBeNull();
-      await act(async () => button?.click());
-      await settle();
-      // The tab exists AND the strip is on it.
-      expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toContain(
-        "blitz-tab:8",
-      );
-      expect(mounted.surface.surfaceTabs?.activeTabId).toBe("blitz-tab:8");
-      // And a second press still closes it, which is what makes it a toggle.
-      await act(async () => button?.click());
-      await settle();
-      expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toEqual([
-        "blitz-tab:7",
-      ]);
-      await mounted.view.unmount();
-    },
-  );
+  // route and were identically dead. Connections was the last panel either
+  // door opened, and it is a tab of the workspace-details dialog now — so what
+  // these cases pin is that neither door writes a pane tab any more.
+  it("offers no panel button on the right icon strip", async () => {
+    const mounted = await mountShell({
+      path: "/workspaces/ws-1/chat/terminal/7",
+      tabs: [{ id: 7, type: "terminal" }],
+      activeId: 7,
+    });
+    const strip = mounted.view.container.querySelector('[aria-label="Workspace panels"]');
+    expect(strip, "the right icon strip is mounted").not.toBeNull();
+    expect([...(strip?.querySelectorAll("button") ?? [])].map((button) =>
+      button.getAttribute("aria-label"))).toEqual([
+      "Side Chat",
+      "Files",
+      "All Changes",
+      "Browser",
+    ]);
+    await mounted.view.unmount();
+  });
 
-  it("selects the Connections panel the box's own focus marker asks for", async () => {
-    // `blitz connections open <provider>` raises a marker the browser polls;
-    // the whole point of it is that the agent sent the member somewhere, so a
-    // panel tab nothing selects is the one outcome it must not have.
+  it("adds no pane tab for the box's own connections focus marker", async () => {
+    // `blitz connections open <provider>` raises a marker the browser polls.
+    // Where it LANDS is pinned by `connections-focus-destination.test.tsx`
+    // (the workspace-details dialog's Connections tab); what matters here is
+    // that the panes are no longer part of the answer.
     const mounted = await mountShell({
       path: "/workspaces/ws-1/chat/terminal/7",
       tabs: [{ id: 7, type: "terminal" }],
@@ -475,7 +466,9 @@ describe("S4 — opening a utility panel shows it", () => {
       await new Promise((resolve) => setTimeout(resolve, PORTS_POLL_INTERVAL_MS + 500));
     });
     await settle();
-    expect(mounted.surface.surfaceTabs?.activeTabId).toBe("blitz-tab:8");
+    expect((mounted.surface.surfaceTabs?.tabs ?? []).map(({ id }) => id)).toEqual([
+      "blitz-tab:7",
+    ]);
     await mounted.view.unmount();
   });
 
@@ -486,9 +479,9 @@ describe("S4 — opening a utility panel shows it", () => {
       activeId: 7,
       sidePanelOnScreen: true,
     });
-    // Our two host tabs ride into Lody's side panel through seam patch 23.
+    // Our one host tab rides into Lody's side panel through seam patch 23.
     expect(mounted.surface.sidePanel?.hostTabs.map(({ id }) => id))
-      .toEqual(["host:browser", "host:connections"]);
+      .toEqual(["host:browser"]);
     mounted.previewFocusMarker.body = {
       focus: {
         version: 2,

@@ -10,27 +10,21 @@ import {
 } from '../src/sessions-page-state.js';
 
 describe('settings routes', () => {
-  it('routes profile, connections, and requests with profile as the index', () => {
+  it('routes the five sections, with profile as the index', () => {
     expect(parseAppRoute('/settings')).toEqual({
       workspaceId: null,
       page: 'settings',
       settingsSection: 'profile',
     });
+    expect(parseAppRoute('/settings/people')).toEqual({
+      workspaceId: null,
+      page: 'settings',
+      settingsSection: 'people',
+    });
     expect(parseAppRoute('/settings/connections')).toEqual({
       workspaceId: null,
       page: 'settings',
       settingsSection: 'connections',
-    });
-    // The pre-rename address stays routable and canonicalizes.
-    expect(parseAppRoute('/settings/integrations')).toEqual({
-      workspaceId: null,
-      page: 'settings',
-      settingsSection: 'connections',
-    });
-    expect(parseAppRoute('/settings/requests/')).toEqual({
-      workspaceId: null,
-      page: 'settings',
-      settingsSection: 'requests',
     });
     expect(parseAppRoute('/settings/compute')).toEqual({
       workspaceId: null,
@@ -46,17 +40,40 @@ describe('settings routes', () => {
       workspaceId: null,
       page: 'drive',
     });
-    expect(parseAppRoute('/settings/usage')).toEqual({
-      workspaceId: null,
-      page: 'settings',
-      settingsSection: 'usage',
-    });
     expect(settingsPath('profile')).toBe('/settings');
+    expect(settingsPath('people')).toBe('/settings/people');
     expect(settingsPath('connections')).toBe('/settings/connections');
-    expect(settingsPath('requests')).toBe('/settings/requests');
     expect(settingsPath('compute')).toBe('/settings/compute');
     expect(settingsPath('credentials')).toBe('/settings/credentials');
-    expect(settingsPath('usage')).toBe('/settings/usage');
+  });
+
+  // A settings link is pasted into chats and bookmarked, so an address for a
+  // section that no longer exists resolves rather than blanks.
+  it('resolves the four retired section addresses', () => {
+    // Members and Invites were two pages of one question and are one People
+    // page now, so both land on it.
+    for (const address of ['/settings/members', '/settings/invites']) {
+      expect(parseAppRoute(address), address).toEqual({
+        workspaceId: null,
+        page: 'settings',
+        settingsSection: 'people',
+      });
+    }
+    // Requests and Usage have no panel left, so they land on the index, which
+    // is where an unknown settings address already landed.
+    for (const address of ['/settings/requests/', '/settings/usage']) {
+      expect(parseAppRoute(address), address).toEqual({
+        workspaceId: null,
+        page: 'settings',
+        settingsSection: 'profile',
+      });
+    }
+    // The pre-rename address stays routable and canonicalizes.
+    expect(parseAppRoute('/settings/integrations')).toEqual({
+      workspaceId: null,
+      page: 'settings',
+      settingsSection: 'connections',
+    });
   });
 
   it('sends the disabled template and recipe addresses to Drive', () => {
