@@ -9,11 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { createClient, type WebDAVClient } from 'webdav';
-import {
-  ApiAdapter,
-  ApiError,
-  type V2WorkspaceRecord,
-} from './api-adapter';
+import { ApiAdapter, ApiError } from './api-adapter';
 import type { ControlPlaneClient } from './api';
 import type { CredentialRequestView } from '@blitzos/schema';
 import { SPAWN_SESSION_LABELS, type SpawnSessionType } from './NewTabMenu';
@@ -142,6 +138,7 @@ import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
 import { useWorkspaceConnectionsFocus } from './use-workspace-connections-focus';
 import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
 import { ErrorReporterProvider } from './error-dialog/ErrorReporter';
+import { useWorkspaceOptimisticCreate } from './use-workspace-optimistic-create';
 
 /** Shared empty list for a workspace whose tabs have not loaded. A fresh `[]`
  * per render would give every callback derived from it a new identity, and the
@@ -208,8 +205,6 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     { workspaceId: string; tab: WorkspaceDetailsTab; focusAddMember?: boolean } | null
   >(null);
   const [machineWorkspaceId, setMachineWorkspaceId] = useState<string | null>(null);
-  const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
-  const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Below the mobile breakpoint the workspace panels live in an off-canvas
@@ -385,7 +380,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     setWorkspaceFiles,
   } = useWorkspacePersistence(
     api,
-    storageNamespace !== null,
+    storageNamespace !== null && activeWorkspace?.pendingCreate !== true,
     activeWorkspaceId,
     persistenceMetadata,
     handlePersistenceError,
@@ -693,7 +688,11 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   });
 
   useEffect(() => {
-    if (!loaded || !storageNamespace) return;
+    if (
+      !loaded
+      || !storageNamespace
+      || store.workspaces.some(({ pendingCreate }) => pendingCreate)
+    ) return;
     const timer = window.setTimeout(() => {
       void api.putGlobalWebAppState({
         version: 1,
@@ -790,31 +789,26 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     navigateToWorkspacePage(workspaceId);
   }, [navigateToWorkspacePage, store.workspaces]);
 
-  // One tail for everything that mints a workspace: the create dialog and
-  // recipe launches both adopt the record and navigate to it the same way.
-  const adoptCreatedWorkspace = useCallback(async (
-    create: () => Promise<V2WorkspaceRecord>,
-  ) => {
-    setCreateWorkspaceBusy(true);
-    setCreateWorkspaceError(null);
-    try {
-      const record = await create();
-      rememberWorkspaceEndpoints(workspaceEndpoints.current, [record], resolver);
-      dispatch({ type: 'workspace_created', record, agentDefault: 'claude' });
-      if (record.canControl) {
-        activeWorkspaceIdRef.current = record.id;
-        setActiveWorkspaceId(record.id);
-        navigateToWorkspacePage(record.id);
-      }
-      setShowCreateWorkspace(false);
-    } catch (createFailure) {
-      setCreateWorkspaceError(caughtErrorMessage(createFailure, 'The control plane request failed.'));
-    } finally {
-      setCreateWorkspaceBusy(false);
-    }
-  }, [navigateToWorkspacePage, resolver]);
+  const closeCreateWorkspace = useCallback(() => {
+    setShowCreateWorkspace(false);
+    setCloneFromWorkspaceId(null);
+  }, []);
+  // Clone submissions carry `cloneFromWorkspaceId` in the same input and use
+  // this tail. Recipe launch stays unmounted product-wide and has no caller.
+  const adoptCreatedWorkspace = useWorkspaceOptimisticCreate({
+    resolver,
+    workspaceEndpoints,
+    storeRef,
+    activeWorkspaceIdRef,
+    commitWorkspaceMutation,
+    setActiveWorkspaceId,
+    setRoute,
+    setError,
+    closeCreateDialog: closeCreateWorkspace,
+    navigateToWorkspacePage,
+  });
   const createWorkspace = useCallback(
-    (input: CreateWorkspaceDialogInput) => adoptCreatedWorkspace(() => api.createWorkspace(input)),
+    (input: CreateWorkspaceDialogInput) => adoptCreatedWorkspace(input, () => api.createWorkspace(input)),
     [adoptCreatedWorkspace, api],
   );
   // A recipe launch has no caller while the recipes surface is disabled; the
@@ -1741,17 +1735,11 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       }}
       onCloseCreateOrg={() => setShowCreateOrg(false)}
       showCreateWorkspace={showCreateWorkspace}
-      createWorkspaceBusy={createWorkspaceBusy}
-      createWorkspaceError={createWorkspaceError}
       listMachineTypes={listMachineTypes}
       refreshWorkspaces={refreshWorkspacesNow}
       commitWorkspaceMutation={commitWorkspaceMutation}
       cloneFromWorkspaceId={cloneFromWorkspaceId}
-      onCancelCreateWorkspace={() => {
-        if (createWorkspaceBusy) return;
-        setShowCreateWorkspace(false);
-        setCloneFromWorkspaceId(null);
-      }}
+      onCancelCreateWorkspace={closeCreateWorkspace}
       onCreateWorkspace={(input) => { void createWorkspace(input); }}
       details={details}
       onCloseDetails={() => setDetails(null)}

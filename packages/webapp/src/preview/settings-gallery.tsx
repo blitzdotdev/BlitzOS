@@ -199,8 +199,6 @@ function CreateWorkspaceSection() {
       </div>
       {open && (
         <CreateWorkspaceDialog
-          busy={false}
-          error={null}
           orgName="Acme Robotics"
           orgId="org-acme"
           admin

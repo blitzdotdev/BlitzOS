@@ -10,7 +10,7 @@ import {
   defaultWorkspaceWebAppState,
   type WorkspaceWebAppStateV1,
 } from "../src/storage.js";
-import { render, settle } from "./dom.js";
+import { deferred, render, settle } from "./dom.js";
 import { workspaceViewFixture } from "./workspace-fixtures.js";
 
 const createClientSpy = vi.hoisted(() => vi.fn());
@@ -1355,6 +1355,202 @@ describe("a workspace whose own machine is stopped", () => {
     // The loading pane prints its stage; "Creating workspace" is only its label.
     expect(view.container.textContent).toContain("allocating · cx23@fsn1");
     expect(view.container.textContent).toContain("allocating ·");
+    await view.unmount();
+  });
+});
+
+const workspaceCreateMachine = {
+  id: "cx23@fsn1",
+  providerId: "hetzner",
+  supportsVolumes: true,
+  name: "CX23",
+  cpuCores: 2,
+  memGb: 4,
+  diskGb: 40,
+  arch: "x86" as const,
+  location: "fsn1",
+  monthlyPrice: { amount: 6.49, currency: "USD" },
+};
+
+async function submitWorkspaceCreate(view: Rendered, name: string): Promise<void> {
+  if (view.container.querySelector('form[aria-label="Create workspace"]') === null) {
+    await click(view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Create workspace"]',
+    ));
+  }
+  await settle();
+  await settle();
+  const form = view.container.querySelector<HTMLFormElement>(
+    'form[aria-label="Create workspace"]',
+  );
+  if (form === null) throw new Error("create workspace form did not open");
+  await typeInto(form.querySelector<HTMLInputElement>('input[name="name"]')!, name);
+  await act(async () => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await settle();
+}
+
+describe("optimistic workspace creation", () => {
+  it("closes the dialog and shows an active loading rail entry before create resolves", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const creation = deferred<{ workspace: WorkspaceView }>();
+    const wire = {
+      ...runningClient(),
+      create: vi.fn(() => creation.promise),
+      listMachineTypes: vi.fn(async () => ({
+        machineTypes: [workspaceCreateMachine],
+        failures: [],
+      })),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+
+    await submitWorkspaceCreate(view, "Draft workspace");
+
+    expect(wire.create).toHaveBeenCalledWith({
+      machineTypeId: "cx23@fsn1",
+      name: "Draft workspace",
+    });
+    expect(view.container.querySelector('form[aria-label="Create workspace"]') === null).toBe(true);
+    const tile = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Draft workspace"]',
+    );
+    expect(tile?.getAttribute("aria-current")).toBe("page");
+    expect(view.container.querySelector('[role="status"][aria-label="Creating workspace"]'))
+      .not.toBeNull();
+    expect(window.location.pathname).toMatch(/^\/workspaces\/pending-workspace-/u);
+    await view.unmount();
+  });
+
+  it("replaces the placeholder and route without persisting or retaining its id", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const creation = deferred<{ workspace: WorkspaceView }>();
+    const putGlobalWebAppState = vi.fn(async (doc) => ({ doc, updatedAt: 1 }));
+    const getWorkspaceWebAppState = vi.fn(async (workspaceId: string) => (
+      decodeWorkspaceWebAppStateResponse(JSON.stringify({
+        doc: serverWorkspaceStates.get(workspaceId) ?? null,
+        updatedAt: null,
+      }))
+    ));
+    const baseResolver = standaloneResolver({ files: 7445 });
+    const resolve = vi.fn(baseResolver.resolve);
+    const wire = {
+      ...runningClient(),
+      create: vi.fn(() => creation.promise),
+      listMachineTypes: vi.fn(async () => ({
+        machineTypes: [workspaceCreateMachine],
+        failures: [],
+      })),
+      putGlobalWebAppState,
+      getWorkspaceWebAppState,
+    };
+    const view = await render(<CloudApp client={wire} resolver={{ ...baseResolver, resolve }} />);
+    await settle();
+    await settle();
+
+    await submitWorkspaceCreate(view, "Draft workspace");
+    const temporaryId = decodeURIComponent(window.location.pathname.split("/").at(-1)!);
+    const historyLength = window.history.length;
+    await act(async () => new Promise((resolveWait) => setTimeout(resolveWait, 200)));
+    const canonical = workspaceViewFixture({
+      id: "workspace-canonical",
+      name: "Canonical workspace",
+      phase: "creating",
+      retryAction: "poll",
+      ownerMembershipId: "membership-one",
+      members: [],
+    });
+    await act(async () => creation.resolve({ workspace: canonical }));
+    await settle();
+    await act(async () => new Promise((resolveWait) => setTimeout(resolveWait, 200)));
+
+    expect(view.container.querySelector('button[aria-label="Draft workspace"]')).toBeNull();
+    const canonicalTile = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Canonical workspace"]',
+    );
+    expect(canonicalTile?.getAttribute("aria-current")).toBe("page");
+    expect(window.location.pathname).toBe("/workspaces/workspace-canonical");
+    expect(window.history.length).toBe(historyLength);
+    expect(getWorkspaceWebAppState).toHaveBeenCalledWith("workspace-canonical");
+    expect(putGlobalWebAppState.mock.calls.at(-1)?.[0]).toEqual({
+      version: 1,
+      activeWorkspaceId: "workspace-canonical",
+      order: ["workspace-canonical", "workspace-running"],
+    });
+    const observableState = JSON.stringify({
+      html: view.container.innerHTML,
+      globalWrites: putGlobalWebAppState.mock.calls,
+      workspaceReads: getWorkspaceWebAppState.mock.calls,
+      workspaceWrites: vi.mocked(wire.putWorkspaceWebAppState).mock.calls,
+      localStorage: [...deviceStorageValues],
+      workspaceDocuments: [...serverWorkspaceStates],
+      resolvedRecords: resolve.mock.calls,
+    });
+    expect(observableState).not.toContain(temporaryId);
+    await view.unmount();
+  });
+
+  it("removes a rejected placeholder and raises the failure outside the closed dialog", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const creation = deferred<{ workspace: WorkspaceView }>();
+    const wire = {
+      ...runningClient(),
+      create: vi.fn(() => creation.promise),
+      listMachineTypes: vi.fn(async () => ({
+        machineTypes: [workspaceCreateMachine],
+        failures: [],
+      })),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    await submitWorkspaceCreate(view, "Rejected workspace");
+
+    await act(async () => creation.reject(new Error("capacity exhausted")));
+    await settle();
+
+    expect(view.container.querySelector('button[aria-label="Rejected workspace"]')).toBeNull();
+    expect(view.container.querySelector('form[aria-label="Create workspace"]') === null).toBe(true);
+    const alert = view.container.querySelector<HTMLElement>(".webapp-notice[role=alert]");
+    expect(alert?.textContent).toContain(
+      "Could not create “Rejected workspace”: capacity exhausted",
+    );
+    await view.unmount();
+  });
+
+  it("replaces a failed first-workspace route with a route that exists", async () => {
+    const creation = deferred<{ workspace: WorkspaceView }>();
+    const wire = {
+      ...client(),
+      me: vi.fn(async () => tenantMe),
+      poll: vi.fn(async () => ({ workspaces: [] })),
+      create: vi.fn(() => creation.promise),
+      listMachineTypes: vi.fn(async () => ({
+        machineTypes: [workspaceCreateMachine],
+        failures: [],
+      })),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    await submitWorkspaceCreate(view, "Only workspace");
+    expect(window.location.pathname).toMatch(/^\/workspaces\/pending-workspace-/u);
+
+    await act(async () => creation.reject(new Error("create failed")));
+    await settle();
+
+    expect(window.location.pathname).toBe("/");
+    expect(view.container.querySelector('button[aria-label="Only workspace"]')).toBeNull();
+    expect(view.container.querySelector('[aria-current="page"].shell-wtile')).toBeNull();
+    expect(view.container.querySelector(".webapp-notice[role=alert]")).not.toBeNull();
     await view.unmount();
   });
 });

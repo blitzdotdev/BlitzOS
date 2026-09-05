@@ -1,5 +1,6 @@
 import type { TenantMe } from './api-adapter';
 import type {
+  CreateWorkspaceRequest,
   MachineView,
   RetryAction,
   WorkspaceMemberRole,
@@ -14,6 +15,8 @@ import type { UiPreferences } from './storage';
 
 export type CloudWorkspaceModel = {
   id: string;
+  /** Client-only create placeholder. It is never derived from or sent to the wire. */
+  pendingCreate: boolean;
   ownerMembershipId: string;
   canControl: boolean;
   shared: boolean;
@@ -46,7 +49,9 @@ export type WorkspaceStoreState = {
 
 export type WorkspaceAction =
   | { type: 'workspaces_loaded'; records: WorkspaceRecord[]; viewer: TenantMe; preferences: UiPreferences }
-  | { type: 'workspace_created'; record: WorkspaceRecord; agentDefault: Agent }
+  | { type: 'workspace_create_started'; workspace: CloudWorkspaceModel }
+  | { type: 'workspace_create_committed'; temporaryId: string; record: WorkspaceRecord; agentDefault: Agent }
+  | { type: 'workspace_create_rolled_back'; temporaryId: string }
   | { type: 'workspace_records_refreshed'; records: WorkspaceRecord[] }
   | { type: 'workspace_record_updated'; record: WorkspaceRecord }
   | { type: 'workspace_resume_failed'; workspaceId: string; errorDetail: string }
@@ -68,6 +73,51 @@ export type WorkspaceAction =
   | { type: 'workspace_reordered'; sourceId: string; targetId: string };
 
 export const initialWorkspaceStore: WorkspaceStoreState = { workspaces: [], viewer: null };
+
+/** Builds the complete shell model needed before the control plane assigns an
+ * id. The create contract guarantees the creator's admin membership; every
+ * server-owned value that is not known yet stays empty or in `creating`. */
+export function pendingWorkspaceModel(
+  temporaryId: string,
+  input: CreateWorkspaceRequest,
+  viewer: TenantMe,
+  now = Date.now(),
+): CloudWorkspaceModel {
+  const machineType = input.defaultMachineTypeId ?? input.machineTypeId ?? '';
+  const serverName = input.name ?? '';
+  const title = serverName || 'New workspace';
+  return {
+    id: temporaryId,
+    pendingCreate: true,
+    ownerMembershipId: viewer.membership.id,
+    canControl: true,
+    shared: false,
+    owner: { name: viewer.identity.name || viewer.identity.email, avatarUrl: viewer.identity.avatarUrl },
+    accessRole: 'owner',
+    serverName,
+    title,
+    machineType: machineType || null,
+    volumeId: input.volumeId ?? null,
+    lifecycleStatus: 'creating',
+    errorDetail: null,
+    retryAction: null,
+    createdAt: now,
+    updatedAt: now,
+    connections: input.connections ?? [],
+    members: [{
+      membershipId: viewer.membership.id,
+      name: viewer.identity.name || viewer.identity.email,
+      avatarUrl: viewer.identity.avatarUrl,
+      role: 'admin',
+      machine: null,
+    }],
+    defaultMachineTypeId: machineType,
+    autoProvision: input.autoProvision !== false,
+    agentRuleId: input.agentRuleId ?? null,
+    myRole: 'admin',
+    agentDefault: 'claude',
+  };
+}
 
 /** The parts of a model the server does not own, and which therefore survive
  * a refresh: the local title, the chosen agent, and the last values of the
@@ -118,6 +168,7 @@ function applyRecord(
 ): CloudWorkspaceModel {
   return {
     id: record.id,
+    pendingCreate: false,
     ownerMembershipId: record.ownerMembershipId,
     canControl: record.canControl,
     shared: record.shared === true,
@@ -193,7 +244,13 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
       ));
       return { workspaces: models, viewer: action.viewer };
     }
-    case 'workspace_created': {
+    case 'workspace_create_started':
+      return { ...state, workspaces: [action.workspace, ...state.workspaces] };
+    case 'workspace_create_committed': {
+      const index = state.workspaces.findIndex(({ id, pendingCreate }) => (
+        pendingCreate && id === action.temporaryId
+      ));
+      if (index < 0) return state;
       const preferences: UiPreferences = {
         version: 1,
         activeWorkspaceId: action.record.id,
@@ -206,13 +263,24 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         preferences,
         state.viewer?.membership.id ?? null,
       );
-      return { ...state, workspaces: [workspace, ...state.workspaces] };
+      const workspaces = [...state.workspaces];
+      workspaces[index] = workspace;
+      return { ...state, workspaces };
     }
+    case 'workspace_create_rolled_back':
+      return {
+        ...state,
+        workspaces: state.workspaces.filter(({ id, pendingCreate }) => (
+          !pendingCreate || id !== action.temporaryId
+        )),
+      };
     case 'workspace_records_refreshed': {
       const recordsById = new Map(action.records.map((record) => [record.id, record]));
       return {
         ...state,
         workspaces: state.workspaces.flatMap((workspace) => {
+          // The control plane cannot list a create it has not answered yet.
+          if (workspace.pendingCreate) return [workspace];
           const record = recordsById.get(workspace.id);
           // Same rule as `workspaces_loaded`: a poll that catches the member's
           // machine mid-replacement must not evict the workspace from the rail.

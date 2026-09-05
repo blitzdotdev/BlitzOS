@@ -210,6 +210,7 @@ const workspaceMembers: WorkspaceMemberView[] = [
 
 export const previewWorkspace: CloudWorkspaceModel = {
   id: 'ws-preview',
+  pendingCreate: false,
   ownerMembershipId: 'm-june',
   canControl: true,
   shared: false,

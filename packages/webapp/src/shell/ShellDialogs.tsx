@@ -29,8 +29,6 @@ export type ShellDialogsProps = {
   onCreateOrg: (name: string) => Promise<void>;
   onCloseCreateOrg: () => void;
   showCreateWorkspace: boolean;
-  createWorkspaceBusy: boolean;
-  createWorkspaceError: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   /** Runs the workspace poll now, so a dialog write reaches the rows without
    * waiting for the next tick. Keep it stable across renders. */
@@ -72,8 +70,6 @@ export function ShellDialogs({
   onCreateOrg,
   onCloseCreateOrg,
   showCreateWorkspace,
-  createWorkspaceBusy,
-  createWorkspaceError,
   listMachineTypes,
   refreshWorkspaces,
   commitWorkspaceMutation,
@@ -110,8 +106,6 @@ export function ShellDialogs({
       )}
       {showCreateWorkspace && (
         <CreateWorkspaceDialog
-          busy={createWorkspaceBusy}
-          error={createWorkspaceError}
           orgName={viewer?.org.name ?? 'your org'}
           orgId={viewer?.org.id ?? ''}
           admin={viewer?.membership.role === 'admin'}
