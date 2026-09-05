@@ -662,6 +662,11 @@ async function createSession(argumentsList) {
       agentType: options.agent,
       prompt: options.prompt,
       project,
+      // Claude's omitted mode is `auto`, whose classifier consumes permission
+      // requests before this headless driver can observe them. `ask` means the
+      // harness needs the daemon's Manual mode, not merely a local decision to
+      // leave any requests unanswered.
+      modeId: options.permissions === "ask" && options.agent === "claude" ? "default" : undefined,
     });
     // A browser's mounted session view holds this room lease. This process has
     // no view, so without the explicit exchange it could exit with the history
@@ -819,6 +824,7 @@ async function promptSession(sessionId, options) {
       userId: context.snapshot.userId,
       agentType,
       prompt: options.prompt,
+      modeId: options.permissions === "ask" && agentType === "claude" ? "default" : undefined,
     });
     await syncSessionDocument(context, sessionId);
     const dispatch = await context.modules.session.dispatchLodyTurn(

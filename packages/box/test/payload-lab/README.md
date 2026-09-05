@@ -88,6 +88,9 @@ The driver records which sessions it created and will answer permission
 requests only for those sessions. `create` and `prompt` accept `--permissions
 allow|deny|ask` (default `allow`); `wait` applies the recorded policy, returning
 `awaitingPermission` immediately for `ask` rather than consuming the timeout.
+For Claude, `ask` also puts the turn in the daemon's `default` (Manual) mode;
+leaving its mode absent would select `auto`, whose classifier can consume the
+request before the driver sees it.
 `session permissions <id> <mode>` changes that recorded policy for the next
 `wait`, which lets an experiment release only the turn it created.
 
