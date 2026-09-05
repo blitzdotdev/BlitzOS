@@ -16,7 +16,6 @@
   },
   "files": [
     "dist",
-    "core/compute/microvm-hosts.js",
     "core/signup-config.js",
     "migrations",
     "README.md",

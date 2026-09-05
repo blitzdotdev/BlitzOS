@@ -377,7 +377,6 @@ function workPanesProps(sessionsPending: boolean): WorkPanesProps {
     previewLinks: [],
     pendingRequests: [],
     pendingRequestsError: null,
-    connectionsFocus: null,
     onOpenDrawer: () => undefined,
     onOpenPreview: () => false,
     onOpenPreviewLink: () => false,

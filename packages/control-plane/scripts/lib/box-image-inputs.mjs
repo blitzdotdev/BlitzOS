@@ -18,6 +18,8 @@ export const BOX_IMAGE_INPUTS = Object.freeze([
   "packages/box/rootfs/etc/blitz/sshd_config",
   "packages/box/rootfs/etc/gitconfig",
   "packages/box/rootfs/etc/profile.d/blitz-npm.sh",
+  "packages/box/rootfs/etc/s6-overlay/s6-rc.d/box-credential/dependencies.d",
+  "packages/box/rootfs/etc/s6-overlay/s6-rc.d/box-credential/type",
   "packages/box/rootfs/etc/s6-overlay/s6-rc.d/cgroups/type",
   "packages/box/rootfs/etc/s6-overlay/s6-rc.d/cloudflared/dependencies.d",
   "packages/box/rootfs/etc/s6-overlay/s6-rc.d/cloudflared/type",

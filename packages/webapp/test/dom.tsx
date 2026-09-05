@@ -27,3 +27,13 @@ export async function settle(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
+
+export function deferred<Value>() {
+  let resolvePromise: (value: Value) => void = () => undefined;
+  let rejectPromise: (reason: Error) => void = () => undefined;
+  const promise = new Promise<Value>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = (reason) => reject(reason);
+  });
+  return { promise, resolve: resolvePromise, reject: rejectPromise };
+}

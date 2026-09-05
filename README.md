@@ -28,7 +28,7 @@ Claude Code and Codex come installed. Any other agent harness that supports ACP 
 
 ### Build tools and workflows
 
-Use agents to build your own dashboards, CRMs, and task managers. Each ships with a backend, auth, and a URL, and are shareable like a google drive.
+Use agents to build your own dashboards, CRMs, and task managers. Each ships with a backend, auth, and a shareable URL.
 
 ## Installation
 
@@ -37,7 +37,7 @@ Use agents to build your own dashboards, CRMs, and task managers. Each ships wit
 Paste this prompt into your coding agent:
 
 ```text
-Self-host BlitzOS from this repo. Read docs/SELF-HOST.md. Follow its steps in order. Ask me for the accounts you need: Cloudflare, a spare domain, Google OAuth, and Hetzner or a Firecracker host.
+Self-host BlitzOS from this repo. Read docs/SELF-HOST.md. Follow its steps in order. Ask me for the accounts you need: Cloudflare, a spare domain, Google OAuth, and Hetzner or AWS.
 ```
 
 ### Manual setup
@@ -47,15 +47,13 @@ Follow the [self-host guide](docs/SELF-HOST.md).
 ## More built in
 
 - **Connections** Connect GitHub, Google Workspace, Linear, Discord, and YouTrack with provider-specific authorization: member OAuth or personal tokens, or admin-managed organization credentials. Enable connections per workspace, and let agents request access.
-- **Shared drive** Share folders with teammates, attach them to workspaces, and sync new and updated files both ways for members with editor access or higher.
 - **Teenyapps** Discover and preview apps running in a workspace, then save links to deployed versions in the same panel.
-- **Bring your own cloud** Run workspaces on Hetzner, AWS, or your own Firecracker hosts, and deploy the control plane in your Cloudflare account.
+- **Bring your own cloud** Run workspaces on Hetzner or AWS, and deploy the control plane in your Cloudflare account.
 
 ## Packages
 
 - [`box`](packages/box/README.md) the complete workspace runtime: SSH, Docker, agent harnesses, terminal, files, and previews.
 - [`control-plane`](packages/control-plane/README.md) workspaces, member machines, roles, credential injection, volumes, and compute providers.
-- [`microvm-host`](packages/microvm-host/README.md) the Go host agent that runs and networks Firecracker workspaces.
 - [`webApp`](packages/webapp/README.md) the browser webApp for creating, configuring, sharing, and working inside workspaces.
 - [`broker`](packages/broker/README.md) short-lived Claude and Codex credential delivery for workspace fleets.
 - [`schema`](packages/schema/README.md) shared wire types and cross-runtime conformance fixtures.
@@ -65,16 +63,13 @@ Follow the [self-host guide](docs/SELF-HOST.md).
 - [Self-host guide](docs/SELF-HOST.md) clone to first workspace, in order.
 - [Workspace tunnels](docs/TUNNEL.md) browser access to cloud-VM workspaces.
 - [Box image](docs/BOX-IMAGE.md) build, publish, and upgrade the workspace image.
-- [Automatic evals](docs/AUTOMATIC-EVALS.md) turn captured agent usage into an eval suite.
 - [Contributing](CONTRIBUTING.md) the three gates, the lint ratchet, fixtures, commit style.
 - [Security](SECURITY.md) reporting, secret blast radius, the workspace trust model.
-- Packages: [box](packages/box/README.md) · [control-plane](packages/control-plane/README.md) · [microvm-host](packages/microvm-host/README.md) · [webapp](packages/webapp/README.md) · [broker](packages/broker/README.md) · [schema](packages/schema/README.md)
+- Packages: [box](packages/box/README.md) · [control-plane](packages/control-plane/README.md) · [webapp](packages/webapp/README.md) · [broker](packages/broker/README.md) · [schema](packages/schema/README.md)
 
 ## Roadmap
 
 - [ ] sessions
-- [ ] recipe triggers
-- [ ] evals
 - [ ] policy
 
 Apache-2.0.

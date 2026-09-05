@@ -87,17 +87,6 @@ const expected = [
   "core/connections/github-repo-check.ts",
   "core/connections/github-repositories.ts",
   "core/http.ts",
-  "core/files/access.ts",
-  "core/files/attachments.ts",
-  "core/files/dav.ts",
-  "core/files/folders.ts",
-  "core/files/keys.ts",
-  "core/files/objects.ts",
-  "core/files/readiness.ts",
-  "core/files/routes.ts",
-  "core/files/schedule.ts",
-  "core/files/sync.ts",
-  "core/files/usage-push.ts",
   "core/identity/google.ts",
   "core/identity/invites.ts",
   "core/identity/members.ts",
@@ -115,7 +104,6 @@ const expected = [
   "core/org-credential-routes.ts",
   "core/org-credentials.ts",
   "core/principals.ts",
-  "core/recipes.ts",
   "core/registry.ts",
   "core/session-shares.ts",
   "core/sessions.ts",
@@ -128,7 +116,7 @@ const expected = [
   "core/webapp-proxy.ts",
   "core/webapp-surface.ts",
   "core/webapp-tickets.ts",
-  "core/template-repos.ts",
+  "core/workspace-repos.ts",
   "core/workspace-access.ts",
   "core/workspace-drain.ts",
   "core/workspace-members.ts",
@@ -146,11 +134,6 @@ const expected = [
   "core/compute/json-fetch.ts",
   "core/compute/org-credentials.ts",
   "core/compute/workspace-placement.ts",
-  "core/compute/microvm-hosts.js",
-  "core/compute/microvm-config.ts",
-  "core/compute/microvm-agent.ts",
-  "core/compute/microvm-host-registry.ts",
-  "core/compute/microvm.ts",
   "core/compute/aws.ts",
   "core/compute/aws-prices.ts",
   "core/compute/aws-sigv4.ts",
@@ -167,7 +150,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(119);
+    expect(first.files).toHaveLength(102);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
@@ -249,10 +232,18 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(teenybase?.source).toContain('name: "users"');
   });
 
-  it("wires the managed worker file bucket and scheduled folder sweep", () => {
-    expect(WORKER_SOURCE).toContain("fileObjects: env.TEENY_PRIMARY_R2 as R2Bucket");
+  it("wires the managed worker R2 bucket and scheduled janitors", () => {
+    expect(WORKER_SOURCE).toContain(
+      "TEENY_PRIMARY_R2: ConstructorParameters<typeof $Database>[3]",
+    );
+    expect(WORKER_SOURCE).toContain(
+      "return new $Database(c, config, c.env.TEENY_PRIMARY_DB, c.env.TEENY_PRIMARY_R2)",
+    );
+    expect(WORKER_SOURCE).toContain(
+      'blobs: managedBlobStore(context.get("$db") as $Database, "box-image")',
+    );
     expect(WORKER_SOURCE).toContain("async scheduled(");
-    expect(WORKER_SOURCE).toContain("await runFileSyncSweep(runtime)");
+    expect(WORKER_SOURCE).toContain("await runSessionSweep(runtime)");
   });
 
   it("reads the cloud workspace credential policy in the managed runtime", () => {
@@ -267,7 +258,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
   });
 
   // Run-3 report, B2. The emitted worker registered only vmRegistry, volume
-  // and microvm, so `/workspaces/:id/webapp/:port` could answer nothing but
+  // and cloud providers, so `/workspaces/:id/webapp/:port` could answer nothing but
   // 503 and the browser terminal was unreachable on Target B. Hetzner has no
   // proxyWebApp of its own, so tunnels are the only path.
   it("registers workspace tunnels and webApp auth from the documented env names", () => {

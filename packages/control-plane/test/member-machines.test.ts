@@ -54,7 +54,7 @@ describe("member machines", () => {
 
     // Workspace creation is org-admin only for now (plan §3).
     expect((await appRequest(app, "/workspaces", {
-      ...json({ machineTypeId: "small" }),
+      ...json({ defaultMachineTypeId: "small" }),
       headers: { Cookie: teammate.cookie, "Content-Type": "application/json" },
     })).status).toBe(403);
 
@@ -297,7 +297,7 @@ describe("member machines", () => {
     const teammate = await sameOrgSession("matrix-member");
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [{ membershipId: teammate.membershipId, role: "member" }],
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -341,7 +341,7 @@ describe("member machines", () => {
     const teammate = await sameOrgSession("leaver");
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [{ membershipId: teammate.membershipId, role: "member" }],
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -374,7 +374,7 @@ describe("member machines", () => {
     const teammate = await sameOrgSession("demoted");
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [{ membershipId: teammate.membershipId, role: "member" }],
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -406,7 +406,7 @@ describe("member machines", () => {
     const teammate = await sameOrgSession("manual");
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         autoProvision: false,
         members: [{ membershipId: teammate.membershipId, role: "member" }],
       }),
@@ -436,7 +436,7 @@ describe("member machines", () => {
     const watcher = await sameOrgSession("manual-viewer");
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         autoProvision: false,
         members: [
           { membershipId: teammate.membershipId, role: "member" },
@@ -502,7 +502,7 @@ describe("member machines", () => {
     const teammate = await sameOrgSession("returning-member");
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [{ membershipId: teammate.membershipId, role: "member" }],
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -556,7 +556,7 @@ describe("member machines", () => {
 
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [
           { membershipId: keeper.membershipId, role: "member" },
           { membershipId: throwaway.membershipId, role: "member", persistentVolume: false },
@@ -618,7 +618,7 @@ describe("member machines", () => {
 
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [
           { membershipId: first.membershipId, role: "member" },
           { membershipId: second.membershipId, role: "member" },
@@ -646,7 +646,7 @@ describe("member machines", () => {
     const teammate = await sameOrgSession("proxy-member");
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [{ membershipId: teammate.membershipId, role: "member" }],
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -758,7 +758,7 @@ describe("workspace settings", () => {
     const other = await sameOrgSession("settings-admin", "admin");
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [{ membershipId: member.membershipId, role: "member" }],
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -793,7 +793,7 @@ describe("workspace repositories", () => {
     const member = await sameOrgSession("repo-member");
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [{ membershipId: member.membershipId, role: "member" }],
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },

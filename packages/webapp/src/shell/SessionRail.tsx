@@ -2,14 +2,14 @@ import type { SpawnSessionType } from '../NewTabMenu';
 import { SessionTypeIcon } from '../SessionTypeIcon';
 import type { LivePort, PreviewLink } from '../preview';
 import type { CloudWorkspaceModel } from '../workspace-store';
-// The Drive page's own share icon, so one glyph means "share" everywhere.
-import { BoxGlyph, ShareGlyph } from '../files/DriveIcons';
+// One shared glyph keeps the meaning of "share" consistent.
+import { BoxGlyph, ShareGlyph } from './SessionRailIcons';
 import { NewTabControl } from './NewTabControl';
-import type { DriveRailSession } from './rail-sessions';
+import type { RailSession } from './rail-sessions';
 
 export type SessionRailProps = {
   workspace: CloudWorkspaceModel | undefined;
-  sessions: DriveRailSession[];
+  sessions: RailSession[];
   activeSessionId: string;
   livePorts: LivePort[];
   previewLinks: PreviewLink[];
@@ -137,7 +137,8 @@ export function SessionRail({
     );
   }
 
-  const canShare = workspace.accessRole === 'owner' || workspace.accessRole === 'admin';
+  const canShare = !workspace.pendingCreate
+    && (workspace.accessRole === 'owner' || workspace.accessRole === 'admin');
   const vendored = onVendorHost !== undefined;
   return (
     <aside className="session-rail" aria-label="Workspace sessions rail">
@@ -155,7 +156,7 @@ export function SessionRail({
             onClick={() => onOpenMembers(workspace.id)}
           ><ShareGlyph className="shell-ib__glyph" /></button>
         )}
-        {workspace.canControl && (
+        {workspace.canControl && !workspace.pendingCreate && (
           <button
             className="shell-ib"
             type="button"
@@ -164,7 +165,7 @@ export function SessionRail({
             onClick={() => onOpenMachine(workspace.id)}
           ><BoxGlyph className="shell-ib__glyph" /></button>
         )}
-        {workspace.canControl && (
+        {workspace.canControl && !workspace.pendingCreate && (
           <button
             className="shell-ib"
             type="button"

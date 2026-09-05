@@ -72,13 +72,13 @@ function expectHttp400(operation: () => unknown, message: string): void {
 describe("VM provider registry", () => {
   it("routes machine types and VM IDs only when exactly one provider claims them", () => {
     const cloud = new StubVmProvider("cloud", "cx22@fsn1", "42");
-    const microvm = new StubVmProvider("microvm", "mv-2c2g@lab", "microvm:v1:lab:1");
-    const registry = new VmProviderRegistry([cloud, microvm]);
+    const secondary = new StubVmProvider("secondary", "other-small@test", "other:v1:test:1");
+    const registry = new VmProviderRegistry([cloud, secondary]);
 
     expect(registry.get("cloud")).toBe(cloud);
-    expect(registry.all()).toEqual([cloud, microvm]);
+    expect(registry.all()).toEqual([cloud, secondary]);
     expect(registry.forMachineType("cx22@fsn1")).toBe(cloud);
-    expect(registry.forMachineType("mv-2c2g@lab")).toBe(microvm);
+    expect(registry.forMachineType("other-small@test")).toBe(secondary);
     expect(registry.forVmId("42")).toBe(cloud);
     expect(registry.forVmId("missing")).toBeUndefined();
   });
@@ -110,9 +110,9 @@ describe("VM provider registry", () => {
   it("stamps aggregate listings and exposes partial provider failures", async () => {
     const cloud = new StubVmProvider("cloud", "cx22@fsn1", "42");
     const unavailable = new StubVmProvider(
-      "microvm",
-      "mv-2c2g@lab",
-      "microvm:v1:lab:1",
+      "secondary",
+      "other-small@test",
+      "other:v1:test:1",
       new Error("capacity unavailable"),
     );
 
@@ -129,7 +129,7 @@ describe("VM provider registry", () => {
         location: "test",
         monthlyPrice: { amount: 12.34, currency: "USD" },
       }],
-      failures: [{ providerId: "microvm", error: "capacity unavailable" }],
+      failures: [{ providerId: "secondary", error: "capacity unavailable" }],
     });
   });
 });

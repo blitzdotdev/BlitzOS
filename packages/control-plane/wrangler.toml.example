@@ -52,13 +52,6 @@ BOX_PAYLOAD_REF = ""
 BOX_PAYLOAD_VERSION = ""
 # Session cookie lifetime in days (1-3650). Optional, default 30.
 SESSION_TTL_DAYS = "30"
-# JSON array of Firecracker microVM hosts. '[]' disables the microVM provider. Shapes below.
-# WARNING: every configured host requires its MICROVM_<NAME>_TOKEN Worker secret
-# (>=32 chars, no whitespace). A missing or weak token makes EVERY request to
-# the Worker fail with 500.
-MICROVM_HOSTS = '[]'
-# Populated shapes — pinned URL and phone-home (dynamic) hosts:
-# MICROVM_HOSTS = '[{"name":"lab","url":"https://lab.example:8443","tokenVar":"MICROVM_LAB_TOKEN"},{"name":"home","tokenVar":"MICROVM_HOME_TOKEN","dynamic":true}]'
 # Cloudflare account that owns the workspace-tunnel zone (dash.cloudflare.com -> your zone -> Overview). Empty until step 8; required only for browser access to cloud-VM workspaces.
 CLOUDFLARE_ACCOUNT_ID = ""
 # Cloudflare zone that holds ws-<workspace-id> DNS records (same Overview page). Empty until step 8; required only for browser access to cloud-VM workspaces.
@@ -94,7 +87,7 @@ namespace_id = "1001"
 limit = 20
 period = 60
 
-# R2 bucket for box images and workspace file sync. The deploy script creates the bucket if it does not exist.
+# R2 bucket for box images. The deploy script creates the bucket if it does not exist.
 [[r2_buckets]]
 binding = "BOX_IMAGES"
 bucket_name = "blitz-box-images"
@@ -137,10 +130,6 @@ run_worker_first = [
   "/connect/*",
   "/connections",
   "/connections/*",
-  "/folders",
-  "/folders/*",
-  "/hosts/*",
-  "/integrations",
   "/invite/*",
   "/invites",
   "/invites/*",
@@ -164,14 +153,12 @@ run_worker_first = [
   "/volumes",
   "/volumes/*",
   "/webapp-state",
-  "/workspace-recipes",
-  "/workspace-recipes/*",
   "/workspaces",
   "/workspaces/*",
 ]
 
 [triggers]
-crons = ["*/5 * * * *", "0 * * * *", "0 3 * * *"]
+crons = ["0 * * * *", "0 3 * * *"]
 
 # The canonical agent-rules document is the box-image skeleton file, and the
 # Worker has no filesystem, so it travels into the bundle as a Text module

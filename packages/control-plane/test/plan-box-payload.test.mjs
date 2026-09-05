@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   appendFileSync,
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { boxPayloadPrefix } from "../scripts/box-payload-key.mjs";
+import { PAYLOAD_ROOTFS_PATHS } from "../scripts/lib/box-payload-files.mjs";
 import {
   buildPlannedPayload,
   planBoxPayload,
@@ -145,6 +147,15 @@ test("base-owned updater edits across commits do not move an identical payload",
   git(parent, ["clone", "-q", "--shared", repoRoot, repository]);
   git(repository, ["config", "user.email", "box-payload-test@example.com"]);
   git(repository, ["config", "user.name", "Box Payload Test"]);
+  // A no-commit merge can add payload files that `git clone` cannot see yet.
+  // Mirror the current payload inventory into the fixture so both builds use
+  // the same working-tree content the imported planner owns.
+  for (const relativePath of PAYLOAD_ROOTFS_PATHS) {
+    const source = path.join(repoRoot, "packages/box/rootfs", relativePath);
+    const destination = path.join(repository, "packages/box/rootfs", relativePath);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(source, destination);
+  }
   const binariesDirectory = binaries();
   const before = await buildPlannedPayload({ repo: repository, binariesDirectory });
   appendFileSync(

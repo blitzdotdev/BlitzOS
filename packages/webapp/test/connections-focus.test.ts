@@ -16,6 +16,15 @@ const focusFixtures = import.meta.glob<FocusFixture>(
   { eager: true, import: 'default' },
 );
 
+/**
+ * The marker is unchanged by the connections redesign: same version, same
+ * fields, same fixture corpus, same gateway and box producers. What changed is
+ * the DESTINATION — `blitz connections open <provider>` opens the
+ * workspace-details dialog on its Connections tab with that provider's row
+ * highlighted, instead of a panel of the workspace. That hop is pinned in
+ * `connections-focus-destination.test.tsx`; everything below is the wire, and
+ * it may not move with the surface.
+ */
 describe('connections-focus browser consumer contract', () => {
   it('pins the shared connections-focus fixture corpus', () => {
     expect(Object.keys(focusFixtures).map((path) => path.split('/').at(-1)).sort()).toEqual([

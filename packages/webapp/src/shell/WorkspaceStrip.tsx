@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import type { TenantMe } from '../api-adapter';
 import type { CloudWorkspaceModel } from '../workspace-store';
-import { DriveGlyph, PlusGlyph } from './StripIcons';
+import { PlusGlyph } from './StripIcons';
 import { workspaceSigil } from './workspace-tile';
 import { squareAvatarUrl } from '../avatar-url';
 
@@ -49,13 +49,12 @@ export type WorkspaceStripProps = {
   onOpenWorkspaceSettings: (workspaceId: string) => void;
   onInviteToWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onOpenDrive: () => void;
   onOpenSettings: () => void;
   onCloseDrawer: () => void;
 };
 
 /** Column one of the shell (plans/mockups/session-rail.html `#strip`): one
- * tile per workspace, the create tile, Drive, and the avatar on the bottom
+ * tile per workspace, the create tile, and the avatar on the bottom
  * edge, which goes straight to settings. Only workspace tiles live up top —
  * the org mark read as one of them, so org switching moved to Settings →
  * Profile (owner annotation 2026-09-01). The workspace panels are the right
@@ -69,7 +68,6 @@ export function WorkspaceStrip({
   onOpenWorkspaceSettings,
   onInviteToWorkspace,
   onCreateWorkspace,
-  onOpenDrive,
   onOpenSettings,
   onCloseDrawer,
 }: WorkspaceStripProps) {
@@ -152,7 +150,9 @@ export function WorkspaceStrip({
                   ? `${workspace.title} — ${stateLabel(workspace)}`
                   : `${workspace.title} — shared by ${owner}`}
                 onClick={() => onSelectWorkspace(workspace.id)}
-                onContextMenu={(event) => openTileMenu(event, workspace)}
+                onContextMenu={workspace.pendingCreate
+                  ? undefined
+                  : (event) => openTileMenu(event, workspace)}
               >
                 <span className="shell-wtile__indicator" aria-hidden="true" />
                 <span
@@ -180,18 +180,6 @@ export function WorkspaceStrip({
       </nav>
 
       <div className="shell-strip__spacer" role="presentation" />
-
-      <nav className="shell-strip__surfaces" aria-label="Drive">
-        <button
-          className="shell-ic"
-          type="button"
-          aria-label="Drive"
-          title="Drive"
-          onClick={onOpenDrive}
-        ><DriveGlyph className="shell-ic__glyph" /></button>
-      </nav>
-
-      <div className="shell-strip__sep" role="presentation" />
 
       {tileMenu !== null && menuWorkspace !== undefined && (
         <>

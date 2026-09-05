@@ -1,5 +1,4 @@
--- Host-driven box updates (the cloud-VM path; the microVM provider has its
--- own guest lifecycle and does not support updates yet).
+-- Host-driven box updates for existing cloud VMs.
 --
 -- `box_update_requested` gates the host-side updater: the VM host polls
 -- GET /workspaces/self/box-config every ~5 minutes and replaces the box

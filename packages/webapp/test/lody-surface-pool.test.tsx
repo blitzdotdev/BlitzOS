@@ -269,7 +269,6 @@ describe("the React surface pool adapter", () => {
       window.dispatchEvent(new StorageEvent("storage", {
         key: "blitz.lody.keepalive",
         newValue: "off",
-        storageArea: window.localStorage,
       }));
     });
     expect(recorder.surfaces).toHaveLength(1);

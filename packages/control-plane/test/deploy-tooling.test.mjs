@@ -138,7 +138,7 @@ const EXAMPLE_ASSETS = [
   'run_worker_first = [ "/sessions*", "/version", "/api/*" ]',
   "",
   "[triggers]",
-  'crons = [ "*/5 * * * *", "0 3 * * *" ]',
+  'crons = [ "0 * * * *", "0 3 * * *" ]',
   "",
 ].join("\n");
 
@@ -148,7 +148,7 @@ test("a config that routes nothing to the worker is no longer drift: the deploy 
     'run_worker_first = [ ]',
     "",
     "[triggers]",
-    'crons = [ "*/5 * * * *", "0 3 * * *" ]',
+    'crons = [ "0 * * * *", "0 3 * * *" ]',
     "",
   ].join("\n");
   assert.deepEqual(missingListEntries(EXAMPLE_ASSETS, config), []);
@@ -166,7 +166,7 @@ test("missingListEntries names a missing cron", () => {
     'run_worker_first = [ "/sessions*", "/version", "/api/*" ]',
     "",
     "[triggers]",
-    'crons = [ "*/5 * * * *" ]',
+    'crons = [ "0 * * * *" ]',
     "",
   ].join("\n");
   assert.deepEqual(missingListEntries(EXAMPLE_ASSETS, config), [
@@ -177,7 +177,7 @@ test("missingListEntries names a missing cron", () => {
 test("a config may run more crons than the example, and that is not drift", () => {
   const config = [
     "[triggers]",
-    'crons = [ "*/5 * * * *", "0 3 * * *", "0 4 * * *" ]',
+    'crons = [ "0 * * * *", "0 3 * * *", "0 4 * * *" ]',
     "",
   ].join("\n");
   assert.deepEqual(missingListEntries(EXAMPLE_ASSETS, config), []);
@@ -185,7 +185,7 @@ test("a config may run more crons than the example, and that is not drift", () =
 
 test("an absent table reports every entry rather than passing quietly", () => {
   assert.deepEqual(missingListEntries(EXAMPLE_ASSETS, 'name = "w"\n'), [
-    { path: "triggers.crons", missing: ["*/5 * * * *", "0 3 * * *"] },
+    { path: "triggers.crons", missing: ["0 * * * *", "0 3 * * *"] },
   ]);
 });
 
@@ -209,14 +209,13 @@ const REPAIR_EXAMPLE = [
   "[vars]",
   'APP_URL = ""',
   'GIT_COMMIT_SHA = ""',
-  'MICROVM_HOSTS = "[]"',
   "",
   "[assets]",
   'directory = "../webapp/dist"',
   'run_worker_first = [ "/version" ]',
   "",
   "[triggers]",
-  'crons = [ "*/5 * * * *", "0 3 * * *" ]',
+  'crons = [ "0 * * * *", "0 3 * * *" ]',
   "",
   "[observability]",
   "enabled = true",
@@ -229,13 +228,12 @@ test("a var the example gained is filled in from the example, not demanded of th
     "",
     "[vars]",
     'APP_URL = "https://deployed.example"',
-    'MICROVM_HOSTS = "[]"',
     "",
     "[assets]",
     'directory = "../webapp/dist"',
     "",
     "[triggers]",
-    'crons = [ "*/5 * * * *", "0 3 * * *" ]',
+    'crons = [ "0 * * * *", "0 3 * * *" ]',
     "",
     "[observability]",
     "enabled = true",
@@ -254,7 +252,7 @@ test("the repair never overwrites a value the deployment already set", () => {
 });
 
 test("a whole missing table is filled in, values and all", () => {
-  const config = ['name = "w"', "", "[vars]", 'APP_URL = ""', 'GIT_COMMIT_SHA = ""', 'MICROVM_HOSTS = "[]"', "", "[assets]", 'directory = "../webapp/dist"', "", "[triggers]", 'crons = [ "*/5 * * * *", "0 3 * * *" ]', ""].join("\n");
+  const config = ['name = "w"', "", "[vars]", 'APP_URL = ""', 'GIT_COMMIT_SHA = ""', "", "[assets]", 'directory = "../webapp/dist"', "", "[triggers]", 'crons = [ "0 * * * *", "0 3 * * *" ]', ""].join("\n");
   const plan = configRepairPlan(REPAIR_EXAMPLE, config);
   assert.deepEqual(plan.filled, [{ path: "observability.enabled", value: true }]);
   assert.deepEqual(plan.patches, [{ observability: { enabled: true } }]);
@@ -269,8 +267,8 @@ test("the generated route list is never filled in: the deploy writes it", () => 
 
 test("a missing cron is repaired as a union, so a deployment keeps its own", () => {
   const config = REPAIR_EXAMPLE.replace(
-    'crons = [ "*/5 * * * *", "0 3 * * *" ]',
-    'crons = [ "*/5 * * * *", "0 9 * * *" ]',
+    'crons = [ "0 * * * *", "0 3 * * *" ]',
+    'crons = [ "0 * * * *", "0 9 * * *" ]',
   );
   const plan = configRepairPlan(REPAIR_EXAMPLE, config);
   assert.deepEqual(plan.filled, [{ path: "triggers.crons[]", value: "0 3 * * *" }]);
@@ -278,7 +276,7 @@ test("a missing cron is repaired as a union, so a deployment keeps its own", () 
   // element and would otherwise leave the old tail in place.
   assert.deepEqual(plan.patches, [
     { triggers: { crons: undefined } },
-    { triggers: { crons: ["*/5 * * * *", "0 9 * * *", "0 3 * * *"] } },
+    { triggers: { crons: ["0 * * * *", "0 9 * * *", "0 3 * * *"] } },
   ]);
 });
 

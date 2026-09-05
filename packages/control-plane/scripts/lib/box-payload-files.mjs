@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const PAYLOAD_ROOTFS_PATHS = Object.freeze([
+  "etc/s6-overlay/s6-rc.d/box-credential/run",
   "etc/s6-overlay/s6-rc.d/cgroups/up",
   "etc/s6-overlay/s6-rc.d/cloudflared/run",
   "etc/s6-overlay/s6-rc.d/dockerd/run",
@@ -40,6 +41,7 @@ export const PAYLOAD_ROOTFS_PATHS = Object.freeze([
   "usr/local/bin/claude",
   "usr/local/bin/codex",
   "usr/local/libexec/blitz-codex-session",
+  "usr/local/libexec/blitz-credential-refresh",
   "usr/local/libexec/blitz-git-credential",
   "usr/local/libexec/blitz-healthcheck",
   "usr/local/libexec/blitz-init-state",

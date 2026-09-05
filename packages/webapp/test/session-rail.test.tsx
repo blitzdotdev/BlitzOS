@@ -14,13 +14,13 @@
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { SessionRail } from "../src/shell/SessionRail.js";
-import type { DriveRailSession } from "../src/shell/rail-sessions.js";
+import type { RailSession } from "../src/shell/rail-sessions.js";
 import { render } from "./dom.js";
 import { workspaceModelFixture } from "./workspace-fixtures.js";
 
 const workspace = workspaceModelFixture({ title: "rail-workspace" });
 
-const tabs: DriveRailSession[] = [
+const tabs: RailSession[] = [
   { id: "1", label: "claude · tab 1", agent: "claude" },
   { id: "2", label: "bash", agent: "terminal" },
 ];

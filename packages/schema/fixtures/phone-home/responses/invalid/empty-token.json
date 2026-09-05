@@ -3,13 +3,11 @@
   "body": {
     "box_id": "box-fixture",
     "access_token": "",
-    "refresh_token": "refresh-fixture",
-    "workspace_id": "workspace-fixture",
-    "webapp_token": "webapp-fixture"
+    "refresh_token": "refresh-fixture"
   },
   "expect": {
     "valid": false,
-    "canonicalKeys": ["box_id", "access_token", "refresh_token", "workspace_id", "webapp_token"],
+    "canonicalKeys": ["box_id", "access_token", "refresh_token"],
     "reason": "response fields must be non-empty strings"
   }
 }

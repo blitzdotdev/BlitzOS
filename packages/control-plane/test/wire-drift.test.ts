@@ -6,19 +6,19 @@ import * as wire from "../core/wire.js";
 type SharedShape<Wire, Schema> = Wire & Schema;
 
 const machineType: SharedShape<wire.MachineType, schema.MachineType> = {
-  id: "mv-2c2g@lab",
-  providerId: "microvm",
-  supportsVolumes: false,
-  name: "MicroVM 2 vCPU / 2 GB",
+  id: "m6i.large@us-east-1",
+  providerId: "aws",
+  supportsVolumes: true,
+  name: "AWS m6i.large",
   cpuCores: 2,
   memGb: 2,
   diskGb: 8,
   arch: "x86",
-  location: "lab",
+  location: "us-east-1",
   monthlyPrice: null,
 };
 
-// The microvm literal above declares no price, so the priced shape needs its
+// The machine literal above declares no price, so the priced shape needs its
 // own row: JSON round-tripping null covers a different field than an object.
 const pricedMachineType: SharedShape<wire.MachineType, schema.MachineType> = {
   ...machineType,
@@ -32,7 +32,7 @@ const machineTypeFailure: SharedShape<
   wire.MachineTypeProviderFailure,
   schema.MachineTypeProviderFailure
 > = {
-  providerId: "microvm",
+  providerId: "aws",
   error: "capacity unavailable",
 };
 
@@ -157,47 +157,10 @@ const putAgentRuleResponse: SharedShape<
   schema.PutAgentRuleResponse
 > = { rule: agentRule };
 
-const recipe: SharedShape<wire.RecipeView, schema.RecipeView> = {
-  id: "recipe",
-  name: "nightly evals",
-  templateId: "template",
-  harness: "claude",
-  model: "claude-sonnet-5",
-  effort: "xhigh",
-  prompt: "Aggregate usage and write evals.\n",
-};
-
-const recipes: SharedShape<
-  wire.ListRecipesResponse,
-  schema.ListRecipesResponse
-> = { recipes: [recipe] };
-
-const createRecipeRequest: SharedShape<
-  wire.CreateRecipeRequest,
-  schema.CreateRecipeRequest
-> = {
-  name: recipe.name,
-  templateId: recipe.templateId,
-  harness: recipe.harness,
-  model: recipe.model,
-  effort: recipe.effort,
-  prompt: recipe.prompt,
-};
-
-const recipeResponse: SharedShape<
-  wire.RecipeResponse,
-  schema.RecipeResponse
-> = { recipe };
-
-const orgUsageCapture: SharedShape<
-  wire.OrgUsageCaptureResponse,
-  schema.OrgUsageCaptureResponse
-> = { enabled: true, folderId: "folder" };
-
 const machine: SharedShape<wire.MachineView, schema.MachineView> = {
   id: "machine",
   state: "running",
-  machineTypeId: "mv-2c2g@lab",
+  machineTypeId: machineType.id,
   volumeId: volume.id,
   volumeUsedPercent: 62,
   payloadVersion: payloadManifest.version,
@@ -491,7 +454,7 @@ const resolveGrantProposalResponse: SharedShape<
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   name: "brave-otter",
-  machineTypeId: "mv-2c2g@lab",
+  machineTypeId: machineType.id,
   phase: "ready",
   retryAction: null,
   canObserve: true,
@@ -511,7 +474,6 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   owner: { name: "Owner", avatarUrl: null },
   agentRuleId: agentRule.id,
   connections: ["linear"],
-  recipeId: recipe.id,
   orgId: "org",
   ownerMembershipId: workspaceMember.membershipId,
   defaultMachineTypeId: machineType.id,
@@ -520,25 +482,20 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   members: [workspaceMember, viewerMember],
 };
 
-const templateConnection: SharedShape<
-  wire.TemplateConnectionView,
-  schema.TemplateConnectionView
-> = { provider: "linear" };
-
-const templateRepo: SharedShape<
-  wire.TemplateRepoView,
-  schema.TemplateRepoView
+const workspaceRepo: SharedShape<
+  wire.WorkspaceRepoView,
+  schema.WorkspaceRepoView
 > = { repo: "blitzdotdev/blitz-core", private: true };
 
 const addWorkspaceRepoRequest: SharedShape<
   wire.AddWorkspaceRepoRequest,
   schema.AddWorkspaceRepoRequest
-> = { repo: templateRepo.repo };
+> = { repo: workspaceRepo.repo };
 
 const listWorkspaceReposResponse: SharedShape<
   wire.ListWorkspaceReposResponse,
   schema.ListWorkspaceReposResponse
-> = { repos: [templateRepo] };
+> = { repos: [workspaceRepo] };
 
 const sessionShare: SharedShape<
   wire.SessionShareView,
@@ -586,7 +543,7 @@ const listGithubInstallations: SharedShape<
 const githubRepository: SharedShape<
   wire.GithubRepositoryView,
   schema.GithubRepositoryView
-> = { repo: templateRepo.repo, accountLogin: "blitzdotdev", private: true };
+> = { repo: workspaceRepo.repo, accountLogin: "blitzdotdev", private: true };
 
 const listGithubRepositories: SharedShape<
   wire.ListGithubRepositoriesResponse,
@@ -608,47 +565,6 @@ const checkGithubRepositoriesResponse: SharedShape<
   schema.CheckGithubRepositoriesResponse
 > = { results: [githubRepositoryCheck] };
 
-const workspaceTemplate: SharedShape<
-  wire.WorkspaceTemplateView,
-  schema.WorkspaceTemplateView
-> = {
-  id: "template",
-  name: "web analysis",
-  machineTypeId: "mv-2c2g@lab",
-  createdAt: 1,
-  createdBy: { name: "Owner", avatarUrl: null },
-  environment,
-  agentRuleId: agentRule.id,
-  isOrgDefault: true,
-  folders: [{ id: "folder", name: "Shared", role: "editor" }],
-  connections: [templateConnection],
-  repos: [templateRepo],
-};
-
-const workspaceTemplates: SharedShape<
-  wire.ListWorkspaceTemplatesResponse,
-  schema.ListWorkspaceTemplatesResponse
-> = { templates: [workspaceTemplate] };
-
-const createWorkspaceTemplate: SharedShape<
-  wire.CreateWorkspaceTemplateRequest,
-  schema.CreateWorkspaceTemplateRequest
-> = {
-  name: "web analysis",
-  machineTypeId: "mv-2c2g@lab",
-  folderIds: ["folder"],
-  connections: [templateConnection],
-  environment,
-  agentRuleId: agentRule.id,
-  repos: [templateRepo.repo],
-  isOrgDefault: true,
-};
-
-const createdWorkspaceTemplate: SharedShape<
-  wire.CreateWorkspaceTemplateResponse,
-  schema.CreateWorkspaceTemplateResponse
-> = { template: workspaceTemplate };
-
 const listMachineTypesResponse: SharedShape<
   wire.ListMachineTypesResponse,
   schema.ListMachineTypesResponse
@@ -661,7 +577,6 @@ const createWorkspaceRequest: SharedShape<
   wire.CreateWorkspaceRequest,
   schema.CreateWorkspaceRequest
 > = {
-  machineTypeId: machineType.id,
   defaultMachineTypeId: machineType.id,
   autoProvision: false,
   members: [{
@@ -680,7 +595,7 @@ const createWorkspaceRequest: SharedShape<
   },
   connections: ["github"],
   agentRuleId: agentRule.id,
-  repos: [templateRepo.repo],
+  repos: [workspaceRepo.repo],
 };
 
 const createWorkspaceResponse: SharedShape<
@@ -780,54 +695,6 @@ const feedResponse: SharedShape<wire.FeedResponse, schema.FeedResponse> = {
   version: "version",
   members: [feedMember],
 };
-
-const folderGrant: SharedShape<wire.FolderGrantView, schema.FolderGrantView> = {
-  id: "grant",
-  membershipId: "member",
-  role: "editor",
-  createdAt: 1,
-  member: { name: "Editor", email: "editor@example.com", avatarUrl: null },
-};
-
-const folder: SharedShape<wire.FolderView, schema.FolderView> = {
-  id: "folder",
-  name: "Shared",
-  role: "owner",
-  orgRole: "viewer",
-  owner: { name: "Owner", avatarUrl: null },
-  attachedWorkspaceIds: ["workspace"],
-  createdAt: 1,
-  updatedAt: 2,
-  grants: [folderGrant],
-};
-
-const folderObject: SharedShape<wire.FolderObjectView, schema.FolderObjectView> = {
-  key: "notes/today.txt",
-  size: 12,
-  mtime: 1,
-  editedBy: "Editor",
-};
-
-const folderObjects: SharedShape<
-  wire.ListFolderObjectsResponse,
-  schema.ListFolderObjectsResponse
-> = { objects: [folderObject], cursor: null, truncated: false };
-
-const folderAttachment: SharedShape<
-  wire.FolderAttachmentView,
-  schema.FolderAttachmentView
-> = {
-  id: "folder",
-  name: "Shared",
-  guestPath: null,
-  role: "editor",
-  attachedAt: 3,
-};
-
-const folderAttachments: SharedShape<
-  wire.ListFolderAttachmentsResponse,
-  schema.ListFolderAttachmentsResponse
-> = { folders: [folderAttachment] };
 
 // The credential module keeps its own copy of the same views in
 // core/connections/types.ts. It is the second hand-mirrored wire in the
@@ -997,8 +864,7 @@ const fullFieldValues = [
   putAgentRuleRequest,
   putAgentRuleResponse,
   workspace,
-  templateConnection,
-  templateRepo,
+  workspaceRepo,
   addWorkspaceRepoRequest,
   listWorkspaceReposResponse,
   sessionShare,
@@ -1011,15 +877,6 @@ const fullFieldValues = [
   githubRepositoryCheck,
   checkGithubRepositoriesRequest,
   checkGithubRepositoriesResponse,
-  workspaceTemplate,
-  workspaceTemplates,
-  createWorkspaceTemplate,
-  createdWorkspaceTemplate,
-  recipe,
-  recipes,
-  createRecipeRequest,
-  recipeResponse,
-  orgUsageCapture,
   listMachineTypesResponse,
   createWorkspaceRequest,
   createWorkspaceResponse,
@@ -1038,12 +895,6 @@ const fullFieldValues = [
   feedKey,
   feedMember,
   feedResponse,
-  folderGrant,
-  folder,
-  folderObject,
-  folderObjects,
-  folderAttachment,
-  folderAttachments,
   catalogAdminForm,
   catalogEntry,
   userGrant,
@@ -1130,8 +981,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.PutAgentRuleRequest>().toEqualTypeOf<schema.PutAgentRuleRequest>();
     expectTypeOf<wire.PutAgentRuleResponse>().toEqualTypeOf<schema.PutAgentRuleResponse>();
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
-    expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
-    expectTypeOf<wire.TemplateRepoView>().toEqualTypeOf<schema.TemplateRepoView>();
+    expectTypeOf<wire.WorkspaceRepoView>().toEqualTypeOf<schema.WorkspaceRepoView>();
     expectTypeOf<wire.AddWorkspaceRepoRequest>().toEqualTypeOf<schema.AddWorkspaceRepoRequest>();
     expectTypeOf<wire.ListWorkspaceReposResponse>().toEqualTypeOf<schema.ListWorkspaceReposResponse>();
     expectTypeOf<wire.SessionShareLevel>().toEqualTypeOf<schema.SessionShareLevel>();
@@ -1146,17 +996,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.GithubRepositoryCheckView>().toEqualTypeOf<schema.GithubRepositoryCheckView>();
     expectTypeOf<wire.CheckGithubRepositoriesRequest>().toEqualTypeOf<schema.CheckGithubRepositoriesRequest>();
     expectTypeOf<wire.CheckGithubRepositoriesResponse>().toEqualTypeOf<schema.CheckGithubRepositoriesResponse>();
-    expectTypeOf<wire.WorkspaceTemplateView>().toEqualTypeOf<schema.WorkspaceTemplateView>();
-    expectTypeOf<wire.ListWorkspaceTemplatesResponse>().toEqualTypeOf<schema.ListWorkspaceTemplatesResponse>();
-    expectTypeOf<wire.CreateWorkspaceTemplateRequest>().toEqualTypeOf<schema.CreateWorkspaceTemplateRequest>();
-    expectTypeOf<wire.CreateWorkspaceTemplateResponse>().toEqualTypeOf<schema.CreateWorkspaceTemplateResponse>();
     expectTypeOf<wire.AgentProvider>().toEqualTypeOf<schema.AgentProvider>();
-    expectTypeOf<wire.RecipeHarness>().toEqualTypeOf<schema.RecipeHarness>();
-    expectTypeOf<wire.RecipeView>().toEqualTypeOf<schema.RecipeView>();
-    expectTypeOf<wire.ListRecipesResponse>().toEqualTypeOf<schema.ListRecipesResponse>();
-    expectTypeOf<wire.CreateRecipeRequest>().toEqualTypeOf<schema.CreateRecipeRequest>();
-    expectTypeOf<wire.RecipeResponse>().toEqualTypeOf<schema.RecipeResponse>();
-    expectTypeOf<wire.OrgUsageCaptureResponse>().toEqualTypeOf<schema.OrgUsageCaptureResponse>();
     expectTypeOf<wire.ListMachineTypesResponse>().toEqualTypeOf<schema.ListMachineTypesResponse>();
     expectTypeOf<wire.CreateWorkspaceRequest>().toEqualTypeOf<schema.CreateWorkspaceRequest>();
     expectTypeOf<wire.CreateWorkspaceResponse>().toEqualTypeOf<schema.CreateWorkspaceResponse>();
@@ -1173,13 +1013,6 @@ describe("local wire copies", () => {
     expectTypeOf<wire.FeedResponse>().toEqualTypeOf<schema.FeedResponse>();
     expectTypeOf<wire.FeedMember>().toEqualTypeOf<schema.FeedMember>();
     expectTypeOf<wire.FeedKey>().toEqualTypeOf<schema.FeedKey>();
-    expectTypeOf<wire.FolderRole>().toEqualTypeOf<schema.FolderRole>();
-    expectTypeOf<wire.FolderGrantView>().toEqualTypeOf<schema.FolderGrantView>();
-    expectTypeOf<wire.FolderView>().toEqualTypeOf<schema.FolderView>();
-    expectTypeOf<wire.FolderObjectView>().toEqualTypeOf<schema.FolderObjectView>();
-    expectTypeOf<wire.ListFolderObjectsResponse>().toEqualTypeOf<schema.ListFolderObjectsResponse>();
-    expectTypeOf<wire.FolderAttachmentView>().toEqualTypeOf<schema.FolderAttachmentView>();
-    expectTypeOf<wire.ListFolderAttachmentsResponse>().toEqualTypeOf<schema.ListFolderAttachmentsResponse>();
   });
 
   it("keeps the credential module's copies exactly equal to @blitzos/schema", () => {
@@ -1202,7 +1035,6 @@ describe("local wire copies", () => {
   it("keeps every duplicated constant and every field-bearing JSON shape covered", () => {
     expect(wire.FEED_MAX_BYTES).toBe(schema.FEED_MAX_BYTES);
     expect(wire.HARNESSES).toEqual(schema.HARNESSES);
-    expect(wire.RECIPE_HARNESSES).toEqual(schema.RECIPE_HARNESSES);
     expect(wire.AGENT_PROVIDERS).toEqual(schema.AGENT_PROVIDERS);
     expect(wire.AGENT_MODELS).toEqual(schema.AGENT_MODELS);
     expect(wire.AGENT_EFFORTS).toEqual(schema.AGENT_EFFORTS);
@@ -1225,7 +1057,6 @@ describe("local wire copies", () => {
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);
     expect(wire.INVITE_TTL_DAYS).toBe(schema.INVITE_TTL_DAYS);
-    expect(wire.FILES_MULTIPART_CHUNK_BYTES).toBe(schema.FILES_MULTIPART_CHUNK_BYTES);
     for (const value of fullFieldValues) {
       expect(JSON.parse(JSON.stringify(value))).toEqual(value);
     }

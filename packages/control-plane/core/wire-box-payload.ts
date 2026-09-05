@@ -8,6 +8,7 @@
 /** Payload-owned longrun services a manifest may ask the updater to restart.
  * Oneshots take effect at next boot, and the updater cannot restart itself. */
 export const BOX_PAYLOAD_RESTART_SERVICES = [
+  "box-credential",
   "cloudflared",
   "dockerd",
   "dufs",

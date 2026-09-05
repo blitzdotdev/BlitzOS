@@ -1,4 +1,4 @@
-import type { WorkspaceEnvironmentResponse, WorkspaceView } from "@blitzos/schema";
+import type { WorkspaceEnvironmentResponse } from "@blitzos/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   appRequest,
@@ -55,24 +55,22 @@ describe("workspace environment (legacy shim)", () => {
     })).status).toBe(403);
   });
 
-  it("ignores a legacy environment field on a create", async () => {
+  it("rejects a legacy environment field on a create", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         environment: { env: { API_ORIGIN: "https://api.example" }, startupScript: null },
       }),
     });
-    // The field is gone from the request, not refused: an old client that
-    // still sends one gets its workspace, and the value goes nowhere. A
-    // secret is stored at org scope now (plans/ORG-CREDENTIALS.md).
-    expect(created.status).toBe(201);
-    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
-    expect(workspace.id).toMatch(/./u);
-    expect(JSON.stringify(workspace)).not.toContain("api.example");
+    expect(created.status).toBe(400);
+    await expect(created.json()).resolves.toEqual({
+      error: "request body has unexpected field environment",
+      retryAction: null,
+    });
   });
 
   it("rejects a create body larger than the request ceiling", async () => {
@@ -82,7 +80,7 @@ describe("workspace environment (legacy shim)", () => {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         userData: "#cloud-config\n".padEnd(200 * 1024, "x"),
       }),
     });

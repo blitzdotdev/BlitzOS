@@ -377,16 +377,16 @@ New VMs use that pin immediately. An existing cloud VM moves only after an
 owner or admin requests an update through the box-config v1 routes in
 `packages/control-plane/core/box-config.ts`; the host updater emitted by
 `packages/control-plane/core/bootstrap.ts` polls, replaces the container, and
-reports the installed ref. MicroVMs have no in-place updater and keep their old
-image until recreation.
+reports the installed ref.
 
 `BOX_PAYLOAD_REF` and `BOX_PAYLOAD_VERSION` affect existing machines. Their
 updaters poll box config, verify and apply the content-addressed release, and
 report the running payload and daemon versions. An unacknowledged report is
-kept in updater state and retried before the next poll does new work. To roll back, restore **both**
-vars from the previous immutable payload release and redeploy. A lower version
-is an ordinary target, so machines apply it on their next poll. Do not replace
-objects under the current version; publish another content hash.
+kept in updater state and retried before the next poll does new work. To roll
+back, restore **both** vars from the previous immutable payload release and
+redeploy. A lower version is an ordinary target, so machines apply it on their
+next poll. Do not replace objects under the current version; publish another
+content hash.
 
 Hold one machine on its current payload with the session-authenticated,
 workspace-admin route:
@@ -412,10 +412,10 @@ that machine has not reported since the payload channel shipped. Compare each
 `payloadVersion` with `BOX_PAYLOAD_VERSION`, and inspect the outcome/time before
 declaring a rollout complete.
 
-Image rollback is the same operation in reverse: restore the previous
-`BOX_IMAGE_*` values and redeploy. VMs created during the bad image window keep
-that image until recycled, while their in-place payload can still be rolled
-back independently.
+Image rollback starts by restoring the previous immutable `BOX_IMAGE_*` pins
+and redeploying. New VMs then use them; request another box update for each
+existing cloud VM that must move back. The in-place payload can be rolled back
+independently.
 
 This boot-time pinning is why the control plane gates some per-workspace
 behavior on the VM's creation time (the `BOX_IMAGE_*_SINCE_MS` constants in

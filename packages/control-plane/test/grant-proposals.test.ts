@@ -47,7 +47,7 @@ async function createWorkspaceWith(
   const created = await appRequest(
     app,
     "/workspaces",
-    withCookie(cookie, json({ machineTypeId: "small", members })),
+    withCookie(cookie, json({ defaultMachineTypeId: "small", members })),
   );
   expect(created.status).toBe(201);
   return (await created.json<{ workspace: WorkspaceView }>()).workspace;

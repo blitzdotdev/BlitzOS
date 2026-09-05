@@ -2,7 +2,6 @@ import type { BlobStore } from "./blobs.js";
 import type { Db } from "./db.js";
 import { HttpError, isNumber } from "./http.js";
 import type { PrincipalSource } from "./principals.js";
-import type { MicrovmPoolProvider } from "./compute/microvm.js";
 import type { OrgComputeProviderResolver } from "./compute/org-credentials.js";
 import type { VolumeProviderResolver } from "./compute/types.js";
 import type { VmProviderRegistry } from "./compute/registry.js";
@@ -132,14 +131,12 @@ export { cloudWorkspaceCredentialPolicyFromEnv };
 export interface CoreRuntime {
   db: Db;
   blobs: BlobStore;
-  fileObjects: R2Bucket;
   credentialMasterKey: CryptoKey;
   vars: RuntimeVariables;
   providers: {
     vmRegistry: VmProviderRegistry;
     volume: VolumeProviderResolver;
     compute: OrgComputeProviderResolver;
-    microvm?: MicrovmPoolProvider;
     workspaceTunnels?: WorkspaceTunnels;
     webAppAuth?: WorkspaceWebAppAuth;
   };

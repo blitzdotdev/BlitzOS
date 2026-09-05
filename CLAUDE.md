@@ -66,15 +66,12 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 |---|---|---|---|
 | box-image manifest | `scripts/lib/worker-source.mjs` producer ↔ Python inside `core/bootstrap.ts` | `fixtures/box-image-manifest/` | `test/box-image-files.test.ts`, `test/bootstrap-python.test.mjs` (runs real `python3`) |
 | version report | `core/version.ts` producer ↔ `scripts/check-box-image.mjs` (reads `commit`) and the verify step of `.github/workflows/canary.yml` (reads `commit` and `boxImageTag` with jq) | `fixtures/version/` | `test/version.test.ts` + `test/deploy-tooling.test.mjs` |
-| phone-home v1 | bash in `core/bootstrap.ts` + `microvm-host/guest/blitz-microvm-enroll.js` ↔ `core/workspaces.ts` | `fixtures/phone-home/` | `test/phone-home-conformance.test.ts`, `guest/blitz-microvm-enroll.test.js` |
-| MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/compute/microvm-hosts.js` imported by both |
-| dufs WebDAV listing | `core/files/sync.ts` parser ↔ dufs in the box image | `fixtures/dav-listing/` | `test/dav-listing-fixtures.test.ts` (TS side; guest side revalidates at box-image rebuild) |
+| phone-home v1 | bash in `core/bootstrap.ts` ↔ `core/workspaces.ts` | `fixtures/phone-home/` | `test/phone-home-conformance.test.ts` |
 | public preview links | box CLI state ↔ Go gateway ↔ browser | `fixtures/previews/` | `gateway/main_test.go`, `webapp/test/preview-v2.test.ts` |
 | preview-focus | `blitz browser open <port\|file\|https-url>` CLI (`blitz teenyapp open` and `blitz preview open` stay aliases for the port form; version-2 marker with a `kind`, version 1 still read) ↔ Go gateway (`/preview-focus`) ↔ browser (`webapp/src/preview.ts` consumer; `CloudApp` opens the browser panel, `webapp/src/browser/`, or a preview tab) | `fixtures/preview-focus/` | `box/guest-tests/test/preview-focus-conformance.test.ts` (producer), `gateway/main_test.go` (reader), `webapp/test/preview-focus.test.ts` (browser consumer) |
 | connections-focus | `blitz connections open <provider>` CLI ↔ Go gateway (`/connections-focus`) ↔ browser (`webapp/src/connections-focus.ts` consumer via `use-workspace-connections-focus.ts`, opens the workspace connections panel with the provider selected) | `fixtures/connections-focus/` | `box/guest-tests/test/connections-focus-conformance.test.ts` (producer), `gateway/main_test.go` (reader), `webapp/test/connections-focus.test.ts` (browser consumer) |
 | webApp ticket v1 | `core/webapp-tickets.ts` mint/verify ↔ `box/gateway/main.go` | `fixtures/webapp-ticket/` | `test/webapp-ticket-conformance.test.ts`, `gateway/main_test.go` (ticket_conformance_test.go) |
 | schema ↔ wire copy | `packages/schema/src` ↔ `control-plane/core/wire.ts` | n/a | `test/wire-drift.test.ts` (full field coverage) |
-| microVM agent protocol | `microvm-host/types.go` ↔ `core/compute/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 | webApp box surface | `core/webapp-surface.ts` ↔ `schema/src/webapp-surface.ts` (webApp resolver) | n/a | `test/webapp-surface-drift.test.ts`, `webapp/test/webapp-surface.test.ts` |
 | agent rules | CP `core/agent-rules.ts` producer (`GET /workspaces/self/agent-rules`) ↔ box `blitz-rules sync` consumer (`box/rootfs/usr/local/bin/blitz-rules`); `AGENT_RULES_DOC` mirrors the canonical `box/rootfs/opt/blitz/skel/agent-rules.md` | `fixtures/agent-rules/` | `test/agent-rules-conformance.test.ts` + `test/agent-rules-drift.test.ts` (CP), `box/guest-tests/test/agent-rules-conformance.test.ts` (box) |
 | entitlements | CP `core/entitlements.ts` (`PUT /orgs/:id/entitlements` writer, `GET /orgs/:id/usage`, the 402 seat-limit refusal and its HS256 handoff token) ↔ the PRIVATE billing service, which owns plans, writes the integers, and verifies the token — core never learns a plan name | `fixtures/entitlements/` | `test/entitlements-fixtures.test.ts` (CP); the billing service copies the corpus and pins it on its side |
@@ -83,7 +80,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | lody local-project registration | box node `box/rootfs/usr/local/libexec/blitz-lody-projects` (registers each `/workspace/<repo>` clone) ↔ browser `webapp/src/lody/local-bridge.ts` + `rpc-client.ts` + `local-projects.ts` (`registerWorkspaceRepositories`, the same sweep driven from the tab) ↔ the source-built `lody` daemon's `/project-control`. The SCHEMA stays Lody's (`vendor/lody/packages/shared/src/message-schemas.ts`, `LocalProjectControlRequest`/`Response`); what is ours is that two BlitzOS producers keep agreeing with it | `fixtures/lody-project-registration/` (capture provenance and source-built recapture rule are in its README) | `box/guest-tests/test/lody-projects-registration.test.ts` (runs the real registrar against a stand-in daemon socket), `webapp/test/lody-project-control-frames.test.ts` (browser producer/parser) |
 | lody session-control stream | browser `webapp/src/lody/rpc-client.ts` (`sendSessionControl`) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` ↔ the source-built `lody` daemon's `/session-control`. The daemon picks NDJSON-per-response or one buffered envelope from the request's `Accept`; ours is the browser that negotiates and reads it frame by frame, and the bridge decision that carries the negotiation upstream. The FRAME UNION stays Lody's (`vendor/lody/packages/shared/src/node/local-ipc.ts:80`, `{kind:'response'\|'complete'\|'error'}`) — it is not exported and its module is node-only, so `rpc-client.ts` re-states it and the corpus keeps the copy honest | `fixtures/lody-session-control-stream/` (capture provenance and source-built recapture rule are in its README) | `webapp/test/lody-session-control-stream.test.ts` (browser consumer: frames emitted before the promise settles, at adversarial chunk boundaries), `box/guest-tests/test/lody-bridge-control-stream.test.ts` (runs the real bridge against a stand-in daemon that holds its stream open), `webapp/test/lody-acp-authentication.test.ts` (whole chain against a real daemon; skips without the bundle) |
 | lody share claim | Go gateway `box/gateway/main.go` (verifies the webApp ticket's `share` claim and forwards it on `X-Blitz-Lody-Share`, stripping any inbound copy) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` (room ACL on `/sync`, session scoping on `/rpc` and `/project`, `/control` refused, `/platform` narrowed). The claim's OWN wire format is pinned by the webApp-ticket corpus on three runtimes; what this pins is the hand-off and the decisions the bridge makes from it | `fixtures/lody-share-claim/` | `gateway/main_test.go` (producer: the header bytes + the path allowlist), `box/guest-tests/test/lody-bridge-share.test.ts` (consumer: runs the real bridge against a stand-in daemon over the whole decision table) |
-| box config v1 | CP `core/box-config.ts` producer (`GET /workspaces/self/box-config`) and consumer (`POST /workspaces/self/box-update-result`) ↔ host updater bash/python emitted by `core/bootstrap.ts` (`blitz-box-update`; cloud-VM path only — the microVM provider has its own guest lifecycle and no update path yet) | `fixtures/box-config/` | `test/box-config-conformance.test.ts` (CP), `test/box-update-conformance.test.mjs` (runs real `python3` over the emitted parser/producer, `bash -n` over the emitted scripts), `test/box-update-host.test.mjs` (runs the emitted updater in real bash against a live CP over real curl) |
+| box config v1 | CP `core/box-config.ts` producer (`GET /workspaces/self/box-config`) and consumer (`POST /workspaces/self/box-update-result`) ↔ host updater bash/python emitted by `core/bootstrap.ts` (`blitz-box-update`) | `fixtures/box-config/` | `test/box-config-conformance.test.ts` (CP), `test/box-update-conformance.test.mjs` (runs real `python3` over the emitted parser/producer, `bash -n` over the emitted scripts), `test/box-update-host.test.mjs` (runs the emitted updater in real bash against a live CP over real curl) |
 | box-payload v1 | `scripts/publish-box-payload.mjs` manifest producer + `core/box-config.ts` pin/result side ↔ box `rootfs/usr/local/libexec/blitz-payload` updater | `fixtures/box-payload/` | `control-plane/test/box-payload-conformance.test.ts` (manifest + CP); `box/guest-tests/test/box-payload-conformance.test.ts` (real updater) |
 | agent API doc | schema types (`packages/schema/src`) + route manifest `core/agent-api-manifest.ts` → generator `control-plane/scripts/generate-agent-api.mjs` (`npm run openapi:generate`; ts-json-schema-generator, no hand-written JSON Schema) → the generated OpenAPI 3.1 document, served verbatim by `core/agent-api.ts` (`GET /agent/api`, box-authed) ↔ agents reading it from a box | `packages/schema/openapi/agent-api.json` (the checked-in artifact IS the fixture) | `test/agent-api-coverage.test.ts` (router ↔ manifest ↔ document, both directions), `test/agent-api-conformance.test.ts` (every `/agent/*` happy-path body against the document's schemas; the served bytes equal the artifact), `test/agent-api-generate.test.mjs` (regenerates in plain Node and demands identical bytes) |
 
@@ -97,6 +94,24 @@ just remounting the routes. The box's device-code `enroll` service and the
 `blitz-cred enroll` verb went in the same change: every provisioned box gets
 its credential from phone-home before the container starts, so the service
 had no path left to run (the broker VM keeps the shared device-flow client).
+
+Retired 2026-09-05: the Org Drive and usage-capture surfaces. Their D1 tables,
+R2 object flows, WebDAV synchronizer, cron, schemas, routes, and webApp screens
+are deleted. Workspace files still use the box gateway's `/files` surface;
+`FilesSidebar`, `FileEditor`, file drops, and Lody attachments remain.
+
+Retired 2026-09-05: template and recipe products. Their schemas, routes,
+database columns, client methods, screens, tests, and dead launch plumbing are
+deleted. Workspace repository cloning remains under workspace-repository names.
+
+Retired 2026-09-05: permissive create-workspace and phone-home compatibility.
+Create requests now reject legacy machine, template, SSH, environment, and
+folder fields. Phone-home accepts canonical fields and returns only box and
+token fields. Deployed-box token families, `/boxes/:id/feed`, the constant
+workspace environment route, box-config v1, tunnel access, and port 7444 remain.
+
+Retired 2026-09-05: the `/integrations` API and `/settings/integrations` UI
+aliases. Canonical connection routes remain.
 
 Retired 2026-09-02: the `connection pull v1`, `credential import v1` and
 `credential list v1` contracts — box credential wire deleted with the
@@ -187,18 +202,6 @@ Every field of `WorkspaceView` is required, including `members`,
 client is `packages/webapp`, built from `packages/schema` in this tree, so a
 server that drops a field fails `test/wire-drift.test.ts` rather than the
 browser. Do not make one optional to spare a fixture.
-
-Templates and Recipes are disabled product-wide (2026-08-29), on both sides:
-
-- Control plane: the two registrations are commented out in `core/app.ts`.
-- Webapp: the `/templates*` and `/recipes*` branches are commented out in
-  `sessions-page-state.ts`, so those addresses fall through to Drive, and
-  `shell/SecondaryRoutes.tsx` no longer renders them.
-
-The page components (`TemplatesHome`, `RecipesHome`, `CreateTemplateScreen`,
-`CreateRecipeScreen`), the client methods and the recipe rows are untouched
-and unreachable. Restoring a surface means restoring both branches — and for
-recipes, rebuilding the launch delivery retired on 2026-09-04 (below).
 
 ## Settings surface style (webapp)
 
@@ -333,5 +336,5 @@ deployment credential alone (`plans/SUBSCRIPTION-COMPUTE.md`).
   If you cannot state it truthfully, the assertion is a bug — parse instead.
 - HTTP from control-plane core goes through `json-fetch.ts`. Errors in core
   go through the structured logging chokepoints, not bare `console.*`.
-- Prefer editing the four split seams (`scripts/lib/`, ui hooks,
-  `terminal-touch-*`, `microvm-*`) over regrowing the monoliths.
+- Prefer editing the split seams (`scripts/lib/`, UI hooks, and
+  `terminal-touch-*`) over regrowing the monoliths.

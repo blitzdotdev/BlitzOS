@@ -10,6 +10,7 @@ import {
  * Oneshots are updated as files and take effect at next boot; the base-owned
  * updater longrun cannot restart itself during a transaction. */
 export const BOX_PAYLOAD_RESTART_SERVICES = [
+  "box-credential",
   "cloudflared",
   "dockerd",
   "dufs",

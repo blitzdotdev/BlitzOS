@@ -21,18 +21,18 @@
  *
  * SCOPED TO OUR CONTAINERS, NEVER `#root *`. `.lody-surface` lives under
  * `#root`, so an `#root`-DESCENDANT rule would reach into the surface and revert
- * their buttons too. `.drive-shell` and `.webapp-shell` are the two roots our
+ * their buttons too. `.app-shell` and `.webapp-shell` are the two roots our
  * product renders under. `html`, `body` and `#root` are named as ELEMENTS —
  * none of the properties they take is inherited, so declaring on them cannot
  * reach the surface either.
  *
- * AND `.drive-shell` IS SUCH AN ANCESTOR TOO — the bug this file shipped with
+ * AND `.app-shell` IS SUCH AN ANCESTOR TOO — the bug this file shipped with
  * (plans/LODY-RUNTIME-DESIGN.md §18). The paragraph above got the hazard right
  * and the selector wrong: in the product the surface is
- * `main.drive-shell > .drive-ws-frame > section.webapp-workspace-view >
+ * `main.app-shell > .app-workspace-frame > section.webapp-workspace-view >
  * div.lody-surface` (`CloudApp.tsx:1582`), and the rail's vendored zone is
- * `main.drive-shell > .shell-nav > .session-rail > .session-list--vendor`. So
- * every `:where(.drive-shell, …) :where(button, input, textarea, a, h1…h6, ul,
+ * `main.app-shell > .shell-nav > .session-rail > .session-list--vendor`. So
+ * every `:where(.app-shell, …) :where(button, input, textarea, a, h1…h6, ul,
  * ol, li, img, table)` rule below was matching LODY's elements and reverting
  * their `appearance`, `background-color`, `border`, `border-radius`, `padding`,
  * `color`, `letter-spacing`, `opacity` and `cursor` to the user-agent default —
@@ -103,7 +103,7 @@ body {
 
 /* Same six, inside our shells — but never inside Lody's two mounts, whose own
    animations and transitions these would revert. */
-:where(.drive-shell, .drive-shell *, .webapp-shell, .webapp-shell *):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
+:where(.app-shell, .app-shell *, .webapp-shell, .webapp-shell *):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   animation-duration: revert;
   animation-iteration-count: revert;
   outline-color: revert;
@@ -131,7 +131,7 @@ body {
   padding: revert;
 }
 
-:where(.drive-shell, .webapp-shell)
+:where(.app-shell, .webapp-shell)
   :where(button, input, select, textarea, a, h1, h2, h3, h4, h5, h6, ul, ol, li, img, table):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   -webkit-tap-highlight-color: revert;
   border: revert;
@@ -139,7 +139,7 @@ body {
   padding: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(button, input, select, textarea):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
+:where(.app-shell, .webapp-shell) :where(button, input, select, textarea):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   appearance: revert;
   background-color: revert;
   border-radius: revert;
@@ -151,28 +151,28 @@ body {
   opacity: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(a):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
+:where(.app-shell, .webapp-shell) :where(a):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   text-decoration: revert;
   -webkit-text-decoration: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(h1, h2, h3, h4, h5, h6):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
+:where(.app-shell, .webapp-shell) :where(h1, h2, h3, h4, h5, h6):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   font-size: revert;
   font-weight: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(ul, ol):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
+:where(.app-shell, .webapp-shell) :where(ul, ol):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   list-style: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(img):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
+:where(.app-shell, .webapp-shell) :where(img):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   display: revert;
   height: revert;
   max-width: revert;
   vertical-align: revert;
 }
 
-:where(.drive-shell, .webapp-shell) :where(table):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
+:where(.app-shell, .webapp-shell) :where(table):where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-list--vendor *)) {
   border-collapse: revert;
   text-indent: revert;
 }
