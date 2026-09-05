@@ -114,6 +114,24 @@ describe("production VM bootstrap", () => {
     expect(runBox).toBeGreaterThan(moveHostSsh);
   });
 
+  it("writes persistent host inotify limits before Docker starts", () => {
+    const userData = registryUserData();
+    const dropIn = `cat >/etc/sysctl.d/60-blitz-inotify.conf <<'INOTIFY'
+fs.inotify.max_user_instances = 1024
+fs.inotify.max_user_watches = 524288
+INOTIFY`;
+
+    expect(userData).toContain(dropIn);
+    expect(userData).toContain(
+      "sysctl -q -p /etc/sysctl.d/60-blitz-inotify.conf || "
+        + 'echo "blitz bootstrap: inotify sysctl failed, continuing"',
+    );
+    expect(userData).toContain("blitz_phase inotify-ready");
+    expect(userData.indexOf(dropIn)).toBeLessThan(
+      userData.indexOf("systemctl enable --now docker"),
+    );
+  });
+
   it.each([undefined, "", " \t\n"])(
     "omits cloud-init authorization and PRESERVES an existing mounted key file when no public key is provided",
     (sshPublicKey) => {
