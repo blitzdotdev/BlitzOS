@@ -140,8 +140,8 @@ function parsePutAgentRule(value: JsonValue): PutAgentRuleRequest {
 // Box-authenticated read of the managed agent rules. Boxes call this with their
 // access token (see core/credentials/mint.ts and authenticateBox) and write the
 // content to the two canonical read paths; on any failure they keep the baked
-// fallback. The workspace's own rule wins; a workspace created from a template
-// inherits that template's rule at create time (core/workspaces.ts), so a null
+// fallback. The workspace's own rule wins; a workspace created from another
+// workspace inherits that source's rule at create time, so a null
 // column here means "nobody chose one" and the built-in doc is served.
 export function addAgentRulesRoutes(
   router: CoreRouter,

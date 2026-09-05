@@ -4,11 +4,8 @@ export interface BootstrapOptions {
   boxImageTag: string;
   phoneHomeUrl: string;
   sshPublicKey?: string;
-  /** Org-level agent-usage capture: pre-creates the two transcript HOME dirs
-   * and bind-mounts them read-only under /workspace/shared/agent-usage/. */
-  usageCapture?: boolean;
-  /** Template repos ("owner/name") cloned into /workspace/<name> by a
-   * detached best-effort retry loop (TEMPLATES-V2). Absent or empty leaves
+  /** Workspace repos ("owner/name") cloned into /workspace/<name> by a
+   * detached best-effort retry loop. Absent or empty leaves
    * the emitted bytes untouched for every ordinary create. */
   repos?: string[];
   /** The resolved VM provider's own apt setup lines, from
@@ -51,8 +48,7 @@ export function shellQuote(value: string): string {
  * Worker has no filesystem to read at runtime, so the script has to be part
  * of the bundle. The emitted bytes are a contract pinned by
  * `test/bootstrap-python.test.mjs` and the phone-home fixtures — edit them
- * the way you would edit a wire format, not a script. A create without
- * usage capture or template repos emits byte-identical output. */
+ * the way you would edit a wire format, not a script. */
 /**
  * The shell helpers `boxImageSetupScript` calls. Emitting that setup without
  * these gives `retry: command not found`, and under `set -e` the script dies
@@ -267,11 +263,9 @@ export function buildBootstrapScript(options: BootstrapOptions): string {
   // its boxes never read another provider's setup.
   const providerAptSetup = options.providerAptSetup ?? "";
 
-  // Usage-capture segments; every one is "" on an ordinary create so the
-  // emitted bytes stay identical for the plain path.
   // This value lands in an emitted shell command. The emitter is the
   // shell-interpolation boundary. `boxHostname` is the real gate. This
-  // re-check keeps the boundary local, the way the template repos do.
+  // re-check keeps the boundary local, the way the workspace repos do.
   // Refuse a bad shape. Never quote around one.
   const hostname = options.boxHostname;
   if (hostname !== undefined && !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(hostname)) {
@@ -280,22 +274,6 @@ export function buildBootstrapScript(options: BootstrapOptions): string {
   const hostnameFlag = hostname === undefined
     ? ""
     : `  --hostname ${shellQuote(hostname)} \\\n`;
-  // The two transcript HOME dirs pre-exist owned by the blitz user so the
-  // read-only mounts never make docker invent root-owned sources, and
-  // /workspace/shared/agent-usage pre-exists for the same reason on the
-  // destination side (docker would otherwise create shared/ as root and
-  // break Drive folder materialization).
-  const usageDirectories = options.usageCapture !== true
-    ? ""
-    : `install -d -o 1000 -g 1000 /var/lib/blitz/home/.claude/projects
-install -d -o 1000 -g 1000 /var/lib/blitz/home/.codex/sessions
-install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
-`;
-  const usageMounts = options.usageCapture !== true
-    ? ""
-    : `  --mount type=bind,src=/var/lib/blitz/home/.claude/projects,dst=/workspace/shared/agent-usage/claude,readonly \\
-  --mount type=bind,src=/var/lib/blitz/home/.codex/sessions,dst=/workspace/shared/agent-usage/codex,readonly \\
-`;
   // The detached `blitz-rc` remote-control tmux session used to be emitted
   // here. Parked 2026-08-24 (owner ruling): that session created the box's
   // tmux server from a bare `docker exec` environment, and every later tab
@@ -303,8 +281,8 @@ install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
   // the feature back only as an in-image service with a real login
   // environment.
 
-  // ---- TEMPLATES-V2 repo cloner (keep as one self-contained segment) ----
-  // "" on every create without template repos, so the emitted bytes stay
+  // ---- workspace repo cloner (keep as one self-contained segment) ----
+  // "" on every create without workspace repos, so the emitted bytes stay
   // identical and every existing bootstrap pin holds. With repos it starts
   // one detached best-effort retry loop inside the box: each pass skips
   // repos that already have a .git (idempotent across reboots), falls back
@@ -318,7 +296,7 @@ install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
     // The save-time validator is the real gate; this re-check keeps the
     // shell-interpolation boundary local to the emitter.
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repo)) {
-      throw new Error(`template repo is not owner/name shaped: ${repo}`);
+      throw new Error(`workspace repo is not owner/name shaped: ${repo}`);
     }
   }
   const repoCloneAttempts = repos.map((repo) => {
@@ -327,7 +305,7 @@ install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
   }).join("\n");
   const repoCloner = repos.length === 0
     ? ""
-    : `echo "blitz bootstrap: template repo cloner starting in the background (best-effort)"
+    : `echo "blitz bootstrap: workspace repo cloner starting in the background (best-effort)"
 nohup docker exec \\
   --user 1000:1000 \\
   --env HOME=/var/lib/blitz/home \\
@@ -337,13 +315,13 @@ nohup docker exec \\
 while :; do
   cloned=true
 ${repoCloneAttempts}
-  [ "$cloned" = true ] && { echo "template repos cloned"; break; }
-  [ "$(date +%s)" -lt "$deadline" ] || { echo "template repo clone gave up after 600 seconds"; break; }
+  [ "$cloned" = true ] && { echo "workspace repos cloned"; break; }
+  [ "$(date +%s)" -lt "$deadline" ] || { echo "workspace repo clone gave up after 600 seconds"; break; }
   sleep 5
 done' >>/var/lib/blitz/repo-clone.log 2>&1 || true &
 
 `;
-  // ---- end TEMPLATES-V2 repo cloner ----
+  // ---- end workspace repo cloner ----
 
   const sshPublicKeyDeclaration = sshPublicKey === undefined
     ? ""
@@ -607,7 +585,7 @@ blitz_phase sshd-ready
 ${ZRAM_SETUP}${imageSetup}
 blitz_phase box-image-ready
 install -d -m 0755 /etc/blitz
-${usageDirectories}# The one docker run for the box container, extracted to a host script so
+# The one docker run for the box container, extracted to a host script so
 # the initial start here and the host-side updater (blitz-box-update below)
 # share one code path. Per-workspace values (hostname, env, mounts) are
 # rendered in at create time; only the image ref varies between calls.
@@ -652,7 +630,7 @@ ${hostnameFlag}  --restart unless-stopped \
   --mount type=bind,src=/var/lib/blitz,dst=/var/lib/blitz \
   --mount type=bind,src=/var/lib/blitz/authorized_key,dst=/run/blitz/authorized_key,readonly \
   --mount type=bind,src=/var/lib/blitz/workspace,dst=/workspace \
-${usageMounts}  -p 0.0.0.0:22:22 \
+  -p 0.0.0.0:22:22 \
   "$box_image"
 BOX_RUN
 chmod 0755 /usr/local/bin/blitz-box-run
@@ -731,8 +709,7 @@ trap - EXIT
 # every poll — the gateway re-reads that file per request, so a domain move
 # no longer strands the box — and replaces the container only when the
 # workspace's update flag is set, because a replacement kills every process
-# inside it. The microVM provider (packages/microvm-host/) has its own guest
-# lifecycle and never runs this. The payloads are the box-config contract,
+# inside it. The payloads are the box-config contract,
 # pinned by packages/schema/fixtures/box-config/.
 cat >/usr/local/sbin/blitz-box-update <<'BOX_UPDATER'
 #!/bin/bash

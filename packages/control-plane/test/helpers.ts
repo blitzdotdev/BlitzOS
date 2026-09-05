@@ -222,7 +222,6 @@ export function appWithVmProviders(
     return {
       db,
       blobs: (context.env as TestBindings).BOX_IMAGES as BlobStore,
-      fileObjects: (context.env as TestBindings).BOX_IMAGES,
       credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
       vars: {
         boxImageRef: (context.env as TestBindings).BOX_IMAGE_REF,
@@ -295,7 +294,6 @@ export function testRuntime(
   return {
     db,
     blobs: env.BOX_IMAGES as BlobStore,
-    fileObjects: env.BOX_IMAGES,
     credentialMasterKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
@@ -456,8 +454,7 @@ export async function createWorkspace(
   volumeId?: string,
 ): Promise<WorkspaceView> {
   const body: Record<string, unknown> = {
-    machineTypeId: "small",
-    sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+    defaultMachineTypeId: "small",
   };
   if (volumeId !== undefined) body.volumeId = volumeId;
   const response = await appRequest(app, "/workspaces", {
@@ -558,17 +555,12 @@ export async function boxTokenFor(
 }
 
 export async function resetDatabase(): Promise<void> {
-  // Ordered children-first because D1 enforces foreign keys: machines sit
-  // between workspaces and everything keyed on a guest (token families,
-  // broker keys, leases), and recipes stamp workspaces.recipe_id.
+  // Ordered children-first because D1 enforces foreign keys. Machines sit
+  // between workspaces and everything keyed on a guest.
   const tables = [
-    "microvm_hosts",
     "provider_health",
     "workspace_repos",
     "session_shares",
-    "folder_grants",
-    "folder_attachments",
-    "folders",
     "credential_events",
     "credential_requests",
     "credential_leases",
@@ -590,7 +582,6 @@ export async function resetDatabase(): Promise<void> {
     "device_authorizations",
     "webapp_state",
     "workspaces",
-    "recipes",
     "agent_rules",
     "operator_tokens",
     "sessions",
@@ -601,12 +592,5 @@ export async function resetDatabase(): Promise<void> {
     "users",
     "principals",
   ];
-  // workspaces and recipes point at each other — a workspace stamps the
-  // recipe that launched it, and a recipe names the workspace it clones — so
-  // both pointers are cleared before either table is emptied.
-  await env.DB.batch([
-    env.DB.prepare("UPDATE workspaces SET recipe_id = NULL"),
-    env.DB.prepare("UPDATE recipes SET source_workspace_id = NULL"),
-    ...tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)),
-  ]);
+  await env.DB.batch(tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
 }

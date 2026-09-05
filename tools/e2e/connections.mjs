@@ -41,7 +41,7 @@ const runToken = randomBytes(6).toString("hex");
 
 const cpUrl = (process.env.CP_URL ?? "").replace(/\/+$/u, "");
 const operatorKey = process.env.OPERATOR_API_KEY ?? "";
-const machineTypeId = process.env.MACHINE_TYPE ?? "mv-2c2g@lab";
+const machineTypeId = process.env.MACHINE_TYPE ?? "cx23@hel1";
 const wantedProvider = process.env.CONNECTION_PROVIDER ?? "";
 const workDir = resolve(process.env.WORK_DIR ?? DEFAULT_WORK_DIR);
 const ledgerPath = resolve(process.env.WORKSPACE_LEDGER ?? DEFAULT_LEDGER);

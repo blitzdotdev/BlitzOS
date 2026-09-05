@@ -145,8 +145,8 @@ export function missingListEntries(exampleToml, configToml) {
  * which the Worker reads as "not configured yet" and the feature that needs it
  * stays off. Copying an empty string in therefore restores the shape without
  * turning anything on, and the deploy keeps failing on the things that would
- * actually break it — a required secret that is not set, MICROVM_HOSTS that
- * does not parse, a SIGNUP_MODE the Worker would 500 on.
+ * actually break it — a required secret that is not set, or a SIGNUP_MODE the
+ * Worker would 500 on.
  *
  * Not repairable — a key whose example value is a documentation placeholder
  * ("<your zone id>"). Only the operator knows the value, and writing the

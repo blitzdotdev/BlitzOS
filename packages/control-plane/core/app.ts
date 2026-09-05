@@ -7,7 +7,6 @@ import { addCredentialRoutes } from "./connections/mint.js";
 import { addWorkspaceEnvironmentRoutes } from "./environment.js";
 import { addEntitlementsRoutes, SeatLimitReached, seatLimitEnvelope } from "./entitlements.js";
 import { frameworkHttpError, HttpError } from "./http.js";
-import { addFilesRoutes } from "./files/routes.js";
 import { addMachineRoutes } from "./machines.js";
 import { addMachineStatsRoutes } from "./machine-stats.js";
 import { addIdentityRoutes } from "./identity/routes.js";
@@ -15,10 +14,8 @@ import { machinePlaneAllows } from "./machine-plane.js";
 import { addOAuthRoutes, authenticateMachinePrincipal } from "./oauth.js";
 import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-tokens.js";
 import type { Principal } from "./principals.js";
-import { addMicrovmHostRoutes } from "./compute/microvm.js";
 import { addOrgComputeCredentialRoutes } from "./compute/org-credentials.js";
 import { addGrantProposalRoutes } from "./grant-proposals.js";
-import { addOrgUsageCaptureRoutes } from "./recipes.js";
 import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import { addSessionRoutes } from "./sessions.js";
@@ -54,7 +51,6 @@ export function installControlPlaneRoutes(
   // tooling must read it without a session.
   addVersionRoutes(router, runtimeFactory);
   addBoxImageRoutes(router, runtimeFactory);
-  addMicrovmHostRoutes(router, runtimeFactory);
   // Box-authenticated read of the managed agent rules; no session principal.
   addAgentRulesRoutes(router, runtimeFactory);
 
@@ -101,20 +97,6 @@ export function installControlPlaneRoutes(
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addAgentRuleLibraryRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  // Templates and Recipes are disabled product-wide (2026-08-29). Both
-  // registrations stay here, commented, so the decision is visible where the
-  // surface used to be mounted and turning either back on is one line.
-  //   - Templates: the object is gone. A workspace is its own template, and
-  //     "new workspace from existing" is CreateWorkspaceRequest.cloneFromWorkspaceId
-  //     (plans/MEMBER-MACHINES.md §0). Migration 0043 dropped the four tables.
-  //   - Recipes: disabled 2026-08-29, feature hidden. The code and the
-  //     `recipes` rows are untouched; only the routes are unmounted.
-  // addWorkspaceTemplateRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  // addRecipeRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  //
-  // Usage capture is not a recipe surface — it is an org switch that fills a
-  // Drive folder — so it stays mounted.
-  addOrgUsageCaptureRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Box-authenticated, so it is registered ahead of the session-authenticated
   // /workspaces/:id routes it shares a prefix with.
   addWorkspaceEnvironmentRoutes(router, runtimeFactory);
@@ -149,7 +131,6 @@ export function installControlPlaneRoutes(
   addMachineRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addVolumeRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  addFilesRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addRegistryRoutes(router, runtimeFactory);
 
   router.get("/machine-types", async (context) => {

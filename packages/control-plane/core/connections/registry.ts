@@ -181,7 +181,4 @@ export function addConnectionRoutes(
   };
 
   router.get("/connections", listConnections);
-  // Alias path: the subsystem was called "integrations" before the rename.
-  // Old bookmarks and scripts keep working; the same handler serves both.
-  router.get("/integrations", listConnections);
 }

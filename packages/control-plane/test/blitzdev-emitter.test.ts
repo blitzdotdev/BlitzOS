@@ -85,17 +85,6 @@ const expected = [
   "core/connections/github-repo-check.ts",
   "core/connections/github-repositories.ts",
   "core/http.ts",
-  "core/files/access.ts",
-  "core/files/attachments.ts",
-  "core/files/dav.ts",
-  "core/files/folders.ts",
-  "core/files/keys.ts",
-  "core/files/objects.ts",
-  "core/files/readiness.ts",
-  "core/files/routes.ts",
-  "core/files/schedule.ts",
-  "core/files/sync.ts",
-  "core/files/usage-push.ts",
   "core/identity/google.ts",
   "core/identity/invites.ts",
   "core/identity/members.ts",
@@ -113,7 +102,6 @@ const expected = [
   "core/org-credential-routes.ts",
   "core/org-credentials.ts",
   "core/principals.ts",
-  "core/recipes.ts",
   "core/registry.ts",
   "core/session-shares.ts",
   "core/sessions.ts",
@@ -126,7 +114,7 @@ const expected = [
   "core/webapp-proxy.ts",
   "core/webapp-surface.ts",
   "core/webapp-tickets.ts",
-  "core/template-repos.ts",
+  "core/workspace-repos.ts",
   "core/workspace-access.ts",
   "core/workspace-drain.ts",
   "core/workspace-members.ts",
@@ -144,11 +132,6 @@ const expected = [
   "core/compute/json-fetch.ts",
   "core/compute/org-credentials.ts",
   "core/compute/workspace-placement.ts",
-  "core/compute/microvm-hosts.js",
-  "core/compute/microvm-config.ts",
-  "core/compute/microvm-agent.ts",
-  "core/compute/microvm-host-registry.ts",
-  "core/compute/microvm.ts",
   "core/compute/aws.ts",
   "core/compute/aws-prices.ts",
   "core/compute/aws-sigv4.ts",
@@ -265,7 +248,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
   });
 
   // Run-3 report, B2. The emitted worker registered only vmRegistry, volume
-  // and microvm, so `/workspaces/:id/webapp/:port` could answer nothing but
+  // and cloud providers, so `/workspaces/:id/webapp/:port` could answer nothing but
   // 503 and the browser terminal was unreachable on Target B. Hetzner has no
   // proxyWebApp of its own, so tunnels are the only path.
   it("registers workspace tunnels and webApp auth from the documented env names", () => {

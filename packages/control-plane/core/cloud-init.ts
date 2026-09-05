@@ -92,12 +92,10 @@ mv /var/lib/blitz/tokens-ready.tmp ${TOKENS_READY_MARKER}
 `;
 }
 
-/** Boot shaping beyond the pinned base script: the org's usage-capture
- * switch, the template's repo list, and the resolved VM provider's own setup
- * lines. Absent (or all-absent fields) emits the exact base bytes. */
+/** Boot shaping beyond the pinned base script: repository clones and the
+ * resolved VM provider's own setup lines. */
 export interface BootShaping {
-  usageCapture?: boolean;
-  /** Template repos ("owner/name") for the bootstrap's detached clone loop. */
+  /** Workspace repos ("owner/name") for the bootstrap's detached clone loop. */
   repos?: string[];
   /** What `VmProvider.bootstrapAptSetup` returned for the provider that owns
    * this create. The caller resolves the provider; this only carries the
@@ -132,9 +130,6 @@ export function buildUserData(
     phoneHomeUrl,
     sshPublicKey,
   };
-  if (shaping?.usageCapture !== undefined) {
-    bootstrapOptions.usageCapture = shaping.usageCapture;
-  }
   if (shaping?.repos !== undefined) bootstrapOptions.repos = shaping.repos;
   if (shaping?.providerAptSetup !== undefined) {
     bootstrapOptions.providerAptSetup = shaping.providerAptSetup;

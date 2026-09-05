@@ -45,7 +45,7 @@ describe("workspace tunnels", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "small" }),
+      body: JSON.stringify({ defaultMachineTypeId: "small" }),
     });
     expect(created.status).toBe(201);
     const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
@@ -114,7 +114,7 @@ describe("workspace tunnels", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "small" }),
+      body: JSON.stringify({ defaultMachineTypeId: "small" }),
     });
     expect(created.status).toBe(201);
     const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
