@@ -33,8 +33,6 @@ export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 // reads the ones granted to it (plans/ORG-CREDENTIALS.md §9).
 
 type CreateWorkspaceDialogProps = {
-  busy: boolean;
-  error: string | null;
   orgName: string;
   orgId?: string;
   /** Org admin. Workspace creation is org-admin only for now (§3), so a
@@ -58,8 +56,6 @@ type CreateWorkspaceDialogProps = {
 };
 
 export function CreateWorkspaceDialog({
-  busy,
-  error,
   orgName,
   orgId = '',
   admin = false,
@@ -103,10 +99,6 @@ export function CreateWorkspaceDialog({
   }, []);
 
   useEffect(() => {
-    if (!busy) submitted.current = false;
-  }, [busy]);
-
-  useEffect(() => {
     if (returningFromConnect) clearWorkspaceConnectDraft();
   }, [returningFromConnect]);
 
@@ -143,7 +135,7 @@ export function CreateWorkspaceDialog({
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (busy || submitted.current) return;
+    if (submitted.current) return;
     if (selectedMachineType === '') return;
     const data = new FormData(event.currentTarget);
     const name = String(data.get('name') ?? '').trim();
@@ -185,13 +177,13 @@ export function CreateWorkspaceDialog({
               ? 'Create workspace'
               : `New workspace from “${cloneFromWorkspaceName}”`}</h1>
           </div>
-          <button type="button" aria-label="Close" disabled={busy} onClick={onCancel}>×</button>
+          <button type="button" aria-label="Close" onClick={onCancel}>×</button>
         </header>
 
         <div className="create-workspace-main">
-          {(error ?? loadError) !== null && (
+          {loadError !== null && (
             <div className="create-workspace-notices">
-              <p className="webapp-form-message" role="alert">{error ?? loadError}</p>
+              <p className="webapp-form-message" role="alert">{loadError}</p>
             </div>
           )}
           {!admin && (
@@ -317,13 +309,13 @@ export function CreateWorkspaceDialog({
         </div>
 
         <footer className="create-workspace-actions">
-          <button className="blueprint-cancel" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
+          <button className="blueprint-cancel" type="button" onClick={onCancel}>Cancel</button>
           <button
             className="create-workspace-primary"
             type="submit"
-            disabled={busy || loading || selectedMachineType === ''}
+            disabled={loading || selectedMachineType === ''}
           >
-            {busy ? 'Creating…' : 'Create workspace'}
+            Create workspace
           </button>
         </footer>
       </form>

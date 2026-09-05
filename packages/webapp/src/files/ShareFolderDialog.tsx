@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ControlPlaneClient, MemberView } from '../api';
-import type { FolderView } from '../file-library-api';
+import type { FolderGrantView, FolderView } from '../file-library-api';
 import { DriveAvatar } from './DriveAvatar';
 import { canManageFolder } from './drive-model';
 
@@ -22,11 +22,14 @@ export function ShareFolderDialog({
   onSnack: (message: React.ReactNode) => void;
 }) {
   const manage = canManageFolder(folder.role);
+  const [displayedFolder, setDisplayedFolder] = useState(folder);
+  const [busy, setBusy] = useState<string | null>(null);
   const [members, setMembers] = useState<MemberView[]>([]);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => setDisplayedFolder(folder), [folder]);
   useEffect(() => {
     if (!manage) return;
     void client.listMembers()
@@ -34,7 +37,7 @@ export function ShareFolderDialog({
       .catch((caught: Error) => setError(caught.message));
   }, [client, manage]);
 
-  const granted = new Set(folder.grants?.map((grant) => grant.membershipId) ?? []);
+  const granted = new Set(displayedFolder.grants?.map((grant) => grant.membershipId) ?? []);
   const trimmed = query.trim().toLowerCase();
   const candidates = members
     .filter((member) => member.status === 'active' && !granted.has(member.id))
@@ -43,18 +46,95 @@ export function ShareFolderDialog({
       || member.email.toLowerCase().includes(trimmed))
     .slice(0, 5);
 
-  const run = (action: Promise<unknown>, done?: React.ReactNode) => {
-    void action
-      .then(() => onChanged())
-      .then(() => {
-        if (done !== undefined) onSnack(done);
+  const finish = (done?: React.ReactNode) => {
+    setBusy(null);
+    if (done !== undefined) onSnack(done);
+    void onChanged().catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : 'Could not refresh folder access.');
+    });
+  };
+
+  const setOrgRole = (next: FolderView['orgRole'], done: React.ReactNode) => {
+    if (busy !== null) return;
+    const preceding = displayedFolder;
+    setDisplayedFolder({ ...preceding, orgRole: next });
+    setBusy('Updating general access…');
+    setError(null);
+    void client.setFolderOrgRole(folder.id, next)
+      .then(() => finish(done))
+      .catch((cause: unknown) => {
+        setDisplayedFolder(preceding);
+        setBusy(null);
+        setError(cause instanceof Error ? cause.message : 'Could not update general access.');
+      });
+  };
+
+  const putGrant = (
+    membershipId: string,
+    member: FolderGrantView['member'],
+    role: FolderGrantView['role'],
+    done: React.ReactNode,
+  ) => {
+    if (busy !== null) return;
+    const preceding = displayedFolder;
+    const previous = displayedFolder.grants?.find((grant) => (
+      grant.membershipId === membershipId
+    ));
+    const optimistic: FolderGrantView = {
+      id: previous?.id ?? 'pending-' + membershipId,
+      membershipId,
+      role,
+      createdAt: previous?.createdAt ?? Date.now(),
+      member,
+    };
+    setDisplayedFolder({
+      ...preceding,
+      grants: [
+        ...(preceding.grants ?? []).filter((grant) => grant.membershipId !== membershipId),
+        optimistic,
+      ],
+    });
+    setBusy((previous === undefined ? 'Adding ' : 'Updating ') + (member.name || member.email) + '…');
+    setError(null);
+    void client.createFolderGrant(folder.id, membershipId, role)
+      .then(({ grant: canonical }) => {
+        setDisplayedFolder((current) => ({
+          ...current,
+          grants: [
+            ...(current.grants ?? []).filter((grant) => grant.membershipId !== membershipId),
+            canonical,
+          ],
+        }));
+        finish(done);
       })
-      .catch((caught: Error) => setError(caught.message));
+      .catch((cause: unknown) => {
+        setDisplayedFolder(preceding);
+        setBusy(null);
+        setError(cause instanceof Error ? cause.message : 'Could not update folder access.');
+      });
+  };
+
+  const removeGrant = (grant: FolderGrantView, done: React.ReactNode) => {
+    if (busy !== null) return;
+    const preceding = displayedFolder;
+    setDisplayedFolder({
+      ...preceding,
+      grants: (preceding.grants ?? []).filter(({ id }) => id !== grant.id),
+    });
+    setBusy('Removing ' + (grant.member.name || grant.member.email) + '…');
+    setError(null);
+    void client.revokeFolderGrant(folder.id, grant.id)
+      .then(() => finish(done))
+      .catch((cause: unknown) => {
+        setDisplayedFolder(preceding);
+        setBusy(null);
+        setError(cause instanceof Error ? cause.message : 'Could not remove folder access.');
+      });
   };
 
   return (
-    <div className="drive-scrim" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="drive-dialog drive-dialog--wide" role="dialog" aria-modal="true" aria-label={`Share ${folder.name}`}>
+    <div className="drive-scrim" role="presentation" onClick={(event) => { if (busy === null && event.target === event.currentTarget) onClose(); }}>
+      <section className="drive-dialog drive-dialog--wide" role="dialog" aria-modal="true" aria-busy={busy !== null} aria-label={`Share ${folder.name}`}>
         <h2>Share <em>“{folder.name}”</em></h2>
         <div className="drive-dialog-body">
           {manage && (
@@ -65,6 +145,7 @@ export function ShareFolderDialog({
                 autoComplete="off"
                 placeholder="Add people"
                 aria-label="Add people"
+                disabled={busy !== null}
                 value={query}
                 onFocus={() => setOpen(true)}
                 onChange={(event) => { setQuery(event.currentTarget.value); setOpen(true); }}
@@ -78,11 +159,18 @@ export function ShareFolderDialog({
                         className="drive-suggestion"
                         type="button"
                         key={member.id}
+                        disabled={busy !== null}
                         onClick={() => {
                           setQuery('');
                           setOpen(false);
-                          run(
-                            client.createFolderGrant(folder.id, member.id, 'editor'),
+                          putGrant(
+                            member.id,
+                            {
+                              name: member.name,
+                              email: member.email,
+                              avatarUrl: member.avatarUrl,
+                            },
+                            'editor',
                             <span><b>{member.name || member.email}</b> can now edit {folder.name}</span>,
                           );
                         }}
@@ -102,24 +190,22 @@ export function ShareFolderDialog({
                 <span className="drive-org-glyph" aria-hidden="true">{orgName.charAt(0).toUpperCase()}</span>
                 <span className="drive-person-copy">
                   <strong>Everyone at {orgName}</strong>
-                  <span>{folder.orgRole === null
+                  <span>{displayedFolder.orgRole === null
                     ? 'No general access'
-                    : folder.orgRole === 'editor' ? 'Anyone in the org can edit' : 'Anyone in the org can view'}</span>
+                    : displayedFolder.orgRole === 'editor' ? 'Anyone in the org can edit' : 'Anyone in the org can view'}</span>
                 </span>
                 {manage ? (
                   <select
                     className="drive-role-select"
                     aria-label={`Access for everyone at ${orgName}`}
-                    value={folder.orgRole ?? 'off'}
+                    value={displayedFolder.orgRole ?? 'off'}
+                    disabled={busy !== null}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       const next = value === 'editor' || value === 'viewer' ? value : null;
-                      run(
-                        client.setFolderOrgRole(folder.id, next),
-                        next === null
+                      setOrgRole(next, next === null
                           ? <span><b>General access removed</b> — only invited people keep access to {folder.name}</span>
-                          : <span><b>Everyone at {orgName}</b> can now {next === 'editor' ? 'edit' : 'view'} {folder.name}</span>,
-                      );
+                          : <span><b>Everyone at {orgName}</b> can now {next === 'editor' ? 'edit' : 'view'} {folder.name}</span>);
                     }}
                   >
                     <option value="off">Off</option>
@@ -128,7 +214,7 @@ export function ShareFolderDialog({
                   </select>
                 ) : (
                   <span className="drive-role-static">
-                    {folder.orgRole === null ? 'Off' : folder.orgRole === 'editor' ? 'Editor' : 'Viewer'}
+                    {displayedFolder.orgRole === null ? 'Off' : displayedFolder.orgRole === 'editor' ? 'Editor' : 'Viewer'}
                   </span>
                 )}
               </div>
@@ -149,7 +235,7 @@ export function ShareFolderDialog({
                 </span>
                 <span className="drive-role-static">Owner</span>
               </div>
-              {folder.grants?.map((grant) => {
+              {displayedFolder.grants?.map((grant) => {
                 const mine = grant.member.email === viewerEmail;
                 return (
                   <div className="drive-person" key={grant.id}>
@@ -163,17 +249,17 @@ export function ShareFolderDialog({
                         className="drive-role-select"
                         aria-label={`Access for ${grant.member.name || grant.member.email}`}
                         value={grant.role}
+                        disabled={busy !== null}
                         onChange={(event) => {
                           const value = event.currentTarget.value;
                           if (value === 'remove') {
-                            run(
-                              client.revokeFolderGrant(folder.id, grant.id),
-                              <span><b>Access revoked immediately</b> · {grant.member.name || grant.member.email}’s next request — including the next chunk of an upload in flight — is refused</span>,
-                            );
+                            removeGrant(grant, <span><b>Access revoked immediately</b> · {grant.member.name || grant.member.email}’s next request — including the next chunk of an upload in flight — is refused</span>);
                             return;
                           }
-                          run(
-                            client.createFolderGrant(folder.id, grant.membershipId, value === 'viewer' ? 'viewer' : 'editor'),
+                          putGrant(
+                            grant.membershipId,
+                            grant.member,
+                            value === 'viewer' ? 'viewer' : 'editor',
                             <span><b>{grant.member.name || grant.member.email}</b> is now a {value} on {folder.name}</span>,
                           );
                         }}
@@ -190,6 +276,7 @@ export function ShareFolderDialog({
               })}
             </div>
           </div>
+          {busy !== null && <p className="drive-dialog-note" role="status">{busy}</p>}
           {error && <p className="drive-dialog-note" role="alert">{error}</p>}
           <p className="drive-dialog-note">
             {manage
@@ -198,7 +285,7 @@ export function ShareFolderDialog({
           </p>
         </div>
         <div className="drive-dialog-foot">
-          <button className="drive-button drive-button--primary" type="button" onClick={onClose}>Done</button>
+          <button className="drive-button drive-button--primary" type="button" disabled={busy !== null} onClick={onClose}>Done</button>
         </div>
       </section>
     </div>

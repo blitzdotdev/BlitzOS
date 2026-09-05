@@ -76,8 +76,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
@@ -117,8 +115,6 @@ describe("create workspace dialog", () => {
   it("summarizes provider failures when the machine catalog is empty", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({
@@ -147,8 +143,6 @@ describe("create workspace dialog", () => {
   it("names the failed provider beside the machine types that did arrive", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({
@@ -177,8 +171,6 @@ describe("create workspace dialog", () => {
   it("keeps the bare empty-catalog message when no provider failed", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: [], failures: [] })}
@@ -200,8 +192,6 @@ describe("create workspace dialog", () => {
     });
     const first = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={client}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
@@ -238,8 +228,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const returned = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
@@ -270,8 +258,6 @@ describe("create workspace dialog", () => {
     };
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         client={rulesClient([BUILT_IN_RULE, orgRule])}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
@@ -334,8 +320,6 @@ describe("create workspace dialog", () => {
     });
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         orgId="org-one"
         admin
@@ -377,8 +361,6 @@ describe("create workspace dialog", () => {
   it("tells a non-admin which cloud key an organization admin must add", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         orgId="org-one"
         client={rulesClient()}
@@ -405,8 +387,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin
         viewerName="Ada Park"
@@ -459,8 +439,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin
         viewerName="Ada Park"
@@ -507,8 +485,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin
         client={rulesClient()}
@@ -554,8 +530,6 @@ describe("create workspace dialog", () => {
   it("tells a member that creating a workspace is an org-admin power", async () => {
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin={false}
         client={rulesClient()}
@@ -574,8 +548,6 @@ describe("create workspace dialog", () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
-        busy={false}
-        error={null}
         orgName="acme"
         admin
         client={rulesClient()}

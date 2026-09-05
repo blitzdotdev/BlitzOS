@@ -137,7 +137,8 @@ export function SessionRail({
     );
   }
 
-  const canShare = workspace.accessRole === 'owner' || workspace.accessRole === 'admin';
+  const canShare = !workspace.pendingCreate
+    && (workspace.accessRole === 'owner' || workspace.accessRole === 'admin');
   const vendored = onVendorHost !== undefined;
   return (
     <aside className="session-rail" aria-label="Workspace sessions rail">
@@ -155,7 +156,7 @@ export function SessionRail({
             onClick={() => onOpenMembers(workspace.id)}
           ><ShareGlyph className="shell-ib__glyph" /></button>
         )}
-        {workspace.canControl && (
+        {workspace.canControl && !workspace.pendingCreate && (
           <button
             className="shell-ib"
             type="button"
@@ -164,7 +165,7 @@ export function SessionRail({
             onClick={() => onOpenMachine(workspace.id)}
           ><BoxGlyph className="shell-ib__glyph" /></button>
         )}
-        {workspace.canControl && (
+        {workspace.canControl && !workspace.pendingCreate && (
           <button
             className="shell-ib"
             type="button"

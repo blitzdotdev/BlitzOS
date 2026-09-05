@@ -16,7 +16,7 @@ import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { ListSessionSharesResponse, SessionShareView, WorkspaceMemberView } from "@blitzos/schema";
 import { SessionShareDialog } from "../src/SessionShareDialog.js";
-import { render, settle } from "./dom.js";
+import { deferred, render, settle } from "./dom.js";
 
 const SESSION = "sess-alpha";
 
@@ -44,9 +44,8 @@ function share(overrides: Partial<SessionShareView> = {}): SessionShareView {
   };
 }
 
-/** A stub that BEHAVES like the routes, because the dialog re-reads after every
- * write and a stub with a frozen answer would make the second click look like a
- * bug in the dialog. */
+/** A stub that behaves like the routes: grants return their canonical row and
+ * revokes confirm the row that disappeared. */
 function client(granted: SessionShareView[]) {
   let rows = [...granted];
   return {
@@ -108,12 +107,17 @@ describe("the session share dialog", () => {
     await view.unmount();
   });
 
-  it("grants, and re-reads the grants the server actually holds", async () => {
+  it("grants and commits the row returned by the server", async () => {
     const api = client([]);
+    const request = deferred<SessionShareView>();
+    api.grantSessionShare.mockReturnValueOnce(request.promise);
     const view = await render(dialog(api, [member()]));
     await settle();
 
     await act(async () => levelButton(view.container, "Read-only").click());
+    expect(levelButton(view.container, "Read-only").getAttribute("aria-pressed")).toBe("true");
+    expect(levelButton(view.container, "Read-only").disabled).toBe(true);
+    request.resolve(share({ level: "ro" }));
     await settle();
     expect(api.grantSessionShare).toHaveBeenCalledWith("workspace-one", {
       sessionId: SESSION,
@@ -122,7 +126,7 @@ describe("the session share dialog", () => {
     });
     // The owner is not named: the rail lists the sessions on the caller's own
     // box, so the session is always theirs and the request omits it.
-    expect(api.listSessionShares).toHaveBeenCalledTimes(2);
+    expect(api.listSessionShares).toHaveBeenCalledOnce();
     await view.unmount();
   });
 
@@ -158,11 +162,14 @@ describe("the session share dialog", () => {
 
   it("surfaces a refusal instead of pretending the grant landed", async () => {
     const api = client([]);
-    api.grantSessionShare.mockRejectedValueOnce(new Error("that member is not in this workspace"));
+    const refusal = deferred<SessionShareView>();
+    api.grantSessionShare.mockReturnValueOnce(refusal.promise);
     const view = await render(dialog(api, [member()]));
     await settle();
 
     await act(async () => levelButton(view.container, "Read-only").click());
+    expect(levelButton(view.container, "Read-only").getAttribute("aria-pressed")).toBe("true");
+    refusal.reject(new Error("that member is not in this workspace"));
     await settle();
     expect(view.container.querySelector("[role='alert']")?.textContent)
       .toBe("that member is not in this workspace");

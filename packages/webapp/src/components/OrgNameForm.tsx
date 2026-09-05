@@ -8,16 +8,19 @@ import { caughtErrorMessage } from '../error-message';
 export function OrgNameForm({
   submitLabel,
   autoFocus = false,
+  name,
+  onNameChange,
   onCreate,
   children,
 }: {
   submitLabel: string;
   autoFocus?: boolean;
+  name: string;
+  onNameChange: (name: string) => void;
   onCreate: (name: string) => Promise<void>;
   /** Extra controls beside the submit button, such as a dialog's Cancel. */
   children?: React.ReactNode;
 }): React.JSX.Element {
-  const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,7 +45,7 @@ export function OrgNameForm({
         id="organization-name"
         name="name"
         value={name}
-        onChange={(event) => setName(event.target.value)}
+        onChange={(event) => onNameChange(event.target.value)}
         autoComplete="organization"
         autoFocus={autoFocus}
         required

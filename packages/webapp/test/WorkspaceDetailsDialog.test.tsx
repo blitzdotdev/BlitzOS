@@ -1,18 +1,25 @@
-import { act } from 'react';
+import { act, useCallback, useState } from 'react';
 import type {
   MachineState,
+  MachineResponse,
   MachineType,
   MachineView,
   OrgCredentialView,
   WorkspaceMemberView,
+  WorkspaceMemberResponse,
 } from '@blitzos/schema';
-import type { ControlPlaneClient } from '../src/api.js';
+import { ApiRequestError, type ControlPlaneClient } from '../src/api.js';
 import { WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
 import { SessionRail } from '../src/shell/SessionRail.js';
 import { machineActionsFor } from '../src/WorkspaceMembersEditor.js';
+import {
+  workspaceReducer,
+  type WorkspaceAction,
+} from '../src/workspace-store.js';
 import { describe, expect, it, vi } from 'vitest';
-import { render, settle } from './dom.js';
-import { workspaceModelFixture } from './workspace-fixtures.js';
+import { deferred, render, settle } from './dom.js';
+import { workspaceModelFixture, workspaceViewFixture } from './workspace-fixtures.js';
+import { ErrorReporterProvider } from '../src/error-dialog/ErrorReporter.js';
 
 const machineTypes: MachineType[] = [
   {
@@ -95,18 +102,43 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
 const listMachineTypesStub = async () => ({ machineTypes, failures: [] });
 const noop = () => undefined;
 
-function dialog(overrides: Partial<Parameters<typeof WorkspaceDetailsDialog>[0]> = {}) {
+function WorkspaceDetailsHarness({
+  overrides,
+}: {
+  overrides: Partial<Parameters<typeof WorkspaceDetailsDialog>[0]>;
+}) {
+  const {
+    workspace: initialWorkspace = workspace,
+    commitWorkspaceMutation: observeCommit,
+    ...rest
+  } = overrides;
+  const [model, setModel] = useState(initialWorkspace);
+  const commitWorkspaceMutation = useCallback((action: WorkspaceAction) => {
+    observeCommit?.(action);
+    setModel((current) => workspaceReducer({
+      workspaces: [current],
+      viewer: null,
+    }, action).workspaces[0] ?? current);
+  }, [observeCommit]);
   return (
     <WorkspaceDetailsDialog
       client={client()}
-      workspace={workspace}
+      workspace={model}
       listMachineTypes={listMachineTypesStub}
-      refreshWorkspaces={noop}
+      commitWorkspaceMutation={commitWorkspaceMutation}
       onClose={noop}
       onClone={noop}
       onDelete={noop}
-      {...overrides}
+      {...rest}
     />
+  );
+}
+
+function dialog(overrides: Partial<Parameters<typeof WorkspaceDetailsDialog>[0]> = {}) {
+  return (
+    <ErrorReporterProvider>
+      <WorkspaceDetailsHarness overrides={overrides} />
+    </ErrorReporterProvider>
   );
 }
 
@@ -140,6 +172,141 @@ describe('WorkspaceDetailsDialog', () => {
     // The workspace owner cannot be removed; another member can.
     expect(view.container.querySelector('button[aria-label="Remove Ada Owner"]')).toBeNull();
     expect(view.container.querySelector('button[aria-label="Remove Grace Viewer"]')).not.toBeNull();
+    await view.unmount();
+  });
+
+  it('shows an added member before the API resolves', async () => {
+    const request = deferred<WorkspaceMemberResponse>();
+    const addWorkspaceMember = vi.fn(() => request.promise);
+    const view = await render(dialog({ client: client({ addWorkspaceMember }) }));
+    await settle();
+
+    const field = view.container.querySelector<HTMLInputElement>('[aria-label="Add people"]');
+    await act(async () => field?.focus());
+    const nia = [...view.container.querySelectorAll<HTMLButtonElement>('.drive-suggestion')]
+      .find((candidate) => candidate.textContent?.includes('Nia Newcomer'));
+    await act(async () => {
+      nia?.click();
+      await Promise.resolve();
+    });
+
+    expect(addWorkspaceMember).toHaveBeenCalledWith(workspace.id, {
+      membershipId: 'membership-3',
+      role: 'member',
+    });
+    expect(view.container.textContent).toContain('Nia Newcomer');
+    expect(view.container.querySelector('[aria-label="Remove Nia Newcomer"]'))
+      .toHaveProperty('disabled', true);
+
+    request.resolve({
+      member: {
+        membershipId: 'membership-3',
+        name: 'Nia Newcomer',
+        avatarUrl: null,
+        role: 'member',
+        machine: null,
+      },
+    });
+    await settle();
+    // The response is committed directly; no workspace poll is required.
+    expect(view.container.textContent).toContain('Nia Newcomer');
+    expect(view.container.querySelector('[aria-label="Remove Nia Newcomer"]'))
+      .toHaveProperty('disabled', false);
+    await view.unmount();
+  });
+
+  it('shows a role change immediately and rolls it back on rejection', async () => {
+    const request = deferred<WorkspaceMemberResponse>();
+    const updateWorkspaceMember = vi.fn(() => request.promise);
+    const view = await render(dialog({ client: client({ updateWorkspaceMember }) }));
+    await settle();
+
+    const role = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Role for Grace Viewer"]',
+    );
+    await act(async () => role?.click());
+    const member = [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+      .find((option) => option.textContent === 'Member');
+    await act(async () => {
+      member?.click();
+      await Promise.resolve();
+    });
+
+    expect(updateWorkspaceMember).toHaveBeenCalledWith(
+      workspace.id,
+      grace.membershipId,
+      { role: 'member' },
+    );
+    expect(role?.textContent).toContain('Member');
+    expect(role?.disabled).toBe(true);
+    expect(view.container.querySelector('.machine-chip')?.textContent).toBe('running');
+    expect(view.container.querySelectorAll('.machine-chip')[1]?.textContent)
+      .toBe('Provisioning');
+
+    request.reject(new ApiRequestError('role is protected', 409, 'poll'));
+    await settle();
+    expect(role?.textContent).toContain('Viewer');
+    expect(role?.disabled).toBe(false);
+    expect(view.container.querySelector('[aria-label="Machine type for Grace Viewer"]'))
+      .toBeNull();
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Couldn’t change member role');
+    await view.unmount();
+  });
+
+  it('hides a removed member before the API resolves and rolls back on failure', async () => {
+    const request = deferred<void>();
+    const removeWorkspaceMember = vi.fn(() => request.promise);
+    const view = await render(dialog({ client: client({ removeWorkspaceMember }) }));
+    await settle();
+
+    const remove = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Remove Grace Viewer"]',
+    );
+    await act(async () => {
+      remove?.click();
+      await Promise.resolve();
+    });
+    expect(removeWorkspaceMember).toHaveBeenCalledWith(workspace.id, grace.membershipId);
+    expect(view.container.textContent).not.toContain('Grace Viewer');
+
+    request.reject(new ApiRequestError('member is protected', 409, 'poll'));
+    await settle();
+    expect(view.container.textContent).toContain('Grace Viewer');
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Couldn’t remove member');
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Status: HTTP 409');
+    await view.unmount();
+  });
+
+  it('shows a machine transition immediately and restores the row on rejection', async () => {
+    const request = deferred<MachineResponse>();
+    const stopMachine = vi.fn(() => request.promise);
+    const view = await render(dialog({ client: client({ stopMachine }) }));
+    await settle();
+
+    const menu = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Machine actions for Ada Owner"]',
+    );
+    await act(async () => menu?.click());
+    const stop = [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+      .find((option) => option.textContent === 'Stop');
+    await act(async () => {
+      stop?.click();
+      await Promise.resolve();
+    });
+
+    expect(stopMachine).toHaveBeenCalledWith('machine-ada');
+    expect(view.container.querySelector('.machine-chip')?.textContent).toBe('Stopping');
+    expect(view.container.querySelector('[aria-label="Machine actions for Ada Owner"]'))
+      .toBeNull();
+
+    request.reject(new ApiRequestError('provider unavailable', 503, 'poll'));
+    await settle();
+    expect(view.container.querySelector('.machine-chip')?.textContent).toBe('running');
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Couldn’t stop machine');
     await view.unmount();
   });
 
@@ -370,7 +537,8 @@ describe('WorkspaceDetailsDialog', () => {
   });
 
   it('writes only the settings fields that actually changed', async () => {
-    const updateWorkspace = vi.fn().mockResolvedValue({ workspace: {} });
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['updateWorkspace']>>>();
+    const updateWorkspace = vi.fn(() => request.promise);
     const view = await render(dialog({ client: client({ updateWorkspace }) }));
     await settle();
     await act(async () => tab(view.container, 'Settings')?.click());
@@ -396,13 +564,27 @@ describe('WorkspaceDetailsDialog', () => {
     await act(async () => toggle?.click());
 
     expect(save()?.disabled).toBe(false);
-    await act(async () => save()?.click());
+    const saveButton = save();
+    await act(async () => saveButton?.click());
+    expect(saveButton?.textContent).toBe('Saving…');
+    expect(name.disabled).toBe(true);
     // The default machine type and the agent rule were never touched, so they
     // travel as absent fields rather than as a restatement of what is stored.
     expect(updateWorkspace).toHaveBeenCalledWith(workspace.id, {
       name: 'renamed-workspace',
       autoProvision: false,
     });
+    request.resolve({ workspace: workspaceViewFixture({
+      id: workspace.id,
+      name: 'server-normalized',
+      defaultMachineTypeId: workspace.defaultMachineTypeId,
+      autoProvision: false,
+      agentRuleId: workspace.agentRuleId,
+    }) });
+    await settle();
+    expect(saveButton?.textContent).toBe('Save settings');
+    expect(name.value).toBe('server-normalized');
+    expect(saveButton?.disabled).toBe(true);
     await view.unmount();
   });
 
