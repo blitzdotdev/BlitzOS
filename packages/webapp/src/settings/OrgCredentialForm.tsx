@@ -178,7 +178,14 @@ export function AccessListEditor({
             className="org-access-open"
             type="button"
             aria-label="Add access"
-            onClick={() => setAdding(true)}
+            onClick={() => {
+              // READ, EVERY TIME THE PICKER OPENS. The level is state, so a
+              // row added at `write` left the next one starting there — and
+              // the next one is often "everyone in the org", which is the one
+              // subject that must not inherit write by accident.
+              setAccess('read');
+              setAdding(true);
+            }}
           >+</button>
         )}
       </div>
