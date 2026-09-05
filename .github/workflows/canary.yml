@@ -101,22 +101,18 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       # The payload version includes the daemon archive digest and the built Go
-      # binaries. Build exactly those inputs before planning either release.
+      # gateway binary. Build exactly those inputs before planning either release.
       # Go 1.26.5 matches the Dockerfile builders, keeping the staged binary
       # bytes identical to the ones baked into an amd64 image.
       - name: Build the daemon archive
         run: node packages/control-plane/scripts/build-box-daemon.mjs --out "$DAEMON_ARCHIVE"
 
-      - name: Build the payload binaries
+      - name: Build the payload binary
         run: |
           mkdir -p "$PAYLOAD_BINARIES"
           (
             cd packages/box/gateway
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-box-gateway" .
-          )
-          (
-            cd packages/broker
-            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-cred" ./cmd/blitz-cred
           )
 
       - name: Plan the baked payload version
@@ -267,16 +263,12 @@ jobs:
       - name: Build the daemon archive
         run: node packages/control-plane/scripts/build-box-daemon.mjs --out "$DAEMON_ARCHIVE"
 
-      - name: Build the payload binaries
+      - name: Build the payload binary
         run: |
           mkdir -p "$PAYLOAD_BINARIES"
           (
             cd packages/box/gateway
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-box-gateway" .
-          )
-          (
-            cd packages/broker
-            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-cred" ./cmd/blitz-cred
           )
 
       # A valid matching manifest is immutable and reusable. Only 404 means

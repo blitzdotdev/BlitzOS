@@ -56,7 +56,6 @@ export const PAYLOAD_ROOTFS_PATHS = Object.freeze([
 
 export const PAYLOAD_GENERATED_PATHS = Object.freeze([
   "rootfs/usr/local/bin/blitz-box-gateway",
-  "rootfs/usr/local/bin/blitz-cred",
 ]);
 
 export const PAYLOAD_FILES = Object.freeze([

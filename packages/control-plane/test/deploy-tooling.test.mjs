@@ -455,11 +455,15 @@ test("no image path changed means no rebuild", () => {
 
 test("a base-owned box change requires a rebuild", () => {
   const decision = boxImageDecision("abc1234", [
+    "packages/broker/cmd/blitz-cred/main.go",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
     "packages/webapp/src/App.tsx",
   ]);
   assert.equal(decision.rebuild, true);
-  assert.deepEqual(decision.paths, ["packages/box/rootfs/usr/local/libexec/blitz-payload"]);
+  assert.deepEqual(decision.paths, [
+    "packages/broker/cmd/blitz-cred/main.go",
+    "packages/box/rootfs/usr/local/libexec/blitz-payload",
+  ]);
 });
 
 test("adding an s6 service changes the base image release", () => {
@@ -475,7 +479,6 @@ test("adding an s6 service changes the base image release", () => {
 test("payload and daemon inputs do not rebuild the base image", () => {
   const decision = boxImageDecision("abc", [
     "packages/box/gateway/main.go",
-    "packages/broker/main.go",
     "packages/schema/fixtures/example.json",
     "packages/box/rootfs/usr/local/bin/blitz",
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run",
@@ -508,6 +511,9 @@ test("IMAGE_PATHS pins the Dockerfile, updater, and s6 service topology", () => 
   for (const required of [
     "packages/box/Dockerfile",
     "packages/box/Dockerfile.dockerignore",
+    "packages/broker/cmd/blitz-cred",
+    "packages/broker/go.mod",
+    "packages/broker/internal",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/payload",
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user",

@@ -110,7 +110,7 @@ Options:
   --url <origin>    Control-plane origin whose R2-backed route should be probed.
   --repo <dir>      Repository whose current payload content is built.
   --daemon <file>   Include this daemon archive's SHA-256 in the version.
-  --binaries <dir>  Use prebuilt blitz-box-gateway and blitz-cred binaries.
+  --binaries <dir>  Use a prebuilt blitz-box-gateway binary.
   --json <file>     Also write the JSON result to this file.
   --print-version   Dry-build the release and print only its content version.
   --help, -h        Print this text.`;

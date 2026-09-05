@@ -32,7 +32,7 @@ function temporaryDirectory(prefix) {
 
 function binaries(suffix = "") {
   const directory = temporaryDirectory("blitz-box-payload-plan-binaries-");
-  for (const name of ["blitz-box-gateway", "blitz-cred"]) {
+  for (const name of ["blitz-box-gateway"]) {
     const filePath = path.join(directory, name);
     writeFileSync(filePath, `binary:${name}${suffix}\n`);
     chmodSync(filePath, 0o755);

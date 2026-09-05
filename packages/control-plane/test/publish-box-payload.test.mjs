@@ -46,7 +46,7 @@ function sha256(bytes) {
 
 function binaries() {
   const directory = temporaryDirectory("blitz-payload-binaries-");
-  for (const name of ["blitz-box-gateway", "blitz-cred"]) {
+  for (const name of ["blitz-box-gateway"]) {
     const filePath = path.join(directory, name);
     writeFileSync(filePath, `binary:${name}\n`);
     chmodSync(filePath, 0o755);

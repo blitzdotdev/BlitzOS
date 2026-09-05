@@ -5,6 +5,12 @@
 // box-side component that must still work when a downloaded payload is bad,
 // so it has no package dependencies and never resolves code through `current`.
 //
+// BASE-OWNED TICK DEPENDENCIES. Node runs this file, /usr/local/bin/blitz-cred
+// obtains the bearer, /var/lib/blitz/origin supplies the endpoint, and Node's
+// built-in HTTP/TLS stack fetches config and reports results. Applying an
+// archive additionally uses the image's tar and s6-svc/s6-svstat tools. None
+// of these paths is payload-owned; the gateway deliberately remains payload.
+//
 // DAEMON IDLE DOOR. The vendored LocalSessionControlRequest union has no
 // request that lists sessions, and LocalMachineRpcRequest has no presence-read
 // method. The daemon does expose `activeSessionCount` on its probe socket's

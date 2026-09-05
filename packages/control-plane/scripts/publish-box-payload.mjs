@@ -105,15 +105,10 @@ export async function buildGoPayloadBinaries(repoRoot, destination) {
     "-o", path.join(destination, "blitz-box-gateway"),
     ".",
   ], { cwd: path.join(repoRoot, "packages/box/gateway"), env: buildEnvironment });
-  await run("go", [
-    "build", "-buildvcs=false", "-trimpath", "-ldflags=-s -w",
-    "-o", path.join(destination, "blitz-cred"),
-    "./cmd/blitz-cred",
-  ], { cwd: path.join(repoRoot, "packages/broker"), env: buildEnvironment });
 }
 
 async function copyPayloadBinaries(binariesDirectory, stagingDirectory) {
-  for (const name of ["blitz-box-gateway", "blitz-cred"]) {
+  for (const name of ["blitz-box-gateway"]) {
     const sourcePath = path.join(binariesDirectory, name);
     const targetPath = path.join(stagingDirectory, "rootfs/usr/local/bin", name);
     if (await stat(sourcePath).catch(() => null) === null) {
@@ -369,7 +364,7 @@ Options:
   --app-url <origin>  Origin used for artifact URLs (default: wrangler APP_URL).
   --prefix <prefix>   R2 key prefix (default: box-payload/<derived-version>).
   --daemon <file>     Include this prebuilt daemon.tar.gz and its metadata.
-  --binaries <dir>    Use prebuilt blitz-box-gateway and blitz-cred binaries.
+  --binaries <dir>    Use a prebuilt blitz-box-gateway binary.
   --out <dir>         Staging directory to keep. With --dry-run, defaults to
                       ./box-payload/<derived-version>.
   --bucket <name>     R2 bucket (default: wrangler BOX_IMAGES bucket).

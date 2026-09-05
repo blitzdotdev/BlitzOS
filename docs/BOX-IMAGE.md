@@ -72,8 +72,9 @@ the `canary` environment:
    canary `wrangler.toml` from
    `CANARY_WRANGLER_TOML`, and reads `APP_URL` from that config.
 2. The `image` job builds `daemon.tar.gz` from the Dockerfile's `daemon` stage
-   and builds the amd64 gateway and credential binaries with the same Go
-   version as the Dockerfile. It runs
+   and builds the amd64 gateway binary with the same Go version as the
+   Dockerfile. `blitz-cred` is base-owned so a bad payload cannot disable the
+   updater's bearer acquisition. It runs
    `plan-box-payload.mjs --print-version --daemon <archive> --binaries <dir>`;
    the resulting hash includes that exact daemon archive digest.
 3. It computes a base release id from the Git object ids named by
@@ -98,7 +99,7 @@ the `canary` environment:
    The publisher uploads every part before `manifest.json`, so a release is
    not visible until all its parts exist.
 7. Only after the image job succeeds, the `payload` job rebuilds the daemon
-   archive and the two binaries, plans with `--daemon`, and refuses to continue
+   archive and the gateway binary, plans with `--daemon`, and refuses to continue
    unless its version equals the one used by the image job. It probes
    `<APP_URL>/box-payload/<version>/manifest.json`; a valid manifest for that
    version is reused, 404 is published with the same `--daemon <archive>`, and
@@ -108,8 +109,9 @@ the `canary` environment:
    the image outputs and verifies that `/version` reports the merged commit and
    expected box-image tag.
 
-The base release id deliberately excludes payload-owned files, the two Go
-binaries, and the daemon. A payload-only merge therefore reuses the current
+The base release id deliberately excludes payload-owned files, the gateway
+binary, and the daemon; it includes the base-owned credential broker sources.
+A payload-only merge therefore reuses the current
 image rather than rebuilding it. Its baked stamp may name the payload current
 when that base was built; that is informational boot state, not the rollout
 pin. A fresh machine starts there and the updater converges it to

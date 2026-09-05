@@ -10,6 +10,9 @@
 // removals; the explicit type/dependency paths catch changes to existing
 // services without making their payload-owned run/up scripts image inputs.
 export const BOX_IMAGE_INPUTS = Object.freeze([
+  "packages/broker/cmd/blitz-cred",
+  "packages/broker/go.mod",
+  "packages/broker/internal",
   "packages/box/Dockerfile",
   "packages/box/Dockerfile.dockerignore",
   "packages/box/rootfs/etc/blitz/sshd_config",

@@ -31,6 +31,7 @@ const BASE_OWNED_ROOTFS_PATHS = [
   "etc/s6-overlay/s6-rc.d/payload/run",
   "usr/local/libexec/blitz-payload",
 ];
+const BASE_OWNED_GENERATED_PATHS = ["rootfs/usr/local/bin/blitz-cred"];
 
 function temporaryDirectory(prefix) {
   const directory = mkdtempSync(path.join(tmpdir(), prefix));
@@ -70,10 +71,10 @@ test("the checked-in inventory owns every eligible rootfs file", () => {
     assert.ok(!PAYLOAD_FILES.includes(`rootfs/${basePath}`));
     assert.ok(statSync(path.join(rootfs, basePath)).isFile());
   }
-  assert.deepEqual(PAYLOAD_GENERATED_PATHS, [
-    "rootfs/usr/local/bin/blitz-box-gateway",
-    "rootfs/usr/local/bin/blitz-cred",
-  ]);
+  for (const basePath of BASE_OWNED_GENERATED_PATHS) {
+    assert.ok(!PAYLOAD_FILES.includes(basePath));
+  }
+  assert.deepEqual(PAYLOAD_GENERATED_PATHS, ["rootfs/usr/local/bin/blitz-box-gateway"]);
   assert.equal(new Set(PAYLOAD_FILES).size, PAYLOAD_FILES.length);
   assert.deepEqual(PAYLOAD_FILES, [...PAYLOAD_FILES].sort());
   assert.ok(PAYLOAD_FILES.includes("rootfs/etc/blitz/env.defaults"));
@@ -89,7 +90,7 @@ test("restart dependencies come from service sources plus the narrow override ta
   assert.ok(restart.gateway.includes("rootfs/usr/local/bin/blitz-box-gateway"));
   assert.ok(restart["lody-bridge"].includes("rootfs/usr/local/libexec/blitz-lody-bridge"));
   assert.ok(restart["machine-stats"].includes("rootfs/usr/local/bin/blitz-machine-stats"));
-  assert.ok(restart.watch.includes("rootfs/usr/local/bin/blitz-cred"));
+  assert.equal(restart.watch.includes("rootfs/usr/local/bin/blitz-cred"), false);
   assert.equal(restart.ttyd.includes("rootfs/usr/local/libexec/blitz-term"), false);
   for (const dependencies of Object.values(restart)) {
     assert.deepEqual(dependencies, [...dependencies].sort());

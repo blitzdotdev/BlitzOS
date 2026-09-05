@@ -23,9 +23,9 @@ interruption; this generalises that to everything we ship.
 
 | Base (image only) | Payload (in place) |
 |---|---|
-| Debian + node 22 + docker static + s6-overlay | every script under `rootfs/usr/local/{bin,libexec}` |
+| Debian + node 22 + docker static + s6-overlay | every other script under `rootfs/usr/local/{bin,libexec}` |
 | cloudflared, ttyd, dufs | s6 `run`/`up` scripts of EXISTING services (the service SET is base) |
-| the payload updater `blitz-payload` + its `payload` s6 service | `blitz-box-gateway`, `blitz-cred` (linux/amd64; arm64 later) |
+| the payload updater `blitz-payload`, `blitz-cred`, and their s6/runtime dependencies | `blitz-box-gateway` (linux/amd64; arm64 later) |
 | `/opt/blitz/npm` prefix with claude, codex, ws | the Lody **daemon bundle** (the patched `lody` install) |
 | a baked copy of the current payload + daemon bundle (§3) | agent rules skeleton, `env.defaults` for services |
 
@@ -83,7 +83,7 @@ exist in the base), `rootfs/opt/blitz/skel/*`, `rootfs/etc/blitz/env.defaults`.
 `payload-version` is outside `rootfs/` and therefore is not listed in
 `manifest.files`; the updater verifies it separately against `manifest.version`.
 Built by `control-plane/scripts/publish-box-payload.mjs` from the repo tree plus
-the two Go binaries (built by the same script via `go build`, or taken from a
+the gateway Go binary (built by the same script via `go build`, or taken from a
 `--binaries <dir>` produced in CI). `packages/box/Dockerfile` must build the
 SAME layout into `/opt/blitz/payload/baked` from the same sources, so a fresh
 box and an updated box are byte-identical for a given version. One function
