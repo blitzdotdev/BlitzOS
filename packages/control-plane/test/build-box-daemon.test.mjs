@@ -9,6 +9,7 @@ import { stageDaemonArchive } from "../scripts/build-box-daemon.mjs";
 import { readLodyDaemonMetadata } from "../scripts/lib/box-daemon.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const scriptPath = fileURLToPath(new URL("../scripts/build-box-daemon.mjs", import.meta.url));
 const temporaryDirectories = [];
 
 function temporaryDirectory(prefix) {
@@ -29,6 +30,17 @@ test("daemon metadata reads the upstream pin and z.literal-backed protocol", asy
     version: "0.88.1+blitz.3",
     protocolVersion: 7,
   });
+});
+
+test("rejects the removed unverified --image archive path before invoking Docker", () => {
+  const outputPath = path.join(temporaryDirectory("blitz-daemon-cli-"), "daemon.tar.gz");
+  const result = spawnSync(process.execPath, [
+    scriptPath,
+    "--out", outputPath,
+    "--image", "unverified:latest",
+  ], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unknown argument: --image/u);
 });
 
 test("daemon staging emits only the installed lody prefix deterministically", async () => {

@@ -73,8 +73,6 @@ Usage:
 Options:
   --out <file>      Output archive. Required.
   --repo <dir>      Repository root (default: current repository).
-  --image <tag>     Copy the daemon prefix from an existing Docker image instead
-                    of building the Dockerfile's daemon target.
   --json <file>     Also write {version,protocolVersion,sha256,bytes,path}.
   --help, -h        Print this text.`;
 }
@@ -83,7 +81,6 @@ function parseCli(argv) {
   const options = {
     outPath: undefined,
     repo: DEFAULT_REPO,
-    image: undefined,
     jsonPath: undefined,
     help: false,
   };
@@ -93,7 +90,7 @@ function parseCli(argv) {
       options.help = true;
       return options;
     }
-    if (!["--out", "--repo", "--image", "--json"].includes(flag)) {
+    if (!["--out", "--repo", "--json"].includes(flag)) {
       throw new Error(`unknown argument: ${flag}`);
     }
     const value = argv[index + 1];
@@ -101,7 +98,6 @@ function parseCli(argv) {
     index += 1;
     if (flag === "--out") options.outPath = path.resolve(value);
     else if (flag === "--repo") options.repo = path.resolve(value);
-    else if (flag === "--image") options.image = value;
     else options.jsonPath = path.resolve(value);
   }
   if (options.outPath === undefined) throw new Error("--out is required");
@@ -115,22 +111,17 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
   const temporary = await mkdtemp(path.join(tmpdir(), "blitz-box-daemon-"));
-  const temporaryImage = options.image === undefined
-    ? `blitz-box-daemon-stage:${process.pid}`
-    : undefined;
-  const image = options.image ?? temporaryImage;
+  const image = `blitz-box-daemon-stage:${process.pid}`;
   let container;
   try {
-    if (temporaryImage !== undefined) {
-      await run("docker", [
-        "build",
-        "--platform", "linux/amd64",
-        "--target", "daemon",
-        "--file", path.join(options.repo, "packages/box/Dockerfile"),
-        "--tag", temporaryImage,
-        options.repo,
-      ]);
-    }
+    await run("docker", [
+      "build",
+      "--platform", "linux/amd64",
+      "--target", "daemon",
+      "--file", path.join(options.repo, "packages/box/Dockerfile"),
+      "--tag", image,
+      options.repo,
+    ]);
     container = await output("docker", ["create", image]);
     const prefix = path.join(temporary, "prefix");
     await mkdir(prefix);
@@ -143,9 +134,7 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(json);
   } finally {
     if (container !== undefined) await output("docker", ["rm", "-f", container]).catch(() => {});
-    if (temporaryImage !== undefined) {
-      await output("docker", ["image", "rm", temporaryImage]).catch(() => {});
-    }
+    await output("docker", ["image", "rm", image]).catch(() => {});
     await rm(temporary, { recursive: true, force: true });
   }
 }

@@ -273,6 +273,11 @@ An amd64 archive boots amd64 machines only. Keep the archive's architecture
 matched to the machine types you offer; if you need both architectures, use
 mode A, whose release build is multi-arch.
 
+**Open arm64 payload item.** The payload identity and publisher currently
+derive from amd64 gateway bytes. Defining an architecture-qualified arm64
+payload identity is intentionally out of scope for thin-image v1; do not point
+arm64 boxes at the amd64 payload pin until that contract is designed.
+
 ## Build locally
 
 Use Node 22 and Go 1.26.5. The daemon archive must exist before the payload
