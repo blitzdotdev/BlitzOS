@@ -9,7 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { createClient, type WebDAVClient } from 'webdav';
-import { ApiAdapter, ApiError } from './api-adapter';
+import { ApiAdapter, ApiError, type TenantMe } from './api-adapter';
 import type { ControlPlaneClient } from './api';
 import type { CredentialRequestView } from '@blitzos/schema';
 import { SPAWN_SESSION_LABELS, type SpawnSessionType } from './NewTabMenu';
@@ -392,11 +392,6 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     workspaceMutationEpoch.current += 1;
     dispatch(action);
   }, []);
-  /** The poll as a dialog asks for it: a settled write wants its rows now,
-   * and has no answer of its own to report. */
-  const refreshWorkspacesNow = useCallback(() => {
-    void refreshWorkspaceRecords();
-  }, [refreshWorkspaceRecords]);
 
   const activeWorkspace = useMemo(
     () => store.workspaces.find(({ id, canControl }) => id === activeWorkspaceId && canControl),
@@ -845,7 +840,11 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     navigateToWorkspacePage,
   });
   const createWorkspace = useCallback(
-    (input: CreateWorkspaceDialogInput) => adoptCreatedWorkspace(input, () => api.createWorkspace(input)),
+    (input: CreateWorkspaceDialogInput, viewer: TenantMe) => adoptCreatedWorkspace(
+      input,
+      viewer,
+      () => api.createWorkspace(input),
+    ),
     [adoptCreatedWorkspace, api],
   );
   // A recipe launch has no caller while the recipes surface is disabled; the
@@ -1771,6 +1770,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       onCloseDrawer={() => setDrawerOpen(false)}
     />
   );
+  const dialogViewer = store.viewer;
   const railOverlays = (
     <>
     {grantProposals.active !== null && store.viewer !== null && (
@@ -1789,9 +1789,9 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
         onResolved={grantProposals.settled}
       />
     )}
-    <ShellDialogs
+    {dialogViewer !== null && <ShellDialogs
       client={client}
-      viewer={store.viewer}
+      viewer={dialogViewer}
       workspaces={store.workspaces}
       showCreateOrg={showCreateOrg}
       createOrgName={createOrgName}
@@ -1800,11 +1800,10 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       onCloseCreateOrg={closeCreateOrganization}
       showCreateWorkspace={showCreateWorkspace}
       listMachineTypes={listMachineTypes}
-      refreshWorkspaces={refreshWorkspacesNow}
       commitWorkspaceMutation={commitWorkspaceMutation}
       cloneFromWorkspaceId={cloneFromWorkspaceId}
       onCancelCreateWorkspace={closeCreateWorkspace}
-      onCreateWorkspace={(input) => { void createWorkspace(input); }}
+      onCreateWorkspace={(input) => { void createWorkspace(input, dialogViewer); }}
       details={details}
       onCloseDetails={() => setDetails(null)}
       machineWorkspaceId={machineWorkspaceId}
@@ -1820,7 +1819,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       confirmation={confirmation}
       onCancelConfirmation={cancelConfirmation}
       onConfirmDelete={confirmWebAppAction}
-    />
+    />}
     </>
   );
   if (signedOut || signOutPending) {

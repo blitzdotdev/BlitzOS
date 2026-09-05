@@ -23,7 +23,7 @@ export type WebAppConfirmation = {
 
 export type ShellDialogsProps = {
   client: ControlPlaneClient;
-  viewer: TenantMe | null;
+  viewer: TenantMe;
   workspaces: CloudWorkspaceModel[];
   showCreateOrg: boolean;
   createOrgName: string;
@@ -32,9 +32,6 @@ export type ShellDialogsProps = {
   onCloseCreateOrg: () => void;
   showCreateWorkspace: boolean;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
-  /** Runs the workspace poll now, so a dialog write reaches the rows without
-   * waiting for the next tick. Keep it stable across renders. */
-  refreshWorkspaces: () => void;
   /** Commits the authoritative response of a workspace mutation and invalidates
    * any workspace poll that began before it. */
   commitWorkspaceMutation: (action: WorkspaceAction) => void;
@@ -75,7 +72,6 @@ export function ShellDialogs({
   onCloseCreateOrg,
   showCreateWorkspace,
   listMachineTypes,
-  refreshWorkspaces,
   commitWorkspaceMutation,
   cloneFromWorkspaceId,
   onCancelCreateWorkspace,
@@ -115,15 +111,15 @@ export function ShellDialogs({
       )}
       {showCreateWorkspace && (
         <CreateWorkspaceDialog
-          orgName={viewer?.org.name ?? 'your org'}
-          orgId={viewer?.org.id ?? ''}
-          admin={viewer?.membership.role === 'admin'}
+          orgName={viewer.org.name}
+          orgId={viewer.org.id}
+          admin={viewer.membership.role === 'admin'}
           saveComputeCredential={client.putComputeCredential}
           client={client}
           listMachineTypes={listMachineTypes}
           cloneFromWorkspaceId={cloneFromWorkspaceId}
           cloneFromWorkspaceName={cloneSource?.title ?? null}
-          viewerName={viewer?.identity.name || viewer?.identity.email || 'You'}
+          viewerName={viewer.identity.name || viewer.identity.email}
           onCancel={onCancelCreateWorkspace}
           onSubmit={onCreateWorkspace}
         />
@@ -134,12 +130,11 @@ export function ShellDialogs({
           client={client}
           workspace={detailsWorkspace}
           listMachineTypes={listMachineTypes}
-          refreshWorkspaces={refreshWorkspaces}
           commitWorkspaceMutation={commitWorkspaceMutation}
           initialTab={details.tab}
           focusAddMember={details.focusAddMember ?? false}
-          viewerMembershipId={viewer?.membership.id ?? null}
-          orgName={viewer?.org.name || viewer?.org.slug || 'the organization'}
+          viewerMembershipId={viewer.membership.id}
+          orgName={viewer.org.name || viewer.org.slug}
           orgWorkspaces={workspaces.map(({ id, title }) => ({ id, name: title }))}
           onClose={onCloseDetails}
           onClone={() => onCloneWorkspace(detailsWorkspace.id)}
@@ -150,10 +145,10 @@ export function ShellDialogs({
       )}
       {machineWorkspace !== undefined && (
         <MyMachineDialog
-          key={`${machineWorkspace.id}:${viewer?.membership.id ?? ''}`}
+          key={`${machineWorkspace.id}:${viewer.membership.id}`}
           client={client}
           workspace={machineWorkspace}
-          membershipId={viewer?.membership.id ?? null}
+          membershipId={viewer.membership.id}
           listMachineTypes={listMachineTypes}
           commitWorkspaceMutation={commitWorkspaceMutation}
           onClose={onCloseMachine}

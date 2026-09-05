@@ -1613,7 +1613,9 @@ describe("optimistic workspace creation", () => {
     expect(tile?.getAttribute("aria-current")).toBe("page");
     expect(view.container.querySelector('[role="status"][aria-label="Creating workspace"]'))
       .not.toBeNull();
-    expect(window.location.pathname).toMatch(/^\/workspaces\/pending-workspace-/u);
+    expect(window.location.pathname).toMatch(
+      /^\/workspaces\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
     await view.unmount();
   });
 
@@ -1733,7 +1735,11 @@ describe("optimistic workspace creation", () => {
     await settle();
     await settle();
     await submitWorkspaceCreate(view, "Only workspace");
-    expect(window.location.pathname).toMatch(/^\/workspaces\/pending-workspace-/u);
+    expect(view.container.querySelector('[role="status"][aria-label="Creating workspace"]'))
+      .not.toBeNull();
+    expect(window.location.pathname).toMatch(
+      /^\/workspaces\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
 
     await act(async () => creation.reject(new Error("create failed")));
     await settle();

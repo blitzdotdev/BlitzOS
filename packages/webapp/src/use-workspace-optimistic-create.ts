@@ -1,5 +1,5 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import type { V2WorkspaceRecord } from './api-adapter';
+import type { TenantMe, V2WorkspaceRecord } from './api-adapter';
 import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
 import { caughtErrorMessage } from './error-message';
 import type { EndpointResolver } from './resolver';
@@ -46,11 +46,10 @@ export function useWorkspaceOptimisticCreate({
 }: OptimisticCreateOptions) {
   return useCallback((
     input: CreateWorkspaceDialogInput,
+    viewer: TenantMe,
     create: () => Promise<V2WorkspaceRecord>,
   ) => {
-    const viewer = storeRef.current.viewer;
-    if (viewer === null) return;
-    const temporaryId = `pending-workspace-${crypto.randomUUID()}`;
+    const temporaryId = crypto.randomUUID();
     const previousActiveWorkspaceId = activeWorkspaceIdRef.current;
     const placeholder = pendingWorkspaceModel(temporaryId, input, viewer);
 

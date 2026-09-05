@@ -50,7 +50,6 @@ export function WorkspaceDetailsDialog({
   client,
   workspace,
   listMachineTypes,
-  refreshWorkspaces,
   initialTab = 'members',
   commitWorkspaceMutation,
   focusAddMember = false,
@@ -70,10 +69,6 @@ export function WorkspaceDetailsDialog({
   orgName?: string;
   /** The org's workspaces, for the grant picker in the credential form. */
   orgWorkspaces?: ReadonlyArray<{ id: string; name: string }>;
-  /** Runs the workspace poll now. The rows this dialog administers are the
-   * polled ones, so a settled write asks for the next poll rather than
-   * leaving the list stale until the 15 s tick. */
-  refreshWorkspaces: () => void;
   commitWorkspaceMutation: (action: WorkspaceAction) => void;
   initialTab?: WorkspaceDetailsTab;
   /** Opens with the add-member field focused, for the tile menu's Invite. */

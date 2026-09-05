@@ -125,7 +125,6 @@ function WorkspaceDetailsHarness({
       client={client()}
       workspace={model}
       listMachineTypes={listMachineTypesStub}
-      refreshWorkspaces={noop}
       commitWorkspaceMutation={commitWorkspaceMutation}
       onClose={noop}
       onClone={noop}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type {
   AddWorkspaceMemberRequest,
   MachineView,
@@ -16,9 +16,8 @@ import type {
   WorkspaceAction,
 } from './workspace-store';
 import {
-  MACHINE_ACTION_FAILURE_TITLES,
   type MachineOverlay,
-  visibleMachine,
+  runMachineOverlayAction,
 } from './machine-overlay';
 
 type OptimisticMemberOptions = {
@@ -61,15 +60,6 @@ export function useWorkspaceOptimisticMembers({
   );
   const reportError = useErrorReporter();
   const workspaceId = workspace.id;
-  const workspaceIdRef = useRef(workspaceId);
-  workspaceIdRef.current = workspaceId;
-
-  useEffect(() => {
-    setPendingAdds(new Map());
-    setPendingRemoves(new Set());
-    setPendingRoleUpdates(new Map());
-    setMachineOverlays(new Map());
-  }, [workspaceId]);
 
   const displayedMembers = useMemo(() => {
     const serverIds = new Set(workspace.members.map(({ membershipId }) => membershipId));
@@ -145,7 +135,6 @@ export function useWorkspaceOptimisticMembers({
           workspaceId,
           member,
         });
-        if (workspaceIdRef.current !== workspaceId) return;
         setPendingAdds((current) => {
           const next = new Map(current);
           next.delete(input.membershipId);
@@ -153,13 +142,11 @@ export function useWorkspaceOptimisticMembers({
         });
       })
       .catch((caught) => {
-        if (workspaceIdRef.current === workspaceId) {
-          setPendingAdds((current) => {
-            const next = new Map(current);
-            next.delete(input.membershipId);
-            return next;
-          });
-        }
+        setPendingAdds((current) => {
+          const next = new Map(current);
+          next.delete(input.membershipId);
+          return next;
+        });
         reportError(caught, {
           title: 'Couldn’t add member',
           action: `Adding ${optimistic.name} to ${workspace.title}.`,
@@ -177,7 +164,6 @@ export function useWorkspaceOptimisticMembers({
           workspaceId,
           membershipId: member.membershipId,
         });
-        if (workspaceIdRef.current !== workspaceId) return;
         setPendingRemoves((current) => {
           const next = new Set(current);
           next.delete(member.membershipId);
@@ -185,13 +171,11 @@ export function useWorkspaceOptimisticMembers({
         });
       })
       .catch((caught) => {
-        if (workspaceIdRef.current === workspaceId) {
-          setPendingRemoves((current) => {
-            const next = new Set(current);
-            next.delete(member.membershipId);
-            return next;
-          });
-        }
+        setPendingRemoves((current) => {
+          const next = new Set(current);
+          next.delete(member.membershipId);
+          return next;
+        });
         reportError(caught, {
           title: 'Couldn’t remove member',
           action: `Removing ${member.name} from ${workspace.title}.`,
@@ -215,7 +199,6 @@ export function useWorkspaceOptimisticMembers({
           workspaceId,
           member: updated,
         });
-        if (workspaceIdRef.current !== workspaceId) return;
         setPendingRoleUpdates((current) => {
           const next = new Map(current);
           next.delete(member.membershipId);
@@ -223,13 +206,11 @@ export function useWorkspaceOptimisticMembers({
         });
       })
       .catch((caught) => {
-        if (workspaceIdRef.current === workspaceId) {
-          setPendingRoleUpdates((current) => {
-            const next = new Map(current);
-            next.delete(member.membershipId);
-            return next;
-          });
-        }
+        setPendingRoleUpdates((current) => {
+          const next = new Map(current);
+          next.delete(member.membershipId);
+          return next;
+        });
         reportError(caught, {
           title: 'Couldn’t change member role',
           action: `Updating ${member.name} in ${workspace.title}.`,
@@ -242,50 +223,27 @@ export function useWorkspaceOptimisticMembers({
     member: WorkspaceMemberView,
     action: MachineAction,
     request: () => Promise<MachineView | null>,
-    title = MACHINE_ACTION_FAILURE_TITLES[action],
+    title?: string,
   ) => {
-    setMachineOverlays((current) => new Map(current).set(member.membershipId, {
+    runMachineOverlayAction({
+      action,
       machine: member.machine,
-      pendingAction: action,
-    }));
-    void request()
-      .then((machine) => {
-        const updated = visibleMachine(machine);
-        commitWorkspaceMutation({
-          type: 'workspace_member_machine_updated',
-          workspaceId,
-          membershipId: member.membershipId,
-          machine: updated,
+      request,
+      setOverlay: (overlay) => {
+        setMachineOverlays((current) => {
+          const next = new Map(current);
+          if (overlay === null) next.delete(member.membershipId);
+          else next.set(member.membershipId, overlay);
+          return next;
         });
-        if (workspaceIdRef.current === workspaceId) {
-          setMachineOverlays((current) => {
-            const next = new Map(current);
-            next.delete(member.membershipId);
-            return next;
-          });
-        }
-        if (updated?.state === 'error') {
-          reportError(new Error(updated.error ?? 'The machine entered an error state.'), {
-            title,
-            action: `${member.name}’s machine in ${workspace.title}.`,
-            workspaceId,
-          });
-        }
-      })
-      .catch((caught) => {
-        if (workspaceIdRef.current === workspaceId) {
-          setMachineOverlays((current) => {
-            const next = new Map(current);
-            next.delete(member.membershipId);
-            return next;
-          });
-        }
-        reportError(caught, {
-          title,
-          action: `${member.name}’s machine in ${workspace.title}.`,
-          workspaceId,
-        });
-      });
+      },
+      commitWorkspaceMutation,
+      workspaceId,
+      membershipId: member.membershipId,
+      reportError,
+      errorAction: `${member.name}’s machine in ${workspace.title}.`,
+      title,
+    });
   };
 
   const machineAction = (

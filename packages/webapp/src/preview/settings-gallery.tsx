@@ -148,7 +148,6 @@ function WorkspaceDetailsSection() {
           client={previewClient}
           workspace={previewWorkspace}
           listMachineTypes={listMachineTypesFixture}
-          refreshWorkspaces={() => undefined}
           commitWorkspaceMutation={() => undefined}
           initialTab={tab}
           viewerMembershipId="m-june"
