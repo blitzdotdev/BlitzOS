@@ -1,6 +1,6 @@
 # webapp
 
-The browser webApp: workspace rail, terminal, files browser/editor, previews,
+The browser web app: workspace rail, terminal, files browser/editor, previews,
 and workspace management.
 
 - Renders the server view. Never infers it. Retry, phase, and capability all
