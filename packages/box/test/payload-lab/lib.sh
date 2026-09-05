@@ -230,9 +230,9 @@ box_ssh() {
 # driver prints only the session id on stdout, so callers may capture it while
 # transport/runtime progress continues to the experiment log on stderr.
 start_turn() {
-  local workspace_id=$1 prompt=$2 host port user target
+  local workspace_id=$1 prompt=$2 permissions=${3:-allow} host port user target
   if payload_lab_dry; then
-    dry_command "session-driver open <workspace:$workspace_id>; create ${LAB_TURN_AGENT:-claude} turn"
+    dry_command "session-driver open <workspace:$workspace_id>; create ${LAB_TURN_AGENT:-claude} turn with $permissions permissions"
     printf 'dry-session-%s\n' "${EXPERIMENT_ID:-payload-lab}"
     return 0
   fi
@@ -249,7 +249,7 @@ start_turn() {
     session create
     --agent "${LAB_TURN_AGENT:-claude}"
     --prompt "$prompt"
-    --permissions allow
+    --permissions "$permissions"
   )
   if [ -n "${LAB_TURN_PROJECT:-}" ]; then
     args+=(--project "$LAB_TURN_PROJECT")
@@ -267,6 +267,32 @@ wait_turn() {
     return 0
   fi
   node "$PAYLOAD_LAB_SESSION_DRIVER" session wait "$session_id" --timeout "$timeout"
+}
+
+# With an `ask` policy, driver wait returns non-zero as soon as the exact
+# session requests permission. That terminal JSON is the precondition: the
+# turn is genuinely active without relying on a shell command staying in the
+# foreground or on any daemon-wide presence pick.
+wait_turn_permission() {
+  local workspace_id=$1 session_id=$2 timeout=$3 output=$4
+  if payload_lab_dry; then
+    dry_command "session-driver wait $session_id for its own permission request for ${timeout}s"
+    return 0
+  fi
+  if wait_turn "$workspace_id" "$session_id" "$timeout" >"$output"; then
+    return 1
+  fi
+  jq -e '.state == "awaitingPermission" and (.permissionRequest.requestId | type == "string")' \
+    "$output" >/dev/null
+}
+
+set_turn_permissions() {
+  local workspace_id=$1 session_id=$2 permissions=$3
+  if payload_lab_dry; then
+    dry_command "session-driver permissions $session_id $permissions on <workspace:$workspace_id>"
+    return 0
+  fi
+  node "$PAYLOAD_LAB_SESSION_DRIVER" session permissions "$session_id" "$permissions"
 }
 
 session_status() {

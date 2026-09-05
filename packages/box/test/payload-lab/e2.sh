@@ -5,25 +5,25 @@ payload_lab_init E2 "$@"
 
 if payload_lab_dry; then
   publish_variant e2-gateway
-  turn_id=$(start_turn "$WORKSPACE_ID" "run a long command")
-  dry_command "wait for exact session $turn_id; create one uniquely named tmux session in the terminal cgroup"
+  turn_id=$(start_turn "$WORKSPACE_ID" "request one shell command" ask)
+  dry_command "wait for exact session $turn_id to request permission; create one uniquely named tmux session in the terminal cgroup"
   dry_command "snapshot only that tmux session and daemon; poll the box-local gateway at 5 Hz"
   pin_payload "$PUBLISHED_VERSION"
   dry_command "wait for normal updater poll; assert applied, gateway reconnect gap <10s, owned tmux intact, and a fresh local gateway/ttyd websocket attaches"
+  set_turn_permissions "$WORKSPACE_ID" "$turn_id" allow
   wait_turn "$WORKSPACE_ID" "$turn_id" "$LAB_TURN_TIMEOUT"
   experiment_pass "dry run: gateway reconnect assertions"
 fi
 
 require_workspace
 publish_variant e2-gateway
-turn_seconds=${LAB_E2_TURN_SECONDS:-$(( LAB_OUTCOME_TIMEOUT + 300 ))}
-expected_text=${LAB_E2_EXPECTED_TEXT:-done}
-turn_prompt=${LAB_E2_PROMPT:-"Use the shell to run 'sleep $turn_seconds' and wait for it to finish, then reply $expected_text."}
-turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt") \
+expected_text=${LAB_E2_EXPECTED_TEXT:-E2-PAYLOAD-LAB-DONE}
+turn_prompt=${LAB_E2_PROMPT:-"Use the shell to run 'printf E2-payload-lab'. Do not answer before the command succeeds. Then reply exactly $expected_text."}
+turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt" ask) \
   || experiment_fail "could not start the E2 turn"
 arm_turn_cleanup "$WORKSPACE_ID" "$turn_id"
-wait_session_state "$WORKSPACE_ID" "$turn_id" running 90 >/dev/null \
-  || experiment_fail "the E2 session did not report its own turn running"
+wait_turn_permission "$WORKSPACE_ID" "$turn_id" 120 "$LAB_TEMP_ROOT/permission.json" \
+  || experiment_fail "the E2 session did not reach its own permission request"
 create_test_terminal "$WORKSPACE_ID"
 before_tmux=$(tmux_session_identity "$WORKSPACE_ID" "$LAB_TEST_TERMINAL_SESSION") \
   || experiment_fail "the E2 tmux precondition is not running"
@@ -57,6 +57,8 @@ assert_local_terminal_attach "$WORKSPACE_ID" "$LAB_TEST_TERMINAL_KEY" \
   || experiment_fail "a new local gateway/ttyd websocket could not attach to the E2 tmux session"
 after_daemon=$(daemon_pid "$WORKSPACE_ID")
 assert_equal "$after_daemon" "$before_daemon" "daemon restarted for a gateway-only payload"
+set_turn_permissions "$WORKSPACE_ID" "$turn_id" allow >/dev/null \
+  || experiment_fail "could not allow the exact E2 session's pending request"
 wait_turn "$WORKSPACE_ID" "$turn_id" "$LAB_TURN_TIMEOUT" >"$LAB_TEMP_ROOT/turn.json" \
   || experiment_fail "the exact E2 turn did not complete after the gateway restart"
 assert_completed_turn_text "$LAB_TEMP_ROOT/turn.json" "$expected_text" \

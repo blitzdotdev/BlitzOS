@@ -23,6 +23,7 @@ describe("thin-image payload lab dry runs", () => {
     expect(result.stdout).toContain("session prompt <session-id> <text>");
     expect(result.stdout).toContain("session status <session-id>");
     expect(result.stdout).toContain("session wait <session-id> --timeout <seconds>");
+    expect(result.stdout).toContain("session permissions <session-id> <allow|deny|ask>");
     expect(result.stdout).toContain("session cancel <session-id>");
     expect(result.stdout).toContain("session list");
   });

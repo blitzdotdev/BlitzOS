@@ -62,6 +62,7 @@ const HELP = `Usage:
   drive.mjs session prompt <session-id> <text> [--permissions <allow|deny|ask>]
   drive.mjs session status <session-id>
   drive.mjs session wait <session-id> --timeout <seconds>
+  drive.mjs session permissions <session-id> <allow|deny|ask>
   drive.mjs session cancel <session-id>
   drive.mjs session list
 
@@ -840,6 +841,13 @@ async function statusSession(sessionId) {
   });
 }
 
+function setSessionPermissions(sessionId, mode) {
+  requireOwnedSession(sessionId);
+  const permissions = parsePermissionMode(mode);
+  rememberSession(sessionId, permissions);
+  process.stdout.write(`${JSON.stringify({ sessionId, permissions })}\n`);
+}
+
 function parseTimeout(argumentsList) {
   if (argumentsList.length !== 2 || argumentsList[0] !== "--timeout") {
     fail("session wait requires --timeout <seconds>");
@@ -1018,6 +1026,13 @@ async function main() {
   }
   if (action === "wait") {
     await waitSession(sessionId, parseTimeout(argumentsList.slice(3)));
+    return;
+  }
+  if (action === "permissions") {
+    if (argumentsList.length !== 4) {
+      fail("session permissions requires <session-id> <allow|deny|ask>");
+    }
+    setSessionPermissions(sessionId, argumentsList[3]);
     return;
   }
   if (action === "cancel") {

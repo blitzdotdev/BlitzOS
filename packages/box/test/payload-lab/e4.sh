@@ -5,25 +5,25 @@ payload_lab_init E4 "$@"
 
 if payload_lab_dry; then
   publish_variant daemon-e4
-  turn_id=$(start_turn "$WORKSPACE_ID" "run beyond the daemon idle cap")
-  dry_command "wait for exact session $turn_id to report running; record daemon pid and daemon-log offset"
+  turn_id=$(start_turn "$WORKSPACE_ID" "request one shell command" ask)
+  dry_command "wait for exact session $turn_id to request permission; record daemon pid and daemon-log offset"
   pin_payload "$PUBLISHED_VERSION"
   dry_command "wait for the normal updater poll; assert pid stays through idle cap, restart, exact-session redispatch, completion, and daemon-log gap"
+  set_turn_permissions "$WORKSPACE_ID" "$turn_id" allow
+  wait_turn "$WORKSPACE_ID" "$turn_id" "$LAB_TURN_TIMEOUT"
   experiment_pass "dry run: busy daemon idle-wait and redispatch assertions"
 fi
 
 require_workspace
 publish_variant daemon-e4
 idle_cap=${LAB_DAEMON_IDLE_CAP:-600}
-turn_seconds=${LAB_E4_TURN_SECONDS:-$(( idle_cap + LAB_OUTCOME_TIMEOUT + 300 ))}
-turn_deadline=$(( $(date +%s) + turn_seconds ))
-expected_text=${LAB_E4_EXPECTED_TEXT:-done}
-turn_prompt=${LAB_E4_PROMPT:-"Use the shell to wait until Unix time $turn_deadline, checking 'date +%s' every five seconds, then reply $expected_text."}
-turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt") \
+expected_text=${LAB_E4_EXPECTED_TEXT:-E4-PAYLOAD-LAB-DONE}
+turn_prompt=${LAB_E4_PROMPT:-"Use the shell to run 'printf E4-payload-lab'. Do not answer before the command succeeds. Then reply exactly $expected_text."}
+turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt" ask) \
   || experiment_fail "could not start the E4 turn"
 arm_turn_cleanup "$WORKSPACE_ID" "$turn_id"
-wait_session_state "$WORKSPACE_ID" "$turn_id" running 90 >/dev/null \
-  || experiment_fail "the E4 session did not report its own turn running"
+wait_turn_permission "$WORKSPACE_ID" "$turn_id" 120 "$LAB_TEMP_ROOT/permission.json" \
+  || experiment_fail "the E4 session did not reach its own permission request"
 before_pid=$(daemon_pid "$WORKSPACE_ID")
 
 target_daemon=$(jq -er .daemon.version "$PUBLISHED_RELEASE_DIR/manifest.json") \
@@ -78,6 +78,8 @@ redispatch_gap=$(( dispatch_ms - before_ms ))
 [ "$redispatch_gap" -ge 0 ] || experiment_fail "daemon-log redispatch gap was negative"
 idle_wait=$(( (restart_ms - switch_ms) / 1000 ))
 [ "$idle_wait" -ge "$probe_delay" ] || experiment_fail "idle wait measured only ${idle_wait}s"
+set_turn_permissions "$WORKSPACE_ID" "$turn_id" allow >/dev/null \
+  || experiment_fail "could not allow the exact E4 session's re-dispatched request"
 wait_turn "$WORKSPACE_ID" "$turn_id" "$LAB_TURN_TIMEOUT" >"$LAB_TEMP_ROOT/turn.json" \
   || experiment_fail "the re-dispatched E4 turn did not complete"
 assert_completed_turn_text "$LAB_TEMP_ROOT/turn.json" "$expected_text" \

@@ -35,8 +35,11 @@ Required for a real run:
 `LAB_WORKSPACES` is a whitespace-separated list consumed by `run-all.sh`.
 Each E script also accepts `<workspace-id> [machine-id]`. E14 requires two live
 member machines in its workspace. E1-E4 start and track their own Claude turn
-through `session-driver/drive.mjs`. E2 also creates one uniquely named tmux
-session, puts its pane in the same `user/tab-*` cgroup placement as
+through `session-driver/drive.mjs`. E1, E2, and E4 hold that exact turn at its
+own permission request until the payload assertion is complete, then allow it
+and require its completion marker; this is stable for a ten-minute idle wait
+where an agent-launched `sleep` may be backgrounded. E2 also creates one
+uniquely named tmux session, puts its pane in the same `user/tab-*` cgroup placement as
 `blitz-term`, and removes only that session on exit. If the box image cannot
 create the unprivileged cgroup leaf, E2 records and uses the permitted plain
 tmux fallback. Existing sessions and tabs are never treated as preconditions,
@@ -85,12 +88,15 @@ The driver records which sessions it created and will answer permission
 requests only for those sessions. `create` and `prompt` accept `--permissions
 allow|deny|ask` (default `allow`); `wait` applies the recorded policy, returning
 `awaitingPermission` immediately for `ask` rather than consuming the timeout.
+`session permissions <id> <mode>` changes that recorded policy for the next
+`wait`, which lets an experiment release only the turn it created.
 
 ```sh
 driver=packages/box/test/payload-lab/session-driver/drive.mjs
 node "$driver" open --ssh blitz@box.example:22 --key /path/to/id_ed25519
 session=$(node "$driver" session create --agent claude --prompt 'say hi' --permissions allow)
 node "$driver" session status "$session"
+node "$driver" session permissions "$session" allow
 node "$driver" session prompt "$session" 'now summarize the workspace'
 node "$driver" session wait "$session" --timeout 900
 node "$driver" session list
