@@ -433,14 +433,12 @@ async function resolveGrantProposal(
     credential === null ? [] : [credential]);
   const live = input.changes.filter((change) =>
     liveCredentials.some((credential) => credential.name === change.name));
-  // One subject check over everything the replace will see: the changes AND
-  // the grants they leave in place, since a kept grant whose member has since
-  // been disabled makes that credential a no-op.
-  const invalid = await invalidGrantSubjects(runtime.db, proposal.orgId, [
-    ...live.map(changeGrant),
-    ...liveCredentials.flatMap((credential) => credential.grants.map(heldGrant)),
-  ]);
-  const survivors = live.filter((change) => !invalid.has(subjectKey(change)));
+  // Validate proposed subjects only. Kept grants are not writes, so
+  // `assertGrantSubjects` deliberately ignores them. A stale subject blocks
+  // an add, but it must not block its removal.
+  const invalid = await invalidGrantSubjects(runtime.db, proposal.orgId, live.map(changeGrant));
+  const survivors = live.filter((change) =>
+    change.action === "remove" || !invalid.has(subjectKey(change)));
   refusePastAuthority(changesPastAuthority(survivors, credentials, input.approver));
   const applied: GrantChange[] = [];
   const replacements = liveCredentials.flatMap((credential) => {
@@ -448,7 +446,7 @@ async function resolveGrantProposal(
       credential.grants.map(heldGrant),
       survivors.filter((change) => change.name === credential.name),
     );
-    if (effective.length === 0 || next.some((grant) => invalid.has(subjectKey(grant)))) return [];
+    if (effective.length === 0) return [];
     applied.push(...effective);
     return [{ credential, grants: next }];
   });

@@ -143,6 +143,15 @@ async function resolve(
   return appRequest(app, `/orgs/self/grant-proposals/${id}/resolve`, withCookie(cookie, json(body)));
 }
 
+async function softDeleteWorkspace(workspaceId: string): Promise<void> {
+  const deletedAt = Date.now();
+  await env.DB.prepare(
+    `UPDATE workspaces
+     SET deleted_at = ?1, revision = revision + 1, updated_at = ?1
+     WHERE id = ?2`,
+  ).bind(deletedAt, workspaceId).run();
+}
+
 const add = (
   name: string,
   subjectKind: GrantChange["subjectKind"],
@@ -501,53 +510,107 @@ describe("grant proposals (plans/ORG-CREDENTIALS.md §7a)", () => {
     await expect(feed(app, admin)).resolves.toEqual([]);
   });
 
-  it("drops a subject that went invalid between propose and resolve, applying the rest", async () => {
+  it("applies an add while preserving a stale workspace grant", async () => {
+    const { app, providers } = harness();
+    const admin = await operatorSession(app);
+    const grantee = await sameOrgSession("later-grantee");
+    const machineWorkspace = await createWorkspace(app, admin);
+    const staleWorkspace = await createWorkspace(app, admin);
+    await storeOrgCredential(app, admin, "KEY_A");
+    expect((await appRequest(app, "/orgs/self/credentials/KEY_A/grants", withCookie(admin, json({
+      grants: [
+        { subjectKind: "membership", subjectId: "personal", access: "write" },
+        { subjectKind: "workspace", subjectId: staleWorkspace.id, access: "read" },
+      ],
+    }, "PUT")))).status).toBe(200);
+    const token = await machineToken(app, providers, machineWorkspace.id);
+
+    const changes = [add("KEY_A", "membership", grantee.membershipId, "read")];
+    const id = await proposed(app, token, changes);
+    await softDeleteWorkspace(staleWorkspace.id);
+
+    const resolved = await resolve(app, admin, id, { approve: true, changes });
+    expect(resolved.status).toBe(200);
+    expect((await resolved.json<ResolveGrantProposalResponse>()).proposal).toMatchObject({
+      state: "approved",
+      applied: changes,
+    });
+    expect((await grantsOf(app, admin)).KEY_A).toEqual([
+      { subjectKind: "membership", subjectId: grantee.membershipId, access: "read" },
+      { subjectKind: "membership", subjectId: "personal", access: "write" },
+      { subjectKind: "workspace", subjectId: staleWorkspace.id, access: "read" },
+    ]);
+  });
+
+  it("drops a dead proposed subject without blocking another valid add", async () => {
     const { app, providers } = harness();
     const admin = await operatorSession(app);
     const leaver = await sameOrgSession("leaver");
-    const workspace = await createWorkspace(app, admin);
+    const machineWorkspace = await createWorkspace(app, admin);
+    const staleWorkspace = await createWorkspace(app, admin);
     await storeOrgCredential(app, admin, "KEY_A");
-    await storeOrgCredential(app, admin, "KEY_B");
-    // KEY_B already holds a grant for the leaver: a kept grant that the
-    // store would refuse to re-validate once they are gone.
-    expect((await appRequest(app, "/orgs/self/credentials/KEY_B/grants", withCookie(admin, json({
+    expect((await appRequest(app, "/orgs/self/credentials/KEY_A/grants", withCookie(admin, json({
       grants: [
         { subjectKind: "membership", subjectId: "personal", access: "write" },
-        { subjectKind: "membership", subjectId: leaver.membershipId, access: "read" },
+        { subjectKind: "workspace", subjectId: staleWorkspace.id, access: "read" },
       ],
     }, "PUT")))).status).toBe(200);
-    const token = await machineToken(app, providers, workspace.id);
+    const token = await machineToken(app, providers, machineWorkspace.id);
 
     const changes = [
-      add("KEY_A", "workspace", workspace.id, "read"),
       add("KEY_A", "membership", leaver.membershipId, "read"),
-      add("KEY_B", "org", null, "read"),
+      add("KEY_A", "org", null, "read"),
     ];
     const id = await proposed(app, token, changes);
-    // The leaver is disabled before the person answers.
+    await softDeleteWorkspace(staleWorkspace.id);
     await env.DB.prepare("UPDATE memberships SET status = 'disabled' WHERE id = ?1")
       .bind(leaver.membershipId).run();
 
     const resolved = await resolve(app, admin, id, { approve: true, changes });
     expect(resolved.status).toBe(200);
-    const { proposal } = await resolved.json<ResolveGrantProposalResponse>();
-    // The leaver's add is dropped; KEY_B is skipped whole, because its kept
-    // grant would have refused the write. KEY_A's workspace read applies.
-    expect(proposal).toMatchObject({
+    expect((await resolved.json<ResolveGrantProposalResponse>()).proposal).toMatchObject({
       state: "approved",
-      applied: [add("KEY_A", "workspace", workspace.id, "read")],
+      applied: [add("KEY_A", "org", null, "read")],
     });
-    const grants = await grantsOf(app, admin);
-    expect(grants.KEY_A).toEqual([
+    expect((await grantsOf(app, admin)).KEY_A).toEqual([
       { subjectKind: "membership", subjectId: "personal", access: "write" },
-      { subjectKind: "workspace", subjectId: workspace.id, access: "read" },
+      { subjectKind: "org", subjectId: null, access: "read" },
+      { subjectKind: "workspace", subjectId: staleWorkspace.id, access: "read" },
     ]);
-    expect(grants.KEY_B).toEqual([
-      { subjectKind: "membership", subjectId: leaver.membershipId, access: "read" },
+  });
+
+  it("applies removal of a stale workspace grant", async () => {
+    const { app, providers } = harness();
+    const admin = await operatorSession(app);
+    const machineWorkspace = await createWorkspace(app, admin);
+    const staleWorkspace = await createWorkspace(app, admin);
+    await storeOrgCredential(app, admin, "KEY_A");
+    expect((await appRequest(app, "/orgs/self/credentials/KEY_A/grants", withCookie(admin, json({
+      grants: [
+        { subjectKind: "membership", subjectId: "personal", access: "write" },
+        { subjectKind: "workspace", subjectId: staleWorkspace.id, access: "read" },
+      ],
+    }, "PUT")))).status).toBe(200);
+    const token = await machineToken(app, providers, machineWorkspace.id);
+
+    const changes = [remove("KEY_A", "workspace", staleWorkspace.id, "read")];
+    const id = await proposed(app, token, changes);
+    await softDeleteWorkspace(staleWorkspace.id);
+
+    const resolved = await resolve(app, admin, id, { approve: true, changes });
+    expect(resolved.status).toBe(200);
+    expect((await resolved.json<ResolveGrantProposalResponse>()).proposal).toMatchObject({
+      state: "approved",
+      applied: changes,
+    });
+    expect((await grantsOf(app, admin)).KEY_A).toEqual([
       { subjectKind: "membership", subjectId: "personal", access: "write" },
     ]);
-    await expect(poll(app, token, id).then((r) => r.json()))
-      .resolves.toMatchObject({ state: "approved", applied: proposal.applied });
+    expect(await env.DB.prepare(
+      `SELECT org_credential_grants.id FROM org_credential_grants
+       JOIN org_credentials ON org_credentials.id = org_credential_grants.credential_id
+       WHERE org_credentials.name = 'KEY_A' AND subject_kind = 'workspace' AND subject_id = ?1`,
+    ).bind(staleWorkspace.id).first()).toBeNull();
   });
 
   it("expires a proposal nobody answered within the TTL", async () => {
