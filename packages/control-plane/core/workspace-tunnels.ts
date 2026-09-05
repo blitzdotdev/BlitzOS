@@ -29,7 +29,6 @@ export interface WorkspaceTunnelRow {
 
 export interface ProvisionedTunnel {
   workspaceId: string;
-  hostname: string;
   tunnelToken: string;
   webAppToken: string;
 }
@@ -83,8 +82,16 @@ export class WorkspaceTunnels {
     });
     return {
       workspaceId,
-      hostname,
       tunnelToken: created.tunnelToken,
+      webAppToken: await this.webAppTokenFor(workspaceId),
+    };
+  }
+
+  /** Returns fresh guest credentials for a tunnel the machine keeps. */
+  async tokensFor(tunnelId: string, workspaceId: string): Promise<ProvisionedTunnel> {
+    return {
+      workspaceId,
+      tunnelToken: await this.client.tokenFor(tunnelId),
       webAppToken: await this.webAppTokenFor(workspaceId),
     };
   }

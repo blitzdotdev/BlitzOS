@@ -1,5 +1,5 @@
 import { boxHostname } from "./bootstrap.js";
-import { buildUserData, type BootShaping } from "./cloud-init.js";
+import { buildUserData, type BootShaping, type TunnelTokens } from "./cloud-init.js";
 import { revokeMachineLeasesQuery } from "./connections/leases.js";
 import { hashSecret, randomToken } from "./crypto.js";
 import { first, rows, transaction, type Db, type Query } from "./db.js";
@@ -302,14 +302,15 @@ export async function provisionMachine(
     const volumeId = input.volumeId ?? autoVolume?.id;
     const workspaceTunnels = runtime.providers.workspaceTunnels;
     const existing = await machineById(runtime.db, id);
-    // A machine keeps the tunnel it already has: the hostname is baked into
-    // the guest's cloudflared config, and re-provisioning one would orphan the
-    // old Cloudflare resources.
-    const tunnel = workspaceTunnels !== undefined
-      && vmProvider.proxyWebApp === undefined
-      && (existing?.tunnel_id ?? null) === null
-      ? await workspaceTunnels.provision(runtime.db, id, workspace.id)
-      : undefined;
+    // A machine keeps its tunnel, but every VM gets fresh token files and the
+    // ready marker in cloud-init.
+    let tunnel: TunnelTokens | undefined;
+    if (workspaceTunnels !== undefined && vmProvider.proxyWebApp === undefined) {
+      const tunnelId = existing?.tunnel_id ?? null;
+      tunnel = tunnelId === null
+        ? await workspaceTunnels.provision(runtime.db, id, workspace.id)
+        : await workspaceTunnels.tokensFor(tunnelId, workspace.id);
+    }
     const userData = tunnel === undefined
       ? baseUserData
       : buildUserData(

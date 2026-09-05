@@ -1675,6 +1675,22 @@ describe("blitz-payload", () => {
     expect(harness.currentContent()).toBe("old\n");
   });
 
+  it("reports unsupported before parsing fields from a newer protocol", async () => {
+    const release = makePayloadArchive([
+      { path: "rootfs/usr/local/bin/tool", content: "new\n" },
+    ]);
+    release.minUpdater = 3;
+    release.restart = { "future-supervisor": [] };
+    const harness = new Harness({ release });
+    await harness.start();
+
+    const result = await expectOneOutcome(harness, "unsupported");
+
+    expect(result.detail).toContain("manifest requires updater protocol 3");
+    expect(harness.requests).not.toContain("GET /payload.tar.gz");
+    expect(harness.currentContent()).toBe("old\n");
+  });
+
   it("recovers a crash with staging debris and a broken current link", async () => {
     const harness = new Harness({ pinVersion: null });
     await harness.start();

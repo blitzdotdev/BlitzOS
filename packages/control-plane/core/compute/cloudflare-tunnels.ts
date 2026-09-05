@@ -128,6 +128,15 @@ export class CloudflareTunnels {
     if (!isString(dnsRecordId) || dnsRecordId === "") {
       throw new Error("Cloudflare DNS create returned no record id");
     }
+    return {
+      tunnelId,
+      dnsRecordId,
+      tunnelToken: await this.tokenFor(tunnelId),
+    };
+  }
+
+  /** Returns the run token for an existing tunnel. */
+  async tokenFor(tunnelId: string): Promise<string> {
     const token = await this.request(
       "GET",
       `/accounts/${this.accountId}/cfd_tunnel/${tunnelId}/token`,
@@ -136,7 +145,7 @@ export class CloudflareTunnels {
     if (!isString(tunnelToken) || tunnelToken === "") {
       throw new Error("Cloudflare tunnel token response was not a string");
     }
-    return { tunnelId, dnsRecordId, tunnelToken };
+    return tunnelToken;
   }
 
   /** Deletes both tunnel resources, tolerating already-deleted ones.

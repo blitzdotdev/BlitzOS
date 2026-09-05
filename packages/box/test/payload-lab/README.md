@@ -1,6 +1,6 @@
 # Thin-image payload lab
 
-These scripts implement the E1–E16 experiment table in
+These scripts implement the E1–E18 payload experiment matrix based on
 `plans/THIN-IMAGE.md` §6. They publish disposable payload variants, move the
 self-hosted thinlab deployment pin, and inspect real Hetzner workspaces.
 They never create or delete a workspace.
@@ -97,8 +97,7 @@ Useful tuning variables are `LAB_OUTCOME_TIMEOUT`, `LAB_PAYLOAD_INTERVAL`,
 `LAB_E2_PROMPT`, `LAB_E3_PROMPT`, `LAB_E4_PROMPT`, their matching
 `LAB_E*_EXPECTED_TEXT` values, `LAB_E13_COMMAND`, and `LAB_HEALTH_PATH`.
 Experiments that use the control-plane proxy default `LAB_HEALTH_PATH` to
-`/healthz`; changing it to `/diag` is useful only while bringing up a
-deployment that has not exposed the specified health path.
+`/diag`, which is an allowed webapp files surface.
 `LAB_PAYLOAD_INTERVAL` is the live box's configured updater interval and
 defaults to the design's 300 seconds; E4 allows that interval plus restart
 slack after the turn becomes idle. The forced four-hour cap is covered by the

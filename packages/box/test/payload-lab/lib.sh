@@ -19,7 +19,7 @@ LAB_OUTCOME_TIMEOUT=${LAB_OUTCOME_TIMEOUT:-420}
 LAB_PAYLOAD_INTERVAL=${LAB_PAYLOAD_INTERVAL:-300}
 LAB_IMAGE_UPDATE_TIMEOUT=${LAB_IMAGE_UPDATE_TIMEOUT:-420}
 LAB_TURN_TIMEOUT=${LAB_TURN_TIMEOUT:-900}
-LAB_HEALTH_PATH=${LAB_HEALTH_PATH:-/healthz}
+LAB_HEALTH_PATH=${LAB_HEALTH_PATH:-/diag}
 
 EXPERIMENT_ID=
 WORKSPACE_ID=
@@ -592,8 +592,15 @@ payload_reported_at() {
   machine_json "$1" "${2:-}" | jq -er '.payloadReportedAt // 0'
 }
 
+# The supervise directories are root-only on the live image, so the
+# supervision tree is read from /proc instead: every s6-supervise process
+# names its service in argv[1], and its one child is the service process.
+payload_service_pid() {
+  box_ssh "$1" 'sup=$(pgrep -f "^s6-supervise payload$" | head -n 1); [ -n "$sup" ] && pgrep -P "$sup" | head -n 1'
+}
+
 payload_process_ticks() {
-  box_ssh "$1" 'pid=$(cat /run/service/payload/supervise/pid); set -- $(cat "/proc/$pid/stat"); printf "%s\n" $(( ${14} + ${15} ))'
+  box_ssh "$1" 'sup=$(pgrep -f "^s6-supervise payload$" | head -n 1); pid=$(pgrep -P "$sup" | head -n 1); set -- $(cat "/proc/$pid/stat"); printf "%s\n" $(( ${14} + ${15} ))'
 }
 
 session_running() {
@@ -646,9 +653,10 @@ tmux_catalog() {
 }
 
 service_pids() {
-  box_ssh "$1" 'for service in /run/service/*; do
-name=${service##*/}
-pid=$(cat "$service/supervise/pid" 2>/dev/null || true)
+  box_ssh "$1" 'for sup in $(pgrep -x s6-supervise); do
+name=$(tr "\0" "\n" </proc/$sup/cmdline 2>/dev/null | sed -n 2p)
+[ -n "$name" ] || continue
+pid=$(pgrep -P "$sup" | head -n 1)
 [ -n "$pid" ] && printf "%s=%s\n" "$name" "$pid"
 done | sort'
 }
@@ -698,6 +706,17 @@ _variant_overlay() {
     daemon-*)
       # A daemon-only release changes no payload source. Its distinct identity
       # is stamped into the archive by _prepare_daemon_variant instead.
+      ;;
+    e17-* | with-hello-*)
+      # A release that ADDS a longrun to the payload-owned service tree. The
+      # marker in its run script keeps every such release a distinct version.
+      source=packages/box/rootfs/etc/s6-overlay/s6-rc.d
+      mkdir -p "$overlay/$source/hello" "$overlay/$source/user/contents.d"
+      printf 'longrun\n' >"$overlay/$source/hello/type"
+      printf '#!/command/with-contenv sh\n# payload-lab %s\nexec sleep infinity\n' "$marker" \
+        >"$overlay/$source/hello/run"
+      chmod 0755 "$overlay/$source/hello/run"
+      : >"$overlay/$source/user/contents.d/hello"
       ;;
     *)
       source=packages/box/rootfs/usr/local/libexec/blitz-term
