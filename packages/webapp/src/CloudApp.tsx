@@ -276,24 +276,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [loaded, mobileWebApp]);
 
   useEffect(() => {
-    if (!mobileWebApp) {
-      setDrawerOpen(false);
-      setMobilePanelsOpen(false);
-    }
+    if (!mobileWebApp) setDrawerOpen(false);
   }, [mobileWebApp]);
 
   useEffect(() => {
     setDrawerOpen(false);
-    setMobilePanelsOpen(false);
   }, [route.page, route.workspaceId]);
 
   useEffect(() => {
     if (!mobileWebApp) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setDrawerOpen(false);
-        setMobilePanelsOpen(false);
-      }
+      if (event.key === 'Escape') setDrawerOpen(false);
     };
     let edgeStart: { x: number; y: number; pointerId: number } | null = null;
     const startEdgeSwipe = (event: PointerEvent) => {

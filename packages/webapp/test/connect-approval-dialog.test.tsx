@@ -8,7 +8,7 @@
  * shapes the primary action takes, and that neither the close button nor
  * "Not now" answers the server.
  */
-import type { CatalogEntryView, CredentialRequestView, UserGrantView } from '@blitzos/schema';
+import type { CatalogEntryView, CredentialLeaseView, CredentialRequestView, UserGrantView } from '@blitzos/schema';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
@@ -47,6 +47,24 @@ const workspace: ConnectDialogWorkspace = {
   }],
 };
 
+/** The lease a mint hands back. Nothing in the dialog reads a field of it —
+ * the call settling is the whole signal — but the response type carries one,
+ * so the mock returns one rather than a `null` the wire cannot produce. */
+function lease(): CredentialLeaseView {
+  return {
+    id: 'lease-1',
+    workspaceId: 'workspace-one',
+    boxId: null,
+    connection: 'linear',
+    userId: null,
+    scopes: [],
+    mode: 'proxy',
+    issuedAt: Date.UTC(2026, 8, 4),
+    expiresAt: Date.UTC(2026, 8, 5),
+    state: 'active',
+  };
+}
+
 function entry(overrides: Partial<CatalogEntryView> = {}): CatalogEntryView {
   return {
     id: 'linear',
@@ -83,7 +101,7 @@ function client(
   return {
     listConnectionCatalog: vi.fn(async () => ({ providers })),
     listConnectionGrants: vi.fn(async () => ({ grants })),
-    mintWorkspaceConnection: vi.fn(async () => ({ lease: null })),
+    mintWorkspaceConnection: vi.fn(async () => ({ lease: lease() })),
     connectStartUrl: (provider: string, workspaceId?: string) =>
       `/connect/${provider}/start?workspaceId=${workspaceId ?? ''}`,
     ...overrides,
@@ -146,7 +164,7 @@ describe('ConnectApprovalDialog', () => {
   });
 
   it('mints in one call when the member already authorized the provider', async () => {
-    const mintWorkspaceConnection = vi.fn(async () => ({ lease: null }));
+    const mintWorkspaceConnection = vi.fn(async () => ({ lease: lease() }));
     const onConnected = vi.fn();
     const view = await render(
       <ConnectApprovalDialog

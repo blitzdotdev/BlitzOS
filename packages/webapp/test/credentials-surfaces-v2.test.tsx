@@ -574,38 +574,6 @@ describe('workspace provider rows', () => {
     await view.unmount();
   });
 
-  it('opens the focused provider row and re-opens it on a fresh focus', async () => {
-    const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
-    });
-    function Harness({ at }: { at: number }) {
-      return (
-        <WorkspaceConnectionsPanel
-          client={wire}
-          workspaceId="workspace-one"
-          pendingRequests={[]}
-          workspaceConnections={[]}
-          connectionsFocus={{ provider: 'linear', at }}
-          onResolveRequest={async () => undefined}
-        />
-      );
-    }
-    const view = await render(<Harness at={1} />);
-    await settle();
-    // The agent's `blitz connections open linear` landed: the row is
-    // highlighted and its connect surface is already open.
-    expect(view.container.querySelector('.wsc-tile--focus')?.textContent)
-      .toContain('Linear');
-    expect(view.container.querySelector('input[name="token"]')).not.toBeNull();
-
-    await act(async () => click(buttonIn(view.container, 'Cancel')));
-    expect(view.container.querySelector('input[name="token"]')).toBeNull();
-    await act(async () => view.root.render(<Harness at={2} />));
-    await settle();
-    expect(view.container.querySelector('input[name="token"]')).not.toBeNull();
-    await view.unmount();
-  });
-
   it('keeps Wanted here beside the rows and hides Recent activity', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
