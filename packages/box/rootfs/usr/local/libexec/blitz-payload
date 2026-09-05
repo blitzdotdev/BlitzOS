@@ -7,9 +7,11 @@
 //
 // BASE-OWNED TICK DEPENDENCIES. Node runs this file, /usr/local/bin/blitz-cred
 // obtains the bearer, /var/lib/blitz/origin supplies the endpoint, and Node's
-// built-in HTTP/TLS stack fetches config and reports results. Applying an
-// archive additionally uses the image's tar and s6 command tools. None of
-// these paths is payload-owned; the gateway deliberately remains payload.
+// built-in HTTP/TLS stack fetches config and reports results. Updater state and
+// downloaded releases stay in the image layer under /opt/blitz/payload.
+// Applying an archive additionally uses the image's tar and s6 command tools.
+// None of these paths is payload-owned; the gateway deliberately remains
+// payload.
 //
 // DAEMON IDLE DOOR. The updater reads `activeSessionCount` from the daemon's
 // bounded local `/state` probe. Lody holds that count above zero for running,
@@ -43,6 +45,10 @@ const FAILED_OUTCOMES = new Set([
   'start-failed',
   'unsupported',
 ]);
+const FEATURE_FLAGS = Object.freeze([
+  Object.freeze({ wire: 'lodySessions', env: 'BLITZ_LODY_SESSIONS' }),
+]);
+const FEATURES_PATH = '/opt/blitz/payload/state/features';
 class FetchFailure extends Error {}
 class VerifyFailure extends Error {}
 
@@ -105,6 +111,13 @@ function requiredArray(value, field) {
 
 function requiredString(value, field) {
   if (typeof value !== 'string') throw new VerifyFailure(`box-payload ${field} must be a string`);
+  return value;
+}
+
+function requiredBoolean(value, field) {
+  if (value !== true && value !== false) {
+    throw new VerifyFailure(`box-payload ${field} must be a boolean`);
+  }
   return value;
 }
 
@@ -234,13 +247,32 @@ function parseManifest(value) {
   return result;
 }
 
-function parsePayloadConfig(value) {
+function parseBoxConfig(value) {
   const envelope = record(value, 'box-config');
-  if (envelope.payload === undefined || envelope.payload === null) return null;
-  const payload = record(envelope.payload, 'box-config.payload');
+  let payload = null;
+  if (envelope.payload !== undefined && envelope.payload !== null) {
+    const payloadObject = record(envelope.payload, 'box-config.payload');
+    payload = {
+      version: version(payloadObject.version, 'box-config.payload.version'),
+      manifestUrl: httpUrl(
+        payloadObject.manifestUrl,
+        'box-config.payload.manifestUrl',
+      ),
+    };
+  }
+  let features = { lodySessions: false };
+  if (envelope.features !== undefined) {
+    const featureObject = record(envelope.features, 'box-config.features');
+    features = {
+      lodySessions: requiredBoolean(
+        featureObject.lodySessions,
+        'box-config.features.lodySessions',
+      ),
+    };
+  }
   return {
-    version: version(payload.version, 'box-config.payload.version'),
-    manifestUrl: httpUrl(payload.manifestUrl, 'box-config.payload.manifestUrl'),
+    payload,
+    features,
   };
 }
 
@@ -271,9 +303,11 @@ function settings() {
     : JSON.parse(process.env.BLITZ_PAYLOAD_TEST_CONFIG);
   const configured = (key, fallback) => test[key] ?? fallback;
   const payloadRoot = configured('payloadRoot', '/opt/blitz/payload');
+  const payloadState = configured('payloadState', path.join(payloadRoot, 'state'));
   return {
     payloadRoot,
-    payloadState: path.join(stateRoot, 'payload'),
+    payloadState,
+    payloadVersions: configured('payloadVersions', path.join(payloadRoot, 'versions')),
     lodyRoot: configured('lodyRoot', '/opt/blitz/lody'),
     originFile: configured('originFile', path.join(stateRoot, 'origin')),
     serviceRoot: configured('serviceRoot', '/run/service'),
@@ -288,7 +322,13 @@ function settings() {
     s6TransitionTimeoutMs: configured('s6TransitionTimeoutMs', 65_000),
     lockPath: configured('lockPath', '/run/blitz-payload.lock'),
     inheritedLockFd9,
-    instancePath: configured('instancePath', path.join(payloadRoot, '.instance')),
+    featuresFile: configured('featuresFile', path.join(payloadState, 'features')),
+    featuresAppliedFile: configured(
+      'featuresAppliedFile',
+      path.join(payloadState, 'features.applied'),
+    ),
+    featuresOwnerUid: configured('featuresOwnerUid', 0),
+    featuresOwnerGid: configured('featuresOwnerGid', 0),
     eventLog: configured('eventLog', null),
     gatewayHealthUrl: configured('gatewayHealthUrl', 'http://127.0.0.1:7445/healthz'),
     daemonSocket: configured(
@@ -304,8 +344,12 @@ function settings() {
     daemonIdleProbeTimeoutMs: configured('daemonIdleProbeTimeoutMs', 2000),
     daemonKillGraceMs: configured('daemonKillGraceMs', 30_000),
     daemonKillPollMs: configured('daemonKillPollMs', 5000),
-    intervalMs: positiveSeconds('BLITZ_PAYLOAD_INTERVAL', 300),
-    firstDelayMs: configured('firstDelayMs', 60_000),
+    intervalMs: configured(
+      'intervalMs',
+      positiveSeconds('BLITZ_PAYLOAD_INTERVAL', 300),
+    ),
+    firstDelayMs: configured('firstDelayMs', 5000),
+    fastFirstContactMs: configured('fastFirstContactMs', 15_000),
     healthTimeoutMs: configured('healthTimeoutMs', 60_000),
     healthIntervalMs: configured('healthIntervalMs', 1000),
     requestTimeoutMs: configured('requestTimeoutMs', 30_000),
@@ -622,31 +666,8 @@ async function writeState(config, state) {
   await fsp.rename(temporary, target);
 }
 
-async function ensureInstance(config) {
-  try {
-    const source = await fsp.readFile(config.instancePath, 'utf8');
-    if (!/^[a-f0-9]{32}\n$/u.test(source)) {
-      throw new Error('payload instance id is malformed');
-    }
-    return { id: source.slice(0, -1) };
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
-  const id = crypto.randomBytes(16).toString('hex');
-  await fsp.mkdir(path.dirname(config.instancePath), { recursive: true, mode: 0o755 });
-  const nonce = crypto.randomBytes(8).toString('hex');
-  const temporary = `${config.instancePath}.new-${process.pid}-${nonce}`;
-  try {
-    await fsp.writeFile(temporary, `${id}\n`, { mode: 0o644, flag: 'wx' });
-    await fsp.rename(temporary, config.instancePath);
-  } finally {
-    await fsp.rm(temporary, { force: true });
-  }
-  return { id };
-}
-
 async function removeStaging(config, protectedDatabase) {
-  const roots = [path.join(config.payloadState, 'versions'), config.lodyRoot];
+  const roots = [config.payloadVersions, config.lodyRoot];
   for (const root of roots) {
     await fsp.mkdir(root, { recursive: true });
     const entries = await fsp.readdir(root, { withFileTypes: true });
@@ -716,40 +737,15 @@ async function ensureCurrentLink(linkPath, fallbackTarget, label) {
 async function initialiseState(config) {
   await fsp.mkdir(config.payloadState, { recursive: true, mode: 0o755 });
   await fsp.chmod(config.payloadState, 0o755);
-  const versionsRoot = path.join(config.payloadState, 'versions');
-  await fsp.mkdir(versionsRoot, { recursive: true, mode: 0o755 });
-  await fsp.chmod(versionsRoot, 0o755);
+  await fsp.mkdir(config.payloadVersions, { recursive: true, mode: 0o755 });
+  await fsp.chmod(config.payloadVersions, 0o755);
   await fsp.mkdir(config.payloadRoot, { recursive: true });
   await fsp.mkdir(config.lodyRoot, { recursive: true });
   liveServiceDatabase = await resolveLiveServiceDatabase(config);
   if (liveServiceDatabase !== null) compiledServiceDatabases.add(liveServiceDatabase);
   await removeStaging(config, liveServiceDatabase);
 
-  let stateBeforeRecovery = await readState(config);
-  const instance = await ensureInstance(config);
-  let recovery;
-  if (stateBeforeRecovery.instanceId !== instance.id) {
-    const foreignPending = pendingRelease(stateBeforeRecovery.pending);
-    stateBeforeRecovery = { ...stateBeforeRecovery, instanceId: instance.id };
-    delete stateBeforeRecovery.pending;
-    if (
-      foreignPending !== null
-      && String(foreignPending.nextDatabase) !== foreignPending.nextDatabase
-    ) {
-      delete stateBeforeRecovery.current;
-      delete stateBeforeRecovery.currentTarget;
-      delete stateBeforeRecovery.previous;
-      delete stateBeforeRecovery.previousTarget;
-    }
-    await writeState(config, stateBeforeRecovery);
-    recovery = {
-      state: stateBeforeRecovery,
-      failure: null,
-      useBakedFallback: true,
-    };
-  } else {
-    recovery = await recoverPending(config, stateBeforeRecovery);
-  }
+  const recovery = await recoverPending(config, await readState(config));
   let state = recovery.state;
   if (recovery.failure !== null) return recovery;
   if ('liveDbPath' in state) {
@@ -970,8 +966,7 @@ async function verifyPayloadTree(root, manifest) {
 }
 
 async function extractPayload(manifest, config) {
-  const versionsRoot = path.join(config.payloadState, 'versions');
-  const final = path.join(versionsRoot, manifest.version);
+  const final = path.join(config.payloadVersions, manifest.version);
   const existing = await fsp.stat(final).catch(() => null);
   if (existing !== null) {
     try {
@@ -1558,6 +1553,98 @@ async function restartServices(services, config, daemonActivationDetail = null) 
   return daemonDetail;
 }
 
+function featureFileBytes(features) {
+  return FEATURE_FLAGS.map(({ wire, env }) =>
+    `${env}=${features[wire] ? '1' : '0'}\n`).join('');
+}
+
+async function featureReaderServices(config) {
+  const currentTree = path.join(config.payloadRoot, 'current', SERVICE_TREE_PATH);
+  const entries = await fsp.readdir(currentTree, { withFileTypes: true });
+  const readers = [];
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || !SERVICE_PATTERN.test(entry.name)) continue;
+    const serviceRoot = path.join(currentTree, entry.name);
+    const [typeSource, runMetadata] = await Promise.all([
+      fsp.readFile(path.join(serviceRoot, 'type'), 'utf8').catch(() => null),
+      fsp.stat(path.join(serviceRoot, 'run')).catch(() => null),
+    ]);
+    if (
+      typeSource?.trim() !== 'longrun'
+      || runMetadata === null
+      || !runMetadata.isFile()
+    ) continue;
+    const runSource = await fsp.readFile(path.join(serviceRoot, 'run'), 'utf8');
+    if (runSource.includes(FEATURES_PATH)) readers.push(entry.name);
+  }
+  return readers;
+}
+
+async function enforceFeatureFileMetadata(filePath, config) {
+  await fsp.chmod(filePath, 0o644);
+  await fsp.chown(
+    filePath,
+    config.featuresOwnerUid,
+    config.featuresOwnerGid,
+  );
+}
+
+async function readOptionalFile(filePath) {
+  return fsp.readFile(filePath, 'utf8').catch((error) => {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  });
+}
+
+async function atomicFeatureFile(filePath, bytes, config, event) {
+  await fsp.mkdir(path.dirname(filePath), { recursive: true, mode: 0o755 });
+  const temporary = `${filePath}.new-${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+  try {
+    await fsp.writeFile(temporary, bytes, { flag: 'wx', mode: 0o644 });
+    await enforceFeatureFileMetadata(temporary, config);
+    await fsp.rename(temporary, filePath);
+    await traceEvent(config, event);
+  } finally {
+    await fsp.rm(temporary, { force: true });
+  }
+}
+
+async function materializeFeatures(features, config) {
+  const bytes = featureFileBytes(features);
+  const previous = await readOptionalFile(config.featuresFile);
+  if (previous === bytes) {
+    await enforceFeatureFileMetadata(config.featuresFile, config);
+  } else {
+    await atomicFeatureFile(config.featuresFile, bytes, config, 'features-rename');
+    testKillAt(config, 'after-features-rename');
+  }
+
+  const applied = await readOptionalFile(config.featuresAppliedFile);
+  if (applied === bytes) {
+    await enforceFeatureFileMetadata(config.featuresAppliedFile, config);
+    return [];
+  }
+
+  const readers = await featureReaderServices(config);
+  log(readers.length === 0
+    ? 'features pending; no reader restart required'
+    : `features pending; restarting ${readers.join(', ')}`);
+  // A feature flip is a deliberate operator action. Restart its readers now;
+  // unlike payload rollout, active Lody sessions do not defer this decision.
+  await restartServices(
+    readers,
+    config,
+    'feature flag changed by deliberate operator action',
+  );
+  await atomicFeatureFile(
+    config.featuresAppliedFile,
+    bytes,
+    config,
+    'features-applied',
+  );
+  return readers;
+}
+
 function probeDaemon(socketPath, timeoutMs) {
   return new Promise((resolve) => {
     const request = http.request({
@@ -2042,17 +2129,16 @@ async function garbageCollect(config, state) {
     linkInfo(path.join(config.payloadRoot, 'current')),
     linkInfo(path.join(config.lodyRoot, 'current')),
   ]);
-  const versionsRoot = path.join(config.payloadState, 'versions');
   const payloadKeep = new Set([
     state.current,
     state.previous,
     deferred?.version,
-  ].filter((item) => String(item) === item).map((item) => path.join(versionsRoot, item)));
+  ].filter((item) => String(item) === item).map((item) => path.join(config.payloadVersions, item)));
   for (const target of [payloadCurrent.target, pendingPayload?.target]) {
     if (String(target) === target) payloadKeep.add(target);
   }
-  for (const entry of await fsp.readdir(versionsRoot, { withFileTypes: true })) {
-    const candidate = path.join(versionsRoot, entry.name);
+  for (const entry of await fsp.readdir(config.payloadVersions, { withFileTypes: true })) {
+    const candidate = path.join(config.payloadVersions, entry.name);
     if (!payloadKeep.has(candidate)) {
       await fsp.rm(candidate, { recursive: true, force: true });
     }
@@ -2094,6 +2180,8 @@ async function garbageCollect(config, state) {
 }
 
 let bootReportPending = true;
+let boxConfigFetchSucceeded = false;
+let fastFirstContactRetry = false;
 
 async function reportRecoveryFailure(config, state, reason) {
   const pending = pendingRelease(state.pending);
@@ -2116,6 +2204,7 @@ async function reportRecoveryFailure(config, state, reason) {
     log(errorMessage(error));
   }
   if (origin === null) {
+    fastFirstContactRetry = !boxConfigFetchSucceeded;
     state = await queueResult(config, state, failure.result);
   } else {
     try {
@@ -2123,6 +2212,7 @@ async function reportRecoveryFailure(config, state, reason) {
       state = (await deliverResult(origin, token, state, failure.result, config)).state;
     } catch (error) {
       log(`result bearer unavailable: ${errorMessage(error)}`);
+      fastFirstContactRetry = !boxConfigFetchSucceeded;
       state = await queueResult(config, state, failure.result);
     }
   }
@@ -2131,6 +2221,7 @@ async function reportRecoveryFailure(config, state, reason) {
 }
 
 async function tickUnlocked(config) {
+  fastFirstContactRetry = false;
   const initial = await initialiseState(config);
   let state = initial.state;
   if (initial.failure !== null) {
@@ -2146,6 +2237,7 @@ async function tickUnlocked(config) {
   }
   if (origin === null) {
     log('idle (no control-plane origin)');
+    fastFirstContactRetry = !boxConfigFetchSucceeded;
     return;
   }
   let token;
@@ -2153,6 +2245,7 @@ async function tickUnlocked(config) {
     token = await accessToken(config);
   } catch (error) {
     log(`idle (bearer unavailable: ${errorMessage(error)})`);
+    fastFirstContactRetry = !boxConfigFetchSucceeded;
     return;
   }
   const resent = await resendQueuedResult(origin, token, state, config);
@@ -2162,7 +2255,7 @@ async function tickUnlocked(config) {
     return;
   }
 
-  let pin;
+  let boxConfig;
   try {
     const response = await fetchJson(
       `${origin}/workspaces/self/box-config`,
@@ -2170,7 +2263,8 @@ async function tickUnlocked(config) {
       'box-config',
       config.requestTimeoutMs,
     );
-    pin = parsePayloadConfig(response);
+    boxConfig = parseBoxConfig(response);
+    boxConfigFetchSucceeded = true;
   } catch (error) {
     const failure = await recordOutcome(
       config,
@@ -2183,6 +2277,8 @@ async function tickUnlocked(config) {
     await garbageCollect(config, state);
     return;
   }
+  await materializeFeatures(boxConfig.features, config);
+  const pin = boxConfig.payload;
 
   if (bootReportPending) {
     const bootDetail = pin === null
@@ -2284,14 +2380,14 @@ async function runLoop() {
     } catch (error) {
       log(`tick failed (${errorMessage(error)})`);
     }
-    await sleep(config.intervalMs);
+    await sleep(fastFirstContactRetry ? config.fastFirstContactMs : config.intervalMs);
   }
 }
 
 async function validatorMain(kind, fixturePath) {
   const parsed = JSON.parse(await fsp.readFile(fixturePath, 'utf8'));
   if (kind === 'validate-manifest') parseManifest(parsed);
-  else parsePayloadConfig(parsed);
+  else parseBoxConfig(parsed);
 }
 
 async function tickMain() {
@@ -2364,4 +2460,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseManifest, parsePayloadConfig, probeGateway };
+module.exports = { parseManifest, parseBoxConfig, probeGateway };

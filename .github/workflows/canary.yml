@@ -159,10 +159,9 @@ jobs:
             printf 'prefix=%s\n' "$(jq -r '.prefix' plan.json)"
           } >> "$GITHUB_OUTPUT"
 
-      # env.defaults tracks Lody off for self-hosters. Canary turns it on with a
-      # validated Docker build arg, replacing the manual edit that once let a
-      # clean rebake silently ship Lody off. The repository root is the build
-      # context because the Dockerfile also copies the broker and schema fixtures.
+      # Feature flags are deployment config, not image inputs. The repository
+      # root remains the build context because the Dockerfile also copies the
+      # broker and schema fixtures.
       - name: Build the box image
         if: steps.plan.outputs.published == 'false'
         env:
@@ -170,7 +169,6 @@ jobs:
           PAYLOAD_VERSION: ${{ steps.payload.outputs.version }}
         run: |
           docker build --platform linux/amd64 \
-            --build-arg BLITZ_LODY_SESSIONS=1 \
             --build-arg "BLITZ_PAYLOAD_VERSION=$PAYLOAD_VERSION" \
             -f packages/box/Dockerfile -t "$IMAGE_TAG" .
 
@@ -446,15 +444,15 @@ jobs:
           # the updater where to fetch and the version is its desired state.
           BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF: ${{ needs.payload.outputs.ref }}
           BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION: ${{ needs.payload.outputs.version }}
+          # Box-side Lody follows box-config and can flip without rebuilding or
+          # replacing the container.
+          BLITZ_DEPLOY_VAR_BOX_LODY_SESSIONS: "1"
           # The Lody session surface, half two (plans/LODY-SESSIONS.md §13.3).
-          # Half one is baked into new canary archives by the image job's
-          # BLITZ_LODY_SESSIONS=1 build arg: the daemon has to be listening
-          # before a browser dials it, and the reverse order gives every member
-          # on canary a rail that cannot list a session.
+          # The box flag above and this webapp build flag ship together: the
+          # daemon has to be listening before a browser dials it, and the
+          # reverse order gives every member a rail that cannot list a session.
           #
-          # It is set HERE and not in env.defaults because env.defaults is the
-          # tracked default for every deployment, including a self-hosted fork
-          # that should stay dark. `npm run build -w @blitzos/webapp` runs
+          # It is set HERE because `npm run build -w @blitzos/webapp` runs
           # `node --env-file=env.defaults vite build`, and node's --env-file
           # does NOT overwrite a variable already in the environment — so this
           # line wins over the `false` in that file, for this deploy only.

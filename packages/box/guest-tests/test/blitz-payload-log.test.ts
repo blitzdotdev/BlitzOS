@@ -32,7 +32,7 @@ describe("blitz-payload file log", () => {
     const payloadRoot = path.join(root, "opt/payload");
     const lodyRoot = path.join(root, "opt/lody");
     const stateRoot = path.join(root, "state");
-    const payloadState = path.join(stateRoot, "payload");
+    const payloadState = path.join(payloadRoot, "state");
     mkdirSync(path.join(payloadRoot, "baked"), { recursive: true });
     mkdirSync(path.join(lodyRoot, "baked"), { recursive: true });
     mkdirSync(payloadState, { recursive: true });
@@ -52,6 +52,7 @@ describe("blitz-payload file log", () => {
         BLITZ_STATE_DIR: stateRoot,
         BLITZ_PAYLOAD_TEST_CONFIG: JSON.stringify({
           payloadRoot,
+          payloadState,
           lodyRoot,
           lockPath: path.join(root, "run/blitz-payload.lock"),
         }),

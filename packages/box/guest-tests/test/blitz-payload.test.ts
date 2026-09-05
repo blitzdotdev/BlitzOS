@@ -1,7 +1,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
+  chmodSync, chownSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
   readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -23,6 +23,7 @@ const BAKED_PAYLOAD_VERSION = "baked-payload-v1", BAKED_DAEMON_VERSION = "0.88.1
 const LOCK_REFUSAL = "another updater holds /run/blitz-payload.lock; stop the payload service "
   + "(s6-svc -d /run/service/payload) or wait for the running tick\n";
 const linuxFlockIt = process.platform === "linux" ? it : it.skip;
+const linuxRootIt = process.platform === "linux" && process.getuid?.() === 0 ? it : it.skip;
 
 function linuxProcessStartTime(pid: number): string {
   const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -94,7 +95,6 @@ interface PayloadState {
   daemonVersion: string;
   daemonTarget?: string;
   daemonProtocolVersion?: number;
-  instanceId?: string;
   pending?: Record<string, object | string | string[] | boolean>;
   lastCommittedUpdateDatabase?: string;
   previousDbPath?: string;
@@ -119,6 +119,7 @@ interface HarnessOptions {
   oversizedConfig?: boolean;
   resultStatus?: number;
   configDelayMs?: number;
+  features?: boolean;
 }
 
 const temporaryDirectories: string[] = [];
@@ -299,13 +300,17 @@ function listen(server: Server): Promise<string> {
 class Harness {
   readonly root = temporaryDirectory("blitz-payload-test-");
   readonly payloadRoot = path.join(this.root, "opt/payload");
-  readonly payloadState = path.join(this.root, "state/payload");
+  readonly payloadState = path.join(this.payloadRoot, "state");
+  readonly payloadVersions = path.join(this.payloadRoot, "versions");
   readonly lodyRoot = path.join(this.root, "opt/lody");
   readonly originFile = path.join(this.root, "state/origin");
+  readonly featuresFile = path.join(this.payloadState, "features");
+  readonly featuresAppliedFile = path.join(this.payloadState, "features.applied");
   readonly serviceRoot = path.join(this.root, "run/service");
   readonly bin = path.join(this.root, "bin");
   readonly s6Log = path.join(this.root, "s6.log");
   readonly credentialLog = path.join(this.root, "credential.log");
+  readonly credentialAttempts = path.join(this.root, "credential-attempts");
   readonly s6Failure = path.join(this.root, "s6-fail");
   readonly s6CompileLog = path.join(this.root, "s6-compile.log");
   readonly s6CompileFailure = path.join(this.root, "s6-compile-fail");
@@ -317,10 +322,11 @@ class Harness {
   readonly s6LiveCompiled = path.join(this.root, "run/s6-rc/compiled");
   readonly s6SourcesRoot = path.join(this.root, "package/admin");
   readonly lockPath = path.join(this.root, "run/blitz-payload.lock");
-  readonly instancePath = path.join(this.payloadRoot, ".instance");
   readonly eventLog = path.join(this.root, "events.log");
   readonly results: PayloadResult[] = [];
   readonly requests: string[] = [];
+  readonly configRequestTimes: number[] = [];
+  readonly credentialCallsAtConfig: number[] = [];
   readonly options: HarnessOptions;
   origin = "";
 
@@ -349,6 +355,8 @@ class Harness {
     symlinkSync("baked", path.join(this.payloadRoot, "current"));
     symlinkSync("baked", path.join(this.lodyRoot, "current"));
     mkdirSync(this.payloadState, { recursive: true });
+    writeFileSync(this.featuresFile, "BLITZ_LODY_SESSIONS=0\n", { mode: 0o644 });
+    writeFileSync(this.featuresAppliedFile, "BLITZ_LODY_SESSIONS=0\n", { mode: 0o644 });
     mkdirSync(this.serviceRoot, { recursive: true });
     mkdirSync(
       path.join(this.s6SourcesRoot, "s6-overlay-3.2.1.0/etc/s6-rc/sources"),
@@ -368,7 +376,10 @@ class Harness {
     writeExecutable(
       path.join(this.bin, "s6-svc"),
       "#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$BLITZ_TEST_S6_LOG\"\n"
-        + "[ ! -e \"$BLITZ_TEST_S6_FAILURE\" ]\n",
+        + "if [ -e \"$BLITZ_TEST_S6_FAILURE\" ]; then\n"
+        + "  failure=$(cat \"$BLITZ_TEST_S6_FAILURE\")\n"
+        + "  case \"$*\" in *\"$failure\"*) rm -f \"$BLITZ_TEST_S6_FAILURE\"; exit 1 ;; esac\n"
+        + "fi\n",
     );
     writeExecutable(
       path.join(this.bin, "s6-rc-compile"),
@@ -443,6 +454,8 @@ class Harness {
       return;
     }
     if (request.url === "/workspaces/self/box-config" && request.method === "GET") {
+      this.configRequestTimes.push(Date.now());
+      this.credentialCallsAtConfig.push(this.calls(this.credentialLog).length);
       const reply = () => {
         if (!this.authorized(request)) {
           response.writeHead(401);
@@ -463,14 +476,18 @@ class Harness {
         const pinVersion = this.options.pinVersion === undefined
           ? this.options.release?.version ?? null
           : this.options.pinVersion;
-        sendJson(response, 200, {
+        const body: Record<string, object | string | boolean | null> = {
           boxImageRef: "base",
           controlPlaneOrigin: this.origin,
           updateRequested: false,
           payload: pinVersion === null
             ? null
             : { version: pinVersion, manifestUrl: `${this.origin}/manifest.json` },
-        });
+        };
+        if (this.options.features !== undefined) {
+          body.features = { lodySessions: this.options.features };
+        }
+        sendJson(response, 200, body);
       };
       if ((this.options.configDelayMs ?? 0) > 0) setTimeout(reply, this.options.configDelayMs);
       else reply();
@@ -535,7 +552,12 @@ class Harness {
         s6DbRoot: this.s6DbRoot,
         s6LiveCompiled: this.s6LiveCompiled,
         lockPath: this.lockPath,
-        instancePath: this.instancePath,
+        payloadState: this.payloadState,
+        payloadVersions: this.payloadVersions,
+        featuresFile: this.featuresFile,
+        featuresAppliedFile: this.featuresAppliedFile,
+        featuresOwnerUid: process.getuid?.() ?? 0,
+        featuresOwnerGid: process.getgid?.() ?? 0,
         s6TransitionTimeoutMs: 1000,
         eventLog: this.eventLog,
         gatewayHealthUrl: `${this.origin}/healthz`,
@@ -546,6 +568,7 @@ class Harness {
         ...testOverrides,
       }),
       BLITZ_TEST_CREDENTIAL_LOG: this.credentialLog,
+      BLITZ_TEST_CREDENTIAL_ATTEMPTS: this.credentialAttempts,
       BLITZ_TEST_S6_LOG: this.s6Log,
       BLITZ_TEST_S6_FAILURE: this.s6Failure,
       BLITZ_TEST_S6_COMPILE_LOG: this.s6CompileLog,
@@ -860,7 +883,7 @@ describe("blitz-payload", () => {
     await harness.start();
     const killed = await runUpdater(harness, 3000, { killAt: "after-switch" });
     expect(killed.signal, killed.stderr).toBe("SIGKILL");
-    const selectedPayload = path.join(harness.payloadState, `versions/${release.version}`);
+    const selectedPayload = path.join(harness.payloadVersions, release.version);
     const selectedDaemon = path.join(harness.lodyRoot, release.daemon?.version ?? "missing");
     const liveDatabase = harness.liveDatabase();
     expect(harness.currentTarget()).toBe(selectedPayload);
@@ -920,7 +943,7 @@ describe("blitz-payload", () => {
     await harness.start();
     const killed = await runUpdater(harness, 3000, { killAt: "after-switch" });
     expect(killed.signal, killed.stderr).toBe("SIGKILL");
-    rmSync(path.join(harness.payloadState, `versions/${release.version}`), {
+    rmSync(path.join(harness.payloadVersions, release.version), {
       recursive: true,
       force: true,
     });
@@ -1084,7 +1107,7 @@ describe("blitz-payload", () => {
     expect(realpathSync(path.join(harness.lodyRoot, "current")))
       .toBe(path.join(harness.lodyRoot, "baked"));
     expect(harness.currentTarget()).toBe(mixedLinks
-      ? path.join(harness.payloadState, `versions/${release.version}`)
+      ? path.join(harness.payloadVersions, release.version)
       : path.join(harness.payloadRoot, "baked"));
     expect(healthRequests).toBe(0);
     const compileCalls = harness.calls(harness.s6CompileLog).length;
@@ -1196,8 +1219,8 @@ describe("blitz-payload", () => {
     await expectOneOutcome(harness, "applied");
 
     const directory = path.join(
-      harness.payloadState,
-      `versions/${release.version}/rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d`,
+      harness.payloadVersions,
+      `${release.version}/rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d`,
     );
     expect(lstatSync(directory).isDirectory()).toBe(true);
     expect(statSync(directory).mode & 0o777).toBe(0o755);
@@ -1356,7 +1379,6 @@ describe("blitz-payload", () => {
       expect(refused.status, refused.stderr).toBe(75);
       expect(refused.stderr).toBe(LOCK_REFUSAL);
       expect(existsSync(path.join(harness.payloadState, "state.json"))).toBe(false);
-      expect(existsSync(harness.instancePath)).toBe(false);
       expect(harness.requests).toEqual([]);
     } finally {
       writeFileSync(release, "release\n");
@@ -1609,13 +1631,13 @@ describe("blitz-payload", () => {
   it("recovers a crash with staging debris and a broken current link", async () => {
     const harness = new Harness({ pinVersion: null });
     await harness.start();
-    const staging = path.join(harness.payloadState, "versions/interrupted.staging");
+    const staging = path.join(harness.payloadVersions, "interrupted.staging");
     const databaseStaging = path.join(harness.s6DbRoot, ".blitz-db-staging-999-deadbeef");
     mkdirSync(staging, { recursive: true });
     mkdirSync(databaseStaging);
     writeFileSync(path.join(staging, "partial"), "never complete\n");
     unlinkSync(path.join(harness.payloadRoot, "current"));
-    const missing = path.join(harness.payloadState, "versions/missing-v2");
+    const missing = path.join(harness.payloadVersions, "missing-v2");
     symlinkSync(missing, path.join(harness.payloadRoot, "current"));
     writeFileSync(path.join(harness.payloadState, "state.json"), `${JSON.stringify({
       current: "missing-v2",
@@ -1637,7 +1659,7 @@ describe("blitz-payload", () => {
   it("drops legacy-shaped pending state without touching recreated links", async () => {
     const harness = new Harness({ pinVersion: null });
     await harness.start();
-    const legacyTarget = path.join(harness.payloadState, "versions/legacy-v1");
+    const legacyTarget = path.join(harness.payloadVersions, "legacy-v1");
     mkdirSync(path.join(legacyTarget, "rootfs/etc/s6-overlay/s6-rc.d/gateway"), {
       recursive: true,
     });
@@ -1951,7 +1973,7 @@ describe("blitz-payload", () => {
     ], "v3");
     const harness = new Harness({ release });
     await harness.start();
-    const versions = path.join(harness.payloadState, "versions");
+    const versions = harness.payloadVersions;
     const v1 = path.join(versions, "v1");
     const v2 = path.join(versions, "v2");
     const seededVersions: Array<[string, string]> = [[v1, "one\n"], [v2, "two\n"]];
@@ -2031,7 +2053,7 @@ describe("blitz-payload", () => {
 
     const killed = await runUpdater(harness, 3000, { killAt: stage });
     expect(killed.signal).toBe("SIGKILL");
-    expect(harness.currentTarget()).toBe(path.join(harness.payloadState, "versions/v2"));
+    expect(harness.currentTarget()).toBe(path.join(harness.payloadVersions, "v2"));
 
     harness.options.pinVersion = null;
     await expectOneOutcome(harness, "booted");
@@ -2049,11 +2071,8 @@ describe("blitz-payload", () => {
     await harness.start();
     const killed = await runUpdater(harness, 3000, { killAt: "after-switch" });
     expect(killed.signal, killed.stderr).toBe("SIGKILL");
-    const instanceId = readFileSync(harness.instancePath, "utf8");
-    expect(instanceId).toMatch(/^[a-f0-9]{32}\n$/u);
-    expect(harness.state().instanceId).toBe(instanceId.trim());
     expect(harness.currentTarget())
-      .toBe(path.join(harness.payloadState, `versions/${release.version}`));
+      .toBe(path.join(harness.payloadVersions, release.version));
 
     rmSync(path.join(harness.root, "run"), { recursive: true, force: true });
     mkdirSync(harness.serviceRoot, { recursive: true });
@@ -2064,70 +2083,31 @@ describe("blitz-payload", () => {
 
     await expectOneOutcome(harness, "booted");
 
-    expect(readFileSync(harness.instancePath, "utf8")).toBe(instanceId);
     expect(harness.state().pending).toBeUndefined();
     expect(harness.currentTarget()).toBe(path.join(harness.payloadRoot, "baked"));
     expect(harness.liveDatabase())
       .toBe(path.join(harness.s6DbRoot, `db-${BAKED_PAYLOAD_VERSION}`));
   });
 
-  it("drops pending and stays baked when recreated links no longer select the candidate", async () => {
-    const committed = addDaemon(makeV2PayloadArchive([
-      { path: "rootfs/usr/local/bin/tool", content: "committed\n" },
-    ], "downloaded-committed-v2"), "downloaded-committed-daemon-v2");
-    const harness = new Harness({ release: committed });
-    await harness.start();
-    const daemonSocket = path.join(harness.root, "recreate-daemon-health.sock");
-    await startUnixHealth(daemonSocket);
-    await expectOneOutcome(harness, "applied", { daemonSocket });
-    const committedTarget = path.join(harness.payloadState, `versions/${committed.version}`);
-    expect(harness.currentTarget()).toBe(committedTarget);
-    expect(realpathSync(path.join(harness.lodyRoot, "current")))
-      .toBe(path.join(harness.lodyRoot, committed.daemon?.version ?? "missing"));
+  it("starts a recreated container on baked and redownloads the pin on its first tick", async () => {
+    const release = makeV2PayloadArchive([
+      { path: "rootfs/usr/local/bin/tool", content: "downloaded\n" },
+    ], "recreated-download-v2");
+    const original = new Harness({ release });
+    await original.start();
+    await expectOneOutcome(original, "applied");
+    expect(original.currentContent()).toBe("downloaded\n");
 
-    const candidate = addDaemon(makeV2PayloadArchive([
-      { path: "rootfs/usr/local/bin/tool", content: "candidate\n" },
-    ], "interrupted-candidate-v2"), "interrupted-candidate-daemon-v2");
-    harness.options.release = candidate;
-    harness.options.pinVersion = candidate.version;
-    const killed = await runUpdater(harness, 3000, { killAt: "after-switch", daemonSocket });
-    expect(killed.signal, killed.stderr).toBe("SIGKILL");
-    expect(harness.state().pending).toBeDefined();
-    const previousInstanceId = readFileSync(harness.instancePath, "utf8");
+    const recreated = new Harness({ release });
+    await recreated.start();
+    expect(recreated.currentTarget()).toBe(path.join(recreated.payloadRoot, "baked"));
+    expect(existsSync(path.join(recreated.payloadState, "state.json"))).toBe(false);
+    expect(existsSync(path.join(recreated.payloadVersions, release.version))).toBe(false);
 
-    rmSync(path.join(harness.payloadRoot, "current"), { force: true });
-    symlinkSync("baked", path.join(harness.payloadRoot, "current"));
-    rmSync(path.join(harness.lodyRoot, "current"), { force: true });
-    symlinkSync("baked", path.join(harness.lodyRoot, "current"));
-    rmSync(harness.instancePath);
-    rmSync(path.join(harness.root, "run"), { recursive: true, force: true });
-    mkdirSync(harness.serviceRoot, { recursive: true });
-    mkdirSync(path.join(harness.s6DbRoot, "db"), { recursive: true });
-    mkdirSync(path.dirname(harness.s6LiveCompiled), { recursive: true });
-    symlinkSync(path.join(harness.s6DbRoot, "db"), harness.s6LiveCompiled);
-    harness.options.pinVersion = null;
-    const compileCalls = harness.calls(harness.s6CompileLog).length;
+    await expectOneOutcome(recreated, "applied");
 
-    await expectOneOutcome(harness, "booted");
-
-    expect(harness.currentTarget()).toBe(path.join(harness.payloadRoot, "baked"));
-    expect(realpathSync(path.join(harness.lodyRoot, "current")))
-      .toBe(path.join(harness.lodyRoot, "baked"));
-    expect(harness.currentContent()).toBe("old\n");
-    expect(harness.state()).toMatchObject({
-      current: BAKED_PAYLOAD_VERSION,
-      currentTarget: path.join(harness.payloadRoot, "baked"),
-      daemonVersion: BAKED_DAEMON_VERSION,
-      previous: committed.version,
-      previousTarget: committedTarget,
-    });
-    expect(harness.state().pending).toBeUndefined();
-    const recreatedInstanceId = readFileSync(harness.instancePath, "utf8");
-    expect(recreatedInstanceId).toMatch(/^[a-f0-9]{32}\n$/u);
-    expect(recreatedInstanceId).not.toBe(previousInstanceId);
-    expect(harness.state().instanceId).toBe(recreatedInstanceId.trim());
-    expect(harness.calls(harness.s6CompileLog)).toHaveLength(compileCalls);
-    expect(existsSync(committedTarget)).toBe(true);
+    expect(recreated.currentContent()).toBe("downloaded\n");
+    expect(recreated.requests).toContain("GET /payload.tar.gz");
   });
 
   it("installs and switches a daemon archive before restarting lody-daemon", async () => {
@@ -2144,7 +2124,7 @@ describe("blitz-payload", () => {
     });
 
     expect(result.daemonVersion).toBe("daemon-v2");
-    expect(harness.currentTarget()).toBe(path.join(harness.payloadState, "versions/v2"));
+    expect(harness.currentTarget()).toBe(path.join(harness.payloadVersions, "v2"));
     expect(realpathSync(path.join(harness.lodyRoot, "current")))
       .toBe(path.join(harness.lodyRoot, "daemon-v2"));
     expect(readFileSync(path.join(harness.lodyRoot, "current/bin/lody"), "utf8"))
@@ -2153,6 +2133,255 @@ describe("blitz-payload", () => {
       `-r ${path.join(harness.serviceRoot, "lody-daemon")}`,
     );
   });
+
+  it("atomically writes and applies held-box features before restarting exact current-tree readers", async () => {
+    const harness = new Harness({ pinVersion: null, features: true });
+    const services = path.join(
+      harness.payloadRoot,
+      "current/rootfs/etc/s6-overlay/s6-rc.d",
+    );
+    const serviceFixtures: Array<readonly [string, string]> = [
+      ["feature-reader", "#!/bin/sh\ncat /opt/blitz/payload/state/features\nexec sleep infinity\n"],
+      ["feature-non-reader", "#!/bin/sh\nexec sleep infinity\n"],
+    ];
+    for (const [name, run] of serviceFixtures) {
+      mkdirSync(path.join(services, name), { recursive: true });
+      writeFileSync(path.join(services, name, "type"), "longrun\n");
+      writeExecutable(path.join(services, name, "run"), run);
+    }
+    await harness.start();
+
+    const result = await expectOneOutcome(harness, "booted");
+
+    expect(result.detail).toContain("no payload pin");
+    expect(readFileSync(harness.featuresFile, "utf8")).toBe("BLITZ_LODY_SESSIONS=1\n");
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=1\n");
+    const metadata = statSync(harness.featuresFile);
+    expect(metadata.mode & 0o777).toBe(0o644);
+    expect(metadata.uid).toBe(process.getuid?.() ?? 0);
+    expect(metadata.gid).toBe(process.getgid?.() ?? 0);
+    expect(harness.calls(harness.eventLog)).toEqual([
+      "features-rename",
+      "features-applied",
+    ]);
+    expect(readdirSync(path.dirname(harness.featuresFile))
+      .filter((name) => name.startsWith("features.new-"))).toEqual([]);
+    expect(harness.calls(harness.s6Log)).toEqual([
+      `-r ${path.join(harness.serviceRoot, "feature-reader")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-bridge")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-daemon")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-projects")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-watchdog")}`,
+    ]);
+    expect(readdirSync(path.dirname(harness.originFile)).sort()).toEqual(["origin"]);
+  });
+
+  it("leaves a real unchanged feature write without restarting a service", async () => {
+    const harness = new Harness({ pinVersion: null, features: true });
+    await harness.start();
+
+    await expectOneOutcome(harness, "booted");
+    rmSync(harness.s6Log, { force: true });
+    rmSync(harness.eventLog, { force: true });
+    await expectOneOutcome(harness, "booted");
+
+    expect(readFileSync(harness.featuresFile, "utf8")).toBe("BLITZ_LODY_SESSIONS=1\n");
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=1\n");
+    expect(harness.calls(harness.s6Log)).toEqual([]);
+    expect(harness.calls(harness.eventLog)).toEqual([]);
+  });
+
+  it("materializes false defaults when box-config omits features", async () => {
+    const harness = new Harness({ pinVersion: null });
+    await harness.start();
+    unlinkSync(harness.featuresFile);
+    unlinkSync(harness.featuresAppliedFile);
+
+    await expectOneOutcome(harness, "booted");
+
+    expect(readFileSync(harness.featuresFile, "utf8")).toBe("BLITZ_LODY_SESSIONS=0\n");
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=0\n");
+    expect(harness.calls(harness.s6Log)).toEqual([
+      `-r ${path.join(harness.serviceRoot, "lody-bridge")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-daemon")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-projects")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-watchdog")}`,
+    ]);
+  });
+
+  linuxRootIt("repairs root ownership and 0644 modes under a restrictive umask", async () => {
+    const harness = new Harness({ pinVersion: null, features: true });
+    await harness.start();
+    chmodSync(harness.featuresFile, 0o600);
+    chmodSync(harness.featuresAppliedFile, 0o600);
+    chownSync(harness.featuresFile, 1, 1);
+    chownSync(harness.featuresAppliedFile, 1, 1);
+    const previousUmask = process.umask(0o077);
+    try {
+      await expectOneOutcome(harness, "booted");
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    for (const featurePath of [harness.featuresFile, harness.featuresAppliedFile]) {
+      const metadata = statSync(featurePath);
+      expect(metadata.mode & 0o777).toBe(0o644);
+      expect(metadata.uid).toBe(0);
+      expect(metadata.gid).toBe(0);
+    }
+  });
+
+  it("retries reader restarts after a kill immediately following the features rename", async () => {
+    const harness = new Harness({ pinVersion: null, features: true });
+    await harness.start();
+
+    const killed = await runUpdater(harness, 3000, { killAt: "after-features-rename" });
+    expect(killed.signal, killed.stderr).toBe("SIGKILL");
+    expect(readFileSync(harness.featuresFile, "utf8")).toBe("BLITZ_LODY_SESSIONS=1\n");
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=0\n");
+    expect(harness.calls(harness.s6Log)).toEqual([]);
+
+    await expectOneOutcome(harness, "booted");
+
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=1\n");
+    expect(harness.calls(harness.s6Log)).toEqual([
+      `-r ${path.join(harness.serviceRoot, "lody-bridge")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-daemon")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-projects")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-watchdog")}`,
+    ]);
+  });
+
+  it("retries every reader after a middle restart failure on identical config", async () => {
+    const harness = new Harness({ pinVersion: null, features: true });
+    await harness.start();
+    writeFileSync(harness.s6Failure, "lody-daemon\n");
+
+    const failed = await runUpdater(harness);
+    expect(failed.status, failed.stderr).toBe(1);
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=0\n");
+    expect(harness.calls(harness.s6Log)).toEqual([
+      `-r ${path.join(harness.serviceRoot, "lody-bridge")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-daemon")}`,
+    ]);
+    rmSync(harness.s6Log, { force: true });
+
+    await expectOneOutcome(harness, "booted");
+
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=1\n");
+    expect(harness.calls(harness.s6Log)).toEqual([
+      `-r ${path.join(harness.serviceRoot, "lody-bridge")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-daemon")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-projects")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-watchdog")}`,
+    ]);
+  });
+
+  it("applies a feature and payload release transition in the same tick", async () => {
+    const release = makeV2PayloadArchive([
+      { path: "rootfs/usr/local/bin/tool", content: "feature-release\n" },
+    ], "feature-release-v2");
+    const harness = new Harness({ release, features: true });
+    await harness.start();
+
+    await expectOneOutcome(harness, "applied");
+
+    expect(harness.currentContent()).toBe("feature-release\n");
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=1\n");
+    const events = harness.calls(harness.eventLog);
+    expect(events.indexOf("features-applied")).toBeLessThan(events.indexOf("compile"));
+  });
+
+  it("pins the production supervised first tick at five seconds", () => {
+    expect(readFileSync(updater, "utf8"))
+      .toContain("firstDelayMs: configured('firstDelayMs', 5000)");
+  });
+
+  it("uses two short no-bearer waits before first contact, then the ordinary interval", async () => {
+    const harness = new Harness({ pinVersion: null });
+    await harness.start();
+    writeExecutable(
+      path.join(harness.bin, "blitz-cred"),
+      "#!/bin/sh\n"
+        + "printf '%s\\n' \"$*\" >>\"$BLITZ_TEST_CREDENTIAL_LOG\"\n"
+        + "count=0\n[ ! -f \"$BLITZ_TEST_CREDENTIAL_ATTEMPTS\" ] || count=$(cat \"$BLITZ_TEST_CREDENTIAL_ATTEMPTS\")\n"
+        + "count=$((count + 1))\nprintf '%s\\n' \"$count\" >\"$BLITZ_TEST_CREDENTIAL_ATTEMPTS\"\n"
+        + "[ \"$count\" -ge 3 ] || exit 1\nprintf 'machine-bearer\\n'\n",
+    );
+    const loopStartedAt = Date.now();
+    const child = spawn(process.execPath, [updater], {
+      env: harness.environment(false, {
+        firstDelayMs: 10,
+        fastFirstContactMs: 30,
+        intervalMs: 800,
+      }),
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const deadline = Date.now() + 4000;
+    while (harness.configRequestTimes.length < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    child.kill("SIGTERM");
+    await new Promise<void>((resolve) => child.once("close", () => resolve()));
+
+    expect(harness.configRequestTimes.length, stderr).toBeGreaterThanOrEqual(2);
+    expect(harness.credentialCallsAtConfig[0]).toBe(3);
+    const first = harness.configRequestTimes[0];
+    const second = harness.configRequestTimes[1];
+    if (first === undefined || second === undefined) throw new Error("missing config request times");
+    expect(first - loopStartedAt).toBeLessThan(500);
+    expect(second - first).toBeGreaterThanOrEqual(650);
+  });
+
+  it.each(["missing origin", "missing bearer"])(
+    "uses fast first-contact cadence for a recovery result with %s",
+    async (missing) => {
+      const release = makeV2PayloadArchive([
+        { path: "rootfs/usr/local/bin/tool", content: "pending-recovery\n" },
+      ], `recovery-cadence-${missing.replace(" ", "-")}-v2`);
+      const harness = new Harness({ release });
+      await harness.start();
+      const killed = await runUpdater(harness, 3000, { killAt: "after-switch" });
+      expect(killed.signal, killed.stderr).toBe("SIGKILL");
+      writeFileSync(harness.s6CompileFailure, "keep recovery pending\n");
+      if (missing === "missing origin") unlinkSync(harness.originFile);
+      else writeExecutable(path.join(harness.bin, "blitz-cred"), "#!/bin/sh\nexit 1\n");
+      const compileCalls = harness.calls(harness.s6CompileLog).length;
+      const child = spawn(process.execPath, [updater], {
+        env: harness.environment(false, {
+          firstDelayMs: 10,
+          fastFirstContactMs: 30,
+          intervalMs: 800,
+        }),
+      });
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      const deadline = Date.now() + 600;
+      while (
+        harness.calls(harness.s6CompileLog).length < compileCalls + 2
+        && Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      child.kill("SIGTERM");
+      await new Promise<void>((resolve) => child.once("close", () => resolve()));
+
+      expect(harness.calls(harness.s6CompileLog).length, stderr)
+        .toBeGreaterThanOrEqual(compileCalls + 2);
+      expect(harness.state().pending).toBeDefined();
+    },
+  );
 
   it("keeps its supervised loop alive and rate-limited across poll errors", async () => {
     const harness = new Harness({ configStatus: 503 });

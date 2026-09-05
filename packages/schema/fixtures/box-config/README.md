@@ -18,7 +18,13 @@ Origin header), and whose `updateRequested` is a boolean. Unknown extra keys
 are tolerated on both sides for forward compatibility. That includes the
 additive `payload: {version, manifestUrl} | null` field consumed by the
 in-box payload updater: the old host image updater deliberately ignores it,
-as pinned by `config-valid-payload.json`. An unversioned or versioned
+as pinned by `config-valid-payload.json`. The optional
+`features: {lodySessions: boolean}` member is also consumed in-box. The updater
+writes every known flag to `/opt/blitz/payload/state/features`. It records a
+completed reader restart in `features.applied`. An absent `features` member
+means all flags are false, preserving compatibility with older control planes.
+`config-valid-features-on.json`, `config-valid-features-off.json`, and
+`config-valid-minimal.json` pin those three cases. An unversioned or versioned
 box-image manifest URL is accepted by the parser; the updater fetches its
 manifest, verifies and concatenates its parts, loads the image under the
 manifest's `imageTag`, and replaces the container by that tag. Other
@@ -26,7 +32,8 @@ URL-shaped refs report `unsupported` rather than being passed to `docker
 pull`, so the origin refresh still happens. On a rejected envelope the host
 changes nothing and keeps polling.
 
-The in-box updater independently parses only the additive `payload` member.
+The in-box updater independently parses the additive `payload` and `features`
+members.
 `payloadAccepts` records that consumer's expectation and defaults to `true`;
 this lets malformed payload pins remain valid fixtures for the legacy host,
 which deliberately ignores that forward-compatible member.

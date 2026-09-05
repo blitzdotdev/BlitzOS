@@ -602,8 +602,8 @@ complete and no longer belongs to PR E:
 1. The key now covers `vendor/lody`, adapter snapshots, `pnpm-lock.yaml`, and
    every shared daemon build input.
 2. The exact `box-image/<releaseId>/manifest.json` probe and reuse behavior stay
-   unchanged. An absent release builds `linux/amd64` with
-   `BLITZ_LODY_SESSIONS=1`. Lody image smoke runs before publication.
+   unchanged. An absent release builds `linux/amd64`. Lody image smoke runs
+   before publication.
 3. `publish-box-image.mjs --prefix ... --json ...` retains part-first upload.
    The validated release-key route and legacy fixed route remain unchanged.
 4. `deploy` still depends on `image`. It receives the immutable `ref`, `tag`,
@@ -612,10 +612,10 @@ complete and no longer belongs to PR E:
 PR E will add BuildKit workflow caching. It will consume the existing input
 evidence rather than changing release identity again.
 
-The build argument already replaced the old untracked `sed`
-(`.github/workflows/canary.yml:109-116`). `env.defaults` remains off for forks
-and self-hosters. Canary explicitly enables the daemon. The archive stays
-amd64 because canary currently offers only x86 machine types
+The box-config deployment variable replaced the image build argument and its
+old `sed`. Canary explicitly enables the daemon. Forks and self-hosters stay
+off by default. The archive stays amd64 because canary currently offers only
+x86 machine types
 (`docs/BOX-IMAGE.md:106-108`). The content-derived tag is a cache/release
 identity, not a byte-reproducibility claim: the manifest's archive SHA remains
 the authoritative byte pin.
@@ -648,7 +648,7 @@ Every item below is a named failing gate, not a review reminder.
 | `lody-notices.test.mjs` | `package/dist/THIRD_PARTY_NOTICES.md` is absent, empty, or differs byte-for-byte from the root notice; the current research tar omitted it (`/var/lib/blitz/home/codex/daemonbuild-result.md:119-123`) |
 | extended `lody-seam-pin.test.ts` + `message-processor.test.ts` | the ACP source anchor moves, undeclared source is removed, or submit/cancel again serialize behind an interactive start |
 | **Lody daemon seam behavior** | the built scratch tree fails the focused ACP authentication queue, built-in-MCP request/reminder, or session-sandbox suites; this includes preserving external MCP servers and the upstream defaults when the host options are absent |
-| **Lody built-image smoke** | inside the just-built enabled image, `lody --help` fails; the package stamp is missing; s6 cannot keep the daemon and bridge up; bridge health or `/lody/platform` fails; the daemon misses its selected MCP environment/log; or its live cgroup and prepared session parent violate the box boundary |
+| **Lody built-image smoke** | inside the just-built image with the feature record seeded before boot, `lody --help` fails; the package stamp is missing; s6 cannot keep the daemon and bridge up; bridge health or `/lody/platform` fails; the daemon misses its selected MCP environment/log; or its live cgroup and prepared session parent violate the box boundary |
 | `lody-build-contract.test.ts` on guest/gateway/webapp | any Docker/Node/Go/browser side accepts, rejects, forwards, compares, logs, or renders a fixture differently |
 | **Lody daemon pair matrix** | a non-paid daemon-backed suite skips for lack of a bundle or fails against the tarball built from the PR's own tree |
 | **Canary image inputs** | an upstream SHA, adapter SHA, lockfile, source seam, or Docker input changes without changing the derived image release ID |
@@ -737,7 +737,7 @@ check is required. The shipping image and migration pieces remain separate.
   tests, s6 comments, harness comments, and the build/stamp/dist-manifest tests.
 - Added the Corepack/frozen builder, package install, notice, stamp, target smoke,
   ACP queue source seam, and focused behavior test. The follow-up fix pass made
-  the target smoke boot the enabled image and made canary run it before publish.
+  the target smoke seed Lody before boot and made canary run it before publish.
 - Deleted the npm daemon install item, all five compiled-patch files and Docker
   steps, and the harness patch list and loop. Platform and Code Collab retain
   regression coverage; builtin MCP and session sandbox use reviewed opt-in

@@ -117,7 +117,9 @@ describe("lody-watchdog s6 service", () => {
   it("idles when the sessions feature is dark", () => {
     // Same gate lody-daemon carries. `sleep infinity` rather than exit: s6
     // restarts a longrun the moment its run script returns.
-    expect(runCode).toMatch(/BLITZ_LODY_SESSIONS/u);
+    expect(runCode).toMatch(/\/opt\/blitz\/payload\/state\/features/u);
+    expect(runCode).toMatch(/grep -qx 'BLITZ_LODY_SESSIONS=1'/u);
+    expect(runCode).not.toMatch(/(?:^|\n)\s*(?:source|\.)\s/u);
     expect(runCode).toMatch(/exec sleep infinity/u);
   });
 });
@@ -187,11 +189,13 @@ interface RunResult {
 }
 
 function runTicks(box: Box, ticks: number, intervalSeconds = 0): Promise<RunResult> {
+  const featuresFile = join(box.stateDir, "features");
+  writeFileSync(featuresFile, "BLITZ_LODY_SESSIONS=1\n");
   return new Promise((resolve) => {
     const child = spawn("bash", [runPath], {
       env: {
         ...process.env,
-        BLITZ_LODY_SESSIONS: "1",
+        BLITZ_FEATURES_FILE: featuresFile,
         BLITZ_STATE_DIR: box.stateDir,
         BLITZ_WATCHDOG_CGROUP_ROOT: box.cgroupRoot,
         BLITZ_WATCHDOG_INTERVAL: String(intervalSeconds),

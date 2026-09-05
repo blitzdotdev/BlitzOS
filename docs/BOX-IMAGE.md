@@ -88,16 +88,14 @@ the `canary` environment:
    manifest, a mismatched tag, any other HTTP status, or a network error fails
    the job instead of pretending the release is absent.
 5. For an absent base release, it runs
-   `docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 --build-arg BLITZ_PAYLOAD_VERSION=<planned-payload-version> -f packages/box/Dockerfile -t <imageTag> .`.
+   `docker build --platform linux/amd64 --build-arg BLITZ_PAYLOAD_VERSION=<planned-payload-version> -f packages/box/Dockerfile -t <imageTag> .`.
    The daemon archive was built before the version was planned, so this baked
    stamp is the same daemon-inclusive version the payload publisher will use.
-   The other build argument turns Lody on for canary while the committed
-   `env.defaults` stays off for self-hosters; the Dockerfile rejects any
-   non-empty value other than `0` or `1`.
-6. It boots that enabled image through its real `/init` entrypoint with
+   Feature flags are deployment config and do not change image bytes.
+6. It boots the image through its real `/init` entrypoint with
    `IMAGE=<imageTag> LODY_BOOT_ONLY=1 packages/box/test/smoke.sh`. The smoke has
-   a 180-second wall-clock readiness deadline and must pass before any archive
-   object is published.
+   a 180-second wall-clock readiness deadline. It seeds Lody in the container's
+   updater state before start. It must pass before any archive object is published.
 7. It runs
    `node packages/control-plane/scripts/publish-box-image.mjs --image <imageTag> --prefix <prefix> --app-url <APP_URL> --json publish.json`.
    The publisher uploads every part before `manifest.json`, so a release is
@@ -115,17 +113,16 @@ the `canary` environment:
    expected box-image tag.
 
 The base release id deliberately excludes payload-owned files, the gateway
-binary, and the daemon; it includes the base-owned credential broker sources.
-It also includes `env.defaults`: environment is fixed when the container is
-created, so changing that file requires an image rather than an in-place
-payload. A payload-only merge therefore reuses the current image rather than
-rebuilding it. Its baked stamp names only the bytes in the baked payload and
-is unaffected by the later canary-only `env.defaults` mutation; it may name the payload current
-when that base was built; that is informational boot state, not the rollout
-pin. A fresh machine starts there and the updater converges it to
+binary, the daemon, and the repository `env.defaults`. It includes the
+base-owned credential broker sources. The Dockerfile owns the box defaults and
+writes them to `/etc/blitz/env.defaults` for deployed hosts and microVM rootfs
+boots. A payload-only merge therefore reuses the current image. Its baked stamp
+names only the bytes in the baked payload and may name the payload current when
+that base was built. That is informational boot state, not the rollout pin. A
+fresh machine starts there and the updater converges it to
 `BOX_PAYLOAD_VERSION`. When a base input changes, the new image is stamped with
-the daemon-inclusive payload version published by the same run. The Dockerfile,
-the updater, and the s6 service set/topology remain image inputs.
+the daemon-inclusive payload version published by the same run. The Dockerfile
+and updater remain image inputs. The s6 service set belongs to the payload.
 
 **Lody release identity.** The daemon is a payload input, not a base input.
 `vendor/lody`, the reviewed adapter snapshots and the shared Lody build scripts
@@ -341,9 +338,9 @@ copy; it carries the `--privileged` and long-`--mount` reasoning with it.
 
 `packages/box/test/smoke.sh` exercises the whole surface: s6 service graph,
 key-only SSH, ttyd/tmux, files, ports, previews, DinD, and the
-unprivileged degradation path. It builds both the default-disabled image and
-the same `BLITZ_LODY_SESSIONS=1` variant canary ships, then boots the enabled
-variant. The Lody checks use a 180-second wall-clock deadline with bounded host
+unprivileged degradation path. It builds one image and seeds its container
+with `BLITZ_LODY_SESSIONS=1` before boot. The Lody checks use a 180-second
+wall-clock deadline with bounded host
 commands while waiting for the supervised daemon and bridge, probe bridge
 health and `/lody/platform`, require the packaged `dist/BUILD.json`, inspect
 the live daemon environment and cgroup, and require its
@@ -357,18 +354,18 @@ exercised by the vendor sandbox suite in the daemon pair gate.
 # Builds a throwaway blitz-box:smoke from this tree, then tests it:
 packages/box/test/smoke.sh
 
-# Tests an already-built Lody-enabled image, and never builds:
+# Tests an already-built image, and never builds:
 IMAGE=blitz-box:local packages/box/test/smoke.sh
 ```
 
 Building is the default on purpose. This is the only gate that runs the s6
 service graph, so a run that silently adopted an existing tag could pass an
 edit to `rootfs/` or an s6 unit against an image that predates it. `IMAGE=`
-skips the build, requires that tag's baked default to enable Lody, and leaves
-the freshness of that tag yours to guarantee. Canary runs this form with
-`LODY_BOOT_ONLY=1` immediately after its enabled build and before publishing any
-archive parts, exiting after the Lody and cgroup checks rather than repeating
-the later terminal/files/preview checks already owned by PR CI.
+skips the build, seeds the feature record into that container before boot, and
+leaves the freshness of the tag yours to guarantee. Canary runs this form with
+`LODY_BOOT_ONLY=1` immediately after its build and before publishing any archive
+parts, exiting after the Lody and cgroup checks rather than repeating the later
+terminal/files/preview checks already owned by PR CI.
 
 ## Upgrade and rollback
 

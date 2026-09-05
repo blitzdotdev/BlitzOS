@@ -3,10 +3,6 @@
     "boxImageRef": "ghcr.io/blitzdotdev/blitz-box:v2",
     "controlPlaneOrigin": "https://cp.example",
     "updateRequested": false,
-    "payload": {
-      "version": "20260904T2130Z-9f3c1a2b",
-      "manifestUrl": "https://cp.example/box-payload/20260904T2130Z-9f3c1a2b/manifest.json"
-    },
     "features": {
       "lodySessions": false
     }

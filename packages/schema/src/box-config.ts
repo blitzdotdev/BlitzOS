@@ -1,5 +1,10 @@
 import type { BoxPayloadConfig } from "./box-payload.js";
 
+/** Deployment feature flags materialized by the in-box updater. */
+export interface BoxFeatures {
+  lodySessions: boolean;
+}
+
 /** The envelope `GET /workspaces/self/box-config` returns to the VM host.
  *
  * This crosses a runtime boundary: the producer is the control-plane Worker
@@ -18,6 +23,7 @@ export interface BoxConfigResponse {
   controlPlaneOrigin: string;
   updateRequested: boolean;
   payload?: BoxPayloadConfig | null;
+  features?: BoxFeatures;
 }
 
 /** What the host reports after an update attempt, in the order it tries:

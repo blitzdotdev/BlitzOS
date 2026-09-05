@@ -14,11 +14,19 @@
 set -euo pipefail
 
 state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+features_file=${BLITZ_FEATURES_FILE:-/opt/blitz/payload/state/features}
+# BLITZ_FEATURES_FILE is a test-only seam. Production uses the literal path above.
+
+if [ ! -f "$features_file" ]; then
+	echo "lody-bridge: waiting for /opt/blitz/payload/state/features"
+	while [ ! -f "$features_file" ]; do sleep 2; done
+fi
 
 # Follows lody-daemon: with no daemon there is nothing to bridge, and a socket
 # that answers 502 to every call is worse than one that is absent.
-if [ "${BLITZ_LODY_SESSIONS:-0}" != "1" ]; then
-	echo "lody-bridge: disabled (set BLITZ_LODY_SESSIONS=1 to enable)"
+if [ "$(wc -c <"$features_file" 2>/dev/null)" -ne 22 ] \
+	|| ! grep -qx 'BLITZ_LODY_SESSIONS=1' "$features_file"; then
+	echo "lody-bridge: disabled by /opt/blitz/payload/state/features"
 	exec sleep infinity
 fi
 

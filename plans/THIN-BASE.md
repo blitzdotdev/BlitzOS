@@ -56,6 +56,12 @@ The symlink targets `/opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d`.
 First boot compiles the baked payload tree.
 Container recreation compiles the restored baked tree.
 
+Updater state lives in `/opt/blitz/payload/state`.
+Downloaded releases live in `/opt/blitz/payload/versions/<version>`.
+Both are in the container image layer, not the state volume.
+A recreation loses them together, starts from baked, and downloads the pin on
+the first tick. A restart keeps both and resumes pending recovery.
+
 Protocol 2 adds the optional `directories` manifest field.
 The parser defaults an omitted field to an empty list.
 The publisher always writes the field and sets `minUpdater: 2`.
@@ -119,11 +125,9 @@ The supervised command keeps its fail-open polling loop.
 Operators and smoke tests use the same tick path.
 
 A container restart compiles the tree selected by `current`.
-The updater persists a random `/opt/blitz/payload/.instance` ID in state.
-Matching IDs make every pending rollback phase resumable even after either
-link or the live database was already restored.
-A container recreate has no instance file, creates a new ID, drops pending
-state from the prior instance, and reconciles the fresh baked links.
+Every pending rollback phase remains resumable after either link or the live
+database was already restored. No instance stamp is needed because state,
+downloaded releases, and current links reset together on recreation.
 
 The smoke runs three live updates against an in-container origin.
 E17 adds `hello` while sshd and gateway keep their pids.
@@ -136,31 +140,57 @@ Adding or redefining a service no longer rebuilds the base image.
 
 ### C. The box environment leaves `env.defaults`
 
-Today `env.defaults` is 156 lines. Six describe the box. The rest document the
-control plane, the microVM host and the webapp. The Dockerfile copies the whole
-file, `blitz-box-run` injects it as the container environment, and it is a base
-input. Editing a webapp default rebuilds the box image. The one box value that
-changes, `BLITZ_LODY_SESSIONS`, is applied by a Docker build argument and a
-`sed`, which is why the smoke builds two images.
+The image now declares `BLITZ_STATE_DIR`, `S6_KEEP_ENV`, `BLITZ_UID`, and
+`BLITZ_GID` with Docker `ENV`. `BLITZ_CP_ORIGIN` stays unset, so
+`blitz-init-state` acts only when an operator deliberately supplies it. The
+repository `env.defaults` retains the broker, control-plane, microVM-host, and
+webapp documentation but has no box section and is no longer a base-image
+input.
 
-After:
+Deployed phase-1 hosts are the compatibility boundary. Their existing
+`blitz-box-run` still extracts `/etc/blitz/env.defaults` from every candidate
+image and passes it to Docker with `--env-file`; deleting that path would stop
+every such host from starting a new container. `microvm-init` also sources that
+file when an OCI image becomes a rootfs. The Dockerfile therefore writes the
+same four assignments to the file with one `printf`. The file and Docker `ENV`
+must stay equal. This move deliberately does not edit either reader.
 
-- `BLITZ_STATE_DIR`, `S6_KEEP_ENV` and the default uid and gid are Dockerfile
-  `ENV` lines. The host passes uid and gid with `-e` as it does today.
-- Feature flags come from the control plane. The phone-home response carries
-  `features`, and the host writes `/var/lib/blitz/features` before the
-  container starts. `box-config` carries the same object, and the updater
-  rewrites the file and restarts the services that read it when it changes.
-  Turning Lody on is a deploy var, like the payload pin.
-- `env.defaults` keeps its role as documentation for the other programs. The
-  box stops reading it.
+Box config v1 has an optional `features` object, currently
+`{lodySessions: boolean}`. The Worker always emits it and treats only
+`BOX_LODY_SESSIONS=1` as enabled. The in-box updater owns the wire-to-env name
+table and materializes every known flag in
+`/opt/blitz/payload/state/features` after every successful config fetch,
+including a held or unpinned response. An absent member is the all-false
+default for older control planes. Writes use a temporary file, mode 0644,
+root ownership, and rename.
 
-Deletes: the build argument and its `sed`, the second smoke build, the
-`docker run --rm --entrypoint cat` env refresh in `blitz-box-run`, and
-`env.defaults` from the base inputs.
+When the bytes change, the updater reads the `run` file of every longrun in the
+current payload service tree and restarts, in name order, exactly those whose
+source mentions the literal `/opt/blitz/payload/state/features`. It writes
+`features.applied` only after every restart succeeds. A kill after the feature
+rename or a failed restart therefore retries on the next identical config.
+The Lody daemon uses its controlled TERM/PID/KILL restart. A feature flip is a
+deliberate operator action and is never deferred for an active session. The
+four Lody launchers wait for the file, match one exact record with `grep`, and
+idle with `sleep infinity` while the flag is off. They never evaluate the file
+as shell.
 
-Contracts: `phone-home v1` and `box config v1` gain an optional `features`
-object. Both need fixtures on both sides before either side changes.
+Phone-home is unchanged. The deployed microVM guest parser accepts only its
+exact three- or five-field response, while both box-config consumers already
+ignore unknown top-level members. Features therefore travel through
+box-config only.
+
+Before the updater has fetched one valid box-config in its process lifetime,
+a missing origin or bearer retries after 15 seconds. After first contact it
+uses the ordinary interval. HTTP failures always use the ordinary interval,
+including a pre-contact 401, so failed-report traffic cannot burst. The first
+supervised tick starts five seconds after boot.
+
+The Docker Lody build argument and sed are gone. Canary deploys
+`BOX_LODY_SESSIONS=1` beside its payload pin; production leaves it unset until
+it pins a payload. The smoke builds one image, seeds the feature file in the
+container layer before boot, keeps E17-E19 on `lodySessions: true`, and flips it
+off and on in E20 while proving only the four readers restart.
 
 ### A. The host tooling leaves user-data
 

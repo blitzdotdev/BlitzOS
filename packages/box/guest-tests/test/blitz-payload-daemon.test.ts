@@ -142,9 +142,12 @@ function listenUnix(server: Server, socketPath: string): Promise<void> {
 class DaemonHarness {
   readonly root = temporaryDirectory("blitz-payload-daemon-");
   readonly payloadRoot = path.join(this.root, "opt/payload");
-  readonly payloadState = path.join(this.root, "state/payload");
+  readonly payloadState = path.join(this.payloadRoot, "state");
+  readonly payloadVersions = path.join(this.payloadRoot, "versions");
   readonly lodyRoot = path.join(this.root, "opt/lody");
   readonly originFile = path.join(this.root, "state/origin");
+  readonly featuresFile = path.join(this.payloadState, "features");
+  readonly featuresAppliedFile = path.join(this.payloadState, "features.applied");
   readonly serviceRoot = path.join(this.root, "run/service");
   readonly bin = path.join(this.root, "bin");
   readonly s6Log = path.join(this.root, "s6.log");
@@ -191,6 +194,9 @@ class DaemonHarness {
     symlinkSync("baked", path.join(this.payloadRoot, "current"));
     symlinkSync("baked", path.join(this.lodyRoot, "current"));
     mkdirSync(this.payloadState, { recursive: true });
+    // Feature behavior has its own harness; keep daemon cases on unchanged defaults.
+    writeFileSync(this.featuresFile, "BLITZ_LODY_SESSIONS=0\n", { mode: 0o644 });
+    writeFileSync(this.featuresAppliedFile, "BLITZ_LODY_SESSIONS=0\n", { mode: 0o644 });
     mkdirSync(this.serviceRoot, { recursive: true });
     mkdirSync(this.bin, { recursive: true });
     mkdirSync(path.join(this.s6SourcesRoot, "s6-overlay-3.2.1.0/etc/s6-rc/sources"), {
@@ -389,6 +395,12 @@ class DaemonHarness {
         s6DbRoot: this.s6DbRoot,
         s6LiveCompiled: this.s6LiveCompiled,
         lockPath: this.lockPath,
+        payloadState: this.payloadState,
+        payloadVersions: this.payloadVersions,
+        featuresFile: this.featuresFile,
+        featuresAppliedFile: this.featuresAppliedFile,
+        featuresOwnerUid: process.getuid?.() ?? 0,
+        featuresOwnerGid: process.getgid?.() ?? 0,
         gatewayHealthUrl: `${this.origin}/healthz`,
         daemonSocket: this.daemonSocket,
         daemonControlSocket: this.options.controlSocket === false
@@ -588,7 +600,7 @@ describe("blitz-payload daemon activation", () => {
     expect(harness.currentDaemon()).toBe("baked");
     expect(harness.calls()).toEqual([]);
     expect(harness.requests.filter((entry) => entry === "GET /manifest.json")).toHaveLength(2);
-    expect(existsSync(path.join(harness.payloadState, "versions/v2"))).toBe(false);
+    expect(existsSync(path.join(harness.payloadVersions, "v2"))).toBe(false);
   });
 
   it("rolls payload and daemon back as one unit and suppresses the failed pin", async () => {

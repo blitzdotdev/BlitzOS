@@ -21,7 +21,6 @@ export const BOX_IMAGE_INPUTS = Object.freeze([
   "packages/control-plane/scripts/box-payload-key.mjs",
   "packages/control-plane/scripts/lib/box-daemon.mjs",
   "packages/control-plane/scripts/lib/box-payload-files.mjs",
-  "env.defaults",
 ]);
 
 // Build-context sources the Dockerfile ALSO copies that are not base inputs.

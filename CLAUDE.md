@@ -248,9 +248,10 @@ The four rules a change must not break:
   ships client prod.
 - Every push to `main` makes the `image` job in `.github/workflows/canary.yml`
   derive a release from the base-owned Dockerfile inputs, reuse its valid
-  versioned R2 archive or build it with Lody on and publish it, then pass the
-  exact pin to the deploy job. Payload-only changes deliberately reuse that
-  base: a fresh box boots the baked copy and converges to the deployment pin.
+  versioned R2 archive or build and publish it, then pass the exact pin to the
+  deploy job. `BOX_LODY_SESSIONS=1` enables Lody through box config. Payload-only
+  changes deliberately reuse the base: a fresh box boots the baked copy and
+  converges to the deployment pin.
 - Every push to `main` also publishes or reuses the daemon-inclusive payload at
   `box-payload/<version>/` and passes `BOX_PAYLOAD_REF` plus
   `BOX_PAYLOAD_VERSION` to the deploy. The order when a base is absent is:

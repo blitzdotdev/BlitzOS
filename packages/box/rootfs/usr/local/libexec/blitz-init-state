@@ -98,7 +98,7 @@ else
   rm -f "$state_dir/authorized_keys"
 fi
 
-if [ -n "$BLITZ_CP_ORIGIN" ]; then
+if [ -n "${BLITZ_CP_ORIGIN:-}" ]; then
   case "$BLITZ_CP_ORIGIN" in
     *$'\n'*|*$'\r'*) echo "BLITZ_CP_ORIGIN must be one line" >&2; exit 1 ;;
   esac

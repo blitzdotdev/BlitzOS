@@ -167,12 +167,22 @@ RUN set -eux; \
 
 FROM runtime-base
 
+ENV BLITZ_STATE_DIR=/var/lib/blitz S6_KEEP_ENV=1 BLITZ_UID=1000 BLITZ_GID=1000
+RUN set -eu; \
+    install -d -m 0755 /etc/blitz; \
+    printf '%s\n' \
+      '# Readers: blitz-box-run --env-file on deployed hosts and microvm-init source this file.' \
+      'BLITZ_STATE_DIR=/var/lib/blitz' \
+      'S6_KEEP_ENV=1' \
+      'BLITZ_UID=1000' \
+      'BLITZ_GID=1000' \
+      > /etc/blitz/env.defaults
+
 COPY --from=artifacts /out/root/ /
 COPY --from=vendors /opt/blitz/npm/ /opt/blitz/npm/
 COPY --from=daemon /opt/blitz/lody/baked/ /opt/blitz/lody/baked/
 COPY --from=payload-build /out/ /opt/blitz/payload/baked/
 COPY packages/box/rootfs/ /
-COPY env.defaults /etc/blitz/env.defaults
 COPY --from=cred-build /out/blitz-cred /usr/local/bin/blitz-cred
 COPY --from=payload-build /tools/lib/box-payload-files.mjs /tmp/box-payload-files.mjs
 RUN set -eux; \
@@ -184,20 +194,11 @@ RUN set -eux; \
     test -d /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d; \
     rm /tmp/box-payload-files.mjs; \
     ln -s /opt/blitz/lody/current/bin/lody /usr/local/bin/lody; \
-    install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
+    install -d -m 0755 \
+      /opt/blitz/payload/state /opt/blitz/payload/versions \
+      /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \
     chown -R blitz:blitz /opt/blitz/npm
-
-# Canary ships Lody on while env.defaults keeps it off for self-hosters. This
-# build argument replaces a manual sed that once let a clean rebake silently
-# ship canary with Lody off.
-ARG BLITZ_LODY_SESSIONS=
-RUN set -eu; \
-    if [ -n "$BLITZ_LODY_SESSIONS" ]; then \
-      case "$BLITZ_LODY_SESSIONS" in 0|1) ;; *) echo "BLITZ_LODY_SESSIONS must be 0 or 1" >&2; exit 1 ;; esac; \
-      sed -i "s/^BLITZ_LODY_SESSIONS=.*/BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS/" /etc/blitz/env.defaults; \
-      grep -qx "BLITZ_LODY_SESSIONS=$BLITZ_LODY_SESSIONS" /etc/blitz/env.defaults; \
-    fi
 
 # /usr/local/bin comes FIRST, ahead of the npm prefix, so the PATH shims at
 # /usr/local/bin/claude and /usr/local/bin/codex win over the real binaries they

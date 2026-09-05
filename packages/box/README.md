@@ -36,7 +36,6 @@ docker run -d \
   --name blitz-box \
   --restart unless-stopped \
   --privileged \
-  --env-file env.defaults \
   -e BLITZ_UID="$(id -u)" \
   -e BLITZ_GID="$(id -g)" \
   --mount type=volume,source=blitz-box-state,target=/var/lib/blitz \
@@ -177,8 +176,11 @@ than running once, because the template-repo cloner keeps arriving for up to ten
 minutes after boot and a member may clone by hand on any day after that. It talks
 only to the daemon's own control socket and opens no port.
 
-All three s6 services (`lody-daemon`, `lody-bridge`, `lody-projects`) are dark
-unless `BLITZ_LODY_SESSIONS=1`; the default in `env.defaults` is `0`.
+All four Lody longruns (`lody-daemon`, `lody-bridge`, `lody-projects`, and
+`lody-watchdog`) match one exact record in
+`/opt/blitz/payload/state/features`. They stay dark unless it is
+`BLITZ_LODY_SESSIONS=1`. The box-config updater defaults the flag to `0`.
+Its first poll starts five seconds after boot.
 
 Scope fence: the box keeps deliberately NO analytics, metering, or usage store.
 Usage and eval data comes from the native harness transcripts in the agent HOME

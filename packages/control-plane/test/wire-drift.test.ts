@@ -128,6 +128,7 @@ const boxConfigResponse: SharedShape<
   controlPlaneOrigin: "https://cp.example",
   updateRequested: true,
   payload: payloadConfig,
+  features: { lodySessions: true },
 };
 
 const boxUpdateResult: SharedShape<

@@ -40,6 +40,10 @@ const fixturesDirectory = fileURLToPath(
 );
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
 const repositoryDirectory = path.resolve(packageDirectory, "../..");
+const releaseSource = readFileSync(
+  path.join(repositoryDirectory, ".github/workflows/release.yml"),
+  "utf8",
+);
 
 // --- value decoders ---------------------------------------------------------
 
@@ -102,6 +106,7 @@ test("the example declares deployment metadata and routes /version to the worker
   assert.match(example, /GIT_COMMIT_SHA/u);
   assert.match(example, /^BOX_PAYLOAD_REF = ""$/mu);
   assert.match(example, /^BOX_PAYLOAD_VERSION = ""$/mu);
+  assert.match(example, /^BOX_LODY_SESSIONS = "0"$/mu);
   assert.match(
     example,
     /CLOUD_WORKSPACE_CREDENTIAL_POLICY = "deployment-fallback"/u,
@@ -398,6 +403,7 @@ const canaryWorkflow = parseYaml(readFileSync(
   path.join(repositoryDirectory, ".github/workflows/canary.yml"),
   "utf8",
 ));
+const releaseWorkflow = parseYaml(releaseSource);
 
 test("the canary payload job takes the image job's inputs, plans, publishes, and exposes in order", () => {
   const steps = canaryWorkflow.jobs.payload.steps;
@@ -440,6 +446,7 @@ test("canary stamps a rebuilt base and deploys the matching payload pin", () => 
   const imageBuild = image.steps.find((step) => step.name === "Build the box image");
   assert.match(payloadPlan.run, /--print-version --daemon "\$DAEMON_ARCHIVE"/u);
   assert.match(imageBuild.run, /--build-arg "BLITZ_PAYLOAD_VERSION=\$PAYLOAD_VERSION"/u);
+  assert.doesNotMatch(imageBuild.run, /BLITZ_LODY_SESSIONS/u);
   assert.equal(imageBuild.env.PAYLOAD_VERSION, "${{ steps.payload.outputs.version }}");
   assert.deepEqual(canaryWorkflow.jobs.payload.needs, ["gate", "image"]);
   assert.deepEqual(canaryWorkflow.jobs.deploy.needs, ["image", "payload"]);
@@ -452,10 +459,27 @@ test("canary stamps a rebuilt base and deploys the matching payload pin", () => 
     deploy.env.BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION,
     "${{ needs.payload.outputs.version }}",
   );
+  assert.equal(deploy.env.BLITZ_DEPLOY_VAR_BOX_LODY_SESSIONS, "1");
   assert.deepEqual(canaryWorkflow.concurrency, {
     group: "canary-deploy",
     "cancel-in-progress": false,
   });
+});
+
+test("release leaves the box feature to a later production payload pin", () => {
+  const build = releaseWorkflow.jobs.images.steps
+    .find((step) => step.name === "Build and push box");
+  assert.doesNotMatch(build.with["build-args"] ?? "", /BLITZ_LODY_SESSIONS|BOX_LODY_SESSIONS/u);
+  const deploy = releaseWorkflow.jobs["deploy-control-plane"].steps
+    .find((step) => step.name === "Deploy");
+  assert.equal(
+    Object.keys(deploy.env).some((name) => name.includes("LODY_SESSIONS")),
+    false,
+  );
+  assert.match(
+    releaseSource,
+    /Client prod leaves BOX_LODY_SESSIONS unset here; it turns Lody on[\s\S]*when it pins a payload deployment\./u,
+  );
 });
 
 // --- box image decision -----------------------------------------------------
@@ -470,14 +494,12 @@ test("a base-owned box change requires a rebuild", () => {
   const decision = boxImageDecision("abc1234", [
     "packages/broker/cmd/blitz-cred/main.go",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
-    "env.defaults",
     "packages/webapp/src/App.tsx",
   ]);
   assert.equal(decision.rebuild, true);
   assert.deepEqual(decision.paths, [
     "packages/broker/cmd/blitz-cred/main.go",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
-    "env.defaults",
   ]);
 });
 
@@ -528,13 +550,13 @@ test("IMAGE_PATHS pins the Dockerfile and updater but excludes s6 service topolo
     "packages/broker/internal",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
     "packages/control-plane/scripts/lib/box-payload-files.mjs",
-    "env.defaults",
   ]) {
     assert.ok(IMAGE_PATHS.includes(required), required);
   }
   for (const payloadOwned of [
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/payload",
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user",
+    "env.defaults",
   ]) {
     assert.equal(IMAGE_PATHS.includes(payloadOwned), false, payloadOwned);
   }

@@ -57,9 +57,9 @@ While the lock stays held, s6 restarts the launcher and retries.
 CLI lock refusal exits 75 and tells the operator to stop the service or wait.
 
 A container restart compiles the tree selected by `current`.
-A persistent `/opt/blitz/payload/.instance` ID distinguishes that restart from a recreate.
-Pending recovery resumes for the same instance regardless of partially restored links.
-A container recreate creates a new ID, drops foreign pending state, and reconciles the baked links.
+Pending recovery resumes from image-layer state regardless of partially restored links.
+A container recreate loses updater state and downloaded releases together.
+It starts from baked and downloads the current pin on its first tick.
 
 `valid/min-updater-unsupported.json` requires protocol 3.
 Parsing validates its shape without claiming support.

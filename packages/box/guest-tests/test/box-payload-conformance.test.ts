@@ -61,7 +61,7 @@ describe("blitz-payload fixture conformance", () => {
     const names = readdirSync(configFixtures)
       .filter((name) => name.startsWith("config-") && name.endsWith(".json"))
       .sort();
-    expect(names).toHaveLength(13);
+    expect(names).toHaveLength(15);
     const temporary = mkdtempSync(path.join(tmpdir(), "blitz-payload-config-"));
     try {
       for (const name of names) {

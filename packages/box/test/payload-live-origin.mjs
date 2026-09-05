@@ -5,18 +5,26 @@ import { appendFile, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 
-const [portSource, releaseRoot, configPath, resultsPath, readyPath] = process.argv.slice(2);
+const [
+  portSource,
+  releaseRoot,
+  configPath,
+  featuresPath,
+  resultsPath,
+  readyPath,
+] = process.argv.slice(2);
 const port = Number(portSource);
 if (
   !Number.isSafeInteger(port)
   || port < 1
   || releaseRoot === undefined
   || configPath === undefined
+  || featuresPath === undefined
   || resultsPath === undefined
   || readyPath === undefined
 ) {
   throw new Error(
-    "usage: payload-live-origin.mjs <port> <release-root> <config> <results> <ready>",
+    "usage: payload-live-origin.mjs <port> <release-root> <config> <features> <results> <ready>",
   );
 }
 
@@ -33,9 +41,18 @@ async function selectedRelease() {
   return source;
 }
 
+async function lodySessionsEnabled() {
+  const source = (await readFile(featuresPath, "utf8")).trim();
+  if (source !== "0" && source !== "1") {
+    throw new Error("payload origin feature config must be 0 or 1");
+  }
+  return source === "1";
+}
+
 const server = http.createServer((request, response) => {
   void (async () => {
     const version = await selectedRelease();
+    const lodySessions = await lodySessionsEnabled();
     const release = path.join(releaseRoot, version);
     if (request.url === "/workspaces/self/box-config" && request.method === "GET") {
       if (request.headers.authorization !== "Bearer smoke-bearer") {
@@ -46,6 +63,7 @@ const server = http.createServer((request, response) => {
         boxImageRef: "smoke",
         controlPlaneOrigin: `http://127.0.0.1:${port}`,
         updateRequested: false,
+        features: { lodySessions },
         payload: {
           version,
           manifestUrl: `http://127.0.0.1:${port}/box-payload/${version}/manifest.json`,

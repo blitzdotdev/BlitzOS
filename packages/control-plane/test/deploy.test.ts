@@ -216,12 +216,14 @@ describe("control-plane deploy command", () => {
     // needs no commit.
     expect(overrideVarsFromEnvironment({
       BLITZ_DEPLOY_VAR_CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+      BLITZ_DEPLOY_VAR_BOX_LODY_SESSIONS: "1",
       BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF: "https://cp.example/box-payload/release-1/manifest.json",
       BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION: "release-1",
       BLITZ_DEPLOY_VAR_PAYMENT_URL: "",
       CLOUDFLARE_API_TOKEN: "not-a-var",
       PAYMENT_URL: "unprefixed, so not a var either",
     })).toEqual({
+      BOX_LODY_SESSIONS: "1",
       BOX_PAYLOAD_REF: "https://cp.example/box-payload/release-1/manifest.json",
       BOX_PAYLOAD_VERSION: "release-1",
       CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
@@ -232,6 +234,7 @@ describe("control-plane deploy command", () => {
       .toThrow("not a known deploy override");
     expect(DEPLOY_OVERRIDE_VAR_NAMES).toContain("BOX_PAYLOAD_REF");
     expect(DEPLOY_OVERRIDE_VAR_NAMES).toContain("BOX_PAYLOAD_VERSION");
+    expect(DEPLOY_OVERRIDE_VAR_NAMES).toContain("BOX_LODY_SESSIONS");
   });
 
   it("passes the checked-out commit to the deploy, so GET /version can report it", async () => {
@@ -651,6 +654,7 @@ describe("control-plane deploy command", () => {
     ]) {
       expect(wranglerExample, deferred).toContain(`${deferred} = ""`);
     }
+    expect(wranglerExample).toContain('BOX_LODY_SESSIONS = "0"');
   });
 
   it("generates a comment-free config that carries every key of the example", () => {
