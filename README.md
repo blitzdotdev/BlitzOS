@@ -1,6 +1,6 @@
 <h1 align="center">BlitzOS</h1>
 
-<p align="center"><strong>Agent workspaces for the rest of the team</strong></p>
+<p align="center"><strong>Agents for the rest of the team</strong></p>
 
 <p align="center">
   <a href="#what-you-can-do-with-blitzos">What you can do</a> •
