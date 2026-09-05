@@ -338,9 +338,9 @@ describe('WorkspaceDetailsDialog', () => {
     const rows = [...view.container.querySelectorAll('.workspace-credential-row')]
       .map((row) => row.textContent);
     expect(rows).toEqual([
-      'STRIPE_API_KEYtest-mode key, safe for CIgranted to this workspaceRotate',
+      'STRIPE_API_KEYtest-mode key, safe for CIthis workspace has accessRotate',
       'SENTRY_DSNorg-wideRotate',
-      'MY_TOKENgranted to youRotate',
+      'MY_TOKENyou have accessRotate',
       'READ_ONLYreadable by you',
     ]);
     expect(listOrgCredentials).toHaveBeenCalledWith(expect.any(AbortSignal), workspace.id);
