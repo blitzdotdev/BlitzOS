@@ -4,12 +4,12 @@ import type {
   ListGithubRepositoriesResponse,
 } from '@blitzos/schema';
 import { useEffect, useState } from 'react';
-import { ApiRequestError } from '../api';
-import { MAX_TEMPLATE_REPOS, repoBasenameCollision } from './repo-urls';
+import { ApiRequestError } from './api';
+import { MAX_WORKSPACE_REPOS, repoBasenameCollision } from './files/repo-urls';
 
 const GITHUB_APP_INSTALL_URL = 'https://github.com/apps/blitzosauth/installations/new';
 
-export interface TemplateRepoPickerApi {
+export interface WorkspaceRepoPickerApi {
   listGithubInstallations(): Promise<ListGithubInstallationsResponse>;
   listGithubRepositories(): Promise<ListGithubRepositoriesResponse>;
 }
@@ -26,14 +26,14 @@ type PickerState =
  * here: a 409 means no grant or a pasted personal token, and either way the
  * answer is the same member connect action. An empty App installation list is
  * the separate owner action. */
-export function TemplateRepoPicker({
+export function WorkspaceRepoPicker({
   client,
   connectHref,
   onConnect,
   value,
   onChange,
 }: {
-  client: TemplateRepoPickerApi;
+  client: WorkspaceRepoPickerApi;
   connectHref: string;
   onConnect: () => void;
   value: string[];
@@ -81,11 +81,11 @@ export function TemplateRepoPicker({
   }, [client, refreshVersion]);
 
   if (state.kind === 'loading') {
-    return <p className="tplf-repos-hint" role="status">Loading GitHub repositories…</p>;
+    return <p className="workspace-repos-hint" role="status">Loading GitHub repositories…</p>;
   }
   if (state.kind === 'connect') {
     return (
-      <div className="tplf-repos-setup">
+      <div className="workspace-repos-setup">
         <p>Connect GitHub to list repositories that your account can reach.</p>
         <a
           className="webapp-action webapp-action--primary"
@@ -99,12 +99,12 @@ export function TemplateRepoPicker({
   }
   if (state.kind === 'install') {
     return (
-      <div className="tplf-repos-setup">
+      <div className="workspace-repos-setup">
         <p>
           A GitHub organization owner must install the BlitzOS App before org
           repositories appear here. GitHub does not return to this page after installation.
         </p>
-        <div className="tplf-repos-setup-actions">
+        <div className="workspace-repos-setup-actions">
           <a
             className="webapp-action webapp-action--primary"
             href={GITHUB_APP_INSTALL_URL}
@@ -114,7 +114,7 @@ export function TemplateRepoPicker({
             Install GitHub App
           </a>
           <button
-            className="tplf-repo-urls-add"
+            className="workspace-repo-urls-add"
             type="button"
             onClick={() => setRefreshVersion((current) => current + 1)}
           >
@@ -126,10 +126,10 @@ export function TemplateRepoPicker({
   }
   if (state.kind === 'error') {
     return (
-      <div className="tplf-repos-setup">
+      <div className="workspace-repos-setup">
         <p className="webapp-form-message" role="alert">{state.message}</p>
         <button
-          className="tplf-repo-urls-add"
+          className="workspace-repo-urls-add"
           type="button"
           onClick={() => setRefreshVersion((current) => current + 1)}
         >
@@ -147,7 +147,7 @@ export function TemplateRepoPicker({
     (selectedAccount === '' || repository.accountLogin === selectedAccount)
     && (needle === '' || repository.repo.toLowerCase().includes(needle))
   ));
-  const atCap = value.length >= MAX_TEMPLATE_REPOS;
+  const atCap = value.length >= MAX_WORKSPACE_REPOS;
   const toggle = (repo: string) => {
     if (value.includes(repo)) {
       setSelectionProblem(null);
@@ -164,8 +164,8 @@ export function TemplateRepoPicker({
   };
 
   return (
-    <div className="tplf-repos-picker">
-      <div className="tplf-repos-controls">
+    <div className="workspace-repos-picker">
+      <div className="workspace-repos-controls">
         <input
           aria-label="Search repositories"
           placeholder="Search repositories…"
@@ -182,23 +182,23 @@ export function TemplateRepoPicker({
         </select>
       </div>
       {atCap && (
-        <p className="tplf-repos-hint" role="status">
-          Up to {MAX_TEMPLATE_REPOS} repositories — remove one to add another.
+        <p className="workspace-repos-hint" role="status">
+          Up to {MAX_WORKSPACE_REPOS} repositories — remove one to add another.
         </p>
       )}
       {selectionProblem !== null && (
         <p className="webapp-form-message" role="alert">{selectionProblem}</p>
       )}
       {state.truncated && (
-        <p className="tplf-repos-hint" role="status">
+        <p className="workspace-repos-hint" role="status">
           GitHub returned a partial repository list. Search may not include every repository.
         </p>
       )}
-      <div className="tplf-repos-list" role="listbox" aria-label="GitHub repositories">
+      <div className="workspace-repos-list" role="listbox" aria-label="GitHub repositories">
         {shown.map((repository) => {
           const selected = value.includes(repository.repo);
           return (
-            <label className="tplf-repo" key={repository.repo}>
+            <label className="workspace-repo" key={repository.repo}>
               <input
                 type="checkbox"
                 checked={selected}
@@ -206,20 +206,20 @@ export function TemplateRepoPicker({
                 onChange={() => toggle(repository.repo)}
               />
               <span>{repository.repo}</span>
-              {repository.private && <em className="tplf-chip">private</em>}
+              {repository.private && <em className="workspace-repo-chip">private</em>}
             </label>
           );
         })}
         {shown.length === 0 && (
-          <p className="tplf-repos-hint">
+          <p className="workspace-repos-hint">
             {state.repositories.length === 0
               ? 'The installed App reaches no repositories available to your account.'
               : 'No repositories match these filters.'}
           </p>
         )}
       </div>
-      <div className="tplf-repos-listfoot">
-        <span className="tplf-repos-count">
+      <div className="workspace-repos-listfoot">
+        <span className="workspace-repos-count">
           {value.length === 0
             ? 'No repositories selected'
             : `${String(value.length)} ${value.length === 1 ? 'repository' : 'repositories'} selected`}
@@ -229,7 +229,7 @@ export function TemplateRepoPicker({
          * itself. Without this, an account installed mid-session stays
          * invisible until the whole screen is rebuilt. */}
         <button
-          className="tplf-repos-refresh"
+          className="workspace-repos-refresh"
           type="button"
           onClick={() => setRefreshVersion((current) => current + 1)}
         >

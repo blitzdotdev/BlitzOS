@@ -533,155 +533,30 @@
   }
 }
 
-/* ============ blitz additions: workspace templates, Brandon's idiom ======= */
-
-.template-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 8px;
-}
-
-.template-tile {
-  display: flex;
-  min-height: 84px;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  padding: 12px 14px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-item);
-  background: var(--paper);
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-}
-
-.template-tile:hover,
-.template-tile:focus-visible {
-  border-color: var(--muted);
-  outline: 0;
-}
-
-.template-tile--selected,
-.template-tile--selected:hover {
-  border-color: var(--ink);
-  box-shadow: 0 0 0 1px var(--ink) inset;
-}
-
-.template-tile strong { font-size: 12px; font-weight: 650; }
-.template-tile span { color: var(--muted); font: 11px/1.5 var(--font-ui); }
-.template-tile__warn { color: var(--accent); }
-
-.template-tile--new {
-  align-items: center;
-  justify-content: center;
-  border-style: dashed;
-  background: transparent;
-  text-align: center;
-}
-
-.template-tile--new:hover strong { color: var(--ink); }
-
-.template-folder-list,
-.template-connection-list {
-  margin: 0;
-  padding-left: 16px;
-  color: var(--muted);
-  font: 11px/1.7 var(--font-ui);
-}
-
-.template-connection-list {
-  list-style: none;
-  padding-left: 0;
-}
-
-.template-connection-list li {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.template-github-gate {
-  display: grid;
-  justify-items: start;
-  gap: 8px;
-}
-
-.template-github-gate p {
-  margin: 0;
-}
-
-.tplf-connections {
+/* ------------------------------------------------ workspace repo picker */
+.workspace-repos {
   display: grid;
   gap: 6px;
   padding: 10px 14px;
 }
 
-.tplf-connections h2 {
+.workspace-repos h2 {
   margin: 0;
   font: 600 12px/1.4 var(--font-ui);
 }
 
-.tplf-connections p {
+.workspace-repos p {
   margin: 0;
   color: var(--muted);
   font: 11px/1.6 var(--font-ui);
 }
 
-.tplf-connection {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font: 12px/1.5 var(--font-ui);
-}
-
-.tplf-connection-glyph {
-  width: 15px;
-  height: 15px;
-  flex: none;
-  color: var(--ink);
-}
-
-.tplf-connection-block {
+.workspace-repos-picker {
   display: grid;
   gap: 6px;
 }
 
-.tplf-connection-block .connect-form {
-  margin-left: 22px;
-}
-
-.tplf-connection-note {
-  margin: 0 0 0 22px;
-  color: var(--muted);
-  font: 11px/1.6 var(--font-ui);
-}
-
-/* ------------------------------------------------ template repo picker */
-.tplf-repos {
-  display: grid;
-  gap: 6px;
-  padding: 10px 14px;
-}
-
-.tplf-repos h2 {
-  margin: 0;
-  font: 600 12px/1.4 var(--font-ui);
-}
-
-.tplf-repos p {
-  margin: 0;
-  color: var(--muted);
-  font: 11px/1.6 var(--font-ui);
-}
-
-.tplf-repos-picker {
-  display: grid;
-  gap: 6px;
-}
-
-.tplf-repos-controls {
+.workspace-repos-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(120px, auto);
   gap: 6px;
@@ -689,7 +564,7 @@
 
 /* Sits under the list, on its right edge: a member reaches for it after
    reading the list and finding an account missing. */
-.tplf-repos-refresh {
+.workspace-repos-refresh {
   border: 1px solid var(--rule);
   border-radius: var(--r-item);
   background: var(--paper);
@@ -701,15 +576,15 @@
   text-decoration: none;
 }
 
-.tplf-repos-listfoot {
+.workspace-repos-listfoot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.tplf-repos-controls input,
-.tplf-repos-controls select {
+.workspace-repos-controls input,
+.workspace-repos-controls select {
   padding: 5px 8px;
   border: 1px solid var(--rule);
   border-radius: var(--r-item);
@@ -718,19 +593,19 @@
   font: 12px/1.5 var(--font-ui);
 }
 
-.tplf-repos-setup {
+.workspace-repos-setup {
   display: grid;
   justify-items: start;
   gap: 8px;
 }
 
-.tplf-repos-setup-actions {
+.workspace-repos-setup-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.tplf-repos-list {
+.workspace-repos-list {
   display: grid;
   max-height: 180px;
   gap: 2px;
@@ -740,34 +615,44 @@
   padding: 6px 8px;
 }
 
-.tplf-repo {
+.workspace-repo {
   display: flex;
   gap: 8px;
   align-items: center;
   font: 12px/1.5 var(--font-ui);
 }
 
-.tplf-repo input { accent-color: var(--accent); }
+.workspace-repo input { accent-color: var(--accent); }
 
-.tplf-repos-hint,
-.tplf-repos-count {
+.workspace-repo-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font: 10px/1 var(--font-ui);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace-repos-hint,
+.workspace-repos-count {
   margin: 0;
   color: var(--muted);
   font: 11px/1.6 var(--font-ui);
 }
 
-.tplf-repo-urls {
+.workspace-repo-urls {
   display: grid;
   gap: 6px;
   margin-top: 8px;
 }
 
-.tplf-repo-urls-label {
+.workspace-repo-urls-label {
   color: var(--ink);
   font: 600 12px/1.4 var(--font-ui);
 }
 
-.tplf-repo-urls-input {
+.workspace-repo-urls-input {
   min-height: 76px;
   box-sizing: border-box;
   width: 100%;
@@ -780,11 +665,11 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.tplf-repo-urls-input.tplf-invalid {
+.workspace-repo-urls-input.workspace-repo-invalid {
   border-color: var(--ansi-red);
 }
 
-.tplf-repo-urls-problems {
+.workspace-repo-urls-problems {
   margin: 0;
   padding: 0;
   color: var(--ansi-red);
@@ -792,24 +677,24 @@
   list-style: none;
 }
 
-.tplf-attached {
+.workspace-repo-attached {
   display: grid;
   gap: 6px;
 }
 
-.tplf-attached-label {
+.workspace-repo-attached-label {
   margin: 0;
   color: var(--ink);
   font: 600 12px/1.4 var(--font-ui);
 }
 
-.tplf-attached-list {
+.workspace-repo-attached-list {
   overflow: hidden;
   border: 1px solid var(--rule);
   border-radius: var(--r-item);
 }
 
-.tplf-attached-row {
+.workspace-repo-attached-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -818,11 +703,11 @@
   font: 12px/1.5 var(--font-ui);
 }
 
-.tplf-attached-row + .tplf-attached-row {
+.workspace-repo-attached-row + .workspace-repo-attached-row {
   border-top: 1px solid var(--rule);
 }
 
-.tplf-attached-row button {
+.workspace-repo-attached-row button {
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -831,12 +716,12 @@
   font: 11px/1.5 var(--font-ui);
 }
 
-.tplf-attached-row button:hover,
-.tplf-attached-row button:focus-visible {
+.workspace-repo-attached-row button:hover,
+.workspace-repo-attached-row button:focus-visible {
   color: var(--ink);
 }
 
-.tplf-repo-urls-add {
+.workspace-repo-urls-add {
   justify-self: end;
   border: 1px solid var(--rule);
   border-radius: var(--r-item);
@@ -847,268 +732,7 @@
   font: 11px/1.5 var(--font-ui);
 }
 
-.tplf-repo-urls-add:disabled {
+.workspace-repo-urls-add:disabled {
   color: var(--faint);
   cursor: default;
-}
-
-/* --------------------------------------------- template folder browser */
-.tplf {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 220px;
-  grid-template-rows: minmax(0, 1fr) auto;
-  overflow: hidden;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-card);
-  background: var(--paper);
-}
-
-.tplf-main {
-  position: relative;
-  display: flex;
-  min-height: 280px;
-  max-height: 360px;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.tplf-head {
-  display: flex;
-  min-height: 36px;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--rule);
-}
-
-.tplf-back {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  flex: none;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: var(--r-item);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.tplf-back:hover:not(:disabled) { border-color: var(--rule); color: var(--ink); }
-.tplf-back:disabled { color: var(--faint); cursor: default; }
-.tplf-back svg { width: 14px; height: 14px; }
-
-.tplf-crumb {
-  overflow: hidden;
-  color: var(--muted);
-  font: 11px/1 var(--font-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tplf-rows { flex: 1; overflow-y: auto; padding: 4px 0; }
-
-.tplf-row {
-  display: grid;
-  width: 100%;
-  border-radius: var(--r-item);
-  grid-template-columns: 16px minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 10px;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-  font-size: 12px;
-  user-select: none;
-}
-
-.tplf-row:hover { background: color-mix(in oklab, var(--ink) 5%, var(--paper)); }
-.tplf-row--selected,
-.tplf-row--selected:hover { background: color-mix(in oklab, var(--ink) 10%, var(--paper)); }
-.tplf-row > svg { width: 15px; height: 15px; color: var(--muted); }
-
-.tplf-row-name {
-  overflow: hidden;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tplf-row-owner {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font: 11px/1 var(--font-ui);
-}
-
-.tplf-row-state {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font: 10px/1 var(--font-ui);
-}
-
-.tplf-chip {
-  padding: 2px 8px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-pill);
-  color: var(--muted);
-  font-style: normal;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-}
-
-.tplf-chip--attached { border-color: var(--accent); color: var(--accent); }
-
-.tplf-empty {
-  padding: 20px 14px;
-  color: var(--faint);
-  font: 11px/1.6 var(--font-ui);
-  text-align: center;
-}
-
-.tplf-status {
-  margin: 0;
-  flex: none;
-  padding: 7px 12px;
-  border-top: 1px solid var(--rule);
-  color: var(--muted);
-  font: 11px/1.4 var(--font-ui);
-}
-
-.tplf-status b { color: var(--ink); }
-
-.tplf-dropover {
-  position: absolute;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  inset: 0;
-  border: 1px dashed var(--accent);
-  border-radius: var(--r-card);
-  background: color-mix(in oklab, var(--accent) 8%, var(--paper));
-  pointer-events: none;
-}
-
-.tplf-dropover span {
-  padding: 7px 12px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-item);
-  background: var(--paper);
-  color: var(--ink);
-  font: 11px/1 var(--font-ui);
-}
-
-.tplf-side {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  border-left: 1px solid var(--rule);
-  background: var(--paper);
-}
-
-.tplf-side h3 {
-  margin: 0;
-  padding: 11px 12px 5px;
-  color: var(--faint);
-  font: 650 10px/1 var(--font-ui);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.tplf-side-list { flex: 1; overflow-y: auto; padding: 0 4px 4px; }
-
-.tplf-side-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--r-item);
-  font-size: 12px;
-}
-
-.tplf-side-item:hover { background: color-mix(in oklab, var(--ink) 5%, var(--paper)); }
-.tplf-side-item > svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
-
-.tplf-side-item span {
-  overflow: hidden;
-  flex: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tplf-side-item button {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  flex: none;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: var(--r-item);
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-}
-
-.tplf-side-item button:hover { border-color: var(--rule); color: var(--ink); }
-.tplf-side-item button svg { width: 12px; height: 12px; }
-
-.tplf-side-empty {
-  margin: 0;
-  padding: 5px 12px;
-  color: var(--faint);
-  font: 11px/1.6 var(--font-ui);
-}
-
-.tplf-foot {
-  display: flex;
-  grid-column: 1 / -1;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--rule);
-  background: var(--paper);
-}
-
-.tplf-foot-hint { color: var(--muted); font: 11px/1 var(--font-ui); }
-
-/* The one upload control sits bottom-right and wears the same skin as the
- * Create template button. Its menu opens upward: the footer is the last row
- * of the browser, so a downward menu would leave the viewport. */
-.tplf-upload-wrap { position: relative; }
-
-.tplf-upload-menu {
-  position: absolute;
-  z-index: 410;
-  top: auto;
-  right: 0;
-  bottom: calc(100% + 6px);
-  left: auto;
-}
-
-.tplf-share {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.6;
-  cursor: pointer;
-}
-
-.tplf-share input { accent-color: var(--accent); }
-
-@media (max-width: 760px) {
-  .tplf { grid-template-columns: minmax(0, 1fr); }
-  .tplf-side { max-height: 140px; border-left: 0; border-top: 1px solid var(--rule); }
 }

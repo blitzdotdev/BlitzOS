@@ -15,7 +15,7 @@ import type { CredentialRequestView } from '@blitzos/schema';
 import { SPAWN_SESSION_LABELS, type SpawnSessionType } from './NewTabMenu';
 import type { WebAppTabModel } from './SessionTypeIcon';
 import { GenericProviderIcon } from './WebAppIcons';
-import type { DriveRailSession } from './shell/rail-sessions';
+import type { RailSession } from './shell/rail-sessions';
 import { workspaceStatusLine } from './shell/workspace-status-line';
 import { useBoxGatewayHealth } from './box-gateway-health';
 import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
@@ -70,7 +70,6 @@ import { LODY_SESSIONS_ENABLED } from './lody/flag';
 import { useSharedSessions } from './lody/use-shared-sessions';
 import type { LodySessionSurfaceApi } from './lody/SessionSurface';
 import {
-  drivePath,
   parseAppRoute,
   settingsPath,
   workspacePath,
@@ -675,6 +674,16 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   }, [loaded, store.workspaces]);
 
   useEffect(() => {
+    if (!loaded || signedOut || route.page !== 'home') return;
+    const workspaceId = selectControllableWorkspaceId(store.workspaces, '');
+    if (workspaceId === '') return;
+    activeWorkspaceIdRef.current = workspaceId;
+    setActiveWorkspaceId(workspaceId);
+    window.history.replaceState({}, '', workspacePath(workspaceId));
+    setRoute({ workspaceId, page: 'webApp', chat: null });
+  }, [loaded, route.page, signedOut, store.workspaces]);
+
+  useEffect(() => {
     const createWorkspaceRoute = window.location.pathname === '/workspaces/new';
     if (
       !loaded
@@ -772,7 +781,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       return;
     }
     window.history.pushState({}, '', '/');
-    setRoute({ workspaceId: null, page: 'drive' });
+    setRoute({ workspaceId: null, page: 'home' });
   }, [navigateToWorkspacePage]);
 
   const deleteWorkspace = useCallback((workspaceId: string) => {
@@ -793,7 +802,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       if (nextId) navigateToWorkspacePage(nextId);
       else {
         window.history.pushState({}, '', '/');
-        setRoute({ workspaceId: null, page: 'drive' });
+        setRoute({ workspaceId: null, page: 'home' });
       }
     }
     void api.deleteWorkspace(workspaceId)
@@ -826,7 +835,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     setCloneFromWorkspaceId(null);
   }, []);
   // Clone submissions carry `cloneFromWorkspaceId` in the same input and use
-  // this tail. Recipe launch stays unmounted product-wide and has no caller.
+  // this tail. Recipes have been removed.
   const adoptCreatedWorkspace = useWorkspaceOptimisticCreate({
     resolver,
     workspaceEndpoints,
@@ -847,9 +856,6 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     ),
     [adoptCreatedWorkspace, api],
   );
-  // A recipe launch has no caller while the recipes surface is disabled; the
-  // adapter keeps `launchRecipe`, so restoring the surface restores the flow.
-
   const setSidePaneWidth = useCallback((width: number) => {
     setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
       ? { ...current, value: { ...current.value, width } }
@@ -1104,7 +1110,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     }
     return tab;
   }), [ttydSessions]);
-  const railSessions = useMemo<DriveRailSession[]>(() => ttydTabs
+  const railSessions = useMemo<RailSession[]>(() => ttydTabs
     .filter((tab) => tab.agent !== 'panel' && tab.agent !== 'preview')
     .map((tab) => ({ id: tab.id, label: tab.label, agent: tab.agent })), [ttydTabs]);
   const railActiveSessionId = (() => {
@@ -1428,7 +1434,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   const workspaceWakingStage = workspaceWaking
     ? activeWorkspace?.lifecycleStatus === 'parked'
       ? 'waking · requesting compute'
-      : 'waking · reattaching drive'
+      : 'waking · reattaching volume'
     : undefined;
   const workspaceErrored = activeWorkspace !== undefined && (
     activeWorkspace.lifecycleStatus === 'error'
@@ -1748,7 +1754,6 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
         setDetails({ workspaceId, tab: 'members', focusAddMember: true });
       }}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
-      onOpenDrive={() => navigateTo(drivePath())}
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
       onCloseSession={closeTtydSession}
@@ -1809,8 +1814,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       machineWorkspaceId={machineWorkspaceId}
       onCloseMachine={() => setMachineWorkspaceId(null)}
       onCloneWorkspace={(workspaceId) => {
-        // "New workspace from existing" IS the template now (§0): the create
-        // dialog opens carrying the source, and the server copies its config.
+        // The create dialog carries the source, and the server copies its config.
         setDetails(null);
         setCloneFromWorkspaceId(workspaceId);
         setShowCreateWorkspace(true);
@@ -1877,8 +1881,6 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
         updateNotice={updateNotice}
         error={error}
         onDismissError={() => setError(null)}
-        onNavigate={navigateTo}
-        onOpenRail={() => setDrawerOpen(true)}
         onNavigateToSettings={navigateToSettings}
         onOpenWorkspace={navigateToWorkspacePage}
         onReviewProposal={grantProposals.reopen}
@@ -1915,7 +1917,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   return (
     <main
       ref={shellRef}
-      className="drive-shell drive-shell--workspace"
+      className="app-shell app-shell--workspace"
       onDragOver={(event) => {
         if (filesClient === null) return;
         if (!event.dataTransfer?.types.includes('Files')) return;
@@ -1945,7 +1947,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       {shellNav(activeWorkspaceId)}
       {railOverlays}
 
-      <div className="drive-ws-frame">
+      <div className="app-workspace-frame">
           <section className="webapp-workspace-view">
             {activeWorkspace?.accessRole === 'viewer' && (
               <div className="ws-viewer-hold" role="status">

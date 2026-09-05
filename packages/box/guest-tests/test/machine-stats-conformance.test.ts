@@ -174,7 +174,7 @@ describe("blitz-machine-stats producer contract", () => {
     const result = await runReport(state);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(posted).toHaveLength(1);
+    expect(posted, result.stderr).toHaveLength(1);
     const report = posted[0];
     expect(report?.authorization).toBe("Bearer good-token");
     expect(report?.contentType).toBe("application/json");

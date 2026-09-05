@@ -91,7 +91,7 @@ export function useWorkspaceOptimisticCreate({
       window.history.replaceState({}, '', path);
       setRoute(fallbackId
         ? { workspaceId: fallbackId, page: 'webApp', chat: null }
-        : { workspaceId: null, page: 'drive' });
+        : { workspaceId: null, page: 'home' });
     });
   }, [
     activeWorkspaceIdRef,

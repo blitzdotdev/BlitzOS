@@ -1,4 +1,11 @@
-import type { WorkspaceEnvironment } from "./environment.js";
+export interface WorkspaceEnvironment {
+  env: Record<string, string>;
+  startupScript: string | null;
+}
+
+export interface WorkspaceEnvironmentResponse extends WorkspaceEnvironment {
+  filesReady: boolean;
+}
 
 export const PHASES = [
   "creating",
@@ -121,12 +128,10 @@ export interface WorkspaceView {
     avatarUrl: string | null;
   };
   agentRuleId: string | null;
-  /** Connection names the workspace's ceiling enables — its template's
-   * stipulated providers plus any named at create. The workspace connections
+  /** Connection names the workspace's ceiling enables — inherited providers
+   * plus any named at create. The workspace connections
    * panel draws one status row per name; gated on the viewer's role. */
   connections: string[];
-  /** Present when a recipe launch created this workspace (provenance). */
-  recipeId?: string;
   /** The member-machines fields.
    *
    * The only client of this view is the webapp in this repository, and it is
@@ -203,11 +208,7 @@ export interface UpdateWorkspaceRequest {
   agentRuleId?: string | null;
 }
 
-export interface TemplateConnectionView {
-  provider: string;
-}
-
-export interface TemplateRepoView {
+export interface WorkspaceRepoView {
   repo: string;
   private: boolean;
 }
@@ -223,7 +224,7 @@ export interface AddWorkspaceRepoRequest {
  * after it: the box clones at boot, so an existing machine keeps what it
  * already has until it is recreated. */
 export interface ListWorkspaceReposResponse {
-  repos: TemplateRepoView[];
+  repos: WorkspaceRepoView[];
 }
 
 /** One granted session, as both halves of the share UI read it.
@@ -312,51 +313,4 @@ export interface CheckGithubRepositoriesRequest {
 /** Probe verdicts in the same order as the request, after deduplication. */
 export interface CheckGithubRepositoriesResponse {
   results: GithubRepositoryCheckView[];
-}
-
-export interface WorkspaceTemplateView {
-  id: string;
-  name: string;
-  machineTypeId: string;
-  createdAt: number;
-  createdBy: { name: string; avatarUrl: string | null };
-  environment: WorkspaceEnvironment | null;
-  agentRuleId: string | null;
-  /** True on the org's default template — the one the create dialog
-   * preselects for every member. At most one per org. */
-  isOrgDefault: boolean;
-  /** Role is the viewer's access; null flags a folder they cannot reach yet. */
-  folders: { id: string; name: string; role: "owner" | "admin" | "editor" | "viewer" | null }[];
-  /** Provider names only. Each name draws a status row in the workspace
-   * connections panel; creation never blocks on connections. */
-  connections: TemplateConnectionView[];
-  /** GitHub repos cloned into /workspace/<name>. Privacy lets create require
-   * the member's GitHub grant before bootstrap starts. */
-  repos: TemplateRepoView[];
-}
-
-export interface ListWorkspaceTemplatesResponse {
-  templates: WorkspaceTemplateView[];
-}
-
-export interface CreateWorkspaceTemplateRequest {
-  name: string;
-  machineTypeId: string;
-  folderIds: string[];
-  connections?: TemplateConnectionView[];
-  environment?: WorkspaceEnvironment;
-  /** An org agent rule to hand every workspace made from this template; null
-   * (or absent) leaves it on the built-in doc. */
-  agentRuleId?: string | null;
-  /** Repo names to clone at create. Naming any force-attaches the github
-   * connection; the server derives privacy with the caller's credential. */
-  repos?: string[];
-  /** True marks this template as the org default (admin only). False clears
-   * the mark iff it currently points at this template. Absent leaves the org
-   * pointer alone — it is org state, not template state. */
-  isOrgDefault?: boolean;
-}
-
-export interface CreateWorkspaceTemplateResponse {
-  template: WorkspaceTemplateView;
 }

@@ -83,7 +83,7 @@ export function pendingWorkspaceModel(
   viewer: TenantMe,
   now = Date.now(),
 ): CloudWorkspaceModel {
-  const machineType = input.defaultMachineTypeId ?? input.machineTypeId ?? '';
+  const machineType = input.defaultMachineTypeId ?? '';
   const serverName = input.name ?? '';
   const title = serverName || 'New workspace';
   return {

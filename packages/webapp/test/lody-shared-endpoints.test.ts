@@ -103,7 +103,7 @@ describe("the shared chat address", () => {
     // membership id as if it were a session on the caller's own box.
     expect(parseAppRoute("/workspaces/ws-1/chat/shared/mem-owner")).toEqual({
       workspaceId: null,
-      page: "drive",
+      page: "home",
     });
     // `shared` alone still matches the one-segment branch, which is exactly why
     // `workspaceChatPath` may never be handed it as a session id.

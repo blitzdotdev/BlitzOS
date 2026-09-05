@@ -9,7 +9,7 @@
 // picker nobody is sitting at on a box. So the box drives it itself.
 //
 // WHY /workspace AND NOT THE CONTROL PLANE'S REPO LIST. Bootstrap knows the
-// template repos it asked for (`core/bootstrap.ts`, TEMPLATES-V2 cloner) and
+// workspace repos it asked for (`core/bootstrap.ts`) and
 // clones each to `/workspace/<dir>`. Inside the box, "the directories under
 // /workspace that are git repositories" IS that list, plus every repo the
 // member cloned by hand — which is the same thing as far as worktrees are

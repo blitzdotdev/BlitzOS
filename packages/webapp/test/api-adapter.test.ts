@@ -12,7 +12,7 @@ function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["re
   return workspaceViewFixture({
     id: `workspace-${phase}`,
     name: `name-${phase}`,
-    machineTypeId: "mv-2c2g@lab",
+    machineTypeId: "cx23@hel1",
     phase,
     retryAction,
     canObserve: phase === "ready",
@@ -55,37 +55,11 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     recreateMachine: vi.fn(async () => { throw new Error("unused"); }),
     setMachineType: vi.fn(async () => { throw new Error("unused"); }),
     destroyMachine: vi.fn(async () => { throw new Error("unused"); }),
-    listFolders: vi.fn(async () => ({ folders: [] })),
-    createFolder: vi.fn(async () => { throw new Error("unused"); }),
-    deleteFolder: vi.fn(async () => undefined),
-    createFolderGrant: vi.fn(async () => { throw new Error("unused"); }),
-    revokeFolderGrant: vi.fn(async () => undefined),
-    listFolderObjects: vi.fn(async () => ({ objects: [], cursor: null, truncated: false })),
-    downloadFolderObject: vi.fn(async () => new Blob()),
-    uploadFolderObject: vi.fn(async () => undefined),
-    listWorkspaceFolders: vi.fn(async () => ({ folders: [] })),
-    attachFolder: vi.fn(async () => { throw new Error("unused"); }),
-    detachFolder: vi.fn(async () => undefined),
-    renameFolder: vi.fn(async () => undefined),
-    setFolderOrgRole: async () => undefined,
     listAgentRules: async () => ({ rules: [] }),
     putAgentRule: async () => { throw new Error('unused'); },
     deleteAgentRule: async () => undefined,
-    listWorkspaceTemplates: async () => ({ templates: [] }),
-    createWorkspaceTemplate: async () => { throw new Error('unused'); },
-    updateWorkspaceTemplate: async () => { throw new Error('unused'); },
-    deleteWorkspaceTemplate: async () => undefined,
-    listRecipes: async () => ({ recipes: [] }),
-    getRecipe: async () => { throw new Error("unused"); },
-    createRecipe: async () => { throw new Error("unused"); },
-    updateRecipe: async () => { throw new Error("unused"); },
-    deleteRecipe: async () => undefined,
-    launchRecipe: async () => ({ workspace: workspace("creating", "poll") }),
-    getUsageCapture: async () => ({ enabled: false, folderId: null }),
     orgUsage: async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false }),
     billing: async () => { throw new Error('unused'); },
-    putUsageCapture: async (enabled: boolean) => ({ enabled, folderId: null }),
-    deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => ({
       user: {
@@ -156,7 +130,7 @@ describe("webapp API adapter", () => {
       // The workspace names its own creator; the viewer's membership id is
       // not an answer to "who owns this".
       ownerMembershipId: "membership-1",
-      machineType: "mv-2c2g@lab",
+      machineType: "cx23@hel1",
       createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_005_000,
     });
@@ -189,8 +163,8 @@ describe("webapp API adapter", () => {
     expect((await adapter.listWorkspaces()).map(({ status }) => status)).toEqual(["running"]);
     expect(poll).toHaveBeenCalledOnce();
 
-    await adapter.createWorkspace({ machineTypeId: "mv-2c2g@lab" });
-    expect(create).toHaveBeenCalledWith({ machineTypeId: "mv-2c2g@lab" });
+    await adapter.createWorkspace({ defaultMachineTypeId: "m6i.large@us-east-1" });
+    expect(create).toHaveBeenCalledWith({ defaultMachineTypeId: "m6i.large@us-east-1" });
 
     await adapter.putGlobalWebAppState(defaultGlobalWebAppState());
     await adapter.putWorkspaceWebAppState("workspace-ready", defaultWorkspaceWebAppState());

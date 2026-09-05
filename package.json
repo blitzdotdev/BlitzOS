@@ -43,7 +43,7 @@
     "provider:check": "npm run provider:check --workspace @blitzos/control-plane --",
     "openapi:generate": "npm run openapi:generate --workspace @blitzos/control-plane",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present && node --test packages/microvm-host/guest/blitz-microvm-enroll.test.js tools/oxlint/blitz-house/*.test.mjs && sh packages/broker/deploy/provision-broker.test.sh"
+    "test": "npm run test --workspaces --if-present && node --test tools/oxlint/blitz-house/*.test.mjs && sh packages/broker/deploy/provision-broker.test.sh"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.79.0",

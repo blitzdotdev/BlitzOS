@@ -183,7 +183,7 @@ describe('WorkspaceDetailsDialog', () => {
 
     const field = view.container.querySelector<HTMLInputElement>('[aria-label="Add people"]');
     await act(async () => field?.focus());
-    const nia = [...view.container.querySelectorAll<HTMLButtonElement>('.drive-suggestion')]
+    const nia = [...view.container.querySelectorAll<HTMLButtonElement>('.member-suggestion')]
       .find((candidate) => candidate.textContent?.includes('Nia Newcomer'));
     await act(async () => {
       nia?.click();

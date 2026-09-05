@@ -218,7 +218,7 @@ describe("org credentials: session plane (§7)", () => {
     const member = await sameOrgSession("workspace-reader");
     const createWorkspace = async (members: object[]) => {
       const response = await appRequest(app, "/workspaces", {
-        ...json({ machineTypeId: "small", members }, "POST"),
+        ...json({ defaultMachineTypeId: "small", members }, "POST"),
         headers: { Cookie: admin, "Content-Type": "application/json" },
       });
       return (await response.json<{ workspace: { id: string } }>()).workspace.id;
@@ -279,7 +279,7 @@ describe("org credentials: session plane (§7)", () => {
     const teammate = await sameOrgSession("grantee");
     const gone = await sameOrgSession("gone-member", "member", "disabled");
     const created = await appRequest(app, "/workspaces", {
-      ...json({ machineTypeId: "small" }, "POST"),
+      ...json({ defaultMachineTypeId: "small" }, "POST"),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
     });
     const workspaceId = (await created.json<{ workspace: { id: string } }>()).workspace.id;

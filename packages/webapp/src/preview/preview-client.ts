@@ -1,6 +1,5 @@
 import type {
   AgentRuleView,
-  FolderGrantView,
   OrgCredentialImportResult,
   OrgCredentialView,
   UserGrantView,
@@ -15,8 +14,6 @@ import {
   credentialRequests,
   DAY,
   delay,
-  folderGrants,
-  folderState,
   grantProposals,
   HOUR,
   invites,
@@ -27,7 +24,6 @@ import {
   orgMembers,
   providerHealth,
   respond,
-  usageState,
   userGrants,
   workspaceRepos,
   workspaceView,
@@ -52,8 +48,6 @@ type PreviewClientMethods = Pick<
   | 'leaveOrg'
   | 'orgUsage'
   | 'billing'
-  | 'getUsageCapture'
-  | 'putUsageCapture'
   | 'listConnectionGrants'
   | 'deleteConnectionGrant'
   | 'listProviderHealth'
@@ -94,9 +88,6 @@ type PreviewClientMethods = Pick<
   | 'putConnectionGrant'
   | 'mintWorkspaceConnection'
   | 'disconnectWorkspaceConnection'
-  | 'createFolderGrant'
-  | 'setFolderOrgRole'
-  | 'revokeFolderGrant'
 >;
 
 const methods: PreviewClientMethods = {
@@ -146,17 +137,6 @@ const methods: PreviewClientMethods = {
   }),
 
   billing: () => respond({ url: '#preview-billing' }),
-
-  getUsageCapture: () => respond({ ...usageState.current }),
-
-  putUsageCapture: async (enabled) => {
-    await delay();
-    usageState.current = {
-      enabled,
-      folderId: enabled ? usageState.current.folderId ?? 'fld-usage' : usageState.current.folderId,
-    };
-    return { ...usageState.current };
-  },
 
   listConnectionGrants: () => respond({ grants: userGrants.map((grant) => ({ ...grant })) }),
 
@@ -436,39 +416,6 @@ const methods: PreviewClientMethods = {
 
   disconnectWorkspaceConnection: () => delay(),
 
-  createFolderGrant: async (_folderId, membershipId, role) => {
-    await delay();
-    const person = orgMembers.find((member) => member.id === membershipId);
-    const existing = folderGrants.find((row) => row.membershipId === membershipId);
-    if (existing !== undefined) {
-      existing.role = role;
-      return { grant: { ...existing } };
-    }
-    const grant: FolderGrantView = {
-      id: `grant-${membershipId}`,
-      membershipId,
-      role,
-      createdAt: Date.now(),
-      member: {
-        name: person?.name ?? membershipId,
-        email: person?.email ?? `${membershipId}@acme.dev`,
-        avatarUrl: person?.avatarUrl ?? null,
-      },
-    };
-    folderGrants.push(grant);
-    return { grant };
-  },
-
-  setFolderOrgRole: async (_folderId, orgRole) => {
-    await delay();
-    folderState.orgRole = orgRole;
-  },
-
-  revokeFolderGrant: async (_folderId, grantId) => {
-    await delay();
-    const index = folderGrants.findIndex((row) => row.id === grantId);
-    if (index !== -1) folderGrants.splice(index, 1);
-  },
 };
 
 // SAFETY: preview-only client. The gallery mounts only components whose client

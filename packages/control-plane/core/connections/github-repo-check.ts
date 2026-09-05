@@ -3,10 +3,10 @@ import { HttpError, isRecord, readJson, requiredString, type JsonValue } from ".
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import {
-  MAX_TEMPLATE_REPOS,
-  TEMPLATE_REPO_PATTERN,
-  type TemplateRepo,
-} from "../template-repos.js";
+  MAX_WORKSPACE_REPOS,
+  WORKSPACE_REPO_PATTERN,
+  type WorkspaceRepo,
+} from "../workspace-repos.js";
 import type {
   CheckGithubRepositoriesRequest,
   CheckGithubRepositoriesResponse,
@@ -21,17 +21,17 @@ function parseCheckGithubRepositoriesRequest(
   if (!Array.isArray(value.repos)) throw new HttpError(400, "repos must be an array");
   const repos = [...new Set(value.repos.map((entry, index) =>
     requiredString(entry, `repos[${String(index)}]`, 256)))];
-  if (repos.length > MAX_TEMPLATE_REPOS) {
-    throw new HttpError(400, `repos must have at most ${String(MAX_TEMPLATE_REPOS)} entries`);
+  if (repos.length > MAX_WORKSPACE_REPOS) {
+    throw new HttpError(400, `repos must have at most ${String(MAX_WORKSPACE_REPOS)} entries`);
   }
   if (repos.length === 0) throw new HttpError(400, "repos must not be empty");
   for (const repo of repos) {
-    if (!TEMPLATE_REPO_PATTERN.test(repo)) {
+    if (!WORKSPACE_REPO_PATTERN.test(repo)) {
       throw new HttpError(400, `repos entries must be "owner/name": ${repo}`);
     }
   }
-  // Basename collisions concern the complete saved template. Save time owns
-  // that check because a probe may cover only the repos a person just added.
+  // Basename collisions concern the complete workspace list. Save time owns
+  // that check because a probe may cover only recently added repositories.
   return { repos };
 }
 
@@ -100,15 +100,15 @@ export async function checkGithubRepositories(
   return Promise.all(repos.map((repo) => checkGithubRepository(repo, token)));
 }
 
-/** Privacy is provider truth, not a client assertion. A template save and a
- * workspace create both receive bare names, so both run this probe before they
+/** Privacy is provider truth, not a client assertion. Workspace creation
+ * receives bare names, so it runs this probe before it
  * write a row: otherwise a direct API caller could label a private repository
  * public and walk past the create-time gate that keeps a doomed clone from
  * failing silently ten minutes into bootstrap. */
 export async function probedRepos(
   repos: readonly string[],
   token: string | null,
-): Promise<TemplateRepo[]> {
+): Promise<WorkspaceRepo[]> {
   if (repos.length === 0) return [];
   const results = await checkGithubRepositories(repos, token);
   return results.map((result) => {
@@ -122,7 +122,7 @@ export async function probedRepos(
 }
 
 /** POST /connections/github/repositories/check — proves the clone path the
- * caller will use. Picking repos for a template is an active-member read, not
+ * caller will use. Picking repositories is an active-member read, not
  * an admin act. */
 export function addGithubRepositoryCheckRoutes(
   router: CoreRouter,

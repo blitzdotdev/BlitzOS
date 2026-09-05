@@ -44,17 +44,6 @@ const expected = [
   "db.ts",
   "entitlements.ts",
   "environment.ts",
-  "files/access.ts",
-  "files/attachments.ts",
-  "files/dav.ts",
-  "files/folders.ts",
-  "files/keys.ts",
-  "files/objects.ts",
-  "files/readiness.ts",
-  "files/routes.ts",
-  "files/schedule.ts",
-  "files/sync.ts",
-  "files/usage-push.ts",
   "grant-proposals.ts",
   "http.ts",
   "identity/google.ts",
@@ -75,7 +64,6 @@ const expected = [
   "org-credentials.ts",
   "preview.ts",
   "principals.ts",
-  "recipes.ts",
   "compute/aws.ts",
   "compute/aws-prices.ts",
   "compute/aws-sigv4.ts",
@@ -86,11 +74,6 @@ const expected = [
   "compute/json-fetch.ts",
   "compute/org-credentials.ts",
   "compute/workspace-placement.ts",
-  "compute/microvm-agent.ts",
-  "compute/microvm-config.ts",
-  "compute/microvm-host-registry.ts",
-  "compute/microvm-hosts.js",
-  "compute/microvm.ts",
   "compute/registry.ts",
   "compute/types.ts",
   "registry.ts",
@@ -99,7 +82,7 @@ const expected = [
   "sessions.ts",
   "version.ts",
   "signup-config.js",
-  "template-repos.ts",
+  "workspace-repos.ts",
   "workspace-names.ts",
   "workspace-access.ts",
   "workspace-drain.ts",
@@ -138,6 +121,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(113);
+    expect(expected).toHaveLength(96);
   });
 });

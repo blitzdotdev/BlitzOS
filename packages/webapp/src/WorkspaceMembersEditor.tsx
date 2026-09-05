@@ -6,7 +6,7 @@ import type {
 } from '@blitzos/schema';
 import { useEffect, useRef, useState } from 'react';
 import type { MemberView } from './api';
-import { DriveAvatar } from './files/DriveAvatar';
+import { MemberAvatar } from './MemberAvatar';
 import { VolumeMeter } from './VolumeMeter';
 import { MachineTypeSelect, WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
 import { WebAppSelectMenu } from './WebAppSelectMenu';
@@ -119,7 +119,7 @@ function AddMemberSearch({
     <div className="workspace-members-search">
       <input
         ref={field}
-        className="drive-field"
+        className="member-search-field"
         type="text"
         autoComplete="off"
         placeholder="Add people"
@@ -129,12 +129,12 @@ function AddMemberSearch({
         onChange={(event) => { setQuery(event.currentTarget.value); setOpen(true); }}
       />
       {open && (
-        <div className="drive-suggestions">
+        <div className="member-suggestions">
           {matches.length === 0
-            ? <div className="drive-suggestion-empty">No one else to add</div>
+            ? <div className="member-suggestion-empty">No one else to add</div>
             : matches.map((member) => (
               <button
-                className="drive-suggestion"
+                className="member-suggestion"
                 type="button"
                 key={member.id}
                 onClick={() => {
@@ -143,8 +143,8 @@ function AddMemberSearch({
                   onAdd(member);
                 }}
               >
-                <DriveAvatar name={member.name || member.email} avatarUrl={member.avatarUrl} size="md" />
-                <span className="drive-person-copy">
+                <MemberAvatar name={member.name || member.email} avatarUrl={member.avatarUrl} size="md" />
+                <span className="member-person-copy">
                   <strong>{member.name || member.email}</strong>
                   <span>{member.email}</span>
                 </span>
@@ -228,7 +228,7 @@ function MemberRow({
   const actions = onMachineAction === null || rowBusy ? [] : machineActionsFor(machine);
   return (
     <div className="workspace-member-row">
-      <DriveAvatar name={name} avatarUrl={avatarUrl} size="md" />
+      <MemberAvatar name={name} avatarUrl={avatarUrl} size="md" />
       <span className="workspace-member-name">
         <strong>{name}</strong>
         {pinned && <small>Workspace owner</small>}

@@ -24,7 +24,7 @@ import {
   WorkspaceMembersEditor,
   type DraftWorkspaceMember,
 } from './WorkspaceMembersEditor';
-import { TemplateRepoPicker } from './files/TemplateRepoPicker';
+import { WorkspaceRepoPicker } from './WorkspaceRepoPicker';
 
 export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 
@@ -130,7 +130,7 @@ export function CreateWorkspaceDialog({
     <li key={failure.providerId}>{failure.providerId}: {failure.error}</li>
   ));
   const storeDraft = () => {
-    storeWorkspaceConnectDraft({ templateId: null, agentRuleId, repos });
+    storeWorkspaceConnectDraft({ agentRuleId, repos });
   };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -141,7 +141,7 @@ export function CreateWorkspaceDialog({
     const name = String(data.get('name') ?? '').trim();
     submitted.current = true;
     const input: CreateWorkspaceDialogInput = {
-      machineTypeId: selectedMachineType,
+      defaultMachineTypeId: selectedMachineType,
     };
     if (name) input.name = name;
     if (repos.length > 0) input.repos = repos;
@@ -282,12 +282,12 @@ export function CreateWorkspaceDialog({
 
           {/* A clone already carries its source's repository list, and the two
             * sources never mix — a body naming both is refused with a 400. */}
-          {cloneFromWorkspaceId === null && <section className="blueprint-selection tplf-repos">
+          {cloneFromWorkspaceId === null && <section className="blueprint-selection workspace-repos">
             <div className="cfg-section-head">
               <h2 className="cfg-title">Repositories</h2>
               <p className="cfg-desc">GitHub repositories cloned into /workspace when this workspace starts.</p>
             </div>
-            <TemplateRepoPicker
+            <WorkspaceRepoPicker
               client={client}
               connectHref={client.connectStartUrl('github', undefined, 'workspace-new')}
               onConnect={storeDraft}

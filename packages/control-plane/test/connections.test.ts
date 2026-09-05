@@ -131,7 +131,7 @@ async function readyWorkspace(
   const created = await appRequest(app, "/workspaces", {
     method: "POST",
     headers: { Cookie: cookie, "Content-Type": "application/json" },
-    body: JSON.stringify({ machineTypeId: "small", ...body }),
+    body: JSON.stringify({ defaultMachineTypeId: "small", ...body }),
   });
   expect(created.status).toBe(201);
   const { workspace } = await created.json<{ workspace: WorkspaceView }>();
@@ -542,7 +542,7 @@ describe("connections: templates and enablement", () => {
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
         name: "frontend",
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         connections: ["linear"],
       }),
     });
@@ -597,7 +597,7 @@ describe("connections: templates and enablement", () => {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         connections: ["linear"],
         manifest: { integrations: {} },
       }),
@@ -714,7 +714,9 @@ describe("connections: connect flow and canary", () => {
     for (const invalid of [
       "/templates/new",
       "https://attacker.example",
+      "template-new",
       "template-edit:",
+      "template-edit:template-123",
       `template-edit:${"x".repeat(65)}`,
     ]) {
       const response = await appRequest(
@@ -725,11 +727,7 @@ describe("connections: connect flow and canary", () => {
       expect(response.status, invalid).toBe(400);
     }
 
-    for (const [returnTo, path] of [
-      ["template-new", "/templates/new"],
-      ["template-edit:template-123", "/templates/template-123/edit"],
-      ["workspace-new", "/workspaces/new"],
-    ] as const) {
+    for (const [returnTo, path] of [["workspace-new", "/workspaces/new"]] as const) {
       const started = await appRequest(
         app,
         `/connect/linear/start?returnTo=${encodeURIComponent(returnTo)}`,
@@ -1100,7 +1098,7 @@ describe("connections: connecting from the webApp", () => {
 
     const started = await appRequest(
       app,
-      `/connect/linear/start?workspaceId=${workspace.id}&returnTo=template-new`,
+      `/connect/linear/start?workspaceId=${workspace.id}&returnTo=workspace-new`,
       { headers: { Cookie: cookie } },
     );
     expect(started.status).toBe(302);
@@ -1254,8 +1252,7 @@ async function createReadyWorkspace(
     method: "POST",
     headers: { Cookie: cookie, "Content-Type": "application/json" },
     body: JSON.stringify({
-      machineTypeId: "small",
-      sshPublicKey: "ssh-ed25519 AAAAC3Nzatest credentials",
+      defaultMachineTypeId: "small",
       ...(integrations === null ? {} : { manifest: { integrations } }),
     }),
   });
@@ -1265,9 +1262,7 @@ async function createReadyWorkspace(
   const enrolled = await appRequest(app, callback.pathname, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      hostPublicKeys: ["ssh-ed25519 AAAAC3Nzatest host"],
-    }),
+    body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAC3Nzatest host" }),
   });
   expect(enrolled.status).toBe(200);
   return { workspace, box: await enrolled.json<BoxCredential>() };
@@ -1931,7 +1926,7 @@ describe("connections: proxy transport and the request inbox", () => {
     expect(JSON.stringify(body)).not.toContain(LINEAR_KEY);
   });
 
-  it("keeps /integrations as an alias of the canonical /connections list", async () => {
+  it("rejects the retired /integrations alias", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
@@ -1942,16 +1937,15 @@ describe("connections: proxy transport and the request inbox", () => {
     const canonicalList = await appRequest(app, "/connections", {
       headers: { Cookie: cookie },
     });
-    expect(aliasList.status).toBe(200);
+    expect(aliasList.status).toBe(404);
+    expect(canonicalList.status).toBe(200);
     const canonicalBody = await canonicalList.json();
-    await expect(aliasList.json()).resolves.toEqual(canonicalBody);
     expect(canonicalBody).toMatchObject({
       connections: [{ name: "linear", status: "active" }],
     });
 
-    // The admin write routes went with the org root they existed to store and
-    // revoke: neither name answers a PUT or a DELETE any more.
-    for (const prefix of ["/connections", "/integrations"]) {
+    // The admin write routes went with the org root they stored and revoked.
+    for (const prefix of ["/connections"]) {
       const put = await appRequest(app, `${prefix}/linear`, {
         method: "PUT",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -2021,7 +2015,7 @@ describe("connections: admin-configured providers through templates", () => {
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
         name: "ops",
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         connections: connections.map(({ provider }) => provider),
       }),
     });

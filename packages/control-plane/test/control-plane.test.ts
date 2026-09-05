@@ -106,7 +106,7 @@ async function workspaceBox(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
+      body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
     },
     { DB: env.DB },
   );
@@ -265,7 +265,7 @@ describe("control plane security and lifecycle", () => {
     const response = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "unknown-machine" }),
+      body: JSON.stringify({ defaultMachineTypeId: "unknown-machine" }),
     });
 
     expect(response.status).toBe(400);
@@ -315,37 +315,31 @@ describe("control plane security and lifecycle", () => {
     ).toBe("destroying");
   });
 
-  it("creates workspaces without an SSH key and normalizes blank keys to absence", async () => {
+  it("creates workspaces without an SSH key", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
+    const response = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultMachineTypeId: "small" }),
+    });
 
-    for (const sshPublicKey of [undefined, "", " \t\n "]) {
-      const response = await appRequest(app, "/workspaces", {
-        method: "POST",
-        headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          machineTypeId: "small",
-          ...(sshPublicKey === undefined ? {} : { sshPublicKey }),
-        }),
-      });
-
-      expect(response.status).toBe(201);
-      const { workspace } = await response.json<WorkspaceResponse>();
-      expect(workspace.createdAt).toBeTypeOf("number");
-      expect(workspace.updatedAt).toBeGreaterThanOrEqual(workspace.createdAt);
-      const userData = providers.userData.get(workspace.id);
-      expect(userData).toBeDefined();
-      expect(userData).not.toContain("ssh_authorized_keys");
-      expect(userData).not.toContain("SSH_PUBLIC_KEY");
-      expect(userData).toContain(
-        "[ -e /var/lib/blitz/authorized_key ] || : >/var/lib/blitz/authorized_key",
-      );
-      expect(userData).toContain(
-        "src=/var/lib/blitz/authorized_key,dst=/run/blitz/authorized_key,readonly",
-      );
-      expect(providers.sshPublicKeys.get(workspace.id)).toBeUndefined();
-    }
-    expect(providers.createCalls).toBe(3);
+    expect(response.status).toBe(201);
+    const { workspace } = await response.json<WorkspaceResponse>();
+    expect(workspace.createdAt).toBeTypeOf("number");
+    expect(workspace.updatedAt).toBeGreaterThanOrEqual(workspace.createdAt);
+    const userData = providers.userData.get(workspace.id);
+    expect(userData).toBeDefined();
+    expect(userData).not.toContain("ssh_authorized_keys");
+    expect(userData).not.toContain("SSH_PUBLIC_KEY");
+    expect(userData).toContain(
+      "[ -e /var/lib/blitz/authorized_key ] || : >/var/lib/blitz/authorized_key",
+    );
+    expect(userData).toContain(
+      "src=/var/lib/blitz/authorized_key,dst=/run/blitz/authorized_key,readonly",
+    );
+    expect(providers.sshPublicKeys.get(workspace.id)).toBeUndefined();
+    expect(providers.createCalls).toBe(1);
   });
 
   // The workspace-level sshPublicKey field is DELETED (a legacy decision that
@@ -359,30 +353,34 @@ describe("control plane security and lifecycle", () => {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
       }),
     });
 
-    // Ignored, not refused: an old client that still sends one keeps working
-    // and simply gets a machine with no key.
-    expect(response.status).toBe(201);
-    const { workspace } = await response.json<WorkspaceResponse>();
-    expect(providers.sshPublicKeys.get(workspace.id)).toBeUndefined();
-    expect(providers.userData.get(workspace.id)).not.toContain("SSH_PUBLIC_KEY");
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "request body has unexpected field sshPublicKey",
+      retryAction: null,
+    });
+    expect(providers.createCalls).toBe(0);
   });
 
-  it("does not validate a workspace-level sshPublicKey, because there is none", async () => {
+  it("rejects the retired machineTypeId create alias", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const response = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "small", sshPublicKey: "not-a-key" }),
+      body: JSON.stringify({ machineTypeId: "small" }),
     });
 
-    expect(response.status).toBe(201);
-    expect(providers.createCalls).toBe(1);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "request body has unexpected field machineTypeId",
+      retryAction: null,
+    });
+    expect(providers.createCalls).toBe(0);
   });
 
   it("filters deprecated and non-allowlisted Hetzner machine types from the API response", async () => {
@@ -469,9 +467,9 @@ describe("control plane security and lifecycle", () => {
     expect(provider.ownsMachineType("cpx31@nbg1")).toBe(true);
     expect(provider.ownsMachineType("cax11")).toBe(true);
     expect(provider.ownsMachineType("cx-22@fsn1")).toBe(false);
-    expect(provider.ownsMachineType("mv-2c2g@lab")).toBe(false);
+    expect(provider.ownsMachineType("other-small@test")).toBe(false);
     expect(provider.ownsVmId("12345678")).toBe(true);
-    expect(provider.ownsVmId("microvm:v1:lab:vm-1")).toBe(false);
+    expect(provider.ownsVmId("other:v1:test:vm-1")).toBe(false);
   });
 
   it("excludes Hetzner machine types with no currently available placement", async () => {
@@ -1037,8 +1035,7 @@ describe("control plane security and lifecycle", () => {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
-        machineTypeId: "small",
-        sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+        defaultMachineTypeId: "small",
       }),
     });
 
@@ -1096,8 +1093,7 @@ describe("control plane security and lifecycle", () => {
           method: "POST",
           headers: { Cookie: cookie, "Content-Type": "application/json" },
           body: JSON.stringify({
-            machineTypeId: "small",
-            sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+            defaultMachineTypeId: "small",
           }),
         },
       );
@@ -1127,8 +1123,7 @@ describe("control plane security and lifecycle", () => {
           method: "POST",
           headers: { Cookie: cookie, "Content-Type": "application/json" },
           body: JSON.stringify({
-            machineTypeId: "small",
-            sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+            defaultMachineTypeId: "small",
           }),
         },
       );
@@ -1154,7 +1149,7 @@ describe("control plane security and lifecycle", () => {
       app, path, { method: "POST", headers, body: JSON.stringify(body) }, bindings,
     );
     const workspace = await post("/workspaces", {
-      machineTypeId: "small", sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+      defaultMachineTypeId: "small",
     });
     const invite = await post("/invites", { role: "member" });
 
@@ -1173,8 +1168,7 @@ describe("control plane security and lifecycle", () => {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
-        machineTypeId: "small",
-        sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+        defaultMachineTypeId: "small",
         userData: callerUserData,
       }),
     });
@@ -1225,7 +1219,7 @@ describe("control plane security and lifecycle", () => {
       appRequest(app, "/workspaces", {
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineTypeId: "small", name, userData }),
+        body: JSON.stringify({ defaultMachineTypeId: "small", name, userData }),
       });
     const accepted = await request("a".repeat(exactCallerBytes));
 
@@ -1253,7 +1247,7 @@ describe("control plane security and lifecycle", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
+        body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
       },
       { DB: env.DB },
     );
@@ -1264,7 +1258,7 @@ describe("control plane security and lifecycle", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
+        body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
       },
       { DB: env.DB },
     );
@@ -1273,7 +1267,7 @@ describe("control plane security and lifecycle", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
+        body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
       },
       { DB: env.DB },
     );
@@ -1333,7 +1327,7 @@ describe("control plane security and lifecycle", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
+        body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
       },
       { DB: env.DB },
     );
@@ -1584,7 +1578,7 @@ describe("control plane security and lifecycle", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
+        body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
       },
       { DB: env.DB },
     );
@@ -1645,7 +1639,7 @@ describe("control plane security and lifecycle", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
+        body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
       },
       { DB: env.DB },
     );

@@ -52,7 +52,7 @@ import { SessionTypeIcon } from "../SessionTypeIcon.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 
 /**
- * The shell grid's rail column, in pixels (`drive-shell.css:119`).
+ * The shell grid's rail column, in pixels (`app-shell.css`).
  *
  * `LoroSidebar` sizes itself with an INLINE width because upstream it is the
  * window's own resizable sidebar. Here the shell grid owns that width, so the

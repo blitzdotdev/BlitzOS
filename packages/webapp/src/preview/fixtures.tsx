@@ -3,16 +3,13 @@ import type {
   CatalogEntryView,
   ConnectionView,
   CredentialRequestView,
-  FolderGrantView,
-  FolderView,
   GrantProposalView,
   ListMachineTypesResponse,
   MachineType,
   MachineView,
   OrgCredentialView,
-  OrgUsageCaptureResponse,
   ProviderHealthView,
-  TemplateRepoView,
+  WorkspaceRepoView,
   UserGrantView,
   WorkspaceMemberView,
   WorkspaceView,
@@ -262,7 +259,7 @@ export function workspaceView(): WorkspaceView {
   };
 }
 
-export const workspaceRepos: TemplateRepoView[] = [
+export const workspaceRepos: WorkspaceRepoView[] = [
   { repo: 'acme/robot-fw', private: true },
   { repo: 'acme/site', private: false },
 ];
@@ -480,16 +477,6 @@ export const computeCredentials = new Map<ComputeCredentialProvider, ComputeCred
   ['hetzner', { provider: 'hetzner', validated_at: NOW - 6 * DAY, created_by: 'June Park' }],
 ]);
 
-/** The usage-capture toggle's server state, boxed so the mock client can
- * replace it across module boundaries. */
-export interface UsageCaptureState {
-  current: OrgUsageCaptureResponse;
-}
-
-export const usageState: UsageCaptureState = {
-  current: { enabled: false, folderId: null },
-};
-
 /* ------------------------------------------------------------ agent rules */
 
 export const agentRules: AgentRuleView[] = [
@@ -508,46 +495,3 @@ export const agentRules: AgentRuleView[] = [
     builtIn: false,
   },
 ];
-
-/* ----------------------------------------------------------------- drive */
-
-/** The share dialog's org-wide access, boxed so the mock client can write it
- * across module boundaries. */
-export interface FolderShareState {
-  orgRole: 'editor' | 'viewer' | null;
-}
-
-export const folderState: FolderShareState = { orgRole: 'viewer' };
-
-export const folderGrants: FolderGrantView[] = [
-  {
-    id: 'grant-ada',
-    membershipId: 'm-ada',
-    role: 'editor',
-    createdAt: NOW - 8 * DAY,
-    member: { name: 'Ada Lovelace', email: 'ada@acme.dev', avatarUrl: null },
-  },
-  {
-    id: 'grant-rio',
-    membershipId: 'm-rio',
-    role: 'viewer',
-    createdAt: NOW - 2 * DAY,
-    member: { name: 'Rio Tanaka', email: 'rio@acme.dev', avatarUrl: null },
-  },
-];
-
-/** Rebuilt per read so the dialog's onChanged reload sees the mutations the
- * mock grant writes made. */
-export function previewFolder(): FolderView {
-  return {
-    id: 'fld-designs',
-    name: 'Design reviews',
-    role: 'owner',
-    orgRole: folderState.orgRole,
-    owner: { name: 'June Park', avatarUrl: null },
-    attachedWorkspaceIds: ['ws-preview'],
-    createdAt: NOW - 40 * DAY,
-    updatedAt: NOW - HOUR,
-    grants: [...folderGrants],
-  };
-}

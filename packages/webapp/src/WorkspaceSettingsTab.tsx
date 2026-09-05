@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type {
   MachineType,
-  TemplateRepoView,
+  WorkspaceRepoView,
   UpdateWorkspaceRequest,
 } from '@blitzos/schema';
 import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
@@ -65,7 +65,7 @@ function ReposEditor({
   onAdd,
   onRemove,
 }: {
-  repos: TemplateRepoView[];
+  repos: WorkspaceRepoView[];
   canManage: boolean;
   onAdd: (repo: string) => void;
   onRemove: (repo: string) => void;
@@ -161,7 +161,7 @@ export function WorkspaceSettingsTab({
   client: AgentRulesApi;
   workspace: CloudWorkspaceModel;
   machines: MachineType[];
-  repos: TemplateRepoView[];
+  repos: WorkspaceRepoView[];
   canManage: boolean;
   onSave: (input: UpdateWorkspaceRequest) => Promise<SettingsDraft>;
   onAddRepo: (repo: string) => void;

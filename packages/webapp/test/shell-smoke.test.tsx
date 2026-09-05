@@ -228,37 +228,11 @@ function client(): ControlPlaneClient {
     recreateMachine: vi.fn(async () => { throw new Error("unused"); }),
     setMachineType: vi.fn(async () => { throw new Error("unused"); }),
     destroyMachine: vi.fn(async () => { throw new Error("unused"); }),
-    listFolders: vi.fn(async () => ({ folders: [] })),
-    createFolder: vi.fn(async () => { throw new Error("unused"); }),
-    deleteFolder: vi.fn(async () => undefined),
-    createFolderGrant: vi.fn(async () => { throw new Error("unused"); }),
-    revokeFolderGrant: vi.fn(async () => undefined),
-    listFolderObjects: vi.fn(async () => ({ objects: [], cursor: null, truncated: false })),
-    downloadFolderObject: vi.fn(async () => new Blob()),
-    uploadFolderObject: vi.fn(async () => undefined),
-    listWorkspaceFolders: vi.fn(async () => ({ folders: [] })),
-    attachFolder: vi.fn(async () => { throw new Error("unused"); }),
-    detachFolder: vi.fn(async () => undefined),
-    renameFolder: vi.fn(async () => undefined),
-  setFolderOrgRole: vi.fn(async () => undefined),
   listAgentRules: vi.fn(async () => ({ rules: [] })),
   putAgentRule: vi.fn(async () => { throw new Error("unused"); }),
   deleteAgentRule: vi.fn(async () => undefined),
-  listWorkspaceTemplates: vi.fn(async () => ({ templates: [] })),
-  createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-    updateWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-  deleteWorkspaceTemplate: vi.fn(async () => undefined),
-  listRecipes: vi.fn(async () => ({ recipes: [] })),
-  getRecipe: vi.fn(async () => { throw new Error("unused"); }),
-  createRecipe: vi.fn(async () => { throw new Error("unused"); }),
-  updateRecipe: vi.fn(async () => { throw new Error("unused"); }),
-  deleteRecipe: vi.fn(async () => undefined),
-  launchRecipe: vi.fn(async () => { throw new Error("unused"); }),
-  getUsageCapture: vi.fn(async () => ({ enabled: false, folderId: null })),
     orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     billing: vi.fn(async () => { throw new Error('unused'); }),
-  putUsageCapture: vi.fn(async (enabled: boolean) => ({ enabled, folderId: null })),
-    deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new ApiRequestError("unauthorized", 401, null); }),
     createOrg: vi.fn(async () => ({
@@ -982,7 +956,7 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("routes non-microVM workspace files through the control plane", async () => {
+  it("routes workspace files through the control plane", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     const view = await render(
       <CloudApp
@@ -1603,7 +1577,7 @@ describe("optimistic workspace creation", () => {
     await submitWorkspaceCreate(view, "Draft workspace");
 
     expect(wire.create).toHaveBeenCalledWith({
-      machineTypeId: "cx23@fsn1",
+      defaultMachineTypeId: "cx23@fsn1",
       name: "Draft workspace",
     });
     expect(view.container.querySelector('form[aria-label="Create workspace"]') === null).toBe(true);

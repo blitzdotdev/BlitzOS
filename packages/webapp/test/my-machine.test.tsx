@@ -368,7 +368,7 @@ describe('the rail header', () => {
     );
     await act(async () => machine?.click());
     expect(onOpenMachine).toHaveBeenCalledWith(workspace.id);
-    // Members wears the Drive page's share icon, which is a 24-grid glyph;
+    // Members uses the shared 24-grid share glyph;
     // the strip's own three-node one is gone.
     const members = view.container.querySelector(
       'button[aria-label="Members of design-team"] svg',

@@ -728,7 +728,7 @@ write_files:
     expect(missing.status).toBe(404);
   });
 
-  it("emits the template repo cloner as a detached best-effort loop outside the container spec", () => {
+  it("emits the workspace repo cloner as a detached best-effort loop outside the container spec", () => {
     const base = {
       boxImageSha256: "",
       boxImageRef: BOX_IMAGE_REF,
@@ -742,7 +742,7 @@ write_files:
     });
 
     expect(script).toContain(
-      'echo "blitz bootstrap: template repo cloner starting in the background (best-effort)"',
+      'echo "blitz bootstrap: workspace repo cloner starting in the background (best-effort)"',
     );
     expect(script).toContain(
       "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || git -c http.version=HTTP/1.1 clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
@@ -758,7 +758,7 @@ write_files:
     expect(script).toContain(
       "done' >>/var/lib/blitz/repo-clone.log 2>&1 || true &",
     );
-    const cloner = script.indexOf("template repo cloner starting");
+    const cloner = script.indexOf("workspace repo cloner starting");
     const clonerExec = script.indexOf("nohup docker exec", cloner);
     const clonerUser = script.indexOf("--user 1000:1000", clonerExec);
     expect(cloner).toBeGreaterThan(script.indexOf('[ "$box_healthy" = true ]'));
@@ -782,7 +782,7 @@ write_files:
     // The emitter is the shell-interpolation boundary: anything that is not
     // owner/name shaped is refused outright, never quoted around.
     expect(() => buildBootstrapScript({ ...base, repos: ["bad'; rm -rf /'"] }))
-      .toThrow("template repo is not owner/name shaped");
+      .toThrow("workspace repo is not owner/name shaped");
   });
 
   // ---- Remote Control target name ----
@@ -858,7 +858,7 @@ write_files:
       const response = await appRequest(app, "/workspaces", {
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineTypeId: "small", name }),
+        body: JSON.stringify({ defaultMachineTypeId: "small", name }),
       });
       expect(response.status).toBe(201);
       const { workspace } = await response.json<{ workspace: { id: string } }>();
@@ -967,7 +967,7 @@ write_files:
       {
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineTypeId: "small", sshPublicKey: SSH_PUBLIC_KEY }),
+        body: JSON.stringify({ defaultMachineTypeId: "small" }),
       },
       {
         DB: env.DB,
@@ -1002,7 +1002,7 @@ write_files:
       {
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineTypeId: "small", sshPublicKey: SSH_PUBLIC_KEY }),
+        body: JSON.stringify({ defaultMachineTypeId: "small" }),
       },
       {
         DB: env.DB,
@@ -1027,8 +1027,7 @@ write_files:
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
         body: JSON.stringify({
-          machineTypeId: "small",
-          sshPublicKey: SSH_PUBLIC_KEY,
+          defaultMachineTypeId: "small",
         }),
       },
       {

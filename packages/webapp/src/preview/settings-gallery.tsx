@@ -9,8 +9,8 @@ import '../webapp-shell.css';
 import '../webapp-workspace.css';
 import '../webapp-select.css';
 import '../chat-panel.css';
-import '../files-drive.css';
-import '../drive-shell.css';
+import '../app-shell.css';
+import '../member-avatar.css';
 import '../strip-rail.css';
 import '../files.css';
 import '../confirmation-dialog.css';
@@ -21,12 +21,11 @@ import '../settings.css';
 import '../org-credentials.css';
 import '../invite-redeem.css';
 import './preview.css';
-import type { CredentialRequestView, FolderView, GrantProposalView } from '@blitzos/schema';
+import type { CredentialRequestView, GrantProposalView } from '@blitzos/schema';
 import { AgentRulesPicker } from '../AgentRulesPicker';
 import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { CreateWorkspaceDialog } from '../CreateWorkspaceDialog';
-import { ShareFolderDialog } from '../files/ShareFolderDialog';
 import { GrantApprovalDialog } from '../GrantApprovalDialog';
 import { MyMachineDialog } from '../MyMachineDialog';
 import type { SettingsSection } from '../sessions-page-state';
@@ -39,7 +38,6 @@ import {
   grantProposals,
   listMachineTypesFixture,
   memberViewer,
-  previewFolder,
   previewWorkspace,
   wantedRequestsSeed,
 } from './fixtures';
@@ -278,48 +276,19 @@ function DrawerConnectionsSection() {
   );
 }
 
-function ShareFolderSection() {
-  const [folder, setFolder] = useState<FolderView | null>(null);
-  const [snack, setSnack] = useState<ReactNode>(null);
-  return (
-    <Section
-      title="Share folder dialog"
-      caption="Drive sharing: owner view of a folder with org-wide access and two grants."
-    >
-      <div className="pv-row">
-        <button className="webapp-action" type="button" onClick={() => setFolder(previewFolder())}>
-          Share “Design reviews”…
-        </button>
-      </div>
-      {snack !== null && <p className="pv-note" role="status">{snack}</p>}
-      {folder !== null && (
-        <ShareFolderDialog
-          client={previewClient}
-          folder={folder}
-          viewerEmail="june@acme.dev"
-          orgName="Acme Robotics"
-          onClose={() => setFolder(null)}
-          onChanged={async () => setFolder(previewFolder())}
-          onSnack={setSnack}
-        />
-      )}
-    </Section>
-  );
-}
-
 function Gallery() {
   return (
     <div className="pv-page">
       <GalleryHeader />
       <Section
         title="Settings page (admin)"
-        caption="All eight panels behind a live left rail: Profile, Members, Invites, Connections, Credentials, Compute, Requests, Usage."
+        caption="All seven panels behind a live left rail: Profile, Members, Invites, Connections, Credentials, Compute, and Requests."
       >
         <SettingsFrame viewer={adminViewer} />
       </Section>
       <Section
         title="Settings page (member view)"
-        caption="The same page as a non-admin: Invites, Compute and Usage disappear, Members loses its controls."
+        caption="The same page as a non-admin: Invites and Compute disappear, and Members loses its controls."
       >
         <SettingsFrame viewer={memberViewer} />
       </Section>
@@ -329,7 +298,6 @@ function Gallery() {
       <ConfirmationSection />
       <AgentRulesSection />
       <DrawerConnectionsSection />
-      <ShareFolderSection />
     </div>
   );
 }

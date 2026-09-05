@@ -234,21 +234,11 @@ export interface ConnectOAuthExtra {
   returnTo: ConnectReturnTo | null;
 }
 
-export type ConnectReturnTo =
-  | "template-new"
-  | `template-edit:${string}`
-  | "workspace-new";
+export type ConnectReturnTo = "workspace-new";
 
-/** Parses the only route names a connect caller may sign. Template ids stay
- * data inside one encoded path segment; accepting a free path here would turn
- * the OAuth callback into an open redirect. */
+/** Parses the only route name a connect caller may sign. */
 export function connectReturnTo(value: string): ConnectReturnTo | null {
-  if (value === "template-new" || value === "workspace-new") return value;
-  if (!value.startsWith("template-edit:")) return null;
-  const templateId = value.slice("template-edit:".length);
-  return templateId.length > 0 && templateId.length <= 64
-    ? `template-edit:${templateId}`
-    : null;
+  return value === "workspace-new" ? value : null;
 }
 
 export type ConnectOAuthStateV1 = OAuthStateBase & ConnectOAuthExtra;

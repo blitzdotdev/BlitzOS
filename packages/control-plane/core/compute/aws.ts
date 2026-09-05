@@ -40,8 +40,8 @@ export const AWS_USER_DATA_MAX_BYTES = 16 * 1024;
 export const AWS_USER_DATA_RAW_MAX_BYTES = 48 * 1024;
 
 /** Machine type ids are `aws-<ec2InstanceType>@<region>`, for example
- * `aws-t3.medium@us-east-1`. The `aws-` prefix cannot collide with microVM
- * (`mv-`) or Hetzner (`^[a-z]+\d+$` before the `@`) ids. */
+ * `aws-t3.medium@us-east-1`. The `aws-` prefix cannot collide with Hetzner
+ * (`^[a-z]+\d+$` before the `@`) ids. */
 const MACHINE_TYPE_PATTERN =
   /^aws-([a-z][a-z0-9]*\.[a-z0-9]+)@([a-z]{2}(?:-[a-z]+)+-\d+)$/u;
 const REGION_PATTERN = /^[a-z]{2}(?:-[a-z]+)+-\d+$/u;
