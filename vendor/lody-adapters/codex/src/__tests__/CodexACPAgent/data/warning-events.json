@@ -1,0 +1,40 @@
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": {
+          "lody": {
+            "notice": {
+              "level": "warning",
+              "message": "Falling back from WebSockets to HTTPS transport. unexpected status 401",
+              "source": "warning"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": {
+          "lody": {
+            "notice": {
+              "level": "warning",
+              "message": "Project configuration could not be loaded\n\nUsing the default configuration instead.",
+              "source": "configWarning"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

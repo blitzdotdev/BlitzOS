@@ -228,7 +228,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // The latest `blitz connections open` focus for the active workspace; a
   // fresh object per event so the panel re-selects on a repeat ask.
   const [connectionsFocus, setConnectionsFocus] = useState<ConnectionsPanelFocus | null>(null);
-  // Lody's side panel as it last reported itself (seam patch 19), and `null`
+  // Lody's side panel as it last reported itself (seam patch 23), and `null`
   // while no session detail is on screen. The right icon strip draws from it
   // and drives it through `sidePanelRequest`, one `seq` per press.
   const [sidePanelState, setSidePanelState] = useSidePanelHostState();
@@ -1014,25 +1014,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     chat: lodyRail.chat,
     revision: shareRevision,
   });
-  // The ADDRESS drives the surface, one way: a deep link, a reload and the back
-  // button all arrive here, and the surface's own navigations come back through
-  // `onActiveSessionChange` below. Both compare before acting, so the pair
-  // converges instead of looping.
-  useEffect(() => {
-    if (lodyApi === null || !lodyRail.visible) return;
-    // THE ARCHIVE IS ASKED FIRST, and it has to be. It names no session, so
-    // `activeSessionId()` answers `null` there exactly as it does on the
-    // landing: comparing session ids alone would leave the surface on the
-    // archive after the address moved back to `/chat`, and would never take it
-    // there in the first place.
-    if (lodyRail.archive) {
-      if (!lodyApi.isArchiveOpen()) lodyApi.openArchive();
-      return;
-    }
-    if (lodyRail.sessionId === lodyApi.activeSessionId() && !lodyApi.isArchiveOpen()) return;
-    if (lodyRail.sessionId === null) lodyApi.openLanding();
-    else lodyApi.openSession(lodyRail.sessionId);
-  }, [lodyApi, lodyRail.archive, lodyRail.sessionId, lodyRail.visible]);
   // "+ NEW SESSION" IS TWO THINGS, and the address is only one of them.
   //
   // Moving the address to the landing does nothing when the landing is already
@@ -1549,7 +1530,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     );
   };
   // Our Browser and Connections panels as tabs of Lody's side panel (seam
-  // patch 19), rebuilt only when what they show changes; each icon is the same
+  // patch 23), rebuilt only when what they show changes; each icon is the same
   // glyph the strip's button wears, in the size Lody's tab bar draws its own.
   const connectionsReadOnly = activeWorkspace?.accessRole === 'viewer';
   const workspaceConnections = activeWorkspace?.connections;
@@ -1919,6 +1900,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               )}
               onApiReady={setLodyApi}
               onActiveSessionChange={lodyRail.mirror}
+              desiredSessionId={lodyRail.sessionId}
+              desiredArchive={lodyRail.archive}
               {...(lodyRail.sessionId === null ? {} : { initialSessionId: lodyRail.sessionId })}
               onShareSession={setSharingSessionId}
               sharedSessions={sharedSessions.rows}

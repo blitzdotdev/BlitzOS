@@ -99,9 +99,9 @@ export function ShellThemeBridge(props: { children: ReactNode }) {
  * The theme half of the surface's provider stack: their `ThemeProvider` with the
  * shell's choice already adopted, and the bridge that keeps it there.
  *
- * `SessionSurface` renders this inside `LodySurfaceProviders`. It is exported
- * whole so a test can mount THE THING, rather than a hand-built stack that
- * happens to look like it — which is the shape of mistake §16 is about.
+ * `SessionSurface` renders this above its keyed per-box provider tree. It is
+ * exported whole so a test can mount THE THING, rather than a hand-built stack
+ * that happens to look like it — which is the shape of mistake §16 is about.
  */
 export function BlitzThemedLodyTree(props: { children: ReactNode; theme: "dark" | "light" }) {
   return (

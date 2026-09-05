@@ -213,6 +213,8 @@ export class MessageProcessor extends EventEmitter<ProcessorEvents> {
       case 'session/preview-create':
       case 'session/preview-revoke':
         return `session:${message.sessionId}:preview`;
+      case 'machine/acp-authenticate':
+        return message.action === 'start' ? `acp-auth:${message.configId}` : null;
       case 'session/cancel':
         return null;
       default:

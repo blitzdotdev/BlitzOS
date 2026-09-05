@@ -162,7 +162,7 @@ const FIXTURE_RAIL_WIDTH = 252;
 /**
  * The footer's New tab control: the product's own `NewTabControl`, in the
  * footer variant `SessionRailSidebar` hands `LoroSidebar` as
- * `footerLeadingContent` (seam patch 18), to the left of their Archive entry.
+ * `footerLeadingContent` (seam patch 22), to the left of their Archive entry.
  *
  * The REAL control, not a placeholder: the trigger and the Archive button beside
  * it must read as one row, so a harness that stubs it out cannot show the thing
@@ -191,7 +191,7 @@ function FixtureNewTabControl() {
  *   it hides is the workspace switcher `div.shell-rhead` already serves.
  *   `footerItems` is declared seam #13: Settings and Help are BlitzOS's own
  *   chrome, and Archive is upstream's only way into the archive page, so it is
- *   the one footer entry the rail keeps. `footerLeadingContent` is seam #18:
+ *   the one footer entry the rail keeps. `footerLeadingContent` is seam #22:
  *   the New tab control, at the start of that same row.
  * - `className` drops their floating-window card chrome: inside the rail the
  *   shell already draws the column's border. `cn()` is tailwind-merge, so these

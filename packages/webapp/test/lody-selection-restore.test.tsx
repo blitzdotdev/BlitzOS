@@ -61,15 +61,24 @@ async function mountRegion() {
   vi.resetModules();
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
   const records: SurfaceRecord[] = [];
-  vi.doMock("../src/lody/SessionSurface.js", () => ({
-    default: (props: { initialSessionId?: string; shared?: { sessionId: string } }) => {
+  vi.doMock("../src/lody/SessionSurface.js", () => {
+    const Recorded = (props: { initialSessionId?: string; shared?: { sessionId: string } }) => {
       useState(() => {
         records.push({ initialSessionId: props.initialSessionId, shared: props.shared });
         return null;
       });
       return <div data-testid="surface" />;
-    },
-  }));
+    };
+    return {
+      default: (host: {
+        surfaces: Array<{
+          surfaceKey: string;
+          initialSessionId?: string;
+          shared?: { sessionId: string };
+        }>;
+      }) => host.surfaces.map((surface) => <Recorded key={surface.surfaceKey} {...surface} />),
+    };
+  });
   const { LodySessionsRegion } = await import("../src/lody/LodySessionsRegion.js");
 
   const base = {

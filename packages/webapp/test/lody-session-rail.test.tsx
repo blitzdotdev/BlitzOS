@@ -186,7 +186,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     ).toEqual([]);
   }, 90_000);
 
-  it("suppresses their header and all of the footer but Archive, with New tab before it (seams #2, #13, #18)", () => {
+  it("suppresses their header and all of the footer but Archive, with New tab before it (seams #2, #13, #22)", () => {
     // §0.3: `div.shell-rhead` stays native, so their workspace switcher must
     // not render — it is the one control that would duplicate it.
     expect(railHost.querySelector("[data-workspace-switcher-trigger]")).toBeNull();
@@ -201,7 +201,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     // hiding it left the page unreachable. Seam patch 13 keeps exactly this one.
     const archive = railButton(/^Archive$/u);
     expect(archive, "the footer's Archive entry").toBeDefined();
-    // The New tab control is in the SAME row, and before Archive: seam patch 18's
+    // The New tab control is in the SAME row, and before Archive: seam patch 22's
     // `footerLeadingContent` is the start of the footer's utility row. It used
     // to head a Terminals section of its own, which is gone.
     const newTab = railButtons().find((button) => button.getAttribute("aria-label") === "New tab");

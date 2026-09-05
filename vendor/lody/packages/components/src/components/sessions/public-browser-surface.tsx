@@ -5,6 +5,7 @@ import type { ElectronPublicBrowserBounds, ElectronPublicBrowserState } from '@l
 
 import { isElectronRenderer } from '@/lib/electron';
 import { getPublicBrowserBridge } from '@/lib/electron-ipc-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import { observeResizeOnAnimationFrame } from '@/lib/resize-observer';
 import { cn } from '@/lib/utils';
 
@@ -40,6 +41,7 @@ export function PublicBrowserSurface({
   onStateChange,
 }: PublicBrowserSurfaceProps) {
   const { t } = useTranslation();
+  const ipcClient = useIpcClient();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const createdRef = useRef(false);
   const layoutGenerationRef = useRef(0);
@@ -48,7 +50,8 @@ export function PublicBrowserSurface({
   const [phase, setPhase] = useState<ElectronPublicBrowserState['phase']>('idle');
   const [surfaceReady, setSurfaceReady] = useState(false);
   const [blockingOverlayOpen, setBlockingOverlayOpen] = useState(false);
-  const bridge = typeof window === 'undefined' ? undefined : getPublicBrowserBridge() ?? undefined;
+  const bridge =
+    typeof window === 'undefined' ? undefined : getPublicBrowserBridge(ipcClient) ?? undefined;
   const electron = isElectronRenderer();
   const nativeViewVisible = active && !blockingOverlayOpen;
 
@@ -155,9 +158,21 @@ export function PublicBrowserSurface({
     };
   }, [bridge, browserId, electron, nativeViewVisible, onStateChange]);
 
+  /* Re-issue the visibility IPC only when the TARGET changes. This effect
+     writes `localError` and also depends on it (an error hides the native
+     view), so an unconditional call retried on every distinct failure
+     message — a bridge error carrying any varying detail (id, path,
+     timestamp) became an unbounded setVisible/render spin. A failed attempt
+     records the error and waits for the next real visibility change instead
+     of retrying itself. */
+  const lastRequestedVisibilityRef = useRef<{ browserId: string; visible: boolean } | null>(null);
   useEffect(() => {
     if (!electron || !bridge || !createdRef.current) return;
-    void bridge.setVisible(browserId, nativeViewVisible && !localError).then(
+    const targetVisible = nativeViewVisible && !localError;
+    const last = lastRequestedVisibilityRef.current;
+    if (last && last.browserId === browserId && last.visible === targetVisible) return;
+    lastRequestedVisibilityRef.current = { browserId, visible: targetVisible };
+    void bridge.setVisible(browserId, targetVisible).then(
       (result) => {
         if (!result.ok) setLocalError(result.error);
       },

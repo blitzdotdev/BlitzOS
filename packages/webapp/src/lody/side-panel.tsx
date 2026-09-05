@@ -1,6 +1,6 @@
 /**
  * The right icon strip as a quick-action bar for Lody's side panel
- * (seam patch 19 in `vendor/lody/BLITZ-PATCHES.md`).
+ * (seam patch 23 in `vendor/lody/BLITZ-PATCHES.md`).
  *
  * ONE PANEL, TWO DRIVERS. Lody's `SessionDetail` owns its side panel — Files,
  * All Changes, Browser, Side Chat, and the viewers a click opens — and draws its
@@ -13,14 +13,14 @@
  * coming back out so the strip can draw a pressed icon.
  *
  * WHY THE TYPES ARE RE-STATED HERE. Every `@lody/components/*` specifier is
- * `any` at our seam (`vendor-modules.d.ts`), so the shapes seam patch 19
+ * `any` at our seam (`vendor-modules.d.ts`), so the shapes seam patch 23
  * declares in `session-detail.tsx` are stated again on our side, the same way
  * `surface-tabs.ts` re-states seam patch 5's.
  */
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { FileDiff, Files, MessageSquare, MonitorPlay, Plug } from "lucide-react";
 
-/** Mirrors `SessionHostSidePanelTab` (seam patch 19). The `host:` prefix is
+/** Mirrors `SessionHostSidePanelTab` (seam patch 23). The `host:` prefix is
  * what keeps a host id out of Lody's persisted side-panel state. */
 export interface SessionHostSidePanelTab {
   id: `host:${string}`;
@@ -29,7 +29,7 @@ export interface SessionHostSidePanelTab {
   content: ReactNode;
 }
 
-/** Mirrors `SessionSidePanelRequest` (seam patch 19). `seq` is what makes a
+/** Mirrors `SessionSidePanelRequest` (seam patch 23). `seq` is what makes a
  * repeat of the same request a new one. */
 export interface SessionSidePanelRequest {
   tabId: string;
@@ -37,7 +37,7 @@ export interface SessionSidePanelRequest {
   seq: number;
 }
 
-/** Mirrors `SessionSidePanelHostState` (seam patch 19). */
+/** Mirrors `SessionSidePanelHostState` (seam patch 23). */
 export interface SessionSidePanelHostState {
   open: boolean;
   activeTabId: string | null;
@@ -85,7 +85,7 @@ export const SIDE_PANEL_QUICK_ACTION_LABELS = {
  * `SidePanelTabIcon` draws for the same kinds (`session-side-panel-tab-bar.tsx`),
  * so the strip icon a member presses is the icon on the tab that opens. The
  * Connections glyph is ours, and reaches Lody's tab bar through the host tab's
- * `icon` (seam patch 19), so it too is the same on both sides.
+ * `icon` (seam patch 23), so it too is the same on both sides.
  */
 export function sidePanelQuickActionIcon(
   action: SidePanelQuickAction,

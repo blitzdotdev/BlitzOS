@@ -63,6 +63,7 @@ import {
 } from '@/components/shared';
 import { cn } from '@/lib/utils';
 import { getIpcServices, onIpcEvent, sendIpc } from '@/lib/electron-ipc-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import {
   bugReportDialogOpenAtom,
   chatLandingSessionStateAtomFamily,
@@ -71,7 +72,8 @@ import {
   mobileKeyboardActionAtom,
   runtimeInitializingAtom,
   setMobileDrawerOpenAtom,
-  sidebarCollapsedAtom,
+  navigationSidebarHiddenAtom,
+  showNavigationSidebarAtom,
   tasksFeatureEnabledAtom,
   userAtom,
   workspaceReposCacheAtomFamily,
@@ -80,6 +82,7 @@ import { docMetaCacheReadyAtom, sessionMetaCountAtom } from '@/atoms/doc-meta';
 import { localProbeAttemptedAtom, localProbeResultAtom } from '@/atoms/local-probe';
 import { lodyPresenceNowMsAtom, lodyPresenceStatesAtom } from '@/atoms/presence';
 import { buildAgentPrompt } from '@/lib';
+import { getAppCurrentPathWithSearch } from '@/lib/app-location';
 import { isImeComposingKeyboardEvent } from '@/lib/ime';
 import { useNavigate } from '@tanstack/react-router';
 import { activeWorkspaceRuntimeAtom, authTokenAtom, runtimeAtom } from '@/atoms/runtime';
@@ -100,7 +103,7 @@ import {
 import { useChatLandingDefaults } from '@/hooks/use-chat-landing-defaults';
 import {
   useAcpSessionConfigSelectionState,
-  useReconcileAcpSessionConfigSelection,
+  useResolvedAcpSessionConfigSelection,
 } from '@/hooks/use-acp-session-config-selection';
 import { useOnlineMachineIds } from '@/hooks/use-machine-online-status';
 import { useResolvedWorkspaceScope } from '@/hooks/use-resolved-workspace-scope';
@@ -602,6 +605,7 @@ function WorkspaceChatLanding({
   resetDraftKey,
   resetDraftOnKeyChange = true,
 }: ChatLandingProps) {
+  const ipcClient = useIpcClient();
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { openSettings } = useOpenSettings();
@@ -962,8 +966,8 @@ function WorkspaceChatLanding({
   } = useSessionActions();
   const openMobileDrawer = useSetAtom(setMobileDrawerOpenAtom);
   const setBugReportDialogOpen = useSetAtom(bugReportDialogOpenAtom);
-  const isLeftSidebarCollapsed = useAtomValue(sidebarCollapsedAtom);
-  const setLeftSidebarCollapsed = useSetAtom(sidebarCollapsedAtom);
+  const isLeftSidebarHidden = useAtomValue(navigationSidebarHiddenAtom);
+  const showNavigationSidebar = useSetAtom(showNavigationSidebarAtom);
   const visibleLocalMachineId = useMemo(() => {
     const machineId = localProbeResult?.machineId as MachineId | undefined;
     return machineId && machines.has(machineId) ? machineId : null;
@@ -1106,17 +1110,6 @@ function WorkspaceChatLanding({
      mobile create flow existed and was an actively confusing UX
      (settings ≠ where you go to create something new). */
   const [mobileCreateWorkspaceOpen, setMobileCreateWorkspaceOpen] = useState(false);
-  const {
-    state: sessionConfigSelectionState,
-    selectedModeId,
-    selectedModelId,
-    configOptionValues,
-    selectMode: setSelectedModeId,
-    selectModel: setSelectedModelName,
-    selectConfigOption: handleConfigOptionChange,
-    dispatch: dispatchSessionConfigSelection,
-  } = useAcpSessionConfigSelectionState();
-
   // ── GitHub context state ──
   const [selectedRepo, setSelectedRepo] = useState<string | undefined>(undefined);
   const selectedRepoWorktreeSetup = useMemo(() => {
@@ -1643,46 +1636,12 @@ function WorkspaceChatLanding({
     () => (selectedAgent ? machines.get(selectedAgent.machineId) : undefined),
     [machines, selectedAgent]
   );
-  const selectorOptions = useAcpSelectorOptions({
-    configId: selectedConfig?.id,
-    cliType: selectedConfig?.cliType,
-    agentType: selectedConfig?.agentType,
-    selectedModeId,
-    selectedModelId,
-    configOptionValues,
-    runtimeOverrides: selectedConfig?.runtimeOverrides,
-    machine: selectedMachine,
-  });
-  const { modeOptions, modelOptions, configOptionSelectors } = selectorOptions;
-  const dispatchConfigOptionValues = useMemo(
-    () => filterAcpSessionConfigOptionValues(configOptionValues, configOptionSelectors),
-    [configOptionSelectors, configOptionValues]
-  );
-  const selectedRateLimits =
-    selectedConfig &&
-    canShowSubscriptionRateLimits({
-      cliType: selectedConfig.cliType,
-      agentType: selectedConfig.agentType,
-      config: selectedConfig,
-    })
-      ? selectedMachine?.raceLimits
-      : undefined;
-  // The landing knows the picked provider's full config, so eligibility is
-  // decided here rather than from `cliType`/`agentType` further down.
-  const showCodexResetForecast =
-    !!selectedConfig &&
-    canShowCodexResetForecast({
-      cliType: selectedConfig.cliType,
-      agentType: selectedConfig.agentType,
-      config: selectedConfig,
-    });
-  const selectedModelLabel = modelOptions.find((option) => option.value === selectedModelId)?.label;
   /* ── Agent Role selection ──
      A Role is one packaged run configuration, so picking one flows through the
      SAME preference channel as this agent's remembered defaults rather than a
-     second apply path: the reconcile pass seeds mode/model/options from the
-     Role before paint, and an option the agent no longer supports falls back to
-     the agent's own value there — visibly — instead of being forced in.
+     second apply path: the derivation seeds mode/model/options from the Role,
+     and an option the agent no longer supports falls back to the agent's own
+     value there — visibly — instead of being forced in.
 
      `token` makes re-picking the same Role after hand-editing a knob a new
      preference, and the preference deliberately OUTLIVES `activeAgentRole`
@@ -1732,15 +1691,62 @@ function WorkspaceChatLanding({
     }
     return selectedAgent ? (agentDefaultsCache.get(selectedAgent.agentId) ?? {}) : {};
   }, [activeAgentRolePreference, selectedAgent]);
-  useReconcileAcpSessionConfigSelection({
+  /* No effects: user edits are the only stored selection state; the effective
+     values derive per render. Candidates feed the capability lookup so the
+     catalog can depend on the selection without feeding back into it. */
+  const {
+    selection: sessionConfigSelection,
+    candidates: sessionConfigCandidates,
+    appliedTargetKey: appliedSessionConfigTargetKey,
+    selectMode: setSelectedModeId,
+    selectModel: setSelectedModelName,
+    selectConfigOption: handleConfigOptionChange,
+  } = useAcpSessionConfigSelectionState({
     targetKey: selectedAgent ? `${selectedAgent.machineId}:${selectedAgent.agentId}` : null,
     preferenceRevision: activeAgentRolePreference
       ? `role:${activeAgentRolePreference.role.id}:${activeAgentRolePreference.role.revision}:${activeAgentRolePreference.token}`
       : (selectedAgent?.agentId ?? 'none'),
     preferences: selectedAgentDefaults,
-    selectorOptions,
-    dispatch: dispatchSessionConfigSelection,
   });
+  const selectorOptions = useAcpSelectorOptions({
+    configId: selectedConfig?.id,
+    cliType: selectedConfig?.cliType,
+    agentType: selectedConfig?.agentType,
+    selectedModeId: sessionConfigCandidates.modeId,
+    selectedModelId: sessionConfigCandidates.modelId,
+    configOptionValues: sessionConfigCandidates.configOptionValues,
+    runtimeOverrides: selectedConfig?.runtimeOverrides,
+    machine: selectedMachine,
+  });
+  const { modeOptions, modelOptions, configOptionSelectors } = selectorOptions;
+  const { selectedModeId, selectedModelId, configOptionValues } =
+    useResolvedAcpSessionConfigSelection(sessionConfigSelection, selectorOptions, {
+      cliType: selectedConfig?.cliType,
+      agentType: selectedConfig?.agentType,
+    });
+  const dispatchConfigOptionValues = useMemo(
+    () => filterAcpSessionConfigOptionValues(configOptionValues, configOptionSelectors),
+    [configOptionSelectors, configOptionValues]
+  );
+  const selectedRateLimits =
+    selectedConfig &&
+    canShowSubscriptionRateLimits({
+      cliType: selectedConfig.cliType,
+      agentType: selectedConfig.agentType,
+      config: selectedConfig,
+    })
+      ? selectedMachine?.raceLimits
+      : undefined;
+  // The landing knows the picked provider's full config, so eligibility is
+  // decided here rather than from `cliType`/`agentType` further down.
+  const showCodexResetForecast =
+    !!selectedConfig &&
+    canShowCodexResetForecast({
+      cliType: selectedConfig.cliType,
+      agentType: selectedConfig.agentType,
+      config: selectedConfig,
+    });
+  const selectedModelLabel = modelOptions.find((option) => option.value === selectedModelId)?.label;
   /* The Role the composer IS, not the one last clicked. The footer names a Role
      only while every value that Role pins is still what will run, so moving a
      knob — or an unsupported pin falling back — takes the name away instead of
@@ -1809,17 +1815,14 @@ function WorkspaceChatLanding({
       setPendingRecentRunConfig(null);
       return;
     }
-    if (
-      sessionConfigSelectionState.targetKey !==
-      `${selectedAgent.machineId}:${selectedAgent.agentId}`
-    ) {
+    if (appliedSessionConfigTargetKey !== `${selectedAgent.machineId}:${selectedAgent.agentId}`) {
       return;
     }
     // A cold agent reports no models until its capabilities resolve; applying
     // then would silently drop the recorded model. Wait — unless the user has
     // meanwhile picked a model themselves, which outranks the entry.
     if (pendingRecentRunConfig.modelId && modelOptions.length === 0) {
-      if (sessionConfigSelectionState.model.origin === 'user') {
+      if (sessionConfigSelection.edits.model !== undefined) {
         setPendingRecentRunConfig(null);
       }
       return;
@@ -1838,13 +1841,13 @@ function WorkspaceChatLanding({
       handleConfigOptionChange(configId, value);
     }
   }, [
+    appliedSessionConfigTargetKey,
     configOptionSelectors,
     handleConfigOptionChange,
     modelOptions,
     pendingRecentRunConfig,
     selectedAgent,
-    sessionConfigSelectionState.model.origin,
-    sessionConfigSelectionState.targetKey,
+    sessionConfigSelection.edits.model,
     setSelectedModelName,
   ]);
   const availableCommands = useAvailableCommands({
@@ -2525,8 +2528,8 @@ function WorkspaceChatLanding({
         let fastPathError: string | null = null;
         const canUseElectronFastPath = isElectron && visibleLocalMachineId === project.machineId;
 
-        if (canUseElectronFastPath && window.__LODY_ELECTRON__ && getIpcServices()) {
-          const result = await getIpcServices()!.localProjects.getGitState(
+        if (canUseElectronFastPath && window.__LODY_ELECTRON__ && getIpcServices(ipcClient)) {
+          const result = await getIpcServices(ipcClient)!.localProjects.getGitState(
             targetWorkspaceId,
             project.localProjectId
           );
@@ -2568,7 +2571,7 @@ function WorkspaceChatLanding({
         return response.state;
       });
     },
-    [isElectron, runtime, t, userId, visibleLocalMachineId]
+    [ipcClient, isElectron, runtime, t, userId, visibleLocalMachineId]
   );
 
   // Collapse the machine map down to a single boolean: is the selected
@@ -2717,7 +2720,7 @@ function WorkspaceChatLanding({
     /** Subscribe to CLI state changes and retry once CLI reaches 'running' phase. */
     const waitForCliReady = () => {
       if (cancelled || unsubscribeCliState) return;
-      const services = getIpcServices();
+      const services = getIpcServices(ipcClient);
       if (!services) {
         setLoadingLocalGitState(false);
         return;
@@ -2733,15 +2736,19 @@ function WorkspaceChatLanding({
 
       const subscribeUntilRunning = () => {
         if (cancelled || unsubscribeCliState) return;
-        sendIpc('cli.subscribe', null);
-        unsubscribeCliState = onIpcEvent('cli.state', (s) => {
-          if (cancelled) return;
-          if (s.phase === 'running') {
-            unsubscribeCliState?.();
-            unsubscribeCliState = null;
-            scheduleRetry();
-          }
-        });
+        sendIpc('cli.subscribe', null, ipcClient);
+        unsubscribeCliState = onIpcEvent(
+          'cli.state',
+          (s) => {
+            if (cancelled) return;
+            if (s.phase === 'running') {
+              unsubscribeCliState?.();
+              unsubscribeCliState = null;
+              scheduleRetry();
+            }
+          },
+          ipcClient
+        );
       };
 
       void services.cli
@@ -2764,7 +2771,7 @@ function WorkspaceChatLanding({
       cancelled = true;
       unsubscribeCliState?.();
     };
-  }, [contextType, localGitStateLoadKey]);
+  }, [contextType, ipcClient, localGitStateLoadKey]);
 
   // ── GitHub repo resolution for local projects ──
   const resolveSelectedLocalProjectGitHubRepo = useCallback(
@@ -3098,6 +3105,8 @@ function WorkspaceChatLanding({
         issuePRMentions,
         mcpServerIds: mcpSelection.selectedIds,
         taskToolsEnabled: tasksFeatureEnabled,
+        agentRoleId: activeAgentRole?.id ?? null,
+        agentRoleRevision: activeAgentRole?.revision,
       });
       const pendingHistoryEntry = buildPendingUserHistoryEntry({
         userId,
@@ -5586,7 +5595,7 @@ function WorkspaceChatLanding({
   const mobileProjectUsesLocalIpc =
     mobileProjectContext?.kind === 'local' &&
     typeof window !== 'undefined' &&
-    Boolean(getIpcServices()) &&
+    Boolean(getIpcServices(ipcClient)) &&
     visibleLocalMachineId === mobileProjectContext.machineId;
 
   /* A stable identity key for the file provider. The raw memo inputs
@@ -5642,6 +5651,7 @@ function WorkspaceChatLanding({
           ? createLocalProjectIpcFileTransport({
               workspaceId,
               localProjectId: mobileProjectContext.projectId as LocalProjectId,
+              ipcClient,
             })
           : workspaceRuntime && userId
             ? createLocalProjectRpcFileTransport({
@@ -5662,6 +5672,7 @@ function WorkspaceChatLanding({
     mobileProjectFileProviderKey,
     mobileProjectContext,
     mobileProjectUsesLocalIpc,
+    ipcClient,
     userId,
     workspaceId,
     workspaceRuntime,
@@ -6376,7 +6387,7 @@ function WorkspaceChatLanding({
             localTab: t('chat.contextSwitch.localProjects', 'Local'),
             githubTab: t('chat.contextSwitch.github', 'GitHub'),
             addProjectMenu: t('chat.contextSwitch.addProjectMenu', 'Add project'),
-            addLocalProject: t('chat.contextSwitch.addProject', 'Add a local project'),
+            addLocalProject: t('chat.contextSwitch.addProject', 'Add a folder'),
             addLocalProjectHint: t(
               'chat.contextSwitch.addLocalProjectHint',
               'Browse the machine and pick a folder'
@@ -6487,6 +6498,7 @@ function WorkspaceChatLanding({
                   void navigate({
                     to: '/$workspaceName/settings',
                     params: { workspaceName: workspaceSlug },
+                    search: { from: getAppCurrentPathWithSearch() },
                   });
                 }
           }
@@ -6630,12 +6642,12 @@ function WorkspaceChatLanding({
         onGoToAgentSettings={handleGoToAgentSettings}
         onOpenMobileDrawer={() => openMobileDrawer(true)}
         leftSidebarExpandSlot={
-          !isMobile && isLeftSidebarCollapsed ? (
+          !isMobile && isLeftSidebarHidden ? (
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => setLeftSidebarCollapsed(false)}
+              onClick={() => showNavigationSidebar()}
               aria-label={t('chat.leftSidebar.show', 'Show navigation sidebar')}
               className="h-7 w-7 shrink-0 text-muted-foreground"
             >

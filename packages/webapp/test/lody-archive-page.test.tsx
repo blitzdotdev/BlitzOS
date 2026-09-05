@@ -26,6 +26,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createCapabilitySet } from "@lody/platform";
 import { PlatformContext } from "@lody/platform/react";
+import { setWorkspaceContextAtom } from "@lody/components/atoms/workspace-context";
 import { initLodyI18n } from "../src/lody/i18n";
 import { installLodyDomStubs } from "./lody-dom-stubs";
 import { render, settle } from "./dom";
@@ -167,7 +168,8 @@ function platformWith(capabilities: readonly string[]) {
 async function mountArchive(options: { capabilities?: readonly string[] } = {}) {
   const store = createStore();
   store.set(userAtom, { id: USER_ID, email: "local@lody.local", name: "You", image: null });
-  const router = createLodySessionRouter(WORKSPACE_SLUG, { workspaceId: WORKSPACE_ID });
+  store.set(setWorkspaceContextAtom, { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID });
+  const router = createLodySessionRouter(WORKSPACE_SLUG);
   await act(async () => {
     await router.navigate({
       to: "/$workspaceName/archive",

@@ -1,0 +1,55 @@
+# ACP adapter for the Claude Agent SDK
+
+[![npm](https://img.shields.io/npm/v/acp-extension-claude)](https://www.npmjs.com/package/acp-extension-claude)
+
+Use [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview#branding-guidelines) from [ACP-compatible](https://agentclientprotocol.com) clients!
+
+This tool implements an ACP agent by using the official [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview), supporting:
+
+- Context @-mentions
+- Images
+- Tool calls (with permission requests)
+- Following
+- Edit review
+- TODO lists
+- Nested subagent transcripts
+- Interactive (and background) terminals
+- Custom [Slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands)
+- Client MCP servers
+- Session-scoped long-running goals through the provider-neutral [goal extension](docs/goal-extension.md)
+- Structured errors, recovery, and warnings through the opt-in [session failure extension](docs/session-failure-extension.md)
+
+Learn more about the [Agent Client Protocol](https://agentclientprotocol.com/).
+
+## Lody extensions
+
+The adapter advertises versioned capabilities under
+`agentCapabilities._meta.lody` using the contracts from `acp-extension-core`.
+These cover usage and rate-limit reporting, an independent rate-limit query,
+acknowledged steering, goals, subagent/background-task lifecycle, and compaction.
+ACP-standard elicitation, plans, session forking, and context-window usage remain
+on their standard protocol paths.
+
+For acknowledged steering, a client attaches a unique `_meta.lody.steer.id` to
+`session/prompt`. The adapter maps only those prompts to
+`SDKUserMessage.priority = "now"`; ordinary prompts keep the SDK's default
+`next` behavior. Once the SDK applies the steer, the adapter sends
+`_lody/session/steer_applied { sessionId, steerId }` before forwarding output
+owned by the new prompt.
+
+### Nested subagent transcripts
+
+ACP 1.2 has no standard subagent tool kind or nested-message relationship. Clients that can render
+nested transcripts can opt in with `clientCapabilities._meta["subagent-transcript"] = true`.
+The agent then forwards subagent text, thinking, and tool calls, relating nested updates to the
+launching Agent/Task call through `_meta.claudeCode.parentToolUseId`. Agent/Task calls are marked
+with `_meta.claudeCode.subagent = true`.
+
+Clients that do not advertise the capability retain the legacy flattened behavior. In both modes,
+the normal Agent/Task tool result is preserved as the protocol-compatible fallback.
+
+## Contribution Policy
+
+This project does not require a Contributor License Agreement (CLA). Instead, contributions are accepted under the following terms:
+
+> By contributing to this project, you agree that your contributions will be licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0). You affirm that you have the legal right to submit your work, that you are not including code you do not have rights to, and that you understand contributions are made without requiring a Contributor License Agreement (CLA).

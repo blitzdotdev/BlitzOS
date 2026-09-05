@@ -24,6 +24,7 @@ import {
 import { useAtomValue, useSetAtom } from 'jotai';
 import { cn } from '@/lib/utils';
 import { getIpcServices } from '@/lib/electron-ipc-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import { writeTextToClipboard } from '@/lib/clipboard';
 import { useActiveVSCodeTheme, useResolvedTheme } from '../../theme-provider';
 import {
@@ -242,6 +243,7 @@ function SessionFileContentViewImpl({
   onAddVisualAnnotationToChat,
   onToggleVisualAnnotationInChat,
 }: SessionFileContentViewProps) {
+  const ipcClient = useIpcClient();
   const { t } = useTranslation();
   const tRef = useLatestRef(t);
   const onSaveStateChangeRef = useLatestRef(onSaveStateChange);
@@ -445,12 +447,13 @@ function SessionFileContentViewImpl({
             localFileSourceKind === 'local-project' && localProjectWorkspaceId && localProjectId
               ? (() => {
                   const canUseIpc =
-                    Boolean(getIpcServices()) &&
+                    Boolean(getIpcServices(ipcClient)) &&
                     (!localProjectMachineId || localProjectMachineId === localMachineId);
                   if (canUseIpc) {
                     return createLocalProjectIpcFileTransport({
                       workspaceId: localProjectWorkspaceId,
                       localProjectId,
+                      ipcClient,
                     }).readFile({ relativePath: normalizedPath });
                   }
                   if (!workspaceRuntime || !currentUserId || !localProjectMachineId) {
@@ -471,9 +474,8 @@ function SessionFileContentViewImpl({
                   }).readFile({ relativePath: normalizedPath });
                 })()
               : (() => {
-                  const reader = getIpcServices()?.localProjects.readSessionWorktreeFile.bind(
-                    getIpcServices()!.localProjects
-                  );
+                  const localProjects = getIpcServices(ipcClient)?.localProjects;
+                  const reader = localProjects?.readSessionWorktreeFile.bind(localProjects);
                   if (!reader) {
                     throw new Error(
                       tRef.current(
@@ -586,6 +588,7 @@ function SessionFileContentViewImpl({
     };
   }, [
     fileContentSource,
+    ipcClient,
     fileProviderMessage,
     currentUserId,
     localFileSourceKind,

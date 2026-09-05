@@ -15,7 +15,9 @@ import {
   isAcpCapabilityCacheEntryCurrent,
   parseCustomAcpCommandLine,
   serializeCustomAcpLaunchSpec,
+  machineSupportsAcpProtocolAuthentication,
   supportsBuiltinAuthentication,
+  usesAcpProtocolAuthentication,
   usesAcpProvidedSessionTitle,
   REGISTRY_ACP_AGENTS,
   type AgentBrandId,
@@ -68,6 +70,7 @@ import { Input } from '@/ui/input';
 import { Label } from '@/ui/label';
 import { Textarea } from '@/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/tabs';
 import { EnvVarsTextarea, envVarsToText } from './env-vars-textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 import { AcpAuthenticationPanel } from './acp-authentication-panel';
@@ -81,6 +84,9 @@ type Translate = ReturnType<typeof useTranslation>['t'];
 export const DEEPSEEK_CLAUDE_PRESET_ID = 'deepseek-over-claude-code';
 export const DEEPSEEK_REASONIX_PRESET_ID = 'deepseek-reasonix';
 const DEEPSEEK_API_KEY_ENV = 'DEEPSEEK_API_KEY';
+const DEEPSEEK_BASE_URL_ENV = 'DEEPSEEK_BASE_URL';
+const DEEPSEEK_OFFICIAL_BASE_URL = 'https://api.deepseek.com';
+type DeepSeekEndpointMode = 'official' | 'custom';
 export const MIMO_CLAUDE_PRESET_ID = 'mimo-over-claude-code';
 export const MINIMAX_CLAUDE_PRESET_ID = 'minimax-over-claude-code';
 export const GLM_CLAUDE_PRESET_ID = 'glm-over-claude-code';
@@ -560,6 +566,10 @@ export type AgentConfigFormData = {
   presetCredentialModeId?: string;
   presetBaseUrlOptionId?: string;
   presetBaseUrl?: string;
+  /** Dialog-only DeepSeek Harness endpoint tab; never persisted on AgentConfigMeta. */
+  deepseekEndpointMode?: DeepSeekEndpointMode;
+  /** Draft custom DEEPSEEK_BASE_URL while the official tab is selected. */
+  deepseekCustomBaseUrl?: string;
 };
 
 export type AgentConfigSubmitPayload = {
@@ -587,11 +597,6 @@ export type AgentConfigDialogMode =
 type RefreshArgs = {
   machineId: MachineId;
   configId: AgentConfigId;
-  cliType: AgentConfigCliType;
-  agentType: string;
-  customAcp?: CustomAcpLaunchSpec;
-  runtimeOverrides?: BuiltinRuntimeOverrides;
-  env?: Record<string, string>;
 };
 
 /** Whether a registry agent's platform binary is present on the target machine. */
@@ -706,6 +711,90 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
+function isDeepSeekBuiltinForm(form: Pick<AgentConfigFormData, 'cliType' | 'agentType'>): boolean {
+  return form.cliType === 'builtin' && form.agentType === 'deepseek';
+}
+
+function getDeepSeekEndpointMode(form: AgentConfigFormData): DeepSeekEndpointMode {
+  return form.deepseekEndpointMode === 'custom' ? 'custom' : 'official';
+}
+
+/**
+ * Official DeepSeek API, including trailing slashes and a bare `/v1` path.
+ * Other hosts, ports, query strings, or extra path segments are custom.
+ */
+function isDeepSeekOfficialBaseUrl(value: string | undefined): boolean {
+  const trimmed = value?.trim() ?? '';
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== 'https:') return false;
+    if (url.username || url.password) return false;
+    if (url.hostname.toLowerCase() !== 'api.deepseek.com') return false;
+    if (url.port !== '' && url.port !== '443') return false;
+    if (url.search !== '' || url.hash !== '') return false;
+    const path = url.pathname.replace(/\/+$/, '').toLowerCase();
+    return path === '' || path === '/v1';
+  } catch {
+    return false;
+  }
+}
+
+function resolveDeepSeekEndpointForm(
+  env: Record<string, string>,
+  explicit?: Pick<AgentConfigFormData, 'deepseekEndpointMode' | 'deepseekCustomBaseUrl'>
+): Pick<AgentConfigFormData, 'deepseekEndpointMode' | 'deepseekCustomBaseUrl'> {
+  if (
+    explicit?.deepseekEndpointMode === 'official' ||
+    explicit?.deepseekEndpointMode === 'custom'
+  ) {
+    return {
+      deepseekEndpointMode: explicit.deepseekEndpointMode,
+      deepseekCustomBaseUrl: explicit.deepseekCustomBaseUrl ?? '',
+    };
+  }
+  const stored = env[DEEPSEEK_BASE_URL_ENV];
+  if (!stored?.trim() || isDeepSeekOfficialBaseUrl(stored)) {
+    return { deepseekEndpointMode: 'official', deepseekCustomBaseUrl: '' };
+  }
+  return { deepseekEndpointMode: 'custom', deepseekCustomBaseUrl: stored };
+}
+
+function omitDeepSeekProtectedEnv(env: Record<string, string>): Record<string, string> {
+  const additionalEnv = { ...env };
+  delete additionalEnv[DEEPSEEK_API_KEY_ENV];
+  delete additionalEnv[DEEPSEEK_BASE_URL_ENV];
+  return additionalEnv;
+}
+
+function hydrateDeepSeekEndpointForm(form: AgentConfigFormData): AgentConfigFormData {
+  if (!isDeepSeekBuiltinForm(form)) return form;
+  const env = { ...form.env };
+  const resolved = resolveDeepSeekEndpointForm(env, form);
+  delete env[DEEPSEEK_BASE_URL_ENV];
+  return {
+    ...form,
+    env,
+    deepseekEndpointMode: resolved.deepseekEndpointMode,
+    deepseekCustomBaseUrl: resolved.deepseekCustomBaseUrl,
+  };
+}
+
+function buildDeepSeekSubmitEnv(formData: AgentConfigFormData): Record<string, string> {
+  const env = omitDeepSeekProtectedEnv(formData.env);
+  const apiKey = formData.env[DEEPSEEK_API_KEY_ENV]?.trim();
+  if (apiKey) {
+    env[DEEPSEEK_API_KEY_ENV] = apiKey;
+  } else {
+    delete env[DEEPSEEK_API_KEY_ENV];
+  }
+  env[DEEPSEEK_BASE_URL_ENV] =
+    getDeepSeekEndpointMode(formData) === 'custom'
+      ? (formData.deepseekCustomBaseUrl ?? '').trim()
+      : DEEPSEEK_OFFICIAL_BASE_URL;
+  return env;
+}
+
 function getPresetTokenEnvKey(
   preset: PresetDefinition,
   mode: PresetCredentialMode | undefined
@@ -775,12 +864,6 @@ function buildPresetInjectedEnvPreview(
   return env;
 }
 
-function omitDeepSeekApiKey(env: Record<string, string>): Record<string, string> {
-  const additionalEnv = { ...env };
-  delete additionalEnv[DEEPSEEK_API_KEY_ENV];
-  return additionalEnv;
-}
-
 // For an existing custom config, returns the command "key" to pre-seed as
 // already-tested IFF the machine still has current cached capabilities whose
 // source version matches the saved command (same derivation the CLI uses in
@@ -826,7 +909,7 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
 
   const initialForm = useMemo<AgentConfigFormData>(() => {
     if (mode.kind === 'edit') {
-      return {
+      return hydrateDeepSeekEndpointForm({
         name: mode.config.name,
         cliType: mode.config.cliType,
         agentType: mode.config.agentType,
@@ -837,9 +920,9 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
         prompt: mode.config.prompt ?? '',
         env: mode.config.env || {},
         titleGeneration: mode.config.titleGeneration,
-      };
+      });
     }
-    return { ...DEFAULT_FORM, ...mode.initialForm };
+    return hydrateDeepSeekEndpointForm({ ...DEFAULT_FORM, ...mode.initialForm });
   }, [mode]);
 
   const [formData, setFormData] = useState<AgentConfigFormData>(initialForm);
@@ -898,19 +981,13 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
   );
   const isNarrowLayout = useNarrowDialogLayout();
   const titleDefaultsAppliedRef = useRef(false);
-  const latestProbeEnvRef = useRef(formData.env);
   const formScrollRef = useRef<HTMLDivElement>(null);
   const machineRef = useRef(machine);
   machineRef.current = machine;
   useKeyboardAwareScrollIntoView(formScrollRef);
 
   useEffect(() => {
-    latestProbeEnvRef.current = formData.env;
-  }, [formData.env]);
-
-  useEffect(() => {
     if (open) {
-      latestProbeEnvRef.current = initialForm.env;
       setFormData(initialForm);
       setManuallyTested(false);
       setAuthRequired(false);
@@ -946,7 +1023,8 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
     activePreset?.brandId ?? (mode.kind === 'edit' ? mode.config.brandId : undefined);
 
   const isCustom = formData.cliType === 'custom';
-  const isDeepSeekBuiltin = formData.cliType === 'builtin' && formData.agentType === 'deepseek';
+  const isDeepSeekBuiltin = isDeepSeekBuiltinForm(formData);
+  const deepseekEndpointMode = getDeepSeekEndpointMode(formData);
   const isManagedBuiltin =
     formData.cliType === 'builtin' && isManagedBuiltinAgentType(formData.agentType);
   const builtinVerificationContext = `${machine.id}:${builtinVerificationRevision}`;
@@ -965,6 +1043,15 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
   // so a sign-in would do nothing for them. Creating one only surfaces the
   // panel when a live probe reported missing credentials, because that panel is
   // the single way to unblock the creation-time verification gate.
+  // Registry and custom providers authenticate through the standard ACP
+  // exchange, but only the agent knows whether it has anything to sign into —
+  // so their panel appears once a live probe reported that auth is required.
+  // The exchange runs entirely on the daemon, so a machine that predates it
+  // answers "Authentication is not supported"; do not offer a button that can
+  // only fail.
+  const usesProtocolAuthentication =
+    usesAcpProtocolAuthentication(formData.cliType) &&
+    machineSupportsAcpProtocolAuthentication(machine);
   const showAuthenticationPanel =
     mode.kind === 'edit'
       ? supportsBuiltinAuthentication({
@@ -972,8 +1059,9 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
           agentType: formData.agentType,
           brandId: resolvedBrandId,
           env: formData.env,
-        })
-      : authRequired && isManagedBuiltin;
+        }) ||
+        (authRequired && usesProtocolAuthentication)
+      : authRequired && (isManagedBuiltin || usesProtocolAuthentication);
   const builtinRuntimeOverrideKey =
     formData.cliType !== 'builtin'
       ? null
@@ -1041,6 +1129,53 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
     machineSupportsProviderSetupProtocol(machine) &&
     requiresBuiltinCreationVerification &&
     usesDefaultManagedRuntime;
+  const lastPersistedPayloadKeyRef = useRef<string | null>(null);
+  const buildSubmitPayload = useCallback((): AgentConfigSubmitPayload => {
+    let env = { ...formData.env };
+    if (activePreset) {
+      env = buildPresetEnv(activePreset, activeCredentialMode, formData);
+    } else if (isDeepSeekBuiltinForm(formData)) {
+      env = buildDeepSeekSubmitEnv(formData);
+    }
+    const agentType = formData.agentType as AgentType;
+    const titleGeneration = acpProvidesSessionTitle
+      ? undefined
+      : isPreset
+        ? buildPresetTitleGeneration(formData.cliType, agentType, formData.titleGeneration)
+        : formData.titleGeneration;
+    return {
+      id: agentConfigId,
+      name: formData.name.trim(),
+      cliType: formData.cliType,
+      agentType,
+      customAcp: isCustom ? (parsedCustomAcp ?? undefined) : undefined,
+      runtimeOverrides: formData.runtimeOverrides,
+      prompt: formData.prompt,
+      env,
+      titleGeneration,
+      description: undefined,
+      brandId: resolvedBrandId,
+      ...(backgroundManagedBuiltinSetup ? { backgroundSetup: true } : {}),
+    };
+  }, [
+    activeCredentialMode,
+    activePreset,
+    acpProvidesSessionTitle,
+    agentConfigId,
+    backgroundManagedBuiltinSetup,
+    formData,
+    isCustom,
+    isPreset,
+    parsedCustomAcp,
+    resolvedBrandId,
+  ]);
+  const persistConfigBeforeMachineLaunch = useCallback(async (): Promise<void> => {
+    const payload = buildSubmitPayload();
+    const payloadKey = JSON.stringify(payload);
+    if (lastPersistedPayloadKeyRef.current === payloadKey) return;
+    await onSubmit(payload);
+    lastPersistedPayloadKeyRef.current = payloadKey;
+  }, [buildSubmitPayload, onSubmit]);
 
   useEffect(() => {
     if (
@@ -1209,13 +1344,11 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
     setProbeError(null);
     void (async () => {
       try {
+        await persistConfigBeforeMachineLaunch();
+        if (cancelled) return;
         const response = await onRefreshCapabilities({
           machineId: machine.id,
           configId: agentConfigId,
-          cliType: formData.cliType,
-          agentType: formData.agentType,
-          env: latestProbeEnvRef.current,
-          runtimeOverrides: formData.runtimeOverrides,
         });
         if (cancelled) return;
         if (response.authRequired) {
@@ -1266,6 +1399,7 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
     binaryReady,
     requiresBuiltinCreationVerification,
     builtinVerificationContext,
+    persistConfigBeforeMachineLaunch,
     t,
   ]);
 
@@ -1277,15 +1411,22 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
     setProbing(true);
     setProbeError(null);
     try {
-      await onRefreshCapabilities({
+      await persistConfigBeforeMachineLaunch();
+      const response = await onRefreshCapabilities({
         machineId: machine.id,
         configId: agentConfigId,
-        cliType: formData.cliType,
-        agentType: formData.agentType,
-        customAcp: parsedCustomAcp,
-        env: latestProbeEnvRef.current,
-        runtimeOverrides: formData.runtimeOverrides,
       });
+      if (response.authRequired) {
+        setAuthRequired(true);
+        setManuallyTested(false);
+        return;
+      }
+      if (!response.success) {
+        throw new Error(
+          response.error ?? t('settings.agent.dialog.probeFailed', 'Provider verification failed.')
+        );
+      }
+      setAuthRequired(false);
       setTestedCustomKey(probedKey);
     } catch (error) {
       setProbeError(error instanceof Error ? error.message : String(error));
@@ -1364,11 +1505,10 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
     });
   }, [isPreset, titleSelectors, formData.titleGeneration?.configOptionValues]);
 
-  const additionalEnv = isDeepSeekBuiltin ? omitDeepSeekApiKey(formData.env) : formData.env;
+  const additionalEnv = isDeepSeekBuiltin ? omitDeepSeekProtectedEnv(formData.env) : formData.env;
   const envCount = Object.keys(additionalEnv).length;
 
   const updateEnvironment = (env: Record<string, string>) => {
-    latestProbeEnvRef.current = env;
     setManuallyTested(false);
     setAuthRequired(false);
     setProbeError(null);
@@ -1380,14 +1520,20 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
   };
 
   const updateDeepSeekApiKey = (value: string) => {
-    const env = { ...formData.env };
+    const env = omitDeepSeekProtectedEnv(formData.env);
     const apiKey = value.trim();
     if (apiKey) {
       env[DEEPSEEK_API_KEY_ENV] = apiKey;
-    } else {
-      delete env[DEEPSEEK_API_KEY_ENV];
     }
     updateEnvironment(env);
+  };
+
+  const updateDeepSeekEndpointMode = (endpointMode: DeepSeekEndpointMode) => {
+    setFormData((prev) => ({ ...prev, deepseekEndpointMode: endpointMode }));
+  };
+
+  const updateDeepSeekCustomBaseUrl = (value: string) => {
+    setFormData((prev) => ({ ...prev, deepseekCustomBaseUrl: value }));
   };
 
   const selectOption = (opt: AgentTypeOption) => {
@@ -1548,6 +1694,18 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
     if (isDeepSeekBuiltin && !formData.env[DEEPSEEK_API_KEY_ENV]?.trim()) {
       return t('agents.disableReason.missingDeepseekApiKey', 'Please enter your DeepSeek API Key');
     }
+    if (isDeepSeekBuiltin && deepseekEndpointMode === 'custom') {
+      const endpoint = (formData.deepseekCustomBaseUrl ?? '').trim();
+      if (!endpoint) {
+        return t('agents.disableReason.missingDeepseekEndpoint', 'Please enter an API Endpoint');
+      }
+      if (!isValidHttpUrl(endpoint)) {
+        return t(
+          'agents.disableReason.invalidDeepseekEndpoint',
+          'Please enter a valid HTTP or HTTPS endpoint'
+        );
+      }
+    }
     if (activePreset && !(formData.presetToken ?? '').trim()) {
       return t('agents.disableReason.missingPresetToken', 'Please paste your {{preset}} token', {
         preset: t(activePreset.labelKey, activePreset.label),
@@ -1580,50 +1738,14 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
   const persistConfig = useCallback(async () => {
     try {
       setSubmitting(true);
-      let env = { ...formData.env };
-      if (activePreset) {
-        env = buildPresetEnv(activePreset, activeCredentialMode, formData);
-      }
-      const agentType = formData.agentType as AgentType;
-      const titleGeneration = acpProvidesSessionTitle
-        ? undefined
-        : isPreset
-          ? buildPresetTitleGeneration(formData.cliType, agentType, formData.titleGeneration)
-          : formData.titleGeneration;
-      await onSubmit({
-        id: agentConfigId,
-        name: formData.name.trim(),
-        cliType: formData.cliType,
-        agentType,
-        customAcp: isCustom ? (parsedCustomAcp ?? undefined) : undefined,
-        runtimeOverrides: formData.runtimeOverrides,
-        prompt: formData.prompt,
-        env,
-        titleGeneration,
-        description: undefined,
-        brandId: resolvedBrandId,
-        ...(backgroundManagedBuiltinSetup ? { backgroundSetup: true } : {}),
-      });
+      await persistConfigBeforeMachineLaunch();
       onOpenChange(false);
     } catch (error) {
       console.error('Failed to save agent config:', error);
     } finally {
       setSubmitting(false);
     }
-  }, [
-    activeCredentialMode,
-    activePreset,
-    acpProvidesSessionTitle,
-    agentConfigId,
-    backgroundManagedBuiltinSetup,
-    formData,
-    isCustom,
-    isPreset,
-    onOpenChange,
-    onSubmit,
-    parsedCustomAcp,
-    resolvedBrandId,
-  ]);
+  }, [onOpenChange, persistConfigBeforeMachineLaunch]);
 
   const submit = async () => {
     if (disableReason || submitting) return;
@@ -1925,31 +2047,14 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
           ) : null}
 
           {isDeepSeekBuiltin ? (
-            <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-4">
-              <Field
-                htmlFor="deepseek-api-key"
-                label={t('settings.agent.dialog.deepseek.apiKeyLabel', 'DeepSeek API Key')}
-                hint={t(
-                  'settings.agent.dialog.deepseek.apiKeyHelp',
-                  'Saved with this provider and injected as DEEPSEEK_API_KEY when DSH starts.'
-                )}
-                icon={<KeyRound className="h-3.5 w-3.5" aria-hidden="true" />}
-              >
-                <Input
-                  id="deepseek-api-key"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={formData.env[DEEPSEEK_API_KEY_ENV] ?? ''}
-                  onChange={(event) => updateDeepSeekApiKey(event.target.value)}
-                  placeholder={t(
-                    'settings.agent.dialog.deepseek.apiKeyPlaceholder',
-                    'sk-XXXXXXXXXXXX'
-                  )}
-                  className="h-9 font-mono"
-                />
-              </Field>
-            </div>
+            <DeepSeekHarnessPanel
+              endpointMode={deepseekEndpointMode}
+              onEndpointModeChange={updateDeepSeekEndpointMode}
+              apiKey={formData.env[DEEPSEEK_API_KEY_ENV] ?? ''}
+              onApiKeyChange={updateDeepSeekApiKey}
+              customBaseUrl={formData.deepseekCustomBaseUrl ?? ''}
+              onCustomBaseUrlChange={updateDeepSeekCustomBaseUrl}
+            />
           ) : null}
 
           {isCustom && (
@@ -2112,14 +2217,20 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
                   configId={agentConfigId}
                   cliType={formData.cliType}
                   agentType={formData.agentType}
+                  providerName={formData.name}
+                  customAcp={parsedCustomAcp ?? undefined}
                   runtimeOverrides={formData.runtimeOverrides}
                   env={formData.env}
                   compact
                   reauthentication={!authRequired}
+                  onBeforeStart={persistConfigBeforeMachineLaunch}
                   onAuthenticated={() => {
                     setAuthRequired(false);
                     setProbeError(null);
                     setManuallyTested(true);
+                    if (isCustom && parsedCustomAcp) {
+                      setTestedCustomKey(customAcpKey);
+                    }
                     if (requiresBuiltinCreationVerification) {
                       setVerifiedBuiltinContext(builtinVerificationContext);
                     }
@@ -2286,21 +2397,22 @@ export function AgentConfigDialog(props: AgentConfigDialogProps) {
               <p className="mb-2 text-xs text-muted-foreground">
                 {t(
                   'settings.agent.dialog.deepseek.envHint',
-                  'Optional: set DEEPSEEK_BASE_URL here to use a compatible endpoint.'
+                  'DEEPSEEK_API_KEY and DEEPSEEK_BASE_URL are set above and cannot be overridden here.'
                 )}
               </p>
             ) : null}
             <EnvVarsTextarea
               value={additionalEnv}
               onChange={(env) => {
-                updateEnvironment(
-                  isDeepSeekBuiltin && formData.env[DEEPSEEK_API_KEY_ENV]
-                    ? {
-                        ...env,
-                        [DEEPSEEK_API_KEY_ENV]: formData.env[DEEPSEEK_API_KEY_ENV],
-                      }
-                    : env
-                );
+                if (!isDeepSeekBuiltin) {
+                  updateEnvironment(env);
+                  return;
+                }
+                const next = omitDeepSeekProtectedEnv(env);
+                if (formData.env[DEEPSEEK_API_KEY_ENV]) {
+                  next[DEEPSEEK_API_KEY_ENV] = formData.env[DEEPSEEK_API_KEY_ENV];
+                }
+                updateEnvironment(next);
               }}
               showLabel={false}
               rows={5}
@@ -2650,6 +2762,111 @@ function ProbeStatus({
       <FlaskConical className="h-3 w-3" />
       {t('settings.agent.dialog.testCapabilitiesShort', 'Test')}
     </Button>
+  );
+}
+
+function DeepSeekApiKeyField({
+  value,
+  onChange,
+  label,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label?: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Field
+      htmlFor="deepseek-api-key"
+      label={label ?? t('settings.agent.dialog.deepseek.apiKeyLabel', 'DeepSeek API Key')}
+      hint={t(
+        'settings.agent.dialog.deepseek.apiKeyHelp',
+        'Saved with this provider and injected as DEEPSEEK_API_KEY when DSH starts.'
+      )}
+      icon={<KeyRound className="h-3.5 w-3.5" aria-hidden="true" />}
+    >
+      <Input
+        id="deepseek-api-key"
+        type="password"
+        autoComplete="off"
+        spellCheck={false}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={t('settings.agent.dialog.deepseek.apiKeyPlaceholder', 'sk-XXXXXXXXXXXX')}
+        className="h-9 font-mono"
+      />
+    </Field>
+  );
+}
+
+function DeepSeekHarnessPanel({
+  endpointMode,
+  onEndpointModeChange,
+  apiKey,
+  onApiKeyChange,
+  customBaseUrl,
+  onCustomBaseUrlChange,
+}: {
+  endpointMode: DeepSeekEndpointMode;
+  onEndpointModeChange: (value: DeepSeekEndpointMode) => void;
+  apiKey: string;
+  onApiKeyChange: (value: string) => void;
+  customBaseUrl: string;
+  onCustomBaseUrlChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-3 rounded-xl border border-primary/20 bg-primary/[0.04] p-4">
+      <Tabs
+        value={endpointMode}
+        onValueChange={(value) => {
+          if (value === 'official' || value === 'custom') {
+            onEndpointModeChange(value);
+          }
+        }}
+      >
+        <TabsList className="grid h-8 w-full grid-cols-2">
+          <TabsTrigger value="official" className="px-2.5 text-xs">
+            {t('settings.agent.dialog.deepseek.officialTab', 'DeepSeek official')}
+          </TabsTrigger>
+          <TabsTrigger value="custom" className="px-2.5 text-xs">
+            {t('settings.agent.dialog.deepseek.customTab', 'Custom Endpoint')}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="official" className="mt-3">
+          <DeepSeekApiKeyField value={apiKey} onChange={onApiKeyChange} />
+        </TabsContent>
+        <TabsContent value="custom" className="mt-3 space-y-3">
+          <Field
+            htmlFor="deepseek-endpoint"
+            label={t('settings.agent.dialog.deepseek.endpointLabel', 'API Endpoint')}
+            hint={t(
+              'settings.agent.dialog.deepseek.endpointHelp',
+              'Required HTTP or HTTPS URL. Saved as DEEPSEEK_BASE_URL without adding or removing /v1.'
+            )}
+          >
+            <Input
+              id="deepseek-endpoint"
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
+              value={customBaseUrl}
+              onChange={(event) => onCustomBaseUrlChange(event.target.value)}
+              placeholder={t(
+                'settings.agent.dialog.deepseek.endpointPlaceholder',
+                'https://example.com'
+              )}
+              className="h-9 font-mono"
+            />
+          </Field>
+          <DeepSeekApiKeyField
+            value={apiKey}
+            onChange={onApiKeyChange}
+            label={t('settings.agent.dialog.deepseek.customApiKeyLabel', 'API Key')}
+          />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }
 

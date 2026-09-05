@@ -59,7 +59,7 @@ import {
   sessionEditAndResendFailure,
 } from '@lody/shared';
 import { createAsyncConcurrencyGate } from '@/lib/async-concurrency-gate';
-import { getIpcServices } from '@/lib/electron-ipc-client';
+import { getIpcServices, windowIpcClient, type LodyIpcClient } from '@/lib/electron-ipc-client';
 import type { WorkspaceTargetRouter } from './workspace-target-router';
 
 const LOCAL_MACHINE_ID_READY_TIMEOUT_MS = 2_000;
@@ -85,6 +85,9 @@ export type WorkspaceMachineRpcFacadeDeps = {
   workspaceId: WorkspaceId;
   targetRouter: Pick<WorkspaceTargetRouter, 'getPlaneForMachine' | 'resolvePlaneForMachine'>;
   getMachineRpcClient: (machineId: MachineId) => Promise<LoroStreamsMachineRpcClient>;
+  ipcClient?: LodyIpcClient;
+  /** Explicit capability for Electron/local bridge fast paths. */
+  localIpcHost?: boolean;
 };
 
 const toCodeCollabTransportError = (error: unknown): CodeCollabV2Error => ({
@@ -94,11 +97,16 @@ const toCodeCollabTransportError = (error: unknown): CodeCollabV2Error => ({
   retryable: true,
 });
 
-const getLocalMachineRpcSender = (): LocalMachineRpcSender | undefined =>
-  getIpcServices()?.machineRpc.send;
+const getLocalMachineRpcSender = (ipcClient: LodyIpcClient): LocalMachineRpcSender | undefined =>
+  getIpcServices(ipcClient)?.machineRpc.send;
 
 export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeDeps) {
   const { workspaceId, targetRouter, getMachineRpcClient } = deps;
+  const ipcClient = deps.ipcClient ?? windowIpcClient;
+  const localIpcHost =
+    deps.localIpcHost ??
+    (typeof window !== 'undefined' &&
+      (window.__LODY_ELECTRON__ === true || window.__LODY_LOCAL_BRIDGE__ === true));
   const codeCollabDiffRpcGate = createAsyncConcurrencyGate(CODE_COLLAB_DIFF_RPC_CONCURRENCY_LIMIT);
 
   const waitForMachineRoute = async (machineId: MachineId): Promise<void> => {
@@ -117,8 +125,8 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
     await waitForMachineRoute(machineId);
     return Boolean(
       typeof window !== 'undefined' &&
-      (window.__LODY_ELECTRON__ || window.__LODY_LOCAL_BRIDGE__) &&
-      getLocalMachineRpcSender() &&
+      localIpcHost &&
+      getLocalMachineRpcSender(ipcClient) &&
       targetRouter.getPlaneForMachine(machineId) === 'local'
     );
   };
@@ -126,7 +134,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
   const sendLocalMachineRpcRequest = async (
     request: LocalMachineRpcRequest
   ): Promise<LocalMachineRpcResult | CodeCollabV2Error | null> => {
-    const sender = getLocalMachineRpcSender();
+    const sender = getLocalMachineRpcSender(ipcClient);
     if (!sender) {
       return toCodeCollabTransportError(new Error('Local Machine RPC is not available.'));
     }
@@ -179,9 +187,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
     };
     try {
       const result = await (async () => {
-        const isElectron =
-          typeof window !== 'undefined' &&
-          (window.__LODY_ELECTRON__ || window.__LODY_LOCAL_BRIDGE__);
+        const isElectron = typeof window !== 'undefined' && localIpcHost;
         if (isElectron) {
           // A local Electron file preview must never fall through to the
           // Streams RPC plane. Until the target router identifies the machine,
@@ -203,7 +209,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
             });
           }
 
-          const sender = getLocalMachineRpcSender();
+          const sender = getLocalMachineRpcSender(ipcClient);
           if (!sender) throw new Error('Local Machine RPC is not available.');
           const response = await sender({
             machineId,
@@ -490,7 +496,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
   ): Promise<SessionCancelResponse | null> => {
     try {
       if (await canUseLocalMachineRpc(machineId)) {
-        const response = await getLocalMachineRpcSender()?.({
+        const response = await getLocalMachineRpcSender(ipcClient)?.({
           machineId,
           workspaceId,
           method: 'session/cancel',
@@ -568,7 +574,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
   ): Promise<SessionDispatchTurnResponse | null> => {
     try {
       if (await canUseLocalMachineRpc(machineId)) {
-        const response = await getLocalMachineRpcSender()?.({
+        const response = await getLocalMachineRpcSender(ipcClient)?.({
           machineId,
           workspaceId,
           method: 'session/dispatch-turn',
@@ -612,7 +618,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
   ): Promise<SessionPrepareResponse | null> => {
     try {
       if (await canUseLocalMachineRpc(machineId)) {
-        const response = await getLocalMachineRpcSender()?.({
+        const response = await getLocalMachineRpcSender(ipcClient)?.({
           machineId,
           workspaceId,
           method: 'session/prepare',
@@ -656,7 +662,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
   ): Promise<SessionPrepareCancelResponse | null> => {
     try {
       if (await canUseLocalMachineRpc(machineId)) {
-        const response = await getLocalMachineRpcSender()?.({
+        const response = await getLocalMachineRpcSender(ipcClient)?.({
           machineId,
           workspaceId,
           method: 'session/prepare-cancel',
@@ -707,7 +713,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
   ): Promise<SessionSteerResponse | null> => {
     try {
       if (await canUseLocalMachineRpc(machineId)) {
-        const response = await getLocalMachineRpcSender()?.({
+        const response = await getLocalMachineRpcSender(ipcClient)?.({
           machineId,
           workspaceId,
           method: 'session/steer',
@@ -751,7 +757,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
   ): Promise<SessionForkResponse | null> => {
     try {
       if (await canUseLocalMachineRpc(machineId)) {
-        const response = await getLocalMachineRpcSender()?.({
+        const response = await getLocalMachineRpcSender(ipcClient)?.({
           machineId,
           workspaceId,
           method: 'session/fork',
@@ -787,7 +793,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
   ): Promise<SessionEditAndResendResponse | null> => {
     try {
       if (await canUseLocalMachineRpc(machineId)) {
-        const response = await getLocalMachineRpcSender()?.({
+        const response = await getLocalMachineRpcSender(ipcClient)?.({
           machineId,
           workspaceId,
           method: 'session/edit-and-resend',
@@ -869,7 +875,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
           message: 'Local preview endpoints are only available on this machine.',
         };
       }
-      const response = await getLocalMachineRpcSender()?.({
+      const response = await getLocalMachineRpcSender(ipcClient)?.({
         machineId,
         workspaceId,
         method: 'session/preview-endpoint-acquire',
@@ -923,7 +929,7 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
           message: 'Local preview endpoints are only available on this machine.',
         };
       }
-      const response = await getLocalMachineRpcSender()?.({
+      const response = await getLocalMachineRpcSender(ipcClient)?.({
         machineId,
         workspaceId,
         method: 'session/preview-endpoint-release',
@@ -998,11 +1004,11 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
     try {
       await waitForMachineRoute(machineId);
       if (
-        (window.__LODY_ELECTRON__ || window.__LODY_LOCAL_BRIDGE__) &&
-        getIpcServices() &&
+        localIpcHost &&
+        getIpcServices(ipcClient) &&
         targetRouter.getPlaneForMachine(machineId) === 'local'
       ) {
-        const state = await getIpcServices()!.localProjects.getGitState(
+        const state = await getIpcServices(ipcClient)!.localProjects.getGitState(
           workspaceId,
           localProjectId
         );
@@ -1054,11 +1060,11 @@ export function createWorkspaceMachineRpcFacade(deps: WorkspaceMachineRpcFacadeD
     try {
       await waitForMachineRoute(request.machineId);
       if (
-        (window.__LODY_ELECTRON__ || window.__LODY_LOCAL_BRIDGE__) &&
-        getIpcServices() &&
+        localIpcHost &&
+        getIpcServices(ipcClient) &&
         targetRouter.getPlaneForMachine(request.machineId) === 'local'
       ) {
-        return await getIpcServices()!.localProjects.control(request);
+        return await getIpcServices(ipcClient)!.localProjects.control(request);
       }
       const response = await (
         await getMachineRpcClient(request.machineId)

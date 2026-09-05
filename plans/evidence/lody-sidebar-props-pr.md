@@ -1,5 +1,8 @@
 # Upstream PR: `LoroSidebar` header/footer suppression props
 
+> **Dated upstream-PR sketch.** As of 2026-09-04, execute any resulting subtree
+> update through `docs/LODY-MERGE.md`; merge mechanics below are historical.
+
 Drafted 2026-08-30 for `LodyAI/Lody`, against the vendored pin `966623d0`.
 It is the contribution that lets BlitzOS drop seam patch 2 in
 `vendor/lody/BLITZ-PATCHES.md` (`plans/LODY-SESSIONS.md` §0.3, §5.3 item 4).

@@ -232,6 +232,58 @@ describe('session sandbox', () => {
     });
   });
 
+  it('keeps only the process-count limit when host capacity limits are disabled', () => {
+    const limits = calculateAutomaticSessionSandboxLimits(
+      {
+        totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+        totalCpuCount: 8,
+      },
+      2,
+      { capacityLimits: false }
+    );
+
+    expect(limits).toEqual({ pidsMax: 1024 });
+  });
+
+  it('creates sessions below a configured cgroup parent', async () => {
+    const cgroupMount = path.join(path.sep, 'mock', 'sys', 'fs', 'cgroup');
+    const fakeFs = new FakeCgroupFs(cgroupMount);
+    const configuredParent = path.join('blitz-user.slice', 'lody-sessions');
+
+    const factory = createSessionSandboxFactory({
+      logger: createSilentLogger(),
+      deps: {
+        platform: 'linux',
+        environment: {
+          LODY_SESSION_CGROUP_PARENT: `/${configuredParent}`,
+        },
+        cgroupMount,
+        fs: fakeFs,
+        readSelfCgroupPath: async () => '/system.slice/lody.service',
+      },
+    });
+
+    const sandbox = await factory('configured-parent' as SessionId);
+    const configuredSessionDir = path.join(
+      cgroupMount,
+      configuredParent,
+      'lody-session-configured-parent'
+    );
+    const defaultSessionDir = path.join(
+      cgroupMount,
+      'system.slice',
+      'lody.service',
+      'lody-sessions',
+      'lody-session-configured-parent'
+    );
+
+    expect(sandbox.enabled).toBe(true);
+    expect(fakeFs.hasDir(configuredSessionDir)).toBe(true);
+    expect(fakeFs.hasDir(defaultSessionDir)).toBe(false);
+
+    await sandbox.cleanup();
+  });
+
   it('initializes a Linux cgroup sandbox, writes limits, and detects memory kills', async () => {
     const cgroupMount = path.join(path.sep, 'mock', 'sys', 'fs', 'cgroup');
     const fakeFs = new FakeCgroupFs(cgroupMount);

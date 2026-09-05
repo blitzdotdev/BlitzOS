@@ -8,18 +8,16 @@
 # it would exit immediately and be restarted forever. `start` is the same
 # service in the foreground.
 #
-# WHY LODY_PLATFORM=local: it selects the account-free platform. The published
-# npm bundle is the cloud build and reads this variable only because
-# packages/box/patches/lody-local-platform.mjs put the read back (see that
-# file). Without both, `lody start` blocks on a device-authorization login
-# against backend.lody.ai and opens no socket at all.
+# WHY LODY_PLATFORM=local: it selects the account-free platform. The vendored
+# public Vite build also inlines local mode; keeping the variable makes the
+# service contract explicit for any code that reads it before bundling.
 #
 # WHY LODY_MCP_HTTP_DISABLED=1: the daemon otherwise starts an MCP HTTP host on
 # an EPHEMERAL loopback port, which the gateway's port discovery would offer the
-# member as a phantom preview. The stdio variant — one `lody-mcp-server` child
-# per agent, a second copy of the whole bundle — is removed from the bundle by
-# packages/box/patches/lody-builtin-mcp-off.mjs, so agents get no Lody MCP at
-# all. If a later phase needs the HTTP host, pin it with
+# member as a phantom preview. LODY_MCP_BUILTIN_DISABLED also omits the stdio
+# variant — one `lody-mcp-server` child and a second bundle copy per agent — and
+# its prompt reminder. Workspace-configured MCP servers remain available. If a
+# later phase needs the HTTP host, pin it with
 # LODY_MCP_HTTP_PREFERRED_PORT and reserve that port in all four places
 # RESERVED_PREVIEW_PORTS lives.
 #
@@ -44,8 +42,8 @@ fi
 # the daemon itself is what puts every agent it starts under the ceiling. The
 # daemon's own sandbox then moves each agent into a leaf of its own,
 # blitz-user.slice/lody-sessions/lody-session-<id>, and ends the session with
-# cgroup.kill — blitz-cgroup init builds that parent and
-# packages/box/patches/lody-session-sandbox.mjs points the daemon at it.
+# cgroup.kill. blitz-cgroup init builds that parent; the two session settings
+# below select it and leave the box's own ceiling as the memory/CPU budget.
 #
 # The gateway, not the daemon, is what the control plane talks to. A dead
 # daemon costs the sessions surface; it does not cost the box its tunnel, its
@@ -56,4 +54,7 @@ exec /usr/local/bin/blitz-cgroup enter user/lody.scope -- /command/s6-setuidgid 
 	LODY_PLATFORM=local \
 	LODY_DATA_DIR="$state_dir/lody" \
 	LODY_MCP_HTTP_DISABLED=1 \
+	LODY_MCP_BUILTIN_DISABLED=1 \
+	LODY_SESSION_CGROUP_PARENT=/blitz-user.slice/lody-sessions \
+	LODY_SESSION_CAPACITY_LIMITS=0 \
 	/opt/blitz/npm/bin/lody start

@@ -210,23 +210,29 @@ async function mountShell(options: ShellOptions) {
   // the rail — the footer's New tab control, which is the only spawn
   // affordance a flag-on workspace has (§4.1, the native strip being gone).
   vi.doMock("../src/lody/SessionSurface.js", () => ({
-    default: (props: {
-      hidden?: boolean;
-      rail?: { newTabControl?: ReactNode };
-      surfaceTabs?: SurfaceRecord["surfaceTabs"];
-      sidePanel?: SurfaceRecord["sidePanel"];
+    default: (host: {
+      surfaces: Array<{
+        active?: boolean;
+        hidden?: boolean;
+        rail?: { newTabControl?: ReactNode };
+        surfaceTabs?: SurfaceRecord["surfaceTabs"];
+        sidePanel?: SurfaceRecord["sidePanel"];
+      }>;
     }) => {
-      surface.hidden = props.hidden === true;
-      surface.surfaceTabs = props.surfaceTabs;
-      surface.sidePanel = props.sidePanel;
+      const current = host.surfaces.find((item) => item.active === true);
+      surface.hidden = current?.hidden === true;
+      surface.surfaceTabs = current?.surfaceTabs;
+      surface.sidePanel = current?.sidePanel;
       // The real page reports its side panel back once it mounts; the shell's
       // browser routing reads that report, so the stand-in answers with an
       // open, empty panel — from an effect, as the page does, never mid-render.
-      const report = options.sidePanelOnScreen === true ? props.sidePanel?.onStateChange : undefined;
+      const report = options.sidePanelOnScreen === true
+        ? current?.sidePanel?.onStateChange
+        : undefined;
       useEffect(() => {
         report?.({ open: true, activeTabId: null, openedTabIds: [], availableOptions: [] });
       }, [report]);
-      return <div data-testid="lody-surface">{props.rail?.newTabControl}</div>;
+      return <div data-testid="lody-surface">{current?.rail?.newTabControl}</div>;
     },
   }));
 
@@ -480,7 +486,7 @@ describe("S4 — opening a utility panel shows it", () => {
       activeId: 7,
       sidePanelOnScreen: true,
     });
-    // Our two host tabs ride into Lody's side panel through seam patch 19.
+    // Our two host tabs ride into Lody's side panel through seam patch 23.
     expect(mounted.surface.sidePanel?.hostTabs.map(({ id }) => id))
       .toEqual(["host:browser", "host:connections"]);
     mounted.previewFocusMarker.body = {
@@ -682,17 +688,20 @@ describe("F8 — the agent-auth banner belongs to session content", () => {
     // The banner says a CONVERSATION's agent is signed out and carries that
     // conversation's sign-in panel. Above the strip while a terminal owns the
     // pane it is a band about something the member is not looking at.
-    const surface = readFileSync(
-      join(repoRoot, "packages/webapp/src/lody/SessionSurface.tsx"),
+    const owners = readFileSync(
+      join(repoRoot, "packages/webapp/src/lody/surface-active-owners.tsx"),
       "utf8",
     );
-    expect(surface).toContain(
-      "props.surfaceTabs !== undefined && props.surfaceTabs.activeTabId !== null",
+    expect(owners).toContain(
+      "const { surfaceTabs } = useLodySurfaceActiveState();",
     );
-    // Rendered through one gate, so there is no second call site to forget.
-    expect(surface).toContain("const agentAuthNotice = (machineId: string): ReactNode =>");
-    expect(surface).toContain("hostTabOwnsPane");
-    expect(surface.match(/<LodyAgentAuthNotice/gu)).toHaveLength(1);
+    expect(owners).toContain(
+      "if (surfaceTabs !== undefined && surfaceTabs.activeTabId !== null) return null;",
+    );
+    // Rendered through one gate in this owner, so there is no second call site
+    // to forget when the active host-tab state changes.
+    expect(owners).toContain("export function LodySurfaceAgentAuthNotice(props: {");
+    expect(owners.match(/<LodyAgentAuthNotice/gu)).toHaveLength(1);
   });
 });
 

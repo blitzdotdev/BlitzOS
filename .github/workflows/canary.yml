@@ -122,6 +122,13 @@ jobs:
           IMAGE_TAG: ${{ steps.plan.outputs.tag }}
         run: docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 -f packages/box/Dockerfile -t "$IMAGE_TAG" .
 
+      - name: Boot-smoke the Lody-enabled image
+        if: steps.plan.outputs.published == 'false'
+        env:
+          IMAGE: ${{ steps.plan.outputs.tag }}
+          LODY_BOOT_ONLY: "1"
+        run: packages/box/test/smoke.sh
+
       # Each content-derived release gets a versioned R2 prefix, so old boxes
       # retain the exact bytes named by their pin. The publisher uploads every
       # part before manifest.json; a failed upload never activates half a release.

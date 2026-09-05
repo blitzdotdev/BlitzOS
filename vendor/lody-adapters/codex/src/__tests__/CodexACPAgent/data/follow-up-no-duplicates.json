@@ -1,0 +1,63 @@
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "id",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "string",
+        "content": {
+          "type": "text",
+          "text": "He"
+        },
+        "_meta": {
+          "lody": {
+            "turnId": "string"
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "id",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "string",
+        "content": {
+          "type": "text",
+          "text": "ll"
+        },
+        "_meta": {
+          "lody": {
+            "turnId": "string"
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "id",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "string",
+        "content": {
+          "type": "text",
+          "text": "o!"
+        },
+        "_meta": {
+          "lody": {
+            "turnId": "string"
+          }
+        }
+      }
+    }
+  ]
+}

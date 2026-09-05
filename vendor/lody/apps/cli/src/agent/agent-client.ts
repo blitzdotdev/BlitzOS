@@ -677,6 +677,10 @@ export class AgentClient implements acp.Client {
   }
 
   private buildBuiltinMcpServers(workdir: string): acp.McpServer[] {
+    if (process.env.LODY_MCP_BUILTIN_DISABLED === '1') {
+      return [];
+    }
+
     if (!this.options.workspaceId || !this.options.machineId) {
       return [];
     }
@@ -774,9 +778,13 @@ export class AgentClient implements acp.Client {
       }
       return [...builtin, ...(external.servers as acp.McpServer[])];
     } catch (error) {
+      const fallback =
+        builtin.length === 0
+          ? 'without an MCP server'
+          : 'with only the built-in Lody server';
       const message = `Workspace MCP servers could not be loaded (${formatErrorMessage(
         error
-      )}). The agent started with only the built-in Lody server.`;
+      )}). The agent started ${fallback}.`;
       this.logger.debug(`[${this.options.sessionId}] ${message}`);
       this.options.onAgentWarning?.({ message, source: 'configWarning' });
       return builtin;

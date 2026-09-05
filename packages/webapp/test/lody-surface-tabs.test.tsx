@@ -43,6 +43,7 @@ import { createLocalPlatformProvider, createStaticStore } from "@lody/platform";
 import { PlatformContext } from "@lody/platform/react";
 import { AuthenticatedConvexContext } from "@lody/components/hooks/use-authenticated-convex";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
+import { setWorkspaceContextAtom } from "@lody/components/atoms/workspace-context";
 import { SessionTabBar } from "@lody/components/components/sessions/session-tab-bar";
 import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { initLodyI18n } from "../src/lody/i18n.js";
@@ -267,15 +268,20 @@ const SIGNED_OUT_CONVEX = {
 };
 
 async function mountChatRoute(surfaceTabs: SurfaceTabsBinding | null) {
-  const router = createLodySessionRouter(LANDING_SLUG, { workspaceId: LANDING_WORKSPACE_ID });
+  const router = createLodySessionRouter(LANDING_SLUG);
   await act(async () => {
     await router.navigate({
       to: "/$workspaceName/chat",
       params: { workspaceName: LANDING_SLUG },
     });
   });
+  const store = createStore();
+  store.set(setWorkspaceContextAtom, {
+    slug: LANDING_SLUG,
+    workspaceId: LANDING_WORKSPACE_ID,
+  });
   const view = await render(
-    <JotaiProvider store={createStore()}>
+    <JotaiProvider store={store}>
       <PlatformContext.Provider value={landingPlatform}>
         <AuthenticatedConvexContext.Provider value={SIGNED_OUT_CONVEX}>
           <Providers>

@@ -15,9 +15,9 @@
  *   `useVisibleMachineMetas` returning nothing cannot strand the box, because
  *   nothing consults it on this path.
  * - And it makes the local data plane MANDATORY: boot attaches it and THROWS
- *   `local_loro_data_plane_bridge_unavailable` if `window.ipc` is missing
- *   (`:2679`). So the bridge is installed before the runtime is created, never
- *   after.
+ *   `local_loro_data_plane_bridge_unavailable` if the injected bridge is
+ *   missing. The bridge is captured before runtime creation; installing the
+ *   compatibility global is optional for headless callers.
  *
  * `apiBaseUrl` is required by the type but unreachable in this mode — every
  * caller of it sits behind `cloudPlaneEnabled`. It is set to the loopback
@@ -28,6 +28,7 @@
 import type { JsonObject, JsonValue } from "@blitzos/schema";
 import { createStore } from "jotai";
 import { createWorkspaceRuntime } from "@lody/components/providers/create-workspace-runtime";
+import { createBoundIpcClient } from "@lody/components/lib/electron-ipc-client";
 import { runtimeAtom } from "@lody/components/atoms/runtime";
 import { setWorkspaceContextAtom } from "@lody/components/atoms/workspace-context";
 import {
@@ -69,8 +70,8 @@ export interface LodyRuntimeHandle {
    * so the shape is stated on this side rather than imported. */
   runtime: LodyWorkspaceRuntime;
   bridge: LodyLocalBridge;
-  /** Tears down the runtime, the bridge and the `window` globals, in that
-   * order. Reversed, the runtime's dispose path would find no `window.ipc`. */
+  /** Tears down the runtime, the bridge and any compatibility globals, in that
+   * order. */
   dispose: () => Promise<void>;
 }
 
@@ -223,7 +224,13 @@ export async function createLodyRuntime(options: {
     bridgeEndpoints.webSocketConstructor = endpoints.webSocketConstructor;
   }
   const bridge = createLodyLocalBridge(bridgeEndpoints);
-  const uninstall = options.installGlobals === false ? () => bridge.dispose() : installLodyLocalBridge(bridge);
+  const ipcClient = createBoundIpcClient(bridge.ipc);
+  const releaseBridge =
+    options.installGlobals === false ? () => bridge.dispose() : installLodyLocalBridge(bridge);
+  const disposeIpc = (): void => {
+    ipcClient.dispose();
+    releaseBridge();
+  };
 
   let runtime: LodyWorkspaceRuntime;
   try {
@@ -237,9 +244,11 @@ export async function createLodyRuntime(options: {
       apiBaseUrl: NO_CLOUD_API_BASE_URL,
       syncMode: "local",
       eagerSyncSurface: "web",
+      ipcClient,
+      localIpcHost: true,
     })) as LodyWorkspaceRuntime;
   } catch (cause) {
-    uninstall();
+    disposeIpc();
     throw cause;
   }
   runtime.setLocalMachineId(snapshot.machineId);
@@ -284,7 +293,7 @@ export async function createLodyRuntime(options: {
     bridge,
     dispose: async () => {
       await runtime.dispose();
-      uninstall();
+      disposeIpc();
     },
   };
 }

@@ -1,5 +1,5 @@
 /**
- * SWITCHING WORKSPACES MUST REBUILD THE SURFACE, BECAUSE IT REBUILDS THE BOX.
+ * SWITCHING WORKSPACES BUILDS EACH BOX ONCE AND RETAINS ITS SETTLED SURFACE.
  *
  * The field report: create workspace B, switch A → B → A, and the sessions
  * surface never populates until the page is reloaded once. Terminals work
@@ -9,7 +9,7 @@
  * surface as `key="own"` — ONE instance covering every workspace the member
  * owns — so a switch handed that instance new props instead of building a new
  * one. `SessionSurface` builds its bridge once per instance
- * (`useLodyLocalBridge`: `held.current ??= createLodyLocalBridge(endpoints)`)
+ * (`useLodySurfaceIpc`: `held.current ??= createLodyLocalBridge(endpoints)`)
  * and the bridge closes over the endpoints it was built with, so `window.ipc`
  * kept dialling the PREVIOUS box.
  *
@@ -23,8 +23,8 @@
  * sessions rebuilds the runtime"). This is the same rule, finally applied to
  * the member's own workspaces.
  */
-import { act, useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, useEffect, useState } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoxEndpoints } from "../src/resolver.js";
 import { render } from "./dom.js";
 
@@ -43,8 +43,23 @@ function boxAt(host: string): BoxEndpoints {
 const BOX_A = boxAt("box-a.invalid");
 const BOX_B = boxAt("box-b.invalid");
 
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(pointer: fine)",
+    media: query,
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => false,
+  }));
+});
+
 afterEach(() => {
+  window.localStorage.clear();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.resetModules();
   vi.restoreAllMocks();
 });
@@ -58,37 +73,82 @@ async function mountRegion() {
   vi.resetModules();
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
   const mounts: string[] = [];
-  vi.doMock("../src/lody/SessionSurface.js", () => ({
-    default: (props: { endpoints: { syncUrl: string } }) => {
+  vi.doMock("../src/lody/SessionSurface.js", () => {
+    const RecordedSurface = (surfaceProps: {
+      entryId: string;
+      syncUrl: string;
+      active: boolean;
+      hidden: boolean;
+      onIdentity: (identity: { machineId: string; lwWorkspaceId: string }) => void;
+    }) => {
       // RECORDED ONCE PER INSTANCE, not once per render. A `useState`
       // initialiser runs exactly when a component instance is created, which is
-      // the same lifetime `useLodyLocalBridge` binds its bridge to — so this
+      // the same lifetime `useLodySurfaceIpc` binds its bridge to — so this
       // records precisely the event the fix is about. Pushing from the render
       // body instead would count re-renders and pass no matter what the key is.
       useState(() => {
-        mounts.push(props.endpoints.syncUrl);
+        mounts.push(surfaceProps.syncUrl);
         return null;
       });
-      return <div data-testid="surface" />;
-    },
-  }));
+      useEffect(() => {
+        const box = surfaceProps.syncUrl.includes("box-a") ? "a" : "b";
+        surfaceProps.onIdentity({ machineId: `machine-${box}`, lwWorkspaceId: `lw_${box}` });
+      }, [surfaceProps.syncUrl]);
+      return (
+        <div
+          data-testid="surface"
+          data-entry={surfaceProps.entryId}
+          data-active={surfaceProps.active}
+          data-hidden={surfaceProps.hidden}
+        />
+      );
+    };
+    return {
+      default: (props: {
+        surfaces: Array<{
+          endpoints: { syncUrl: string };
+          surfaceKey: string;
+          active: boolean;
+          hidden: boolean;
+          onIdentity: (identity: { machineId: string; lwWorkspaceId: string }) => void;
+        }>;
+      }) => props.surfaces.map((surface) => (
+        <RecordedSurface
+          key={surface.surfaceKey}
+          entryId={surface.surfaceKey}
+          syncUrl={surface.endpoints.syncUrl}
+          active={surface.active}
+          hidden={surface.hidden}
+          onIdentity={surface.onIdentity}
+        />
+      )),
+    };
+  });
   const { LodySessionsRegion } = await import("../src/lody/LodySessionsRegion.js");
 
-  const element = (endpoints: BoxEndpoints) => (
+  const element = (
+    endpoints: BoxEndpoints | null,
+    visible = true,
+    sessions: "present" | "probing" = "present",
+  ) => (
     <LodySessionsRegion
       endpoints={endpoints}
-      sessions="present"
+      sessions={sessions}
       viewerName="Me"
       viewerAvatarUrl={null}
       workspaceTitle="Workspace"
-      visible
+      visible={visible}
       railHost={null}
     />
   );
 
   const view = await render(element(BOX_A));
-  const show = async (endpoints: BoxEndpoints): Promise<void> => {
-    await act(async () => view.root.render(element(endpoints)));
+  const show = async (
+    endpoints: BoxEndpoints | null,
+    visible = true,
+    sessions: "present" | "probing" = "present",
+  ): Promise<void> => {
+    await act(async () => view.root.render(element(endpoints, visible, sessions)));
     await act(async () => {
       await Promise.resolve();
     });
@@ -100,18 +160,23 @@ async function mountRegion() {
 }
 
 describe("switching between owned workspaces", () => {
-  it("builds a new surface for a new box, so the bridge is never stale", async () => {
+  it("keeps both settled surfaces mounted and reuses A on return", async () => {
     const { mounts, show, view } = await mountRegion();
     expect(mounts).toEqual([BOX_A.lodySyncUrl]);
+    const firstAEntry = view.container.querySelector("[data-active='true']")
+      ?.getAttribute("data-entry");
 
     // A → B. The old instance must not simply be handed B's props: its bridge
     // was built against A and cannot be re-pointed.
     await show(BOX_B);
     expect(mounts).toEqual([BOX_A.lodySyncUrl, BOX_B.lodySyncUrl]);
 
-    // B → A, the half of the report that needed a page reload.
+    // B → A retains both React identities and only changes ownership.
     await show(BOX_A);
-    expect(mounts).toEqual([BOX_A.lodySyncUrl, BOX_B.lodySyncUrl, BOX_A.lodySyncUrl]);
+    expect(mounts).toEqual([BOX_A.lodySyncUrl, BOX_B.lodySyncUrl]);
+    expect(view.container.querySelectorAll("[data-testid='surface']")).toHaveLength(2);
+    const active = view.container.querySelector("[data-active='true']");
+    expect(active?.getAttribute("data-entry")).toBe(firstAEntry);
 
     await view.unmount();
   });
@@ -125,9 +190,26 @@ describe("switching between owned workspaces", () => {
     // would throw away a live runtime many times a minute — so the key must
     // carry the box's IDENTITY, never the props object's.
     await show({ ...BOX_A });
-    await show({ ...BOX_A });
+    await show({ ...BOX_A }, false);
     expect(mounts).toEqual([BOX_A.lodySyncUrl]);
+    const surface = view.container.querySelector("[data-testid='surface']");
+    expect(surface?.getAttribute("data-active")).toBe("true");
+    expect(surface?.getAttribute("data-hidden")).toBe("true");
 
+    await view.unmount();
+  });
+
+  it("keeps A through B's capability-probing window", async () => {
+    const { mounts, show, view } = await mountRegion();
+    await show(null, false, "probing");
+    expect(mounts).toEqual([BOX_A.lodySyncUrl]);
+    expect(view.container.querySelector("[data-testid='surface']")?.getAttribute("data-active"))
+      .toBe("false");
+
+    await show(BOX_B);
+    await show(null, false, "probing");
+    await show(BOX_A);
+    expect(mounts).toEqual([BOX_A.lodySyncUrl, BOX_B.lodySyncUrl]);
     await view.unmount();
   });
 });

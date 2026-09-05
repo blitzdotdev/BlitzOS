@@ -25,6 +25,15 @@ export function vendorPath(path: string): string {
   return fileURLToPath(new URL(`../../../../vendor/lody/${path}`, import.meta.url));
 }
 
+/** Source aliases shared by Vite and source-closure audits. */
+export const LODY_VENDOR_SOURCE_ALIASES = [
+  { find: "@lody/components", vendorSource: "packages/components/src" },
+  { find: "@lody/shared", vendorSource: "packages/shared/src" },
+  { find: "@lody/platform", vendorSource: "packages/platform/src" },
+  { find: "@lody/cloud-api", vendorSource: "packages/cloud-api/src" },
+  { find: "@lody/loro-streams-rpc", vendorSource: "packages/loro-streams-rpc/src" },
+];
+
 /**
  * Stand-ins for Lody's pnpm workspace links and for the one workspace package
  * that is an empty git submodule in the public tree (`acp-extension-dsh`; the
@@ -43,11 +52,10 @@ export function lodyVendorAliases(): Alias[] {
       find: "acp-extension-dsh/capabilities",
       replacement: fileURLToPath(new URL("./stubs/acp-extension-dsh-capabilities.ts", import.meta.url)),
     },
-    { find: "@lody/components", replacement: componentsSrc },
-    { find: "@lody/shared", replacement: vendorPath("packages/shared/src") },
-    { find: "@lody/platform", replacement: vendorPath("packages/platform/src") },
-    { find: "@lody/cloud-api", replacement: vendorPath("packages/cloud-api/src") },
-    { find: "@lody/loro-streams-rpc", replacement: vendorPath("packages/loro-streams-rpc/src") },
+    ...LODY_VENDOR_SOURCE_ALIASES.map(({ find, vendorSource }) => ({
+      find,
+      replacement: vendorPath(vendorSource),
+    })),
     // Their components package imports itself as `@/...`. The trailing slash
     // keeps this from swallowing any future bare `@` specifier.
     { find: "@/", replacement: `${componentsSrc}/` },

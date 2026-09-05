@@ -12,9 +12,10 @@
  * while the data plane dials a different daemon. Nothing syncs; no error is
  * raised; a reload — the only thing that reset the singleton — is the cure.
  *
- * BLITZ SEAM PATCH 17 adds `resetLocalPlatformSnapshotState()`, called from the
- * incoming surface's render (`SessionSurface.useLodyLocalBridge`). This test
- * pins the seam directly: the stale read is real, and the reset closes it.
+ * BLITZ SEAM PATCH 17 added `resetLocalPlatformSnapshotState()` for sequential
+ * hand-off. Seam 18 supersedes that host behavior with client-keyed state so
+ * retained surfaces never reset one another, but keeps the scoped reset as a
+ * compatibility/test cleanup. This regression pins that retained API directly.
  */
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -88,8 +89,8 @@ describe("local-platform snapshot across a box switch", () => {
     expect(observed).toBe("lw_A");
     await staleMount.unmount();
 
-    // THE FIX. Forget the previous box before the incoming surface reads the
-    // snapshot; the poll re-runs against box B's bridge and settles on B.
+    // THE COMPATIBILITY RESET. Sequential/default-client hosts can still forget
+    // the previous snapshot explicitly; retained surfaces use distinct clients.
     await act(async () => {
       resetLocalPlatformSnapshotState();
     });

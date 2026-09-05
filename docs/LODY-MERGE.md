@@ -1,565 +1,530 @@
 # Lody upstream merge runbook
 
-Operational and evergreen. This is the procedure for pulling
-[LodyAI/Lody](https://github.com/LodyAI/Lody) into `vendor/lody` and putting the
-result back into a state where every gate passes. It is written so a scheduled
-agent can execute it verbatim, on a fresh branch, without asking anything.
+This is the single procedure for importing
+[LodyAI/Lody](https://github.com/LodyAI/Lody) into `vendor/lody`, proving the
+renderer and daemon from the same tree, and opening the result for review.
+`vendor/lody/BLITZ-PATCHES.md` is the seam and conflict manual;
+`vendor/lody/UPSTREAM.md` records pins.
 
-Design: `plans/LODY-SESSIONS.md` §5.3, §5.4. Conflict manual:
-`vendor/lody/BLITZ-PATCHES.md`. Current pin: `vendor/lody/UPSTREAM.md`.
+**Open a pull request. Never merge to `main` unattended.** Automation may
+prepare and push the branch, but it must never enable auto-merge or call
+`gh pr merge`. A green gate proves mechanics, not that BlitzOS wants every new
+upstream behavior.
 
-**Open a pull request. Never merge to `main` unattended.** The gates below say
-whether the merge is mechanically sound. They cannot say whether an upstream
-behaviour change is one this product wants, and nothing in this document is
-allowed to decide that.
+## Status
 
-## 0. Before anything
+The target command is:
 
 ```sh
-git -C /path/to/BlitzOS worktree add -b lody-merge-$(date +%Y%m%d) /path/to/BlitzOS-lody-merge
-cd /path/to/BlitzOS-lody-merge
+npm run lody:merge -- --ref <release-tag-or-main>
+```
+
+It is not present in the root `package.json` yet. Use the manual equivalent in
+this runbook for every row marked manual.
+
+| Step | Status at HEAD | Target owner |
+|---|---|---|
+| Resolve the ref, pull the subtree, update pins and baselines, run gates, push, and open the PR | **Manual until plan PR E** | `scripts/lody-merge.mjs` through `npm run lody:merge` |
+| Materialize the five CLI adapters at their gitlink SHAs | **Automated by `npm run lody:adapters:sync`** | `scripts/lody-sync-adapters.mjs` and reviewed `vendor/lody-adapters/` trees |
+| Build, check, pack, and stamp the daemon from the merged tree | **Automated by `npm run lody:build` and the image's `lody-build` stage** | shared `scripts/lody-build-package.mjs` |
+| Run the real-daemon pair matrix against the PR artifact | **Required in the `lody-daemon` CI job** | `LODY_BUNDLE` and `LODY_CLAUDE_BINARY` select the job's installed artifact |
+| Serve and compare daemon provenance | **Inspect `BUILD.json` locally until plan PR D** | `/lody/build` plus browser comparison; legacy boxes have no route |
+| Publish and deploy a canary box image after merge | **Automated now by `.github/workflows/canary.yml`** | The release key covers every repository path copied by the Dockerfile, including all Lody build inputs |
+
+The shipping image builds and installs the daemon package from this same
+vendored tree. There is no npm daemon release to select or bump during an
+upstream merge. The renderer/daemon identity is the upstream commit and build
+stamp, never the stale `apps/cli/package.json` version.
+
+## Prepare a branch
+
+Start from current `main` in a clean worktree. Record the branch point and old
+pin before changing anything.
+
+```sh
+git status --porcelain
 npm ci
+BRANCH_POINT=$(git rev-parse HEAD)
+OLD_SHA=$(sed -n 's/| Pinned commit | `\([0-9a-f]\{40\}\)` |/\1/p' vendor/lody/UPSTREAM.md)
+test -n "$OLD_SHA"
+printf 'branch=%s\nold Lody=%s\n' "$BRANCH_POINT" "$OLD_SHA"
 ```
 
-Record the starting point, because several steps below compare against it:
+Prefer a public release tag. `main` is allowed when the needed change has no
+release, but label the PR `UNRELEASED UPSTREAM` and run the entire pair matrix.
 
 ```sh
-git rev-parse HEAD                                    # the branch point
-grep 'Pinned commit' vendor/lody/UPSTREAM.md          # the current upstream sha
-grep -n 'lody@' packages/box/Dockerfile               # the current npm pin
-node scripts/lint-gate.mjs | tail -3                  # the baseline you must not raise
+LODY_REF=<release-tag-or-main>
+LODY_URL=https://github.com/LodyAI/Lody
+git fetch --no-tags "$LODY_URL" "$LODY_REF"
+NEW_SHA=$(git rev-parse FETCH_HEAD^{commit})
+git log --oneline "$OLD_SHA..$NEW_SHA"
+git rev-list --count "$OLD_SHA..$NEW_SHA"
 ```
 
-## 1. Is there anything to merge?
+Stop without opening a PR when the count is zero.
+
+## Inventory the seams before pulling
+
+Derive the declared seam-file inventory from `BLITZ-PATCHES.md`, then prove it
+covers every current upstream divergence. This avoids another hard-coded file
+list drifting as seams are added or retired.
 
 ```sh
-git fetch --no-tags https://github.com/LodyAI/Lody main
-git log --oneline <pinned-sha>..FETCH_HEAD
-git rev-list --count <pinned-sha>..FETCH_HEAD
+DECLARED_SEAM_FILES=$(mktemp)
+ACTUAL_SEAM_FILES=$(mktemp)
+UNDECLARED_SEAM_FILES=$(mktemp)
+grep -oE '`(apps|packages)/[^`]+\.(ts|tsx|js|mjs)`' \
+  vendor/lody/BLITZ-PATCHES.md | tr -d '`' | sort -u | \
+  while IFS= read -r file; do
+    git cat-file -e "HEAD:vendor/lody/$file" 2>/dev/null && printf '%s\n' "$file"
+  done > "$DECLARED_SEAM_FILES"
+git diff --name-only "$OLD_SHA" "$(git rev-parse HEAD:vendor/lody)" -- . \
+  ':!UPSTREAM.md' ':!BLITZ-PATCHES.md' | sort -u > "$ACTUAL_SEAM_FILES"
+comm -23 "$ACTUAL_SEAM_FILES" "$DECLARED_SEAM_FILES" \
+  > "$UNDECLARED_SEAM_FILES"
+if [ -s "$UNDECLARED_SEAM_FILES" ]; then
+  sed 's/^/undeclared vendor divergence: /' "$UNDECLARED_SEAM_FILES" >&2
+  exit 1
+fi
+git diff --name-only "$OLD_SHA" "$NEW_SHA" -- $(cat "$DECLARED_SEAM_FILES")
 ```
 
-No commits means stop and say so. Do not open an empty pull request.
+The last command is the review forecast: it reports declared seam files that
+upstream touched. Numbers from earlier merges are examples, not contracts. One
+large merge covered 152 upstream commits and required review of six seam files
+and 16 local hunks; a later merge may have none or many more.
 
-Before pulling, find out whether upstream touched a file BlitzOS diverges in.
-This is the single most useful thing to know first, because it is the difference
-between a mechanical merge and one that needs judgement:
+Also inspect upstream changes around ambient IPC. The source audit in the gates
+is authoritative; this early search identifies likely human-review sites.
 
 ```sh
-git diff --name-only <pinned-sha>..FETCH_HEAD -- \
-  'vendor/lody/packages/components/src/providers/workspace-machine-rpc-facade.ts' \
-  'vendor/lody/packages/components/src/providers/create-workspace-runtime.ts' \
-  'vendor/lody/packages/components/src/window-globals.d.ts' \
-  'vendor/lody/packages/components/src/components/loro-sidebar.tsx' \
-  'vendor/lody/packages/components/src/lib/electron-session-file-sender.ts' \
-  'vendor/lody/packages/components/src/components/sessions/session-chat-interface.tsx' \
-  'vendor/lody/packages/components/src/components/sessions/session-detail.tsx' \
-  'vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx'
+git diff "$OLD_SHA" "$NEW_SHA" -- packages/components/src | \
+  grep -E 'getIpcServices|onIpcEvent|sendIpc|sendLocalSessionControl|getPublicBrowserBridge|window\.ipc' || true
 ```
 
-(The paths inside the upstream tree have no `vendor/lody/` prefix; drop it when
-comparing against `FETCH_HEAD` directly. The list is exactly the file list in
-§4 below, and it is generated from `BLITZ-PATCHES.md`.)
+## Pull the subtree without losing its marker
 
-## 2. The subtree pull, and the squash-commit caveat
+`--squash` reconstructs history from the squash commit message's
+`git-subtree-split: <sha>` trailer. Confirm the old marker is reachable before
+asking Git to pull new content:
 
 ```sh
-git subtree pull --prefix vendor/lody https://github.com/LodyAI/Lody <ref> --squash
+OLD_SUBTREE_COMMIT=$(git log HEAD --fixed-strings \
+  --grep="git-subtree-split: $OLD_SHA" --format='%H' -1)
+if [ -z "$OLD_SUBTREE_COMMIT" ]; then
+  git subtree pull --prefix vendor/lody "$LODY_URL" "$OLD_SHA" --squash
+  OLD_SUBTREE_COMMIT=$(git log HEAD --fixed-strings \
+    --grep="git-subtree-split: $OLD_SHA" --format='%H' -1)
+fi
+test -n "$OLD_SUBTREE_COMMIT"
 ```
 
-**The caveat, from phase 0, and it is the thing that goes wrong.** `--squash`
-means `git subtree` reconstructs the upstream state from the SQUASH COMMIT
-MESSAGE, not from a merge base it can see in the graph. It reads the line
+That old-pin pull is the recovery when an earlier rewrite lost the split
+trailer. If it cannot establish the marker, re-add the old subtree in a scratch
+worktree and compare it before proceeding. Never accept a pull that appears to
+re-import the whole tree.
 
-```
-git-subtree-split: <sha>
-```
-
-out of the last squash commit under this prefix. Consequences an agent must not
-learn the hard way:
-
-- **Never amend, reword, or rebase a subtree squash commit.** Rewriting that
-  message loses the split sha, and the next pull re-imports the whole tree as
-  new content — thousands of files, every seam patch conflicting at once.
-- **Never squash the merge commit `git subtree pull` produces** when landing the
-  pull request. Merge it, or the next pull sees no split sha.
-- If the split sha is lost anyway, the recovery is `git subtree pull` with an
-  explicit `--squash` against the OLD sha first to re-establish the marker; if
-  that fails, re-add the subtree in a scratch worktree and diff.
-
-Verify the marker survived before going further:
+Now pull the resolved new commit:
 
 ```sh
-git log -1 --format=%B $(git rev-list -1 HEAD -- vendor/lody) | grep git-subtree-split
+git subtree pull --prefix vendor/lody "$LODY_URL" "$NEW_SHA" --squash
 ```
 
-If the pull conflicts, resolve with `BLITZ-PATCHES.md` open. Every conflict
-should be inside one of the eight files in §4; a conflict anywhere else means
-somebody edited `vendor/lody` outside a declared seam, which is a finding to
-report rather than to resolve quietly.
-
-## 3. The npm `lody` pin, and the verified-pair rule
-
-The renderer comes from this subtree and the daemon comes from npm, and **they
-must move together.** The CRDT mirrors tolerate unknown fields, but nothing in
-this port banks on skew: protocol v7 is a `z.literal`, and a renderer that
-speaks v8 against a v7 daemon fails at the first frame.
-
-The public tree lags the npm releases (it said `0.76.0` when npm was at
-`0.88.1`), so "the version in `apps/cli/package.json`" is not the answer. Find
-the npm release that corresponds to the subtree you just pulled:
+If the new pull reports conflicts, skip the new marker check for the moment,
+resolve every conflict by the next section, then finish the prepared subtree
+commit without rewriting its message:
 
 ```sh
-npm view lody versions --json | tail -20
-npm view lody@<candidate> dist.shasum
+git add vendor/lody
+git commit --no-edit
 ```
 
-Then, in ONE change:
+Return here and verify the marker before doing any other merge work.
 
-1. bump `lody@<version>` in `packages/box/Dockerfile`;
-2. re-audit BOTH patches in `packages/box/patches/` — see §5, neither is
-   optional and each is guarded twice;
-3. record both numbers in `vendor/lody/UPSTREAM.md`.
+Preserve the new marker:
 
-If no npm release matches the subtree, **stay on the current npm pin and say so
-in the pull request body.** A renderer merge with an unchanged daemon is a
-supported state; a guessed daemon version is not.
-
-## 4. Re-anchor the seam patches
-
-`vendor/lody/BLITZ-PATCHES.md` is the conflict manual and lists every deliberate
-divergence with its upstream anchor. After the pull, confirm the divergence is
-still exactly what that file says:
+- Never amend, reword, rebase, or squash the subtree squash commit.
+- Land the PR with a merge commit. Do not use GitHub's squash or rebase merge.
+- Verify the marker before continuing.
 
 ```sh
-git diff --stat <new-upstream-sha> $(git rev-parse HEAD:vendor/lody) -- . \
+SUBTREE_COMMIT=$(git log HEAD --fixed-strings \
+  --grep="git-subtree-split: $NEW_SHA" --format='%H' -1)
+test -n "$SUBTREE_COMMIT"
+git show -s --format='%B' "$SUBTREE_COMMIT" | \
+  grep -F "git-subtree-dir: vendor/lody"
+git show -s --format='%B' "$SUBTREE_COMMIT" | \
+  grep -F "git-subtree-split: $NEW_SHA"
+```
+
+## Resolve conflicts by class
+
+Open `vendor/lody/BLITZ-PATCHES.md` for every conflict. Conflicts outside a
+declared seam are evidence of an undeclared vendor edit; stop and report them.
+
+| Class | Meaning | Resolution |
+|---|---|---|
+| A | Upstream now supplies the behavior | Delete the Blitz seam and its declaration; use upstream's API |
+| B | The behavior is still needed and only its source anchor moved | Reapply the same narrow behavior using that seam's conflict drill; update anchors and tests |
+| C | Upstream changed the mechanism or product meaning | Stop for a human decision; do not invent a reconciliation |
+
+After the tree is resolved, update `vendor/lody/UPSTREAM.md` with `NEW_SHA`,
+the upstream commit date/title, the current date, and `SUBTREE_COMMIT`. Do not
+add an npm row.
+
+## Reconcile the source seams
+
+Diff the upstream commit against the vendored tree, not against the Blitz
+squash commit. The upstream commit and `HEAD:vendor/lody` both expose Lody paths
+at the tree root; the squash commit does not.
+
+```sh
+git diff --stat "$NEW_SHA" "$(git rev-parse HEAD:vendor/lody)" -- . \
   ':!UPSTREAM.md' ':!BLITZ-PATCHES.md'
+git diff --name-only "$NEW_SHA" "$(git rev-parse HEAD:vendor/lody)" -- . \
+  ':!UPSTREAM.md' ':!BLITZ-PATCHES.md' | sort -u > "$ACTUAL_SEAM_FILES"
+comm -23 "$ACTUAL_SEAM_FILES" "$DECLARED_SEAM_FILES" \
+  > "$UNDECLARED_SEAM_FILES"
+if [ -s "$UNDECLARED_SEAM_FILES" ]; then
+  sed 's/^/undeclared vendor divergence: /' "$UNDECLARED_SEAM_FILES" >&2
+  exit 1
+fi
 ```
 
-**Diff against the upstream COMMIT, never against the squash commit.** The
-squash commit holds the upstream tree at its own root, with no `vendor/lody/`
-prefix, so diffing a merged branch against it reports the whole vendored tree as
-added — thousands of files, and no way to see the seven that matter. Comparing
-the upstream commit to `HEAD:vendor/lody` (a tree, which `git diff` accepts) is
-the comparison that answers the question.
+For every retained seam, refresh the upstream anchor and line number in
+`BLITZ-PATCHES.md`. Run its conflict drill and delete any seam whose upstream
+replacement has landed. Daemon seams 19-21 cover the ACP-authentication queue,
+the optional built-in MCP server, and host-selected cgroup parent/capacity
+policy. Their environment options retain upstream defaults when absent; the box
+service selects the host behavior. The ACP rule moves only an authentication
+`start` to `acp-auth:<configId>`; submit and cancel remain on the default chain.
+Renderer seams 22 and 23 add the sidebar footer slot and host side-panel tabs.
+The browser-panel seam numbered 20 on main was withdrawn before the merge.
 
-**The exact count moves with every seam patch, and `BLITZ-PATCHES.md`'s
-"Expected after seam patch N" notes are the authority** (this list said EIGHT
-through seam patch 5 and has not kept pace since; seam patches 10 to 18 add
-files this table does not list — read the ledger). The files the first nine
-seam patches and seam patch 19 touch are:
+The ambient-IPC audit is not a formatting gate. Any newly reachable unbound IPC
+site reported by `lody-ipc-client-isolation.test.ts` is a class-C decision.
 
-| # | File | Seam patch |
-|---|---|---|
-| 1 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 1 (hunks 1–4) |
-| 2 | `packages/components/src/providers/create-workspace-runtime.ts` | 1 (hunk 5) |
-| 3 | `packages/components/src/window-globals.d.ts` | 1 (hunk 6) |
-| 4 | `packages/components/src/components/loro-sidebar.tsx` | 2 |
-| 5 | `packages/components/src/lib/electron-session-file-sender.ts` | 3 |
-| 6 | `packages/components/src/components/sessions/session-chat-interface.tsx` | 4 and 7 |
-| 7 | `packages/components/src/components/sessions/session-detail.tsx` | 4, 5, 6, 7, 15, 16 and 19 |
-| 8 | `packages/components/src/components/sessions/session-tab-bar.tsx` | 5 |
-| 9 | `packages/components/src/lib/session-github-state.ts` | 7 |
-| 10 | `packages/components/src/components/chat/chat-landing.tsx` | 7 |
-| 11 | `packages/components/src/components/chat/unified-project-selector.tsx` | 7 |
-| 12 | `packages/components/src/components/sessions/session-chat-input-area.tsx` | 7 and 8 |
-| 13 | `packages/components/src/components/sessions/session-conversation-diff-panel.tsx` | 7 |
-| 14 | `packages/components/src/hooks/use-chat-landing-file-draft.ts` | 8 |
-| 15 | `packages/components/src/components/session-list.tsx` | 9 |
-| 16 | `packages/components/src/components/sessions/session-side-panel-tab-bar.tsx` | 19 |
+## Refresh pristine baselines
 
-A file outside the ledger's tables means a hunk landed somewhere undeclared. Fewer means a patch
-was lost in the merge — which typecheck may not catch, because most of these
-widen a predicate rather than change a type. Check each against its row in
-`BLITZ-PATCHES.md`:
+The seam tests read checked-in pristine upstream sources because shallow CI
+clones may not contain the upstream commit object. Refresh all eight from a
+clone that contains `NEW_SHA`:
 
 ```sh
-grep -rn '__LODY_LOCAL_BRIDGE__' vendor/lody/packages/components/src | wc -l   # expect 7
-grep -n 'hideHeader\|hideFooter' vendor/lody/packages/components/src/components/loro-sidebar.tsx | head
-grep -n 'readOnly' vendor/lody/packages/components/src/components/sessions/session-{detail,chat-interface}.tsx
-grep -n 'surfaceTabs' vendor/lody/packages/components/src/components/sessions/session-{detail,tab-bar}.tsx
-grep -n 'parentSession?' vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx
-grep -n 'onSessionTabSelect\|onSessionMissing' vendor/lody/packages/components/src/components/sessions/session-detail.tsx
-grep -n 'sideChatRequiresAssistantTurn\|activeTabAssistantTurnId' vendor/lody/packages/components/src/components/sessions/session-detail.tsx
-```
-
-The last three are seam patch 5, and they answer different questions.
-`surfaceTabs` is the tab API and its content render; the two `onSession*`
-callbacks are its outward edge — the page telling the host that its selection
-is over (a conversation tab was chosen) or that its whole strip is gone (the
-session does not exist), neither of which the host can observe; `parentSession?` is the one hunk
-typecheck CANNOT catch in the other direction — losing it makes a REQUIRED prop
-required again at a call site (`packages/webapp/src/lody/TerminalTabsStrip.tsx`)
-that then stops compiling, so THAT loss is loud. What is quiet is upstream making
-the strip read `parentSession` somewhere new, and
-`packages/webapp/test/lody-surface-tabs.test.tsx` is what catches that.
-
-The last one is seam patch 6, and it is the quietest of them all: the prop is
-optional and the mirror it feeds is a `useState`, so losing any hunk compiles and
-runs — the Side Chat launcher simply goes back to accepting a click it cannot
-serve. `packages/webapp/test/lody-side-chat-guard.test.tsx` names each part for
-that reason.
-
-`BLITZ-PATCHES.md` carries a **merge conflict drill** for each patch, saying
-what to do when the anchor is reworded and what to do when upstream replaces the
-mechanism. Follow the drill; do not re-derive it.
-
-**Then re-anchor its line numbers, in the same change.** Every number in that
-file, and every line reference in §7's mirror table, is stated "at `<sha>`". A
-merge moves most of them. A stale anchor is worse than no anchor: §7's whole
-question is whether upstream fixed a defect, and an anchor pointing at the wrong
-line reads as "yes".
-
-**Re-take the seam baselines too.** `packages/webapp/test/upstream-baseline/`
-holds pristine copies of the two files seam patch 5 patches, and
-`packages/webapp/test/lody-surface-tabs.test.tsx` uses them to prove the
-vendored tree lost no line `BLITZ-PATCHES.md` does not declare. They are
-committed rather than read out of git on demand, because the upstream commit's
-tree is only reachable from a full clone and CI does not have one. Refresh them
-from a clone that DOES have the new commit, in the same change as the merge:
-
-```sh
-PIN=<the new upstream sha>
-for f in session-tab-bar session-detail; do
-  git show "$PIN:packages/components/src/components/sessions/$f.tsx" \
-    > packages/webapp/test/upstream-baseline/"$f.tsx.txt"
+for file in sessions/session-tab-bar sessions/session-detail \
+            sessions/session-side-panel-tab-bar \
+            mobile/mobile-session-tab-sheet mobile/mobile-home-screen; do
+  git show "$NEW_SHA:packages/components/src/components/$file.tsx" \
+    > "packages/webapp/test/upstream-baseline/$(basename "$file").tsx.txt"
 done
+git show "$NEW_SHA:apps/cli/src/lib/message-processor.ts" \
+  > packages/webapp/test/upstream-baseline/message-processor.ts.txt
+git show "$NEW_SHA:apps/cli/src/agent/agent-client.ts" \
+  > packages/webapp/test/upstream-baseline/agent-client.ts.txt
+git show "$NEW_SHA:apps/cli/src/mcp/lody-mcp-http-server.ts" \
+  > packages/webapp/test/upstream-baseline/lody-mcp-http-server.ts.txt
 ```
 
-Then move the sha in that directory's `README.md` and every anchor line number
-in the test. The test fails when the README no longer names the pin
-`UPSTREAM.md` states, so a forgotten refresh is loud rather than silent.
+Update the provenance SHA in
+`packages/webapp/test/upstream-baseline/README.md`, then move each line-number
+anchor in `packages/webapp/test/lody-seam-pin.test.ts` and
+`vendor/lody/BLITZ-PATCHES.md` to the corresponding line in the new pristine
+source. Never weaken a test merely because an anchor moved.
 
-**Three of these patches DELETE when their upstream pull request lands.** Check
-before re-applying — re-applying a patch upstream has already accepted is how a
-fork starts:
+## Reconcile dependencies and workarounds
 
-| Seam patch | Upstream PR sketch | Delete when |
-|---|---|---|
-| 2 (`loro-sidebar.tsx`) | `plans/evidence/lody-sidebar-props-pr.md` | upstream has `hideHeader`/`hideFooter`, or any equivalent suppression |
-| 3 (`electron-session-file-sender.ts`) | `plans/evidence/lody-attachment-seam-pr.md` | upstream's local-file-send predicate stops requiring Electron |
-| 4 (`session-chat-interface.tsx`, `session-detail.tsx`) | `plans/evidence/lody-readonly-prop-pr.md` | upstream grows `readOnly` or its own viewer concept |
-| 5 (`session-tab-bar.tsx`, `session-detail.tsx`) | `plans/evidence/lody-surface-tabs-pr.md` | upstream lets a host contribute tabs to the session tab strip, in any spelling |
-
-**Three of them are still open and not yet submitted**: the read-only prop, the
-attachment predicate and the surface-tabs props. None has been sent upstream, so
-none can have merged; the sidebar props PR is drafted and in the same state. If a
-scheduled agent finds one of these merged upstream, that is news — say so
-prominently in the pull request body.
-
-## 5. Re-audit the npm-artifact patches
-
-Five scripts in `packages/box/patches/` are applied to the **published npm
-artifact**, in the Dockerfile's order. The order is load-bearing:
-`lody-local-platform.mjs` guards on a sha256 of the file AS PUBLISHED, so nothing
-may rewrite it first. All five are idempotent — re-running any of them on an
-already-patched bundle reports it and exits 0, which is what lets the daemon test
-harness copy a real box's bundle and re-apply them to the copy.
-
-### 5a. The platform patch
-
-`packages/box/patches/lody-local-platform.mjs` is applied to the published npm
-artifact, not to this tree. It restores the `LODY_PLATFORM` env read that
-`lody`'s cloud build inlines away, and **without it a box cannot start the
-daemon at all**. It is a standing obligation at every version bump.
-
-It is guarded twice, so neglect fails the image build loudly:
-
-- `EXPECTED_INPUT_SHA256` pins the sha256 of the published `dist/index.js`. Any
-  new version fails here first.
-- `EXPECTED_OCCURRENCES` pins the anchor count at **4**. A refactor that moves
-  or splits the call sites fails here.
-
-**All four sites, always.** One of them is the default argument of
-`getInstallationProfile()`, which selects the whole installation profile.
-Patching only the `getCliPlatformKind` site leaves the daemon running the local
-composition under the CLOUD profile — socket basenames `lody-*`, host lease on
-17788, data dir `~/.lody` — and the box depends on the LOCAL shape: `lody-oss-*`
-basenames, port **17789**, `~/.lody-oss`. 17789 is pinned in
-`RESERVED_PREVIEW_PORTS` and `lody-oss-` is the namespace
-`/usr/local/libexec/blitz-lody-bridge` derives its socket paths from.
-
-Re-auditing means, in order:
+Upstream resolves through its pnpm catalog; the Blitz webapp resolves the
+renderer dependencies through `packages/webapp/package.json`. Review both the
+catalog and upstream patch set.
 
 ```sh
-npm pack lody@<version> --pack-destination /tmp && tar -xzf /tmp/lody-<version>.tgz -C /tmp
-sha256sum /tmp/package/dist/index.js
-grep -c 'resolvePlatformKind("cloud")' /tmp/package/dist/index.js   # expect 4
-node packages/box/patches/lody-local-platform.mjs /tmp/package/dist/index.js
-LODY_PLATFORM=local node /tmp/package/dist/index.js start           # expect "Starting in local platform mode"
+git diff "$OLD_SHA" "$NEW_SHA" -- \
+  pnpm-workspace.yaml packages/components/package.json patches/
+grep -n 'patchedDependencies' -A 30 vendor/lody/pnpm-workspace.yaml
+node scripts/apply-vendor-patches.mjs
 ```
 
-Then update `EXPECTED_INPUT_SHA256`, `EXPECTED_VERSION` and the Dockerfile pin
-**together**, in the same commit.
+Move every renderer dependency that Blitz names to the upstream catalog value.
+Remove a deleted upstream patch from `scripts/apply-vendor-patches.mjs`; there
+is no second patch copy. Recheck the guarded `@pierre/diffs` side-effects fix
+there and delete it if upstream's published package now names the shipped
+`dist/components/web-components.js` or drops `sideEffects`.
 
-### 5b. The ACP sign-in queue patch
+Review the workaround inventory under “Things upstream does not support” in
+`BLITZ-PATCHES.md`. In particular, delete a mirror when upstream:
 
-`packages/box/patches/lody-acp-auth-queue.mjs` gives `machine/acp-authenticate`
-its own chain in `MessageProcessor.extractQueueKey`. Without it every `machine/*`
-message shares one serial chain, so the `submit-code` carrying a member's pasted
-sign-in code queues behind the `claude auth login` that is blocking on stdin
-waiting for it — and so does `cancel`. An interactive agent sign-in can then only
-time out, after 285 s. See `plans/LODY-RUNTIME-DESIGN.md` §13.3.
+- passes `machineFlockRows` on the archive worktree-cleanup path;
+- accepts a local project's own remote without a cloud repository row; or
+- lets the local runtime supply the machine list for ACP capability refresh.
 
-Its guards are the installed package version and its own anchor at exactly one
-occurrence, NOT a file sha256 — a file hash can only pin the first patch in a
-chain. Re-auditing means:
+Update every moved anchor even when the workaround remains.
+
+## Sync adapters at the gitlink SHAs
+
+The CLI workspace uses five adapter gitlinks: core, Claude, Codex, DSH, and
+Grok. Kimi remains a gitlink but is excluded by
+`vendor/lody/pnpm-workspace.yaml`; do not materialize it for this build.
+
+Sync, review, stage, and check the reviewed trees:
 
 ```sh
-grep -A 14 'extractQueueKey(message)' /tmp/package/dist/index.js
-node packages/box/patches/lody-acp-auth-queue.mjs /tmp/package/dist/index.js
+npm run lody:adapters:sync
+git diff -- vendor/lody-adapters
+git add vendor/lody-adapters
+npm run lody:adapters:check
+npm run lody:adapters:check -- --fetch
 ```
 
-**If the new version already routes unnamed control messages off one shared
-chain, DELETE this patch rather than updating it** — and say so prominently in
-the pull request body, because it means the upstream defect is fixed.
+The sync fetches each exact public gitlink commit, archives only its tracked
+tree, and removes `dist/` and `node_modules/`. It then replaces the matching
+`vendor/lody-adapters/<name>/` snapshot. Tests, docs, and lockfiles remain.
+Sync reports the old and new SHAs plus file write and removal counts. It exits
+without comparing its output to the old index.
 
-### 5c. The Code Collab worktree-root patch
+The first check uses no network. It proves all five stamps match their gitlinks
+and `.gitmodules`. It also checks package presence and rejects unstaged snapshot
+changes. The fetch check exports every exact upstream commit and compares its
+bytes and modes with the staged snapshot. Record all six gitlink SHAs and any
+adapter-tree changes in the PR body.
 
-`packages/box/patches/lody-code-collab-worktree-root.mjs` makes
-`resolveCodeCollabWorkspaceRoot` answer with a worktree session's WORKTREE. Its
-local-project branch answers with the project's root path and reads neither
-`project.useWorktree` nor `meta.isWorktree`, so as soon as no live `Session`
-object is left, All Changes, the Files tab and every file chip of a BlitzOS
-worktree session read the `/workspace/<repo>` clone. The clone is clean by
-design, so the panel shows an empty SUCCESS — "No changes yet." — and never an
-error. Reported from the first real worktree dogfood on canary.
+## Build and stamp the daemon
 
-Its guards are the installed package version and its own anchor at exactly one
-occurrence. Re-auditing means:
+Build the same package the image installs. Every retained daemon seam already
+lives in the subtree; the builder never rewrites the compiled output.
 
 ```sh
-grep -A 16 'if (project?.kind === "local") {' /tmp/package/dist/index.js  # the resolver's branch
-node packages/box/patches/lody-code-collab-worktree-root.mjs /tmp/package/dist/index.js
-npx vitest run test/lody-worktree-session.test.ts   # in packages/webapp, on a box with the bundle
+LODY_OUT=$(mktemp -d)
+npm run lody:build -- --out "$LODY_OUT"
+mapfile -t TARBALLS < <(find "$LODY_OUT" -maxdepth 1 -type f -name 'lody-*.tgz' -print)
+test "${#TARBALLS[@]}" -eq 1
+TARBALL=${TARBALLS[0]}
+jq . "$LODY_OUT/BUILD.json"
 ```
 
-**If the new version resolves a local-project worktree session to its worktree,
-DELETE this patch rather than updating it.** Their own
-`lib/terminal-workdir-resolver.ts:97` already does, so the two may converge.
+The script exports `HEAD:vendor/lody`, overlays the five reviewed adapters,
+creates a Corepack shim for upstream's bare `pnpm` calls, performs the frozen
+install and build, and copies the notice. It derives an npm lockfile v3
+shrinkwrap from `apps/cli` production dependencies in `pnpm-lock.yaml`.
+Every runtime package has the reviewed version, tarball URL, and integrity.
+The script also checks the short required-asset manifest. Missing workers,
+presets, WASM, the notice, the shrinkwrap, or the stamp fail the build.
+Unrelated chunks are allowed. The identical stamp sits beside the tarball and
+inside `dist/BUILD.json`. `distSha256` covers sorted path and content-digest
+records for `dist`, except the self-referential stamp. A measured warm build
+took about 91 seconds. That is evidence, not a timeout.
 
-### 5d. The built-in MCP server patch
+For a Docker builder without Git, pass `--source /path/to/lody`. The script
+reads source identity from that tree's `UPSTREAM.md` and adapter identity from
+the reviewed `vendor/lody-adapters` stamps beside the script's repository root.
 
-`packages/box/patches/lody-builtin-mcp-off.mjs` empties the built-in list in
-`AgentClient.buildMcpServers`, so no session spawns
-`lody __internal lody-mcp-server` — a second copy of the whole bundle, 266 MB
-resident per session on a cx33 (2026-09-02), serving tools BlitzOS does not
-use — and blanks `LODY_MCP_TOOLS_REMINDER`, the sentence `buildPrompt` appends
-to every turn to advertise them. Workspace-configured MCP servers are untouched.
+## Run the pair gate
 
-Its guards are the installed package version and two anchors at exactly one
-occurrence each. Re-auditing means:
+Extract the tarball into a temporary prefix. Run npm at the package root so it
+enforces the included shrinkwrap. Then point the harness at that directory:
 
 ```sh
-grep -c 'const builtin = this.buildBuiltinMcpServers(workdir);' /tmp/package/dist/index.js  # expect 1
-grep -c 'const LODY_MCP_TOOLS_REMINDER = ' /tmp/package/dist/index.js                        # expect 1
-node packages/box/patches/lody-builtin-mcp-off.mjs /tmp/package/dist/index.js
+mkdir -p "$LODY_OUT/install/lib/node_modules" "$LODY_OUT/unpack"
+tar -xzf "$TARBALL" -C "$LODY_OUT/unpack"
+mv "$LODY_OUT/unpack/package" "$LODY_OUT/install/lib/node_modules/lody"
+npm ci --prefix "$LODY_OUT/install/lib/node_modules/lody" --omit=dev
+export LODY_BUNDLE="$LODY_OUT/install/lib/node_modules/lody"
+test -f "$LODY_BUNDLE/dist/index.js"
 ```
 
-Then start a session on a box built from the bundle and confirm `ps` shows no
-`lody-mcp-server` child under the agent.
-
-**If the new version makes the built-in server optional, DELETE this patch and
-set the option instead.**
-
-### 5e. The session sandbox patch
-
-`packages/box/patches/lody-session-sandbox.mjs` makes Lody's per-session cgroup
-sandbox start on a box and strips its capacity split. Upstream derives the
-session parent from the daemon's own cgroup, which cannot hand controllers to
-children while it holds the daemon, so on a box every session logs "Execution
-sandbox unavailable" and runs with no `cgroup.kill` — which is how `npm test`
-trees and MCP servers outlive the session that started them. The patch parents
-the leaves at `blitz-user.slice/lody-sessions`, which `blitz-cgroup init` builds
-and delegates, and turns `calculateAutomaticSessionSandboxLimits` into
-`pids.max` only, because the box already has its ceiling and does not want a
-second budget that shrinks with every open session.
-
-Its guards are the installed package version and two anchors at exactly one
-occurrence each. Re-auditing means:
+Set `LODY_CLAUDE_BINARY` to the same Claude CLI used by the image when the
+default `/opt/blitz/npm/bin/claude` does not exist. The post-sign-in suite names
+that missing prerequisite when it skips. Run every non-probe harness consumer
+serially:
 
 ```sh
-grep -c 'trimLeadingSlash(selfCgroupPath), DEFAULT_SESSION_PARENT' /tmp/package/dist/index.js  # expect 1
-grep -c 'memoryMaxBytes: Math.max(1, Math.floor(executionMemoryBudgetBytes / sessionCount))' /tmp/package/dist/index.js  # expect 1
-node packages/box/patches/lody-session-sandbox.mjs /tmp/package/dist/index.js
-```
-
-Then, on a box built from the bundle, open a session and confirm its agent sits
-in `/blitz-user.slice/lody-sessions/lody-session-<id>` (`/proc/<pid>/cgroup`),
-that the daemon log no longer says "Execution sandbox unavailable", and that
-archiving the session leaves nothing behind in `ps`.
-
-**If the new version makes the parent directory or the automatic limits
-configurable, DELETE this patch and set the options instead.**
-
-## 6. Dependencies and the patch-file audit
-
-Upstream resolves renderer dependencies through pnpm's catalog; BlitzOS resolves
-them through npm in `packages/webapp/package.json`.
-
-```sh
-git diff <pinned-sha>..FETCH_HEAD -- pnpm-workspace.yaml packages/components/package.json
-```
-
-For every catalog entry that moved and that `packages/webapp/package.json`
-names, move ours to match. A dependency upstream ADDED that our build reaches
-shows up as a resolve failure in step 7's build, not here.
-
-Their `patchedDependencies` are applied by `scripts/apply-vendor-patches.mjs`
-against `vendor/lody/patches/`. That script patches in place — there is no
-second copy of a patch file to update — so the audit is:
-
-```sh
-git diff --stat <pinned-sha>..FETCH_HEAD -- patches/
-grep -n 'patchedDependencies' -A 20 vendor/lody/pnpm-workspace.yaml
-node scripts/apply-vendor-patches.mjs        # runs on postinstall too; must be silent
-```
-
-A patch whose target version moved fails here with the file and the hunk. A
-patch upstream DELETED must be removed from the script in the same change.
-
-### 6a. The `@pierre/diffs` sideEffects fix
-
-The same script carries one fix that is a JSON field edit rather than a patch
-file: `@pierre/diffs@1.0.10` publishes `"sideEffects":
-["src/components/web-components.ts"]`, a path that exists only in their source
-tree, while the package ships `dist/`. The allowlist matches nothing, the
-bundler drops `dist/components/web-components.js` — the side-effect-only
-module that `customElements.define`s `<diffs-container>` — and every diff body
-in the product renders as an inert element with no shadow root and no error
-(measured in a real Chromium against the production build, 2026-09-01; the
-"All Changes lists files but expands to nothing" bug). The postinstall step
-appends the real dist path to the allowlist.
-
-The guard is the installed VERSION, and it fails closed: a `@pierre/diffs`
-bump makes `apply-vendor-patches.mjs` exit non-zero (so `npm install` fails
-loudly) and fails `packages/webapp/test/pierre-web-components.test.ts`, which
-pins the fix applied AND the upstream defect present. Re-auditing on a bump
-means:
-
-```sh
-node -e 'console.log(require("@pierre/diffs/package.json").sideEffects)'
-# still names only src/ paths -> bump `version` in PIERRE_SIDE_EFFECTS_FIX
-# (scripts/apply-vendor-patches.mjs) and re-run the probe below
 cd packages/webapp
-npx vite build --config test/diff-probe/vite.config.ts
-node test/diff-probe/run-browser.mjs test/diff-probe/dist   # needs playwright; expects hasPre: true
-npx vitest run test/pierre-web-components.test.ts
+PAIR_TESTS=$(grep -rl --include='*.test.ts' --include='*.test.tsx' \
+  'lody-daemon-harness' test | grep -v '\.probe\.' | sort)
+npx vitest run --maxWorkers=1 $PAIR_TESTS
+cd ../..
 ```
 
-**If the new version's `sideEffects` names the shipped
-`dist/components/web-components.js` (or drops the field), DELETE the
-`PIERRE_SIDE_EFFECTS_FIX` block and this section rather than updating them** —
-the test's "upstream still carries the defect" half fails exactly then, and
-say so in the pull request body, because it means the upstream defect is
-fixed.
+At HEAD that discovery selects these 15 suites:
 
-## 7. The three workaround mirrors, and when they DELETE
+```text
+lody-acp-authentication        lody-archive-lifecycle
+lody-attachments               lody-post-signin-turn
+lody-project-control-frames    lody-rail-groups
+lody-session-rail              lody-session-roundtrip
+lody-session-surface           lody-session-workdir
+lody-shared-endpoints          lody-shared-surface
+lody-sharing-relay             lody-worktree-composer
+lody-worktree-session
+```
 
-`packages/webapp/src/lody/` holds three workarounds for upstream defects. Each
-is a candidate for deletion at every merge, and each has an upstream fix
-described in `vendor/lody/BLITZ-PATCHES.md` under "things upstream does not
-support". **Check all three; delete the ones that have landed.**
+The discovery command, rather than this snapshot, is authoritative when a new
+harness consumer lands. `lody-session-surface`, `lody-session-rail`, and
+`lody-post-signin-turn` are the minimum smoke subset, not the whole gate.
 
-| Mirror | What it repairs | Delete when upstream |
-|---|---|---|
-| `mirrorLocalProjectsToMachineMeta` (`local-projects.ts`) | archive resolves nothing for a local-project worktree, because the ARCHIVE caller does not pass `machineFlockRows` (`message-handler.ts:3971` vs `:4499`) | passes `machineFlockRows` on the archive path |
-| `publishBoxReposAsWorkspaceRepos` (`local-projects.ts`) | a local project's repo name is dropped unless the cloud already knows the repo (`chat-landing.tsx:481`) | treats a local project's own remote as sufficient |
-| `refreshLodyAcpCapabilities` (`agent-configs.ts`) | upstream's startup capabilities pass lists machines from the Convex-authorized set, which never contains a box (`create-workspace-runtime.ts:2415`) | lets the caller supply the machine list |
+Leave `BLITZ_LODY_LIVE_TURN` unset. Tests that dispatch a paid model turn skip
+by design in `lody-post-signin-turn`, `lody-session-rail`,
+`lody-session-roundtrip`, `lody-session-surface`, `lody-shared-surface`, and
+`lody-worktree-composer`; their remaining cases must run. The
+`lody-keepalive-activation` and `lody-switch-cost` probe suites in that directory
+also stay out of PR CI; they require `BLITZ_LODY_SWITCH_PROBE=1` and belong in a
+scheduled/manual performance run.
 
-Each check is a `grep` in the pulled tree for the anchor named above. If the
-anchor moved but the defect stands, update the line reference in
-`BLITZ-PATCHES.md` — a stale anchor is how the next agent concludes it was
-fixed.
-
-## 8. Gates
+Run the daemon-free bridge boundary gates too. They use stand-ins and are not
+evidence that the built daemon starts, but they protect the box boundary:
 
 ```sh
+cd packages/box/guest-tests
+npx vitest run --maxWorkers=1 \
+  test/lody-bridge-frames.test.ts \
+  test/lody-bridge-control-stream.test.ts \
+  test/lody-bridge-share.test.ts \
+  test/lody-projects-registration.test.ts
+cd ../../..
+```
+
+The required `lody-daemon` job runs this discovery against the artifact it just
+built and fails explicitly if a non-paid suite reports a bundle-absence skip.
+Before installing that artifact, it also runs the focused authentication-queue,
+built-in-MCP request/reminder, and session-sandbox tests in the preserved
+scratch tree that produced it.
+
+The install fetches only the shrinkwrap's exact registry tarball URLs. npm
+checks every integrity before extraction. Lifecycle scripts remain enabled for
+native dependencies in the target runtime. The reviewed Lody workspace marks
+`better-sqlite3` 13 as build-ignored because its package already carries
+platform prebuilds. The pair gate proves those locked dependencies install and
+the resulting daemon starts.
+
+## Recapture fixture corpora only for semantic changes
+
+Validate these daemon-authored corpora against the just-built daemon:
+
+- `packages/schema/fixtures/lody-data-plane/server/`, except its two documented
+  synthesized cases, retaining the derived chunked frame;
+- `packages/schema/fixtures/lody-project-registration/request/` and
+  `response/`;
+- the non-synthesized stream and envelope cases in
+  `packages/schema/fixtures/lody-session-control-stream/`; and
+- `packages/schema/fixtures/lody-share-claim/catalog-full.json`, regenerating
+  `catalog-shared.json` through the real bridge projection.
+
+Do not churn real IDs on every merge. Re-capture only when reviewed protocol
+behavior changes, and normalize only the nondeterministic IDs and timestamps
+each README already documents. Until `scripts/lody-validate-fixtures.mjs`
+lands, drive the capture scenarios with the pair harness and run every listed
+conformance test. After it lands, validation uses the PR-built artifact and is
+mandatory.
+
+Every recaptured corpus README must contain this exact provenance form with
+real values:
+
+```text
+Captured from the daemon built from `vendor/lody` at `<upstreamSha>` (`distSha256` `<sha>`).
+```
+
+The qualified README paragraphs naming the old npm daemon in the captured
+corpora are historical capture facts, not a daemon-selection rule.
+
+## Run all gates
+
+Run the focused seam pins first, then the repository and Go gates:
+
+```sh
+cd packages/webapp
+npx vitest run --maxWorkers=1 \
+  test/lody-seam-pin.test.ts \
+  test/lody-v1-scope-sources.test.ts \
+  test/lody-ipc-client-isolation.test.ts
+cd ../..
+
 npm run typecheck
 npm run lint:gate
 npm test
-```
-
-Then the two Go suites, which `npm test` does not run:
-
-```sh
 ( cd packages/broker && go test ./... )
-( cd packages/box/gateway && gofmt -l . && go test ./... )
+( cd packages/box/gateway && test -z "$(gofmt -l .)" && go test ./... )
+git diff --check
 ```
 
-`lint:gate` must PASS, not merely produce a number. **Never raise
-`lint-baseline.json` to make a merge pass.** A merge that adds findings is
-reporting an upstream change that our rules dislike; say so in the pull request
-and leave the baseline alone.
+`lint:gate` must pass; never raise `lint-baseline.json` to absorb upstream
+findings. Once present, also require the adapter-drift, pin-provenance,
+dist-manifest, notices, source-seam behavior, fixture-validation, built-image
+smoke, `/lody/build` contract, pair-matrix, and canary-image-input gates named
+in `plans/LODY-DAEMON-FROM-TREE.md`.
 
-The daemon-backed suites skip without a `lody` bundle installed at
-`/opt/blitz/npm/lib/node_modules/lody`, which is the case on CI. On a machine
-that has one they run, and a merge is much better validated with them:
+## What needs a human
+
+Automation must stop for:
+
+- a class-C seam conflict;
+- upstream behavior that is mechanically valid but unwanted in BlitzOS;
+- a red or unexpectedly skipped non-paid pair gate;
+- a new ambient IPC site reported by the source audit;
+- a fixture semantic change that requires a reviewed recapture;
+- the final PR review and merge click.
+
+Everything else is routine evidence gathering and may be automated.
+
+## Open the pull request and stop
+
+Until plan PR E opens the PR itself:
 
 ```sh
-ls /opt/blitz/npm/lib/node_modules/lody/dist/index.js && npm test
+git push -u origin "$(git branch --show-current)"
+gh pr create --title "chore(vendor): merge Lody ${NEW_SHA:0:12}" --body-file <file>
 ```
 
-They serialize on a cross-file lock, so the run is slower rather than parallel;
-that is expected. No live turn is ever spent: `BLITZ_LODY_LIVE_TURN` is unset.
+The PR body must include:
 
-## 9. Open the pull request
+- old and new upstream SHAs, ref, commit list/count, and whether it is a release;
+- all six adapter gitlink SHAs and adapter-tree changes;
+- every seam file upstream touched and its A/B/C resolution;
+- deleted seams, retained workarounds, and new ambient IPC findings;
+- tarball and `BUILD.json` identity plus package-output review;
+- fixture validation or reviewed recapture details;
+- exact gate results, including paid/probe skips; and
+- canary transition impact.
 
-```sh
-git push -u origin <branch>
-gh pr create --title 'chore(vendor): merge Lody <short-sha>' --body-file <file>
-```
+Do not merge it. A person reviews the upstream behavior and clicks merge.
 
-The body says, at minimum:
+## What happens after the human merge
 
-- the upstream range merged, and the commit count;
-- which of the seven divergent files upstream touched, and how each conflict was
-  resolved;
-- whether the npm `lody` pin moved, and if not, why;
-- the gate output, verbatim;
-- anything from step 7 that could be deleted, and whether it was;
-- every friction point, appended to §11 of this document in the same PR.
+Every push to `main` runs the `image` job in
+`.github/workflows/canary.yml`. It derives a SHA-256 release ID from the Git
+object IDs for every repository path copied by the Dockerfile. These inputs
+include `packages/box`, `packages/broker`, `packages/schema/fixtures`,
+`env.defaults`, `vendor/lody`, `vendor/lody-adapters`, and all Lody build scripts.
+The canonical list lives in
+`packages/control-plane/scripts/lib/box-image-inputs.mjs` and
+`packages/control-plane/scripts/box-image-key.mjs`. It validates and reuses an
+existing matching manifest or builds an amd64 image with Lody sessions enabled,
+boot-smokes that enabled image, publishes parts before the manifest under
+immutable `box-image/<releaseId>/` keys through
+`packages/control-plane/scripts/publish-box-image.mjs`, passes the exact
+ref/tag/archive digest to `deploy`, and verifies both commit and image tag through
+`/version`.
 
-**Never merge unattended.** A green PR is the runbook's output; the decision is
-a person's.
+`box-image-key.test.mjs` parses build-context `COPY` instructions and rejects
+an uncovered source. It also proves each Lody input changes the release ID.
+The key reads Git tree and blob IDs, so large adapter trees remain fast.
+Gitlinks inside `vendor/lody` contribute to its tree ID without a file walk.
 
-## 10. If something breaks
+A vendor-only merge therefore selects a matching immutable image. The image is
+reused or baked, published, pinned, and deployed without a follow-up source
+commit. Plan PR D adds `/lody/build` so the browser can compare the package's
+own stamp with its renderer commit.
 
-| Symptom | Where to look |
+New boxes use the newly deployed pin. Existing cloud boxes replace their
+container only after `updateRequested` is set through
+`packages/control-plane/core/box-config.ts`; microVMs have no in-place update
+path. An upstream merge never silently kills every running field box.
+
+## Where things are documented
+
+| Document | Scope |
 |---|---|
-| the pull re-imports the whole tree | §2 — the split sha is gone from the squash commit |
-| typecheck fails inside `vendor/lody` | not ours to fix; the vendored tree is excluded from our tsconfig — check the alias list in `packages/webapp/vite.config.ts` and the stubs in `src/lody/stubs/` |
-| a `@lody/*` import resolves to nothing | a package upstream moved or renamed; the aliases are in `packages/webapp/vite.config.ts` |
-| the surface mounts and renders nothing | a provider upstream added. `SessionSurface`'s module comment lists what is deliberately not mounted, and `inert-auth-client.ts` throws a TypeError naming any new call site |
-| a daemon-backed suite times out with an empty log | an orphaned daemon holds the local profile's host lease: `ss -lntp \| grep 17789` |
-| the box cannot start its daemon | §5 — the platform patch |
-
-## 11. Friction log
-
-Appended by each merge, newest first. A runbook that does not record what went
-wrong is a runbook that will go wrong the same way again.
-
-### 2026-08-30 — `966623d0` → `f3474894`, 11 commits (the first merge)
-
-The rehearsal that validated this document. Outcome: **the seam architecture
-held.** One conflict, mechanical; the divergence came out at exactly seven files;
-every gate green.
-
-| # | Friction | Fixed by |
-|---|---|---|
-| 1 | §4's verification command diffed against the SQUASH commit and reported the entire vendored tree as added. A squash commit holds the upstream tree at its own root, with no prefix. | The command above, and the same correction in `vendor/lody/BLITZ-PATCHES.md`. |
-| 2 | The one conflict was `window-globals.d.ts`: upstream widened `__LODY_PLATFORM__` with `preferredSystemLanguages` on the line above our `__LODY_LOCAL_BRIDGE__` declaration. Textually adjacent, semantically unrelated. | Keep both. This is what seam patch 1's drill describes, and it took one edit. |
-| 3 | `session-chat-interface.tsx` — seam patch 4, added in the same phase — auto-merged with no conflict, upstream having touched it in the same file 4,000 lines away. | Nothing. Recorded because it is the good case and it is worth knowing the seams are not all equally fragile. |
-| 4 | **Every line number in `BLITZ-PATCHES.md` had moved**, including the three workaround anchors in §7 whose whole purpose is to say whether upstream fixed the defect. A stale anchor reads as "fixed". | Re-anchored in the same commit. Make this step explicit at every merge: the anchors are load-bearing, not decoration. |
-| 5 | `npm test` failed FIVE cases in `lody-sharing-relay.test.ts` — and it was not the merge. Phase 7 had taught the harness's shim to strip an inbound `X-Blitz-Lody-Share`, as the real gateway does, which closed a shortcut that test had been taking: it set the header itself on the un-prefixed path. | The test now dials `harness.sharedEndpoints(claim)`, which is how a grantee reaches a box in production. Better test, found by the gate. |
-| 6 | `lody-worktree-session.test.ts` failed once inside a full `npm test` and passed alone, twice. The daemon-backed suites serialize on a cross-file lock and a full run spends ~11 minutes of test time. | Re-run before believing it. Not a merge signal. |
-
-**What did NOT move:** the npm `lody` pin. npm's latest is still `0.88.1`, so
-§3's rule applies — the daemon stays where it is, and the platform patch needed
-no re-audit because the artifact it patches did not change.
-
-**All three workaround mirrors are still needed.** Checked against the new tree:
-the archive path still does not pass `machineFlockRows`
-(`message-handler.ts:3989` vs `:4518`), `resolveLocalProjectGithubRepoFullName`
-still gates on the cloud repo list (`chat-landing.tsx:481`), and the startup
-capabilities pass still lists machines from the Convex-authorized set
-(`create-workspace-runtime.ts:2416`).
+| `docs/LODY-MERGE.md` | The one current upstream-merge procedure |
+| `vendor/lody/BLITZ-PATCHES.md` | Declared seams, upstream anchors, conflict drills, and workaround inventory |
+| `vendor/lody/UPSTREAM.md` | The upstream revision, subtree squash commit, and adapter gitlink pins |
+| `plans/LODY-DAEMON-FROM-TREE.md` | Approved source-built-daemon design, gates, and migration PRs |
+| `plans/LODY-SESSIONS.md` | Historical design rationale; its old merge and npm-pin rules are superseded |

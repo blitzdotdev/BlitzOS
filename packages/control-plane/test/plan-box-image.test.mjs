@@ -43,6 +43,12 @@ function createInputRepository() {
     ["packages/box/Dockerfile", "FROM scratch\n"],
     ["packages/broker/main.go", "package main\n"],
     ["packages/schema/fixtures/example.json", "{}\n"],
+    ["vendor/lody/package.json", "{}\n"],
+    ["vendor/lody-adapters/core/package.json", "{}\n"],
+    ["scripts/lody-build-package.mjs", "export {};\n"],
+    ["scripts/lody-npm-shrinkwrap.mjs", "export {};\n"],
+    ["scripts/lody-sync-adapters.mjs", "export {};\n"],
+    ["scripts/lody-package-manifest.json", "[]\n"],
     ["env.defaults", "BLITZ_LODY_SESSIONS=0\n"],
   ]) {
     const filePath = path.join(repository, relativePath);

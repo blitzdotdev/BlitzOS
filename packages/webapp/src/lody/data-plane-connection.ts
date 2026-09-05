@@ -71,7 +71,11 @@ export interface LodyDataPlaneConnectionOptions {
   url: string;
   /** Injected in tests; defaults to the platform `WebSocket`. */
   webSocketConstructor?: typeof WebSocket;
+  /** Socket continuity edges consumed by the owning keep-alive entry. */
+  onContinuity?: (event: LodyDataPlaneContinuityEvent) => void;
 }
+
+export type LodyDataPlaneContinuityEvent = "socket-close" | "socket-redial";
 
 export interface LodyDataPlaneConnectionHandle {
   connection: LodyDataPlaneConnection;
@@ -129,6 +133,7 @@ export function createLodyDataPlaneConnection(
     redialTimer = setTimeout(() => {
       redialTimer = null;
       stats.redials += 1;
+      options.onContinuity?.("socket-redial");
       open();
     }, redialDelay);
     redialDelay = Math.min(redialDelay * 2, REDIAL_MAX_DELAY_MS);
@@ -138,6 +143,7 @@ export function createLodyDataPlaneConnection(
     stopTimers();
     const dying = socket;
     socket = null;
+    if (dying !== null) options.onContinuity?.("socket-close");
     setConnected(false);
     if (dying !== null && (dying.readyState === 0 || dying.readyState === 1)) dying.close();
     scheduleRedial();

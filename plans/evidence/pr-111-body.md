@@ -1,5 +1,9 @@
 # Lody sessions: chats and GitHub worktrees, first-class
 
+> **Historical pull-request record.** As of 2026-09-04, its npm-daemon,
+> verified-pair, compiled-patch, and merge-procedure descriptions are superseded
+> by `docs/LODY-MERGE.md` and `plans/LODY-DAEMON-FROM-TREE.md`.
+
 Vendors Lody's session plane into BlitzOS: the daemon on the box, the renderer
 in the webapp, and the rail rebuilt around sessions instead of terminal tabs.
 Phases 0–7 of `plans/LODY-SESSIONS.md`, which is the plan and the record.
@@ -72,7 +76,7 @@ both sides.
 
 The published `lody` npm package is the CLOUD build — its Vite config inlines
 the platform as a literal, so the local composition root is unreachable and the
-daemon blocks on a device-authorization login. `packages/box/patches/lody-local-platform.mjs`
+daemon blocks on a device-authorization login. The now-retired `lody-local-platform.mjs`
 restores the env read at image build, guarded by a sha256 of the input and an
 anchor count, so a version bump fails the image build loudly rather than
 shipping a box that cannot start.

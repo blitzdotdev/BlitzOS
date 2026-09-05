@@ -259,7 +259,7 @@ describe("the project picker's GitHub entries", () => {
     const view = await renderPicker([]);
     const text = menuText();
     expect(text, "C65 is gone").not.toContain("Connect more GitHub projects");
-    expect(text, "the picker itself still renders").toContain("Add a local project");
+    expect(text, "the picker itself still renders").toContain("Add a folder");
     await view.unmount();
   });
 

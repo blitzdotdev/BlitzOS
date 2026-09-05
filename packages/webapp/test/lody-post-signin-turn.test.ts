@@ -14,14 +14,14 @@
  * handed. A stub of any of them would assert the stub.
  *
  * THE STAND-IN IS THE CREDENTIAL, NOT THE BINARY. `beforeAll` writes a shim
- * that execs the SAME `/opt/blitz/npm/bin/claude` the box runs; the only thing
- * it changes is which `HOME` that process sees, so the first turn runs against a
+ * that execs the SAME Claude binary the harness was given (the box path by
+ * default); the only thing it changes is which `HOME` that process sees, so the first turn runs against a
  * signed-out CLI exactly as a box with no Claude credential does, and
  * `markSignedIn()` is `claude auth login` in its only observable effect — the
  * credential is now in the HOME the agent's process reads.
  *
- * TWO GATES, the ones every daemon-backed suite here uses: the whole file skips
- * without a `lody` bundle (which is CI), and the turn that reaches a model is
+ * TWO GATES: the whole file skips with a named reason without a Lody package or
+ * Claude binary, and the turn that reaches a model is
  * skipped unless `BLITZ_LODY_LIVE_TURN=1`, because it spends a turn of
  * somebody's subscription:
  *
@@ -29,7 +29,7 @@
  */
 import "fake-indexeddb/auto";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStore } from "jotai";
@@ -54,9 +54,9 @@ import {
   type LodyHarness,
 } from "./lody-daemon-harness.js";
 
-/** The vendor CLI the box's own PATH shim execs. The stand-in below execs the
- * same one, so nothing about the agent is simulated. */
-const CLAUDE_BINARY = "/opt/blitz/npm/bin/claude";
+/** The vendor CLI the box's own PATH shim execs. CI supplies its install path;
+ * the stand-in below still execs the same binary, so the agent is not mocked. */
+const CLAUDE_BINARY = process.env.LODY_CLAUDE_BINARY ?? "/opt/blitz/npm/bin/claude";
 /** The cheapest prompt that still needs a model. One turn, never retried. */
 const LIVE_TURN_PROMPT = "reply with the word ok";
 const LIVE_TURN_DEADLINE_MS = 120_000;
@@ -116,7 +116,17 @@ function assistantSpoke(history: readonly JsonValue[]): boolean {
   });
 }
 
-describe.skipIf(!lodyDaemonAvailable())("the first turn after an agent sign-in", () => {
+const prerequisiteFailure = !lodyDaemonAvailable()
+  ? "the Lody package is absent"
+  : !existsSync(CLAUDE_BINARY)
+    ? `the Claude binary is absent at ${CLAUDE_BINARY}`
+    : null;
+
+describe.skipIf(prerequisiteFailure !== null)(
+  prerequisiteFailure === null
+    ? "the first turn after an agent sign-in"
+    : `the first turn after an agent sign-in (skipped: ${prerequisiteFailure})`,
+  () => {
   let harness: LodyHarness;
   let snapshot: LodyPlatformSnapshot;
   let handle: LodyRuntimeHandle;
@@ -297,4 +307,5 @@ describe.skipIf(!lodyDaemonAvailable())("the first turn after an agent sign-in",
     },
     300_000,
   );
-});
+  },
+);

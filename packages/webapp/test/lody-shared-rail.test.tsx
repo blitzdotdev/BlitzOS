@@ -312,8 +312,8 @@ async function mountRegion(sharedOpen: unknown | null) {
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
   const props: { surfaceTabs?: unknown }[] = [];
   vi.doMock("../src/lody/SessionSurface.js", () => ({
-    default: (received: { surfaceTabs?: unknown }) => {
-      props.push(received);
+    default: (host: { surfaces: Array<{ surfaceTabs?: unknown }> }) => {
+      props.push(...host.surfaces);
       return null;
     },
   }));

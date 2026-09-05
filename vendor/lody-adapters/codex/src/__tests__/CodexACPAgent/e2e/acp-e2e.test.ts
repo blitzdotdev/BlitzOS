@@ -1,0 +1,175 @@
+import path from "node:path";
+import {afterEach, expect, it} from "vitest";
+import {AgentMode} from "../../../AgentMode";
+import {legacySetSessionModel} from "../../../AcpExtensions";
+import {
+    createAuthenticatedFixture,
+    createGatewayFixture,
+    DEFAULT_TEST_MODEL_ID,
+    describeE2E,
+    OTHER_TEST_MODEL_ID,
+    requireLiveApiKey,
+    type SpawnedAgentFixture,
+} from "./acp-e2e-test-utils";
+
+describeE2E("E2E tests", () => {
+    let fixture: SpawnedAgentFixture | null = null;
+
+    afterEach(async () => {
+        if (fixture) {
+            await fixture.dispose();
+            fixture = null;
+        }
+    });
+
+    it("returns model response", async () => {
+        fixture = await createAuthenticatedFixture();
+        const session = await fixture.createSession();
+        await fixture.expectPromptText(session.sessionId, "Reply with exactly integration-ok and nothing else.", (text) => {
+            expect(text.toLowerCase()).toContain("integration-ok");
+        });
+    });
+
+    it("forks a session and continues from the copied Codex history", async () => {
+        fixture = await createAuthenticatedFixture();
+        const source = await fixture.createSession();
+        await fixture.expectPromptText(
+            source.sessionId,
+            "Remember the exact marker fork-history-ok and reply with exactly remembered.",
+            (text) => {
+                expect(text.toLowerCase()).toContain("remembered");
+            },
+        );
+
+        const forked = await fixture.connection.unstable_forkSession({
+            sessionId: source.sessionId,
+            cwd: fixture.workspaceDir,
+            mcpServers: [],
+        });
+
+        expect(forked.sessionId).not.toBe(source.sessionId);
+        await fixture.expectPromptText(
+            forked.sessionId,
+            "Reply with only the exact marker I asked you to remember.",
+            (text) => {
+                expect(text.toLowerCase()).toContain("fork-history-ok");
+            },
+        );
+    });
+
+    it("returns model response when authenticated via gateway", async () => {
+        const apiKey = requireLiveApiKey();
+        fixture = await createGatewayFixture("https://api.openai.com/v1", {Authorization: `Bearer ${apiKey}`});
+        const session = await fixture.createSession();
+        await fixture.expectPromptText(session.sessionId, "Reply with exactly integration-ok and nothing else.", (text) => {
+            expect(text.toLowerCase()).toContain("integration-ok");
+        });
+    });
+
+    it("uses the selected session model for subsequent prompts", async () => {
+        fixture = await createAuthenticatedFixture();
+        const session = await fixture.createSession();
+
+        const models = session.models;
+        if (!models) {
+            throw new Error("Agent did not return initial model state.");
+        }
+        expect(models.availableModels.length).toBeGreaterThan(0);
+        expect(models.currentModelId).toBe(DEFAULT_TEST_MODEL_ID.toString());
+
+        await legacySetSessionModel(fixture.connection, {
+            sessionId: session.sessionId,
+            modelId: OTHER_TEST_MODEL_ID.toString(),
+        });
+        await fixture.expectStatus(session.sessionId, {Model: OTHER_TEST_MODEL_ID});
+    });
+
+    it("changes session mode via setSessionMode and reflects it in /status", async () => {
+        fixture = await createAuthenticatedFixture();
+        const session = await fixture.createSession();
+
+        const modes = session.modes;
+        expect(modes?.currentModeId).toBe(AgentMode.DEFAULT_AGENT_MODE.id);
+        expect(modes?.availableModes.map((mode) => mode.id)).toEqual(
+            AgentMode.all().map((mode) => mode.id),
+        );
+
+        const targetMode = AgentMode.AgentFullAccess;
+        await fixture.connection.setSessionMode({
+            sessionId: session.sessionId,
+            modeId: targetMode.id,
+        });
+
+        await fixture.expectStatus(session.sessionId, {
+            Approval: targetMode.approvalPolicy,
+            Sandbox: targetMode.sandboxMode,
+        });
+    });
+
+    it("respects INITIAL_AGENT_MODE when seeding the initial session mode", async () => {
+        const initialMode = AgentMode.ReadOnly;
+        fixture = await createAuthenticatedFixture(initialMode);
+        const session = await fixture.createSession();
+
+        expect(session.modes?.currentModeId).toBe(initialMode.id);
+
+        await fixture.expectStatus(session.sessionId, {
+            Approval: initialMode.approvalPolicy,
+            Sandbox: initialMode.sandboxMode,
+        });
+    });
+
+    it("lists a user skill from the CODEX_HOME", async () => {
+        fixture = await createAuthenticatedFixture();
+        fixture.writeSkill({
+            name: "integration-skill",
+            description: "Integration skill",
+            body: "This skill exists only for integration testing.",
+        });
+        const session = await fixture.createSession();
+        await fixture.expectPromptText(session.sessionId, "/skills", (text) => {
+            expect(text).toContain("Available skills:");
+            expect(text).toContain("- integration-skill: Integration skill");
+        });
+    });
+
+    it("lists skills from additional session roots", async () => {
+        fixture = await createAuthenticatedFixture();
+        const additionalSkillsRoot = path.join(fixture.workspaceDir, "custom-skills");
+        fixture.writeSkill({
+            name: "session-root-skill",
+            description: "Session root skill",
+            body: "This skill exists only in an additional root passed at session creation.",
+        }, path.join(additionalSkillsRoot, ".agents", "skills"));
+
+        const session = await fixture.connection.newSession({
+            cwd: fixture.workspaceDir,
+            mcpServers: [],
+            _meta: {
+                additionalRoots: [additionalSkillsRoot],
+            },
+        });
+
+        await fixture.expectPromptText(session.sessionId, "/skills", (text) => {
+            expect(text).toContain("Available skills:");
+            expect(text).toContain("- session-root-skill: Session root skill");
+        });
+    });
+
+    it("lists repo skills from the session cwd", async () => {
+        fixture = await createAuthenticatedFixture();
+        fixture.writeSkill({
+            name: "workspace-skill",
+            description: "Workspace skill",
+            body: "This skill exists only in the session workspace.",
+        }, path.join(fixture.workspaceDir, ".agents", "skills"));
+
+        const session = await fixture.createSession();
+
+        await fixture.expectAvailableCommand(session.sessionId, "$workspace-skill");
+        await fixture.expectPromptText(session.sessionId, "/skills", (text) => {
+            expect(text).toContain("Available skills:");
+            expect(text).toContain("- workspace-skill: Workspace skill");
+        });
+    });
+});

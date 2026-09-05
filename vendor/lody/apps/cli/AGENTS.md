@@ -61,6 +61,12 @@ Two things the dev build does deliberately, both load-bearing:
 - Preview targets are untrusted. Keep automatic candidates loopback-only and
   require explicit recent user approval before accepting a private literal IP;
   validate path-relative targets at the CLI boundary.
+- The local preview proxy must never forward an OBSERVED WebSocket close code into a
+  Close frame. RFC 6455 reserves 1005/1006 for local observation, so `ws` throws from a
+  TCP callback and kills the CLI with the active Agent session. Mirror the shape instead
+  (`mirrorWebSocketClose` in `preview/local-preview-proxy.ts`): `terminate()` for 1006,
+  code-less `close()` for 1005. Both directions, plus the local-socket `error` handler,
+  which must not pre-empt that mirror once the connection is open.
 - Embedded CLI packaging invariants (native deps, ABI, child runtime env) live in
   [apps/electron/AGENTS.md](../electron/AGENTS.md). Read them before changing runtime
   deps/bundle externals or spawning `process.execPath` with a filtered environment.
@@ -75,9 +81,15 @@ Two things the dev build does deliberately, both load-bearing:
   before changing local ports/sockets, daemon PID state, Electron/daemon startup,
   Supervisor retries, or Worker shutdown. Health probes are observation only and
   must never authorize PID killing.
-- `lody daemon status` reads the runtime probe's explicit `backend` authorization/
-  connection state and `connectedWorkspaces`; aggregate `connectivity` is local runtime
-  health and must not be presented as proof that the cached CLI token was accepted.
+- Cloud-mode `lody daemon status` reads the runtime probe's explicit `backend` authorization/
+  connection state and `connectedWorkspaces`; local mode omits that cloud-only block. Aggregate
+  `connectivity` is local runtime health and must not be presented as proof that the cached CLI
+  token was accepted.
+  Connection-age fields preserve one continuous non-connected interval across
+  connecting/disconnected transitions and clear only on connected. They travel in the
+  top-level `connectionAges` v1 extension because older consumers reject unknown keys inside
+  the strict backend/workspace objects but accept unknown top-level state. Status colors
+  these states and reports a red connection error once that interval reaches 60 seconds.
 
 - `lody daemon start` resolves cloud authentication in the FOREGROUND process before
   spawning the detached runner (`commands/daemon-auth-preflight.ts`): validate the cached
@@ -87,6 +99,11 @@ Two things the dev build does deliberately, both load-bearing:
   re-authenticating — a network outage must not replace a working credential — and a
   non-TTY run aborts instead of blocking on a browser link until the device code expires.
   `--skip-auth-check` is the explicit opt-out; `--auth` keeps its non-interactive path.
+  The runner's fd 3 launch handshake reports success only after its supervised Worker reaches
+  `startupStage=ready`; an initial Worker exit returns its bounded output to the foreground and
+  terminates the runner instead of claiming that daemon startup succeeded. Explicitly retryable
+  startup exits keep that handshake pending, and a handshake timeout terminates and awaits the
+  exact spawned runner before the foreground reports failure.
 - New one-shot commands should use `src/lib/command-runtime.ts` (`runOneShotCommand`)
   so exit codes, telemetry flush, and stream flushing are handled consistently.
 - Process entrypoints, command-owned boundaries, global process-error handlers, and
@@ -164,6 +181,12 @@ Two things the dev build does deliberately, both load-bearing:
 - Post-turn automatic commit/push is allowed for GitHub worktrees and local projects
   with `ProjectRef.useWorktree === true`. Never run it against a local project's
   original directory, even when that project has a `githubRepoFullName` or associated PR.
+- Local create resolves `ProjectRef.githubRepoFullName` from the project's `origin`
+  for direct AND worktree sessions, exactly like desktop creation, because
+  `repoFullName`, PR actions, and post-turn PR detection all read it. Bind only a
+  repository the workspace enables, recording the workspace's spelling; an
+  unauthorized, absent, or unreadable one leaves the Session local rather than
+  failing create.
 - MCP session tools use stable machine/session/agent-config ids and strict, narrow input
   schemas. New create/chat Commands require a caller-chosen Operation id. Create persists
   the Operation before its fallible availability/materialization step; the normal response
@@ -286,6 +309,18 @@ Two things the dev build does deliberately, both load-bearing:
   are not the privacy boundary.
 
 ## GitHub auth shortcut
+
+- Custom and Registry ACP authentication uses a temporary protocol connection: initialize,
+  select an advertised agent-driven method, then call ACP `authenticate`. Deprecated `env_var`
+  methods are rejected rather than revived as a second credential protocol, and terminal methods
+  remain unavailable until Machine RPC has a real interactive terminal bridge. Request-scoped URL
+  and text/secret/single-select form elicitations are bounded, validated, and bridged one at a time
+  to Machine RPC progress; URLs must use HTTP(S). Replies stay ephemeral; secret defaults and raw
+  authentication-process output never enter retained progress. Renderer cancellation and the
+  CLI-owned deadline must abort the ACP request and terminate its whole process group, including a
+  timeout that lands during cleanup. A capability refresh after login remains the proof that
+  credentials actually became usable and must finish inside the renderer's 300-second workflow
+  deadline.
 
 - Agent `gh` auth for GitHub repo sessions is managed in
   `src/session/session-manager.ts`: it creates the git credential broker, prepends the

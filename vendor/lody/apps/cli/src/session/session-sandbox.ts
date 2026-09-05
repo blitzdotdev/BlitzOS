@@ -40,6 +40,10 @@ export interface MachineCapacitySnapshot {
   totalCpuCount: number;
 }
 
+export interface AutomaticSessionSandboxLimitOptions {
+  capacityLimits?: boolean;
+}
+
 export interface SessionResourceLimitViolation {
   kind: 'memory' | 'pids';
   message: string;
@@ -128,6 +132,7 @@ export type SessionSandboxFactory = (sessionId: SessionId) => Promise<SessionSan
 
 interface SessionSandboxDeps {
   platform: NodeJS.Platform;
+  environment: NodeJS.ProcessEnv;
   cgroupMount: string;
   fs: ExecSandboxFs;
   spawnProcess: typeof spawn;
@@ -148,6 +153,7 @@ type ProcessOutputListener = (chunk: Buffer) => void;
 
 const defaultSandboxDeps = (): SessionSandboxDeps => ({
   platform: process.platform,
+  environment: process.env,
   cgroupMount: DEFAULT_CGROUP_MOUNT,
   fs,
   spawnProcess: spawn,
@@ -261,8 +267,13 @@ export function createNoopSessionSandbox(
 // docs/exec-sandbox.md and specs/container-resources.md for the design rationale.
 export function calculateAutomaticSessionSandboxLimits(
   machineCapacity: MachineCapacitySnapshot,
-  activeSessionCount: number
+  activeSessionCount: number,
+  options: AutomaticSessionSandboxLimitOptions = {}
 ): SessionSandboxLimits {
+  if (options.capacityLimits === false) {
+    return { pidsMax: DEFAULT_SESSION_PIDS_MAX };
+  }
+
   const totalMemoryBytes = Math.max(1, Math.floor(machineCapacity.totalMemoryBytes));
   const totalCpuCount = Math.max(1, Math.floor(machineCapacity.totalCpuCount));
   const sessionCount = Math.max(1, Math.floor(activeSessionCount));
@@ -419,11 +430,17 @@ class LinuxCgroupSessionSandbox implements SessionSandbox {
     }
 
     const selfCgroupPath = await this.deps.readSelfCgroupPath();
-    const parentDir = path.join(
-      this.deps.cgroupMount,
-      trimLeadingSlash(selfCgroupPath),
-      DEFAULT_SESSION_PARENT
-    );
+    const configuredParent = this.deps.environment.LODY_SESSION_CGROUP_PARENT?.trim();
+    const parentDir = configuredParent
+      ? path.resolve(this.deps.cgroupMount, trimLeadingSlash(configuredParent))
+      : path.join(this.deps.cgroupMount, trimLeadingSlash(selfCgroupPath), DEFAULT_SESSION_PARENT);
+    if (
+      configuredParent &&
+      parentDir !== this.deps.cgroupMount &&
+      !parentDir.startsWith(`${this.deps.cgroupMount}${path.sep}`)
+    ) {
+      throw new Error('Configured session cgroup parent escapes the cgroup mount');
+    }
     const cgroupDir = path.join(parentDir, `lody-session-${sanitizePathSegment(this.sessionId)}`);
 
     await this.deps.fs.mkdir(parentDir, { recursive: true });

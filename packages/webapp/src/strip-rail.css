@@ -268,7 +268,7 @@
 }
 
 /* The same control as a terminal glyph, in the vendored rail's FOOTER, to the
-   left of their Archive entry (`vendor/lody/BLITZ-PATCHES.md` seam patch 18).
+   left of their Archive entry (`vendor/lody/BLITZ-PATCHES.md` seam patch 22).
    The bar's border and gutters are the rail's, not the control's, so both come
    off. The trigger takes the footer button's own box — 28px, the `h-7 w-7
    rounded-md` of `getLoroSidebarFooterIconButtonClassName` — so the two read

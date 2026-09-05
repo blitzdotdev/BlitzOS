@@ -302,7 +302,7 @@ describe("the overlay's vendor hooks", () => {
       hook: 'data-lody-session-tab-region="side-panel"',
       file: ["components", "sessions", "session-detail.tsx"],
     },
-    // The footer's icon buttons (seam patches 13 and 18): the class is the
+    // The footer's icon buttons (seam patches 13 and 22): the class is the
     // rest-state colour `getLoroSidebarFooterIconButtonClassName` spends.
     { hook: "text-sidebar-foreground dark:text-sidebar-foreground-muted", file: ["components", "loro-sidebar.tsx"] },
   ];

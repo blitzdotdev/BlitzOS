@@ -1,5 +1,10 @@
 # Lody sessions — phase 2/3 browser runtime design
 
+> **Historical design record.** As of 2026-09-04, current upstream-merge,
+> npm-daemon-pin, and compiled-patch procedure is superseded by
+> `docs/LODY-MERGE.md` and `plans/LODY-DAEMON-FROM-TREE.md`. Measurements below
+> remain evidence for the runtime decisions they originally supported.
+
 How the vendored Lody renderer is wired to the box daemon in the browser: the
 platform provider, the two transport planes, the session-surface mount, and the
 style compensation. Plan of record: `plans/LODY-SESSIONS.md`. Evidence:
@@ -1556,7 +1561,7 @@ queuedFor=10000ms active=1 waiting=0
 only exit is the 285 s timeout. Verified directly against the daemon's own
 control socket, so it is not something our chain introduced.
 
-**Shipped:** `packages/box/patches/lody-acp-auth-queue.mjs`, a second patch to
+**Shipped at the time:** `lody-acp-auth-queue.mjs`, a second patch to
 the published npm bundle beside `lody-local-platform.mjs`. It adds one case:
 
 ```js

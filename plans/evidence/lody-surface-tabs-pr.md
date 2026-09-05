@@ -1,5 +1,8 @@
 # Upstream PR: host-contributed tabs in the session tab strip
 
+> **Dated upstream-PR sketch.** As of 2026-09-04, execute any resulting subtree
+> update through `docs/LODY-MERGE.md`; merge mechanics below are historical.
+
 Drafted 2026-08-31 for `LodyAI/Lody`, against the vendored pin `f3474894`.
 It is the contribution that lets BlitzOS drop seam patch 5 in
 `vendor/lody/BLITZ-PATCHES.md` (`plans/LODY-TERMINAL-TABS.md` §3.3).

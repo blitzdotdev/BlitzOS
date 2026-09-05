@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BrowserAddressError,
   classifyBrowserHostname,
+  classifyResolvedBrowserAddress,
   formatPreviewTargetUrl,
   parseBrowserAddress,
 } from '../src/browser-url';
@@ -69,6 +70,34 @@ describe('classifyBrowserHostname', () => {
   it('treats local DNS names as managed targets', () => {
     expect(classifyBrowserHostname('devbox.local')).toBe('private-lan');
     expect(classifyBrowserHostname('host.docker.internal')).toBe('private-lan');
+  });
+
+  it('prohibits literal RFC 2544 benchmarking addresses', () => {
+    expect(classifyBrowserHostname('198.18.3.75')).toBe('prohibited');
+    expect(classifyBrowserHostname('198.19.255.1')).toBe('prohibited');
+    expect(() => parseBrowserAddress('http://198.18.3.75/')).toThrow(BrowserAddressError);
+  });
+});
+
+describe('classifyResolvedBrowserAddress', () => {
+  it.each(['198.18.0.1', '198.18.3.75', '198.19.255.254', '[::ffff:c612:34b]'])(
+    'accepts %s as a fake-IP proxy answer for a public hostname',
+    (address) => {
+      expect(classifyResolvedBrowserAddress(address)).toBe('public');
+    }
+  );
+
+  it.each([
+    ['127.0.0.1', 'loopback'],
+    ['10.0.0.8', 'private-lan'],
+    ['[::ffff:c0a8:101]', 'private-lan'],
+    ['169.254.169.254', 'prohibited'],
+    ['198.17.255.255', 'public'],
+    ['198.20.0.0', 'public'],
+    ['198.51.100.7', 'prohibited'],
+    ['[fe80::1]', 'prohibited'],
+  ])('still classifies resolved %s as %s', (address, targetClass) => {
+    expect(classifyResolvedBrowserAddress(address)).toBe(targetClass);
   });
 });
 

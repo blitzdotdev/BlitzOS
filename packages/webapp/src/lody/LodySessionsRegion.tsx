@@ -17,15 +17,25 @@
  * `main.tsx`, where there is no control plane and therefore no address to
  * parse.
  */
-import { Suspense, lazy, useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { SessionShareLevel } from "@blitzos/schema";
 import type { BoxEndpoints } from "../resolver.js";
 import type { LodySessionsCapability } from "./box-capability.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 import type { LodyRailBinding, LodySessionSurfaceApi } from "./SessionSurface.js";
+import { LodySurfacePool, type LodySurfacePoolTarget } from "./LodySurfacePool.js";
 import type { SidePanelBinding } from "./side-panel.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 import { SurfaceLoadBoundary } from "./SurfaceLoadBoundary.js";
+import { createLodySurfaceIdentityClaims } from "./surface-identity-claims.js";
 import type { SurfaceTabsBinding } from "./surface-tabs.js";
 
 /**
@@ -69,7 +79,7 @@ export interface LodySessionsRegionProps {
    * restore and its permanent delete. */
   onOpenArchive?: () => void;
   /** The `New tab` control for the rail footer, left of Archive (seam patch
-   * 18): Claude / Codex / terminal, on the unchanged tmux/ttyd spawn path. */
+   * 22): Claude / Codex / terminal, on the unchanged tmux/ttyd spawn path. */
   newTabControl?: ReactNode;
   /** Right-click Share on a session row (plans/LODY-SHARING.md §8). */
   onShareSession?: (sessionId: string) => void;
@@ -101,6 +111,9 @@ export interface LodySessionsRegionProps {
    * the owned surface; a shared surface's address is `sharedOpen.sessionId`.
    */
   initialSessionId?: string;
+  /** The shell address to reconcile with a retained router on activation. */
+  desiredSessionId?: string | null;
+  desiredArchive?: boolean;
 }
 
 /** One open shared session: whose box, which session, at what level. */
@@ -151,18 +164,30 @@ function lodyEndpoints(endpoints: BoxEndpoints) {
 
 export function LodySessionsRegion(props: LodySessionsRegionProps) {
   const sharedOpen = props.sharedOpen ?? null;
-  const rail: LodyRailBinding = {
-    activeSharedSessionId: sharedOpen === null ? null : sharedOpen.sessionId,
-  };
-  if (props.onOpenSession !== undefined) rail.onOpenSession = props.onOpenSession;
-  if (props.onOpenLanding !== undefined) rail.onOpenLanding = props.onOpenLanding;
-  if (props.onOpenArchive !== undefined) rail.onOpenArchive = props.onOpenArchive;
-  if (props.newTabControl !== undefined) rail.newTabControl = props.newTabControl;
-  if (props.onShareSession !== undefined) rail.onShareSession = props.onShareSession;
-  if (props.sharedSessions !== undefined) rail.sharedSessions = props.sharedSessions;
-  if (props.onSelectSharedSession !== undefined) {
-    rail.onSelectSharedSession = props.onSelectSharedSession;
-  }
+  const rail = useMemo<LodyRailBinding>(() => {
+    const binding: LodyRailBinding = {
+      activeSharedSessionId: sharedOpen === null ? null : sharedOpen.sessionId,
+    };
+    if (props.onOpenSession !== undefined) binding.onOpenSession = props.onOpenSession;
+    if (props.onOpenLanding !== undefined) binding.onOpenLanding = props.onOpenLanding;
+    if (props.onOpenArchive !== undefined) binding.onOpenArchive = props.onOpenArchive;
+    if (props.newTabControl !== undefined) binding.newTabControl = props.newTabControl;
+    if (props.onShareSession !== undefined) binding.onShareSession = props.onShareSession;
+    if (props.sharedSessions !== undefined) binding.sharedSessions = props.sharedSessions;
+    if (props.onSelectSharedSession !== undefined) {
+      binding.onSelectSharedSession = props.onSelectSharedSession;
+    }
+    return binding;
+  }, [
+    props.newTabControl,
+    props.onOpenArchive,
+    props.onOpenLanding,
+    props.onOpenSession,
+    props.onSelectSharedSession,
+    props.onShareSession,
+    props.sharedSessions,
+    sharedOpen,
+  ]);
 
   // Mounted on the FIRST request, and never unmounted BY A HIDE afterwards: the
   // runtime owns a WebSocket, an IndexedDB repo and a WASM instance, so a hide
@@ -171,18 +196,23 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   // is part of the surface, so the rail is what raises the first request in
   // practice — see `useLodyRail`.
   //
-  // A CHANGE OF BOX IS NOT A HIDE. The key below carries the box, so switching
-  // workspaces does unmount and rebuild — that is the point of it, and the
-  // `window.ipc` singleton documented further down means it could not be any
-  // other way while only one bridge can exist at a time.
+  // A box change now hands ownership to the identity pool below. This latch
+  // keeps that pool mounted through capability probing and ordinary pane hides.
   const [everRequested, setEverRequested] = useState(false);
   const wanted = props.visible || props.railHost !== null;
   useEffect(() => {
     if (wanted) setEverRequested(true);
   }, [wanted]);
-  const [SessionSurface, setSessionSurface] = useState(loadSessionSurface);
+  const identityClaims = useMemo(createLodySurfaceIdentityClaims, []);
+  const [surfaceAttempt, setSurfaceAttempt] = useState(() => ({
+    Surface: loadSessionSurface(),
+    claimantId: 1,
+  }));
   const retrySurface = useCallback(() => {
-    setSessionSurface(loadSessionSurface());
+    setSurfaceAttempt((current) => ({
+      Surface: loadSessionSurface(),
+      claimantId: current.claimantId + 1,
+    }));
   }, []);
 
   const { endpoints } = props;
@@ -194,66 +224,42 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   // The null check is repeated ahead of the predicate only to narrow the type
   // for the rest of this function; the predicate is still where the condition
   // is decided, and `CloudApp` asks the same one.
-  if (endpoints === null || !lodySurfaceMounts(endpoints, props.sessions) || !everRequested) {
+  if (!LODY_SESSIONS_ENABLED || !everRequested) {
     return null;
   }
 
   const viewer = { name: props.viewerName, avatarUrl: props.viewerAvatarUrl };
-  // EXACTLY ONE SURFACE IS MOUNTED, and this is the constraint that decides it:
-  // the vendored renderer's local plane is a SINGLETON on `window.ipc`
-  // (plans/LODY-SHARING.md §6.1). `sendIpc` re-reads that global on every call,
-  // so a second mounted surface does not get a second bridge — it takes the
-  // first one's. Measured, not reasoned about: with both mounted, the OWNER's
-  // own `session/dispatch-turn` came back `share_forbidden`, because it had been
-  // routed to the grantee's box.
-  //
-  // So opening a shared session tears the runtime down and rebuilds it against
-  // the owner's endpoints, which is §6.3's answer taken as written, with the
-  // cost it names: the rail's vendored zone lists whichever box is mounted. The
-  // native parts — "Shared with you" and the footer's New tab control — are
-  // props, so they follow the mount and the member always has a way back.
-  const surfaceProps =
-    sharedOpen === null
-      ? {
-          // KEYED BY THE BOX, exactly as the shared branch below is.
-          //
-          // This was the constant `"own"` — one instance covering EVERY
-          // workspace the member owns — and that is a stale-address bug, not a
-          // style choice. `SessionSurface` builds its bridge once per instance
-          // (`useLodyLocalBridge`: `held.current ??= createLodyLocalBridge(...)`)
-          // and that bridge CLOSES OVER the endpoints it was built with: sync,
-          // rpc, control, project, platform, files. With one instance shared
-          // across workspaces, a switch handed the surface new props and left
-          // `window.ipc` pointing at the PREVIOUS box.
-          //
-          // What the member saw: the snapshot poller and the capability probe
-          // both key on `platformUrl`, so they moved to box B and the runtime
-          // rebuilt for workspace B — while its data plane still dialled box A,
-          // which has no rooms for B. Not an error, just a surface that never
-          // populated, until a full page reload rebuilt the ref.
-          //
-          // The ref-once is CORRECT; the key was wrong. One instance per box
-          // makes "build the bridge once" mean what it says, so nothing in
-          // `local-bridge.ts` has to become mutable to fix this.
-          //
-          // Still exactly one surface mounted at a time — a key change unmounts
-          // the old one — which is what the `window.ipc` singleton above
-          // requires. `lodySyncUrl` names the box and cannot drift from the
-          // thing that went stale, because it IS the thing that went stale.
-          key: `own:${endpoints.lodySyncUrl}`,
-          endpoints: lodyEndpoints(endpoints),
-          shared: undefined,
-          readOnly: false,
-        }
-      : {
-          // Keyed by the OWNER's membership: switching between two members'
-          // shared sessions rebuilds the runtime, and switching between two
-          // sessions on the same member's box does not.
-          key: `shared:${sharedOpen.ownerMembershipId}`,
-          endpoints: lodyEndpoints(sharedOpen.endpoints),
-          shared: { sessionId: sharedOpen.sessionId },
-          readOnly: sharedOpen.level === "ro",
-        };
+  // A capability probe or a workspace with no running box removes CURRENT
+  // ownership without unmounting known hidden entries. This is what lets A
+  // survive the short probing window before B can be requested.
+  const eligible = endpoints !== null && lodySurfaceMounts(endpoints, props.sessions);
+  let target: LodySurfacePoolTarget | null = null;
+  if (eligible && endpoints !== null) {
+    if (sharedOpen === null) {
+      const ownedTarget: LodySurfacePoolTarget = {
+        kind: "owned",
+        endpoints: lodyEndpoints(endpoints),
+        workspaceTitle: props.workspaceTitle,
+        readOnly: false,
+        desiredSessionId: props.desiredSessionId ?? props.initialSessionId ?? null,
+        desiredArchive: props.desiredArchive === true,
+      };
+      if (props.initialSessionId !== undefined) {
+        ownedTarget.initialSessionId = props.initialSessionId;
+      }
+      target = ownedTarget;
+    } else {
+      target = {
+        kind: "shared",
+        endpoints: lodyEndpoints(sharedOpen.endpoints),
+        workspaceTitle: props.workspaceTitle,
+        readOnly: sharedOpen.level === "ro",
+        shared: { sessionId: sharedOpen.sessionId },
+        desiredSessionId: sharedOpen.sessionId,
+        desiredArchive: false,
+      };
+    }
+  }
   // NO HOST TABS ON A SHARED SURFACE (plans/LODY-TERMINAL-TABS.md §5.1). A
   // terminal is an arbitrary shell on the OWNER's box, and no share level in
   // §0.1 grants that — the same reason the bridge refuses `/control` outright
@@ -268,10 +274,6 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   // The restored own-box selection rides ONLY the owned surface. A shared
   // surface opens on `sharedOpen.sessionId` through the branch above, so passing
   // it here too would fight that.
-  const ownInitial =
-    sharedOpen === null && props.initialSessionId !== undefined
-      ? { initialSessionId: props.initialSessionId }
-      : {};
   // THE BOUNDARY IS OUTSIDE THE SUSPENSE, so it catches the import's rejection
   // as well as anything the surface throws once it has mounted. Without it a
   // rejected chunk propagates past the whole tree and React unmounts the
@@ -279,19 +281,17 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   return (
     <SurfaceLoadBoundary onRetry={retrySurface}>
       <Suspense fallback={null}>
-        <SessionSurface
-          key={surfaceProps.key}
-          endpoints={surfaceProps.endpoints}
+        <LodySurfacePool
+          Surface={surfaceAttempt.Surface}
+          target={target}
           viewer={viewer}
-          workspaceTitle={props.workspaceTitle}
-          hidden={!props.visible}
+          visible={props.visible}
           railHost={props.railHost}
           rail={rail}
-          readOnly={surfaceProps.readOnly}
+          identityClaims={identityClaims}
+          claimantId={`boundary-attempt-${surfaceAttempt.claimantId}`}
           {...hostTabs}
           {...sidePanel}
-          {...ownInitial}
-          {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
           {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
           {...(props.onActiveSessionChange === undefined
             ? {}

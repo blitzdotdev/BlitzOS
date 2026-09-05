@@ -14,6 +14,7 @@ import {
   getSessionIdFromRoomId,
   AgentConfigId,
   MachineId,
+  ManagedBuiltinAgentType,
   SessionHistoryInput,
   isCodeCollabFileIndexFlockDocId,
   isCodeCollabFileIndexSignalFlockDocId,
@@ -42,6 +43,8 @@ import {
   getServerNow,
   isLoroRepoDocDeleted,
   getMachineFlockAcpCapabilities,
+  getMachineFlockProviderSetupCancellations,
+  getMachineFlockProviderSetups,
   getMachineFlockDocId,
   machineFlockKeys,
   readMachineFlockRowsFromFlock,
@@ -56,6 +59,8 @@ import {
   type SessionAcpRuntimeConfigPatch,
   type SessionAcpRuntimeConfigSnapshot,
   isSensitiveAcpConfigOptionId,
+  BuiltinRuntimeOverridesSchema,
+  CustomAcpLaunchSpecSchema,
 } from '@lody/shared';
 import { LocalLoroDataPlaneServer } from '@lody/shared/local-loro-data-plane-server';
 import { createLocalLoroDataPlaneScheduler } from '@lody/shared/local-loro-data-plane-scheduler';
@@ -97,6 +102,7 @@ import { streamsRoomBinding, type StreamsRoomBinding } from './streams-room-bind
 import { formatErrorMessage } from '@/utils/format-error';
 import {
   listMergedAgentConfigs,
+  readMachineBuiltinAgentOptOuts,
   readMergedAgentConfigById,
   upsertMachineAgentConfig,
 } from '@/lib/agent-config-machine-flock';
@@ -107,6 +113,43 @@ const normalizeSessionHistoryEntry = (entry: SessionHistoryInput): SessionHistor
   ...entry,
   inputConfig: normalizeSessionTurnInputConfig(entry.inputConfig),
 });
+
+const isValidDaemonLaunchConfig = (
+  config: AgentConfigMeta,
+  expectedConfigId: AgentConfigId,
+  expectedMachineId: MachineId
+): boolean => {
+  if (
+    config.id !== expectedConfigId ||
+    config.machineId !== expectedMachineId ||
+    typeof config.agentType !== 'string' ||
+    config.agentType.trim().length === 0 ||
+    typeof config.env !== 'object' ||
+    config.env === null ||
+    Array.isArray(config.env) ||
+    Object.values(config.env).some((value) => typeof value !== 'string')
+  ) {
+    return false;
+  }
+
+  if (config.cliType === 'custom') {
+    return (
+      CustomAcpLaunchSpecSchema.safeParse(config.customAcp).success &&
+      config.runtimeOverrides === undefined
+    );
+  }
+  if (config.cliType === 'registry') {
+    return config.customAcp === undefined && config.runtimeOverrides === undefined;
+  }
+  if (config.cliType === 'builtin') {
+    return (
+      config.customAcp === undefined &&
+      (config.runtimeOverrides === undefined ||
+        BuiltinRuntimeOverridesSchema.safeParse(config.runtimeOverrides).success)
+    );
+  }
+  return false;
+};
 
 type GlobalWithOptionalBun = typeof globalThis & { Bun?: unknown };
 type GlobalWithWebSocket = { WebSocket: typeof ProxiedWebSocket };
@@ -1330,6 +1373,11 @@ export class LoroDocumentManager {
     return false;
   }
 
+  /** Managed builtin provider types the user removed on this machine, so they must not be auto-registered at startup. */
+  async getBuiltinAgentOptOuts(machineId: MachineId): Promise<Set<ManagedBuiltinAgentType>> {
+    return await readMachineBuiltinAgentOptOuts(this.repo, this.workspaceId, machineId);
+  }
+
   async getAgentConfigById(
     agentConfigId: AgentConfigId,
     machineId?: MachineId
@@ -1341,6 +1389,37 @@ export class LoroDocumentManager {
     }
     const configs = await listMergedAgentConfigs(this.repo, this.workspaceId);
     return configs.find((config) => config.id === agentConfigId) ?? null;
+  }
+
+  /**
+   * Resolve the daemon-authoritative Provider config used by a process-launching
+   * Machine RPC. Published configs and durable provider-setup rows are the only
+   * accepted sources; caller-supplied launch fields never participate.
+   */
+  async getAgentConfigForMachineLaunch(
+    agentConfigId: AgentConfigId,
+    machineId: MachineId
+  ): Promise<AgentConfigMeta | null> {
+    const config = await this.getAgentConfigById(agentConfigId, machineId);
+    if (config) {
+      return isValidDaemonLaunchConfig(config, agentConfigId, machineId) ? config : null;
+    }
+
+    const handle = await this.repo.openFlockDoc(getMachineFlockDocId(this.workspaceId, machineId));
+    const rows = readMachineFlockRowsFromFlock(handle.flock, {
+      prefixes: [
+        machineFlockKeys.providerSetup(agentConfigId),
+        machineFlockKeys.providerSetupCancellation(agentConfigId),
+      ],
+    });
+    if (getMachineFlockProviderSetupCancellations(rows)[agentConfigId]) {
+      return null;
+    }
+    const setup = getMachineFlockProviderSetups(rows)[agentConfigId];
+    return setup?.machineId === machineId &&
+      isValidDaemonLaunchConfig(setup.config, agentConfigId, machineId)
+      ? setup.config
+      : null;
   }
 
   async createAgentConfig(
@@ -2611,6 +2690,30 @@ export class SessionDocument implements LoroDocument<SessionDocMeta, SessionMeta
       });
       throw error;
     }
+  }
+
+  /**
+   * Append a user turn and publish its dispatch pointer as ONE operation.
+   *
+   * Both writes are a single fact — "this turn is waiting to run" — split across
+   * two documents, because the pointer lives in workspace meta (the activation
+   * index startup scans) and so cannot be derived from history. Pairing them by
+   * convention leaves every producer one forgotten line from a turn that runs
+   * without advancing `latestUserMsgId`; see `../../session/AGENTS.md` for what
+   * that costs. History is written first so the content lands before the pointer
+   * that advertises it, and `lastMissingHistoryUserMsgId` is left alone: clearing
+   * it belongs to producers that first supersede the acknowledged entry.
+   */
+  async appendUserTurn(entry: SessionHistoryInput): Promise<void> {
+    if (entry.role !== 'user') {
+      throw new Error(
+        `appendUserTurn requires a user entry, received role "${entry.role}" for ${entry.id}`
+      );
+    }
+    await this.updateHistory((history) => [...history, entry]);
+    await this.repo.upsertDocMeta(this.roomId, {
+      latestUserMsgId: entry.id,
+    } satisfies Partial<SessionMeta>);
   }
 
   private summarizeHistoryTailForDiagnostics(

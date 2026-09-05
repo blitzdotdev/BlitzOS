@@ -30,7 +30,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { toast } from "sonner";
-import { LodySurfaceProviders, LODY_TOASTER_HOST_CLASS } from "../src/lody/surface-providers";
+import {
+  LodySurfaceProviders,
+  LodySurfaceThemeRoot,
+  LODY_TOASTER_HOST_CLASS,
+} from "../src/lody/surface-providers";
 import { LODY_SURFACE_CLASS } from "../src/lody/surface-class";
 import { render, settle } from "./dom";
 
@@ -62,8 +66,12 @@ afterEach(async () => {
   window.localStorage.clear();
 });
 
-async function mountProviders() {
-  const view = await render(<LodySurfaceProviders><div /></LodySurfaceProviders>);
+async function mountProviders(active = true) {
+  const view = await render(
+    <LodySurfaceThemeRoot>
+      <LodySurfaceProviders active={active}><div /></LodySurfaceProviders>
+    </LodySurfaceThemeRoot>,
+  );
   cleanup = view.unmount;
   return view;
 }
@@ -93,6 +101,70 @@ describe("the vendored surface's toast host", () => {
     // ONE toaster and therefore one toast. Two hosts would show every message
     // twice, which is the failure mode a second mount produces.
     expect(rendered).toHaveLength(1);
+  });
+
+  it("gives toast rendering to the active surface only", async () => {
+    const view = await mountProviders(false);
+    expect(view.container.querySelector("section[aria-live]")).toBeNull();
+
+    await fireVendoredToast("Hidden surface failure");
+    expect(view.container.querySelector("[data-sonner-toast]")).toBeNull();
+  });
+
+  it("dismisses the outgoing surface queue instead of migrating it to active B", async () => {
+    const tree = (active: "a" | "b") => (
+      <LodySurfaceThemeRoot>
+        <div data-surface="a">
+          <LodySurfaceProviders active={active === "a"}><div /></LodySurfaceProviders>
+        </div>
+        <div data-surface="b">
+          <LodySurfaceProviders active={active === "b"}><div /></LodySurfaceProviders>
+        </div>
+      </LodySurfaceThemeRoot>
+    );
+    const view = await render(tree("a"));
+    cleanup = view.unmount;
+    await fireVendoredToast("A failed before handoff");
+    expect(view.container.querySelector("[data-surface='a']")?.textContent)
+      .toContain("A failed before handoff");
+
+    await act(async () => view.root.render(tree("b")));
+    await settle();
+    expect(view.container.querySelector("[data-surface='b']")?.textContent)
+      .not.toContain("A failed before handoff");
+  });
+
+  it.fails("attributes a late failure to A after its operation crosses the handoff to B", async () => {
+    const tree = (active: "a" | "b") => (
+      <LodySurfaceThemeRoot>
+        <div data-surface="a">
+          <LodySurfaceProviders active={active === "a"}><div /></LodySurfaceProviders>
+        </div>
+        <div data-surface="b">
+          <LodySurfaceProviders active={active === "b"}><div /></LodySurfaceProviders>
+        </div>
+      </LodySurfaceThemeRoot>
+    );
+    let failOperation = (): void => undefined;
+    const failure = new Promise<void>((resolve) => {
+      failOperation = resolve;
+    });
+    const operation = failure.then(async () => {
+      await fireVendoredToast("A failed after handoff");
+    });
+    const view = await render(tree("a"));
+    cleanup = view.unmount;
+    await act(async () => view.root.render(tree("b")));
+    failOperation();
+    await operation;
+    const shownInB = view.container.querySelector("[data-surface='b']")?.textContent
+      ?.includes("A failed after handoff") === true;
+
+    await act(async () => view.root.render(tree("a")));
+    await settle();
+    const shownInA = view.container.querySelector("[data-surface='a']")?.textContent
+      ?.includes("A failed after handoff") === true;
+    expect({ shownInB, shownInA }).toEqual({ shownInB: false, shownInA: true });
   });
 
   it("puts the toaster below the theme provider, so it paints in the shell's mode", async () => {

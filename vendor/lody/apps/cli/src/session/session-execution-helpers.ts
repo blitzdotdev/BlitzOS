@@ -63,8 +63,10 @@ const GITHUB_WORKTREE_SYSTEM_COMMANDS = `\n\nThe following are system instructio
   - When passing a multiline body to gh pr create, use $'..' syntax and replace literal \\n text with actual line breaks. Inside $'...', use real newlines rather than \\n strings.
   - The agent may use a one-time URL rewrite to fetch SSH git submodules over HTTPS, as long as the submodule is also authorized for lody or is public: git -c url."https://github.com/".insteadOf=git@github.com: submodule update --init --recursive`;
 
-const LODY_MCP_TOOLS_REMINDER =
-  '\n\nUse the available Lody MCP tools when relevant; rely on their tool descriptions for complete, current capabilities and usage guidance.';
+const lodyMcpToolsReminder = (): string =>
+  process.env.LODY_MCP_BUILTIN_DISABLED === '1'
+    ? ''
+    : '\n\nUse the available Lody MCP tools when relevant; rely on their tool descriptions for complete, current capabilities and usage guidance.';
 
 // TODO: use system prompt
 export const buildPrompt = (
@@ -80,5 +82,5 @@ export const buildPrompt = (
     : '';
   const systemCommands = project?.kind === 'github' ? GITHUB_WORKTREE_SYSTEM_COMMANDS : '';
 
-  return `${promptWithReferences}${feedbackInstruction}${systemCommands}${LODY_MCP_TOOLS_REMINDER}`;
+  return `${promptWithReferences}${feedbackInstruction}${systemCommands}${lodyMcpToolsReminder()}`;
 };

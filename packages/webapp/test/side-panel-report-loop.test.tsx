@@ -130,9 +130,12 @@ async function mountShell() {
   }));
   const surface: SurfaceRecord = { renderCount: 0, sidePanel: undefined };
   vi.doMock("../src/lody/SessionSurface.js", () => ({
-    default: (props: { sidePanel?: SidePanelBinding }) => {
+    default: (host: {
+      surfaces: Array<{ active?: boolean; sidePanel?: SidePanelBinding }>;
+    }) => {
+      const current = host.surfaces.find((candidate) => candidate.active === true);
       surface.renderCount += 1;
-      surface.sidePanel = props.sidePanel;
+      surface.sidePanel = current?.sidePanel;
       return <div data-testid="lody-surface" />;
     },
   }));

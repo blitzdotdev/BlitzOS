@@ -262,8 +262,8 @@ cmd_init() {
   # from a parent that already carries them. That parent cannot be lody.scope:
   # a cgroup holding a process (the daemon) may not distribute controllers to
   # its children (cgroup v2's no-internal-process rule). So the parent is built
-  # HERE, beside the daemon's leaf, and packages/box/patches/
-  # lody-session-sandbox.mjs points the daemon at it. Owned by the Blitz
+  # HERE, beside the daemon's leaf, and LODY_SESSION_CGROUP_PARENT points the
+  # daemon at it. Owned by the Blitz
   # identity like the slice above it, so the daemon can mkdir and rmdir leaves;
   # the common ancestor of a move from lody.scope into a leaf is the user
   # slice, whose cgroup.procs that identity already holds. The sandbox refuses a leaf without

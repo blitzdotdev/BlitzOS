@@ -1,26 +1,21 @@
 /**
  * `window.ipc` IS A SINGLETON, AND A WORKSPACE SWITCH NOW HANDS IT OVER.
  *
- * `LodySessionsRegion` keys the owned surface `own:${lodySyncUrl}`, so switching
- * workspaces unmounts one `SessionSurface` and mounts another. Both install a
- * bridge at `window.ipc`, and for a moment both exist: React mounts the new
- * subtree and only then runs the departing one's cleanup.
+ * The keep-alive pool retains both surfaces while activation hands the one
+ * compatibility global from the old owner to the new owner. React may install
+ * the incoming bridge before it runs the departing owner's cleanup.
  *
  * The uninstall returned by `installLodyLocalBridge` used to `delete
  * target.ipc` unconditionally, without asking whether the global was still its
  * own. So the OLD surface's cleanup deleted the NEW surface's bridge, and the
- * new runtime — whose boot effect runs before its parent re-asserts the install,
- * because React runs child effects first — found no `window.ipc` at all. Its
- * local data plane never attached, nothing synced, and the rail's session list
- * stayed empty until the member reloaded the page. A reload has no departing
- * surface, which is exactly why it looked like a fix.
- *
- * Before the per-box key this could not happen: one surface owned the global for
- * the life of the tab, so an unconditional delete was always its own.
+ * incoming retained surface's compatibility callers then found no `window.ipc`.
  */
+import { act, createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLodyLocalBridge, installLodyLocalBridge } from "../src/lody/local-bridge.js";
 import type { LodyLocalBridgeEndpoints } from "../src/lody/local-bridge.js";
+import { useLodySurfaceIpc, useLodySurfaceIpcLifecycle } from "../src/lody/surface-ipc.js";
+import { render, settle } from "./dom.js";
 
 function endpointsFor(host: string): LodyLocalBridgeEndpoints {
   return {
@@ -35,12 +30,27 @@ function endpointsFor(host: string): LodyLocalBridgeEndpoints {
 
 /** A stand-in for `window`, so a case never leaves the real global installed. */
 function fakeWindow() {
+  // SAFETY: publication only reads/writes the two optional Lody bridge globals
+  // on this isolated object; no native Window implementation is exercised.
   return {} as unknown as Window & typeof globalThis;
 }
 
 afterEach(() => {
+  delete window.ipc;
+  delete window.__LODY_LOCAL_BRIDGE__;
   vi.restoreAllMocks();
 });
+
+function SurfaceBridgeProbe(props: {
+  name: string;
+  active: boolean;
+  bridges: Map<string, NonNullable<Window["ipc"]>>;
+}) {
+  const held = useLodySurfaceIpc(endpointsFor(`${props.name}.invalid`));
+  props.bridges.set(props.name, held.bridge.ipc);
+  useLodySurfaceIpcLifecycle(held, props.active);
+  return null;
+}
 
 describe("handing window.ipc from one box's surface to the next", () => {
   it("leaves the incoming bridge installed when the outgoing one cleans up", () => {
@@ -88,5 +98,61 @@ describe("handing window.ipc from one box's surface to the next", () => {
     // close, or a switch leaks a WebSocket per visited workspace.
     expect(disposeOutgoing).toHaveBeenCalledTimes(1);
     expect(target.ipc).toBe(incoming.ipc);
+  });
+
+  it("rejects invokes after the bound bridge is disposed", async () => {
+    const bridge = createLodyLocalBridge(endpointsFor("box-a.invalid"));
+    const invoke = bridge.ipc.invoke;
+    bridge.dispose();
+
+    await expect(invoke("loro.isConnected")).rejects.toThrow("lody_ipc_bridge_disposed");
+    expect(() => bridge.ipc.send("loro.subscribe", null)).not.toThrow();
+  });
+
+  it("reports a daemon identity change observed through the platform door", async () => {
+    const continuity: string[] = [];
+    let read = 0;
+    const fetchImpl = vi.fn(async () => {
+      read += 1;
+      return new Response(JSON.stringify({
+        identity: { userId: "local:user" },
+        machine: { machineId: read === 1 ? "machine-a" : "machine-b" },
+        workspaces: [{
+          workspaceId: read === 1 ? "lw_a" : "lw_b",
+          name: "Lody",
+          slug: "local",
+          role: "admin",
+          state: "active",
+        }],
+      }), { status: 200 });
+    });
+    const bridge = createLodyLocalBridge({
+      ...endpointsFor("box-a.invalid"),
+      fetchImpl,
+      onContinuity: (event) => continuity.push(event),
+    });
+
+    await bridge.ipc.invoke("localPlatform.getSnapshot");
+    await bridge.ipc.invoke("localPlatform.getSnapshot");
+    expect(continuity).toEqual(["identity-change"]);
+    bridge.dispose();
+  });
+
+  it("publishes window.ipc from the active retained surface only", async () => {
+    const bridges = new Map<string, NonNullable<Window["ipc"]>>();
+    const tree = (active: "a" | "b") => createElement(
+      "div",
+      null,
+      createElement(SurfaceBridgeProbe, { name: "a", active: active === "a", bridges }),
+      createElement(SurfaceBridgeProbe, { name: "b", active: active === "b", bridges }),
+    );
+    const view = await render(tree("a"));
+    expect(window.ipc).toBe(bridges.get("a"));
+
+    await act(async () => view.root.render(tree("b")));
+    expect(window.ipc).toBe(bridges.get("b"));
+    await view.unmount();
+    await settle();
+    expect(window.ipc).toBeUndefined();
   });
 });

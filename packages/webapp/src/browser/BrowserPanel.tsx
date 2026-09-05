@@ -1,7 +1,7 @@
 /**
  * The BlitzOS browser: one iframe, an address bar, and the three kinds of
  * address `browser-target.ts` knows. It lives in Lody's side panel as our
- * `host:browser` tab (seam patch 19) and is what `blitz browser open` drives.
+ * `host:browser` tab (seam patch 23) and is what `blitz browser open` drives.
  *
  * History is the panel's own list of the addresses it was asked for — typed,
  * or raised by the box. A same-origin frame (a port or a file) also reports

@@ -14,7 +14,7 @@ export type NewTabControlProps = {
    * `'bar'` is the rail's own pinned action, full width above the list.
    * `'footer'` is the same menu behind a terminal glyph, in the footer of the
    * vendored rail, to the left of their Archive entry
-   * (`vendor/lody/BLITZ-PATCHES.md` seam patch 18). The menu opens upward
+   * (`vendor/lody/BLITZ-PATCHES.md` seam patch 22). The menu opens upward
    * there, because below the footer is the end of the rail.
    */
   variant: 'bar' | 'footer';

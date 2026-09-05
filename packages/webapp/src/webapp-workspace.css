@@ -1253,7 +1253,7 @@
   display: contents;
 }
 
-/* Our Connections panel as a tab of Lody's side panel (seam patch 19): the
+/* Our Connections panel as a tab of Lody's side panel (seam patch 23): the
  * panel body scrolls inside the tab, as Files and All Changes do. */
 .webapp-side-panel-host {
   height: 100%;

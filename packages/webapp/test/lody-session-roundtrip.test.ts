@@ -3,17 +3,16 @@
  *
  * "Create a session from the browser; a turn dispatches; a reply streams."
  *
- * Everything under test is real: a patched `lody@0.88.1` daemon, the box's own
+ * Everything under test is real: the tree-built Lody daemon, the box's own
  * `blitz-lody-bridge`, our `window.ipc` install, our WebSocket data plane, our
  * three HTTP planes, and the vendored `createWorkspaceRuntime` in
  * `syncMode: 'local'`. The only stand-in is the Go gateway, which has no
  * toolchain here and is tested in `packages/box/gateway/main_test.go`.
  *
- * TWO GATES, DELIBERATELY:
+ * ONE PAID-TURN GATE, DELIBERATELY:
  *
- * - The whole suite SKIPS when no `lody` bundle is installed, which is CI. A
- *   test that needs a 21 MB npm artifact cannot be a merge gate, and pretending
- *   otherwise with a mock would test the mock.
+ * - The pair CI job supplies its daemon through `LODY_BUNDLE`. Local runs must
+ *   point that variable at an installed tree-built package.
  * - The DISPATCH is skipped unless `BLITZ_LODY_LIVE_TURN=1`, because a dispatch
  *   launches the ACP adapter and spends a turn of somebody's subscription. Run
  *   the exit test with:

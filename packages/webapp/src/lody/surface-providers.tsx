@@ -1,6 +1,7 @@
 /**
  * The surface's provider stack, in the order design doc §1.4 fixes: i18n, the
- * theme tree, tooltips — and the toast host.
+ * per-surface i18n/tooltips and the active surface's toast host. The root theme
+ * owner is separate because it is page-global, not runtime/store state.
  *
  * ITS OWN MODULE, for the reason `shell-theme.tsx` gives about itself. Mounting
  * `SessionSurface` in a test costs the whole vendored renderer — Monaco, shiki,
@@ -13,10 +14,11 @@
  * `SessionSurface.tsx` re-exports it, because that is the file every reader
  * comes to first and the stack is still its composition.
  */
-import { useMemo, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, type ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { Toaster } from "@lody/components/ui/sonner";
+import { toast } from "sonner";
 import { initLodyI18n } from "./i18n.js";
 import { BlitzThemedLodyTree, adoptShellTheme } from "./shell-theme.js";
 import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
@@ -45,13 +47,13 @@ import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
  * `.lody-surface` — and Sonner renders in place rather than through a portal, so
  * it inherits them from the surface it lives in.
  *
- * IT CANNOT DOUBLE-MOUNT, and two toasters would show every toast twice. There
+ * ONLY THE ACTIVE SURFACE MOUNTS IT, and two toasters would show every toast
+ * twice. There
  * are exactly two ways to get one: this stack, and upstream's `__root.tsx`. That
  * root route is not in our route tree and cannot be — `createLodySessionRouter`
  * builds its own `createRootRoute` (`router.tsx`) and mounts their PAGES, never
- * their roots — and `LodySessionsRegion` renders ONE `SessionSurface`, swapping
- * between the workspace's own box and a shared one by `key` rather than mounting
- * both.
+ * their roots. The retained region can mount two surfaces, but its active-state
+ * owner renders this host for exactly one of them.
  *
  * THE WRAPPER IS OURS AND THE ELEMENT INSIDE IT IS THEIRS. Sonner's live region
  * is an empty `<section>` — every toast in it is `position: fixed` — and
@@ -62,18 +64,36 @@ import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
  */
 export const LODY_TOASTER_HOST_CLASS = "lody-surface__toaster";
 
-export function LodySurfaceProviders(props: { children: ReactNode }) {
-  const i18n = useMemo(() => initLodyI18n(), []);
+/**
+ * One page-global Lody theme owner around every surface slot.
+ *
+ * The provider reads no Jotai store or workspace runtime. Hoisting it keeps an
+ * inactive or evicted surface's VS Code-theme cleanup from clearing root CSS
+ * state installed by the active surface.
+ */
+export function LodySurfaceThemeRoot(props: { children: ReactNode }) {
   const theme = useMemo(() => adoptShellTheme(), []);
-  // Beside the theme adoption for the same reason: both write a key their own
-  // code reads on first render, so both have to happen before that render.
+  return <BlitzThemedLodyTree theme={theme}>{props.children}</BlitzThemedLodyTree>;
+}
+
+export function LodySurfaceToaster() {
+  useLayoutEffect(() => () => {
+    // Lody's producers do not supply Sonner's optional toasterId, so the only
+    // safe handoff is to clear the page-global queue before another host owns it.
+    toast.dismiss();
+  }, []);
+  return <div className={LODY_TOASTER_HOST_CLASS}><Toaster /></div>;
+}
+
+export function LodySurfaceProviders(props: { children: ReactNode; active?: boolean }) {
+  const i18n = useMemo(() => initLodyI18n(), []);
+  // This writes a key vendored code reads on first render, so it must happen
+  // before that render just like the hoisted root's theme adoption.
   useMemo(() => seedWorktreeWorkdirDefault(), []);
   return (
     <I18nextProvider i18n={i18n}>
-      <BlitzThemedLodyTree theme={theme}>
-        <TooltipProvider>{props.children}</TooltipProvider>
-        <div className={LODY_TOASTER_HOST_CLASS}><Toaster /></div>
-      </BlitzThemedLodyTree>
+      <TooltipProvider>{props.children}</TooltipProvider>
+      {props.active !== false && <LodySurfaceToaster />}
     </I18nextProvider>
   );
 }

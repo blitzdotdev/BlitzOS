@@ -1,8 +1,8 @@
 /**
- * Seam patch 19, the halves that can be driven without a daemon.
+ * Seam patch 23, the halves that can be driven without a daemon.
  *
  * WHAT IS MOUNTED. The real vendored `SessionSidePanelTabBar` and
- * `SessionSidePanelEmptyState`, given a `custom` option the way seam patch 19's
+ * `SessionSidePanelEmptyState`, given a `custom` option the way seam patch 23's
  * `sidePanelFixedOptions` builds one: the tab draws under its `host:` id with
  * the host's glyph (or the Files glyph when it gave none), it is offered by the
  * `+` menu and by the empty state, and selecting or closing it reports the
@@ -42,7 +42,7 @@ const vendorDir = join(
 );
 const vendored = (file: string): string => readFileSync(join(vendorDir, file), "utf8");
 
-/** The shape seam patch 19 hunk 8 pushes for each host tab, beside upstream's own two. */
+/** The shape seam patch 23 hunk 8 pushes for each host tab, beside upstream's own two. */
 const FILES = { id: "files" as const, label: "Files", kind: "files" as const };
 const CHANGES = { id: "changes" as const, label: "All Changes", kind: "changes" as const };
 const CONNECTIONS = {
@@ -158,7 +158,7 @@ describe("the patched SessionSidePanelTabBar with a host tab", () => {
 });
 
 describe("the page-level halves are declared where the pin reads them", () => {
-  it("declares seam patch 19's four props and three types on SessionDetail", () => {
+  it("declares seam patch 23's four props and three types on SessionDetail", () => {
     const detail = vendored("session-detail.tsx");
     for (const text of [
       "export interface SessionHostSidePanelTab {",

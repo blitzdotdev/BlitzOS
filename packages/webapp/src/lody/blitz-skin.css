@@ -214,7 +214,7 @@ body > :where(:not(#root)) {
 
 /*
  * The footer's icon buttons — their Archive entry (seam patch 13) and our New
- * tab trigger before it (seam patch 18, `.shell-newbar--footer`) — are one row,
+ * tab trigger before it (seam patch 22, `.shell-newbar--footer`) — are one row,
  * so they wear one rest colour: the rail's own icon-button token, `--faint`
  * (`.shell-ib`, `strip-rail.css`). Upstream paints the rest state
  * `text-sidebar-foreground` in the light theme and

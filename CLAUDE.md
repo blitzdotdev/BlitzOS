@@ -79,9 +79,9 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | agent rules | CP `core/agent-rules.ts` producer (`GET /workspaces/self/agent-rules`) ↔ box `blitz-rules sync` consumer (`box/rootfs/usr/local/bin/blitz-rules`); `AGENT_RULES_DOC` mirrors the canonical `box/rootfs/opt/blitz/skel/agent-rules.md` | `fixtures/agent-rules/` | `test/agent-rules-conformance.test.ts` + `test/agent-rules-drift.test.ts` (CP), `box/guest-tests/test/agent-rules-conformance.test.ts` (box) |
 | entitlements | CP `core/entitlements.ts` (`PUT /orgs/:id/entitlements` writer, `GET /orgs/:id/usage`, the 402 seat-limit refusal and its HS256 handoff token) ↔ the PRIVATE billing service, which owns plans, writes the integers, and verifies the token — core never learns a plan name | `fixtures/entitlements/` | `test/entitlements-fixtures.test.ts` (CP); the billing service copies the corpus and pins it on its side |
 | machine-stats | guest producer `box/rootfs/usr/local/bin/blitz-machine-stats` (s6 longrun `machine-stats`, one report every 10 min) ↔ CP consumer `core/machine-stats.ts` (`POST /workspaces/self/machine-stats`), which fills `machines.disk_used_percent` and surfaces as `MachineView.volumeUsedPercent` | `fixtures/machine-stats/` | `test/machine-stats-conformance.test.ts` (CP), `box/guest-tests/test/machine-stats-conformance.test.ts` (guest: the real script against a local origin) |
-| lody data-plane v7 | browser `webapp/src/lody/data-plane-connection.ts` ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` ↔ the `lody` daemon (not in this tree). The SCHEMA stays Lody's (`vendor/lody/packages/shared/src/local-loro-data-plane.ts`, `protocolVersion` is a `z.literal(7)`); what became ours in phase 2 is the FRAMING — one WebSocket text message is one JSON frame, newline-delimited on the daemon's side | `fixtures/lody-data-plane/` (server frames captured from a real `lody@0.88.1`) | `webapp/test/lody-data-plane-frames.test.ts` (browser producer/parser), `box/guest-tests/test/lody-bridge-frames.test.ts` (runs the real bridge script against a stand-in daemon socket) |
-| lody local-project registration | box node `box/rootfs/usr/local/libexec/blitz-lody-projects` (registers each `/workspace/<repo>` clone) ↔ browser `webapp/src/lody/local-bridge.ts` + `rpc-client.ts` + `local-projects.ts` (`registerWorkspaceRepositories`, the same sweep driven from the tab) ↔ the `lody` daemon's `/project-control` (not in this tree). The SCHEMA stays Lody's (`vendor/lody/packages/shared/src/message-schemas.ts`, `LocalProjectControlRequest`/`Response`); what is ours is that two BlitzOS producers keep agreeing with it | `fixtures/lody-project-registration/` (responses captured from a real `lody@0.88.1`) | `box/guest-tests/test/lody-projects-registration.test.ts` (runs the real registrar against a stand-in daemon socket), `webapp/test/lody-project-control-frames.test.ts` (browser producer/parser) |
-| lody session-control stream | browser `webapp/src/lody/rpc-client.ts` (`sendSessionControl`) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` ↔ the `lody` daemon's `/session-control` (not in this tree). The daemon picks NDJSON-per-response or one buffered envelope from the request's `Accept`; ours is the browser that negotiates and reads it frame by frame, and the bridge decision that carries the negotiation upstream. The FRAME UNION stays Lody's (`vendor/lody/packages/shared/src/node/local-ipc.ts:80`, `{kind:'response'\|'complete'\|'error'}`) — it is not exported and its module is node-only, so `rpc-client.ts` re-states it and the corpus keeps the copy honest | `fixtures/lody-session-control-stream/` (bodies captured from a real `lody@0.88.1` through the real bridge) | `webapp/test/lody-session-control-stream.test.ts` (browser consumer: frames emitted before the promise settles, at adversarial chunk boundaries), `box/guest-tests/test/lody-bridge-control-stream.test.ts` (runs the real bridge against a stand-in daemon that holds its stream open), `webapp/test/lody-acp-authentication.test.ts` (whole chain against a real daemon; skips without the bundle) |
+| lody data-plane v7 | browser `webapp/src/lody/data-plane-connection.ts` ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` ↔ the `lody` daemon built from `vendor/lody/apps/cli`. The SCHEMA stays Lody's (`vendor/lody/packages/shared/src/local-loro-data-plane.ts`, `protocolVersion` is a `z.literal(7)`); what became ours in phase 2 is the FRAMING — one WebSocket text message is one JSON frame, newline-delimited on the daemon's side | `fixtures/lody-data-plane/` (capture provenance and source-built recapture rule are in its README) | `webapp/test/lody-data-plane-frames.test.ts` (browser producer/parser), `box/guest-tests/test/lody-bridge-frames.test.ts` (runs the real bridge script against a stand-in daemon socket) |
+| lody local-project registration | box node `box/rootfs/usr/local/libexec/blitz-lody-projects` (registers each `/workspace/<repo>` clone) ↔ browser `webapp/src/lody/local-bridge.ts` + `rpc-client.ts` + `local-projects.ts` (`registerWorkspaceRepositories`, the same sweep driven from the tab) ↔ the source-built `lody` daemon's `/project-control`. The SCHEMA stays Lody's (`vendor/lody/packages/shared/src/message-schemas.ts`, `LocalProjectControlRequest`/`Response`); what is ours is that two BlitzOS producers keep agreeing with it | `fixtures/lody-project-registration/` (capture provenance and source-built recapture rule are in its README) | `box/guest-tests/test/lody-projects-registration.test.ts` (runs the real registrar against a stand-in daemon socket), `webapp/test/lody-project-control-frames.test.ts` (browser producer/parser) |
+| lody session-control stream | browser `webapp/src/lody/rpc-client.ts` (`sendSessionControl`) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` ↔ the source-built `lody` daemon's `/session-control`. The daemon picks NDJSON-per-response or one buffered envelope from the request's `Accept`; ours is the browser that negotiates and reads it frame by frame, and the bridge decision that carries the negotiation upstream. The FRAME UNION stays Lody's (`vendor/lody/packages/shared/src/node/local-ipc.ts:80`, `{kind:'response'\|'complete'\|'error'}`) — it is not exported and its module is node-only, so `rpc-client.ts` re-states it and the corpus keeps the copy honest | `fixtures/lody-session-control-stream/` (capture provenance and source-built recapture rule are in its README) | `webapp/test/lody-session-control-stream.test.ts` (browser consumer: frames emitted before the promise settles, at adversarial chunk boundaries), `box/guest-tests/test/lody-bridge-control-stream.test.ts` (runs the real bridge against a stand-in daemon that holds its stream open), `webapp/test/lody-acp-authentication.test.ts` (whole chain against a real daemon; skips without the bundle) |
 | lody share claim | Go gateway `box/gateway/main.go` (verifies the webApp ticket's `share` claim and forwards it on `X-Blitz-Lody-Share`, stripping any inbound copy) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` (room ACL on `/sync`, session scoping on `/rpc` and `/project`, `/control` refused, `/platform` narrowed). The claim's OWN wire format is pinned by the webApp-ticket corpus on three runtimes; what this pins is the hand-off and the decisions the bridge makes from it | `fixtures/lody-share-claim/` | `gateway/main_test.go` (producer: the header bytes + the path allowlist), `box/guest-tests/test/lody-bridge-share.test.ts` (consumer: runs the real bridge against a stand-in daemon over the whole decision table) |
 | box config v1 | CP `core/box-config.ts` producer (`GET /workspaces/self/box-config`) and consumer (`POST /workspaces/self/box-update-result`) ↔ host updater bash/python emitted by `core/bootstrap.ts` (`blitz-box-update`; cloud-VM path only — the microVM provider has its own guest lifecycle and no update path yet) | `fixtures/box-config/` | `test/box-config-conformance.test.ts` (CP), `test/box-update-conformance.test.mjs` (runs real `python3` over the emitted parser/producer, `bash -n` over the emitted scripts), `test/box-update-host.test.mjs` (runs the emitted updater in real bash against a live CP over real curl) |
 | agent API doc | schema types (`packages/schema/src`) + route manifest `core/agent-api-manifest.ts` → generator `control-plane/scripts/generate-agent-api.mjs` (`npm run openapi:generate`; ts-json-schema-generator, no hand-written JSON Schema) → the generated OpenAPI 3.1 document, served verbatim by `core/agent-api.ts` (`GET /agent/api`, box-authed) ↔ agents reading it from a box | `packages/schema/openapi/agent-api.json` (the checked-in artifact IS the fixture) | `test/agent-api-coverage.test.ts` (router ↔ manifest ↔ document, both directions), `test/agent-api-conformance.test.ts` (every `/agent/*` happy-path body against the document's schemas; the served bytes equal the artifact), `test/agent-api-generate.test.mjs` (regenerates in plain Node and demands identical bytes) |
@@ -126,26 +126,33 @@ Do not add aliases anywhere else.
 ## Vendored Lody: rules and upstream merges
 
 `vendor/lody` is a squashed git subtree of https://github.com/LodyAI/Lody
-(Apache-2.0). The box does NOT build it — it installs the prebuilt npm `lody`
-daemon (`packages/box/Dockerfile`). The subtree commit and the npm version are
-one verified pair, both pinned in `vendor/lody/UPSTREAM.md`: bump them together.
+(Apache-2.0). One upstream commit is the renderer and target daemon source
+identity. `packages/box/Dockerfile` builds and stamps the daemon from that same
+tree; an upstream merge never selects or bumps an independent npm package.
 
 - Integration code never goes inside `vendor/lody`; it lives in
   `packages/webapp/src/lody/`.
-- The ONLY allowed in-vendor edits are the seam patches declared in
+- `vendor/lody-adapters` is generated supply-chain input. Sync it, stage the
+  result, then run the network-free check. Use `--check --fetch` to compare
+  staged bytes with upstream. Never edit an adapter or its stamp by hand.
+- The only allowed in-vendor edits are source seams declared in
   `vendor/lody/BLITZ-PATCHES.md`, each with an upstream-PR sketch. Declare a new
   vendor edit there first, or do not make it.
-- The daemon patches in `packages/box/patches/` (`lody-local-platform.mjs`,
-  cloud→local platform; `lody-acp-auth-queue.mjs`, the ACP-auth queue chain;
-  `lody-code-collab-worktree-root.mjs`, Code Collab's worktree root;
-  `lody-builtin-mcp-off.mjs`, no per-session `lody-mcp-server` child;
-  `lody-session-sandbox.mjs`, per-session cgroup leaves beside `lody.scope`
-  with no capacity split) are
-  guarded against the published bundle (sha256; version + anchor count) and must
-  be re-verified on every daemon bump.
-- Upstream merges follow the runbook `docs/LODY-MERGE.md`. Where Lody upstream
-  and BlitzOS disagree, copy Lody's behavior rather than reconcile the two
-  (`plans/LODY-SESSIONS.md` §0 bias rule).
+- Daemon-specific behavior is either upstream or a declared, default-inert
+  source/configuration seam; compiled-bundle rewrites are not permitted.
+- Upstream automation may open a PR but never merge it. Class-C conflicts,
+  unwanted upstream behavior, red pair gates, and new ambient IPC sites need a
+  human.
+- Where Lody upstream and BlitzOS disagree, copy Lody's behavior rather than
+  reimplementing it (`plans/LODY-SESSIONS.md` §0 bias rule).
+
+| Document | Scope |
+|---|---|
+| `docs/LODY-MERGE.md` | The one current merge procedure |
+| `vendor/lody/BLITZ-PATCHES.md` | Source seams and conflict manual |
+| `vendor/lody/UPSTREAM.md` | Core, subtree, and adapter pins |
+| `plans/LODY-DAEMON-FROM-TREE.md` | Approved design and migration |
+| `plans/LODY-SESSIONS.md` | Historical design rationale |
 
 ## Member machines: what a workspace is now
 

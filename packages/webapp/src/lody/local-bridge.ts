@@ -2,14 +2,13 @@
  * `window.ipc`, backed by the box gateway instead of Electron
  * (plans/LODY-RUNTIME-DESIGN.md §2.1).
  *
- * THE SEAM IS `window.ipc`, NOT A SOURCE PATCH. `createLocalLoroDataPlaneConnection`
- * (`vendor/lody/packages/components/src/providers/local-loro-data-plane-connection.ts:8`)
- * gates only on `getIpcServices()`, and `getIpcServices()`
- * (`components/src/lib/electron-ipc-client.ts:50`) is a generic proxy over
- * `window.ipc`: `createLodyIpcProxy` dispatches `groupName.methodName` by string
- * (`:22`). Nothing about it is Electron-specific. So installing `window.ipc`
- * before the runtime mounts makes the whole local plane work with NO vendor edit
- * on the data path at all.
+ * THE TRANSPORT SHAPE IS ELECTRON'S IPC SEAM. `createLodyIpcProxy` dispatches
+ * `groupName.methodName` by string, so nothing about the bridge itself is
+ * Electron-specific. A `SessionSurface` now captures this object in a bound IPC
+ * client and injects that authority into its renderer subtree. The active
+ * surface still installs `window.ipc` for unchanged Electron/default callers,
+ * but it is no longer the authority used by a Blitz runtime after construction;
+ * see seam patch 18.
  *
  * DO NOT SET `window.__LODY_ELECTRON__`. Forty-four sites read it — window
  * controls in `routes/__root.tsx`, `electron-menu-handler`,
@@ -32,10 +31,15 @@ import { LocalMachineRpcRequestSchema } from "@lody/shared/local-machine-rpc";
 import { LocalProjectControlRequestSchema, LocalSessionControlRequestSchema } from "@lody/shared/message-schemas";
 import {
   createLodyDataPlaneConnection,
+  type LodyDataPlaneContinuityEvent,
   type LodyDataPlaneConnectionHandle,
   type LodyDataPlaneStats,
 } from "./data-plane-connection.js";
-import { fetchLodyPlatformSnapshot, type LodyPlatformFetchOptions } from "./platform-snapshot.js";
+import {
+  fetchLodyPlatformSnapshot,
+  type LodyPlatformFetchOptions,
+  type LodyPlatformSnapshot,
+} from "./platform-snapshot.js";
 import {
   sendMachineRpc,
   sendProjectControl,
@@ -101,8 +105,8 @@ export function withBoxBrowseRoot(
 type IpcBridge = NonNullable<Window["ipc"]>;
 
 export interface LodyLocalBridge {
-  /** The object installed at `window.ipc`. Exposed for tests that drive it
-   * without touching the global. */
+  /** Captured by the surface client and also installed at `window.ipc` for
+   * compatibility. Exposed for tests that drive it without touching globals. */
   ipc: IpcBridge;
   /** Data-plane counters, for the phase-3 assertion that nothing is dropped. */
   dataPlaneStats: () => LodyDataPlaneStats;
@@ -119,7 +123,11 @@ export interface LodyLocalBridgeEndpoints extends LodyHttpPlaneEndpoints {
   /** The box path `filesBase` serves; see `LodyAttachmentEndpoints`. */
   filesRoot?: string;
   webSocketConstructor?: typeof WebSocket;
+  /** The retained surface must revalidate or evict after any broken link. */
+  onContinuity?: (event: LodyBridgeContinuityEvent) => void;
 }
+
+export type LodyBridgeContinuityEvent = LodyDataPlaneContinuityEvent | "identity-change";
 
 interface PushListeners {
   loroEvent: Set<(payload: LodyDataPlaneFrame) => void>;
@@ -132,8 +140,8 @@ interface PushListeners {
 type ProjectFailureStyle = "error" | "throw" | "null" | "success";
 
 /**
- * Builds the bridge. `installLodyLocalBridge` puts it on `window`; a test can
- * hold it instead.
+ * Builds the bridge. `publishLodyLocalBridge` or the compatibility installer
+ * puts it on `window`; a test can hold it instead.
  *
  * The data-plane socket is opened lazily on the first `loro.subscribe`, which is
  * what `createLocalLoroDataPlaneConnection` sends before anything else. Opening
@@ -150,14 +158,17 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
   let dataPlane: LodyDataPlaneConnectionHandle | null = null;
   let unsubscribeMessages: (() => void) | null = null;
   let unsubscribeStatus: (() => void) | null = null;
+  let disposed = false;
 
   const openDataPlane = (): LodyDataPlaneConnectionHandle => {
     if (dataPlane !== null) return dataPlane;
-    const handle = createLodyDataPlaneConnection(
-      endpoints.webSocketConstructor === undefined
-        ? { url: endpoints.syncUrl }
-        : { url: endpoints.syncUrl, webSocketConstructor: endpoints.webSocketConstructor },
-    );
+    const connectionOptions = endpoints.webSocketConstructor === undefined
+      ? { url: endpoints.syncUrl }
+      : { url: endpoints.syncUrl, webSocketConstructor: endpoints.webSocketConstructor };
+    const handle = createLodyDataPlaneConnection({
+      ...connectionOptions,
+      onContinuity: (event) => endpoints.onContinuity?.(event),
+    });
     unsubscribeMessages = handle.connection.onMessage((message: LodyDataPlaneFrame) => {
       for (const listener of listeners.loroEvent) listener(message);
     });
@@ -198,12 +209,22 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
    * one.
    */
   let machineId: string | null = null;
+  let daemonIdentity: string | null = null;
+  const observeIdentity = (snapshot: LodyPlatformSnapshot): void => {
+    const next = `${snapshot.machineId}\u0000${snapshot.workspace.workspaceId}`;
+    if (daemonIdentity !== null && daemonIdentity !== next) {
+      endpoints.onContinuity?.("identity-change");
+    }
+    daemonIdentity = next;
+  };
   async function resolveMachineId(): Promise<string | null> {
     if (machineId !== null) return machineId;
     const options: LodyPlatformFetchOptions = {};
     if (endpoints.fetchImpl !== undefined) options.fetchImpl = endpoints.fetchImpl;
     try {
-      machineId = (await fetchLodyPlatformSnapshot(endpoints.platformUrl, options))?.machineId ?? null;
+      const snapshot = await fetchLodyPlatformSnapshot(endpoints.platformUrl, options);
+      if (snapshot !== null) observeIdentity(snapshot);
+      machineId = snapshot?.machineId ?? null;
     } catch {
       // Not cached: a transport failure before the daemon has written its
       // catalog must not make every later call fail too.
@@ -289,6 +310,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
   }
 
   const invoke = async (channel: string, ...args: LodyIpcArgument[]): Promise<LodyIpcReply> => {
+    if (disposed) throw new Error("lody_ipc_bridge_disposed");
     switch (channel) {
       case "loro.isConnected":
         return dataPlane?.connection.isConnected() ?? false;
@@ -316,6 +338,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
         try {
           const snapshot = await fetchLodyPlatformSnapshot(endpoints.platformUrl, options);
           if (snapshot === null) return null;
+          observeIdentity(snapshot);
           return { userId: snapshot.userId, workspace: snapshot.workspace };
         } catch {
           return null;
@@ -474,6 +497,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
   };
 
   const send = (channel: string, payload?: LodyIpcSendPayload): void => {
+    if (disposed) return;
     switch (channel) {
       case "loro.subscribe":
         openDataPlane();
@@ -493,6 +517,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
   };
 
   const on = (channel: string, listener: (payload: LodyIpcPush) => void): (() => void) => {
+    if (disposed) return () => {};
     switch (channel) {
       case "loro.event": {
         listeners.loroEvent.add(listener);
@@ -533,6 +558,8 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
       },
     unsupportedChannels: () => [...unsupported],
     dispose: () => {
+      if (disposed) return;
+      disposed = true;
       unsubscribeMessages?.();
       unsubscribeStatus?.();
       dataPlane?.dispose();
@@ -577,29 +604,30 @@ export function installLodyLocalBridge(
   bridge: LodyLocalBridge,
   target: Window & typeof globalThis = window,
 ): () => void {
+  const unpublish = publishLodyLocalBridge(bridge, target);
+  return () => {
+    unpublish();
+    bridge.dispose();
+  };
+}
+
+/** Publishes compatibility globals without owning the bridge's lifetime. */
+export function publishLodyLocalBridge(
+  bridge: LodyLocalBridge,
+  target: Window & typeof globalThis = window,
+): () => void {
   target.ipc = bridge.ipc;
   target.__LODY_LOCAL_BRIDGE__ = true;
   return () => {
     // ONLY CLEAR THE GLOBAL IF IT IS STILL OURS.
     //
-    // `window.ipc` is a singleton and a workspace switch now HANDS IT OVER:
-    // `LodySessionsRegion` keys the owned surface by box, so one `SessionSurface`
-    // unmounts while another mounts, and React mounts the new subtree before it
-    // runs the departing one's cleanup. An unconditional `delete` therefore
-    // deleted the INCOMING surface's bridge. The new runtime's boot effect runs
-    // before its parent re-asserts the install — React runs child effects first
-    // — so it found no bridge, its local data plane never attached, nothing
-    // synced, and the rail's session list stayed empty until a reload. A reload
-    // has no departing surface, which is why it looked like the cure.
-    //
-    // Before the per-box key one surface owned this for the life of the tab, so
-    // the unconditional delete was always its own. It is not any more.
+    // `window.ipc` is a singleton and activation HANDS IT OVER between retained
+    // surfaces. React may publish the incoming bridge before the outgoing
+    // layout-effect cleanup runs; an unconditional delete would then remove the
+    // incoming owner and leave compatibility callers with no bridge.
     if (target.ipc === bridge.ipc) {
       delete target.ipc;
       delete target.__LODY_LOCAL_BRIDGE__;
     }
-    // Ownership decides the GLOBAL, never the socket. This bridge's data plane
-    // closes either way, or a switch leaks a WebSocket per visited workspace.
-    bridge.dispose();
   };
 }

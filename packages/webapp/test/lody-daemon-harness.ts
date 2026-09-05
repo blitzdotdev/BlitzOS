@@ -1,13 +1,12 @@
 /**
  * A real Lody daemon, the real box bridge, and a gateway-shaped front door.
  *
- * The phase-2 exit test drives the browser runtime against an actual
- * `lody@0.88.1` daemon rather than a mock, because every failure phase 1 found
- * lived in the difference between the two (`plans/evidence/lody-phase1.md` §0).
+ * The phase-2 exit test drives the browser runtime against an actual Lody
+ * daemon package rather than a mock, because every failure phase 1 found lived
+ * in the difference between the two (`plans/evidence/lody-phase1.md` §0).
  * This module stands up the same three processes a box runs, in the same order:
  *
- * 1. the patched daemon — every script in `packages/box/patches/` applied to a
- *    COPY of the installed npm bundle, in the image build's own order;
+ * 1. the daemon — the selected tree-built package is copied unchanged;
  * 2. `packages/box/rootfs/usr/local/libexec/blitz-lody-bridge`, unmodified;
  * 3. a TCP front door that maps `/lody/*` onto the bridge's unix socket, which
  *    is what `packages/box/gateway/main.go` does. The Go gateway itself cannot
@@ -21,7 +20,7 @@
  * this box is 75 bytes, and `<scratchpad>/lody-data/run/lody-oss-loro-data-plane.sock`
  * is 118. So the data dir is a short `os.tmpdir()` path, not the scratchpad.
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   cpSync,
@@ -61,26 +60,58 @@ export function repoRoot(): string {
     directory = parent;
   }
 }
+const INSTALLED_LODY_BUNDLE = "/opt/blitz/npm/lib/node_modules/lody";
 
-/** Where the box image installs the daemon, and where this box has it too. */
-export const LODY_BUNDLE = "/opt/blitz/npm/lib/node_modules/lody";
-/** Every patch the image build applies to the published bundle, IN THE ORDER the
- * Dockerfile applies them. `lody-local-platform` guards on a sha256 of the file
- * as published, so it has to run before anything else rewrites it. */
-const PATCH_SCRIPTS = [
-  join(repoRoot(), "packages/box/patches/lody-local-platform.mjs"),
-  join(repoRoot(), "packages/box/patches/lody-acp-auth-queue.mjs"),
-  join(repoRoot(), "packages/box/patches/lody-code-collab-worktree-root.mjs"),
-  join(repoRoot(), "packages/box/patches/lody-builtin-mcp-off.mjs"),
-  join(repoRoot(), "packages/box/patches/lody-session-sandbox.mjs"),
-];
+/**
+ * A package directory, resolved in pair-by-construction order:
+ * explicit CI artifact, then a stamped image install. A legacy unstamped
+ * package and a machine with no daemon both stay unavailable.
+ */
+function selectedLodyBundle(): string | null {
+  if (process.env.LODY_BUNDLE !== undefined) {
+    return existsSync(join(process.env.LODY_BUNDLE, "dist", "index.js"))
+      ? process.env.LODY_BUNDLE
+      : null;
+  }
+  return existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "index.js")) &&
+    existsSync(join(INSTALLED_LODY_BUNDLE, "dist", "BUILD.json"))
+    ? INSTALLED_LODY_BUNDLE
+    : null;
+}
+
+const BUNDLE_HINT =
+  "Run npm run lody:build -- --out \"$LODY_OUT\", install the tarball, then " +
+  "export LODY_BUNDLE=\"$LODY_OUT/install/lib/node_modules/lody\".";
+let reportedUnavailableBundle = false;
+
+function reportUnavailableBundle(): void {
+  if (reportedUnavailableBundle) return;
+  reportedUnavailableBundle = true;
+  process.stderr.write(
+    `LODY PAIR GATE: skipped for lack of a bundle; no stamped package is available. ${BUNDLE_HINT}\n`,
+  );
+}
+
+function resolveLodyBundle(): string {
+  const bundle = selectedLodyBundle();
+  if (bundle !== null) return bundle;
+  reportUnavailableBundle();
+  throw new Error("Lody daemon bundle is unavailable");
+}
+
 const BRIDGE_SCRIPT = join(repoRoot(), "packages/box/rootfs/usr/local/libexec/blitz-lody-bridge");
 const REPO_NODE_MODULES = join(repoRoot(), "node_modules");
 
-/** `true` when this machine can run the exit test at all. CI has no `lody`
- * installed, so the test skips there rather than failing. */
+/** `true` when an explicit or installed bundle makes a lazy resolution viable. */
 export function lodyDaemonAvailable(): boolean {
-  return existsSync(join(LODY_BUNDLE, "dist", "index.js"));
+  const available = selectedLodyBundle() !== null;
+  if (!available) {
+    reportUnavailableBundle();
+    if (process.env.LODY_REQUIRE_BUNDLE === "1") {
+      throw new Error("Lody daemon bundle is required");
+    }
+  }
+  return available;
 }
 
 export interface LodyHarness {
@@ -135,9 +166,9 @@ export interface LodyShareClaim {
  * WHY IT IS REQUIRED. The lease is one TCP port for the whole `lody-oss`
  * installation profile, with no override, and a BOX RUNS ITS OWN DAEMON on it
  * (`s6-rc.d/lody-daemon`). Every daemon-backed suite here runs on a box. Before
- * the image shipped `lody-local-platform.mjs`, the box's daemon could not reach
- * local mode and never took the lease, so an unsupervised harness worked by
- * accident; on a current image it exits with "Cannot start: foreground process
+ * the image shipped a local tree build, the box's daemon could not reach local
+ * mode and never took the lease, so an unsupervised harness worked by accident;
+ * on a current image it exits with "Cannot start: foreground process
  * N already owns the local agent runtime" and the harness reports a 60 s
  * provisioning timeout that names the wrong cause.
  *
@@ -166,7 +197,7 @@ function waitFor(what: string, check: () => boolean, timeoutMs: number): Promise
     const tick = (): void => {
       if (check()) return resolve();
       if (Date.now() > deadline) return reject(new Error(`timed out waiting for ${what}`));
-      setTimeout(tick, 100);
+      setTimeout(tick, 10);
     };
     tick();
   });
@@ -386,6 +417,11 @@ function harnessLockIsStale(): boolean {
  * reaped in the next poll and this timer only ever bounds honest waiting.
  */
 const HARNESS_LOCK_WAIT_MS = 900_000;
+// Cross-process suites remain serialized. One explicit measurement may nest a
+// second harness in the same worker to represent two independently minted box
+// identities; the outer release owns the filesystem lock until both stop.
+let inProcessLockDepth = 0;
+let releaseProcessLock: (() => void) | null = null;
 
 /**
  * What a daemon-backed suite's boot hook must allow.
@@ -394,18 +430,42 @@ const HARNESS_LOCK_WAIT_MS = 900_000;
  * lock waits fires on QUEUEING rather than on anything being wrong — which is
  * how phase 6's relay suite first failed, with a 180 s hook and a 900 s lock.
  * The two numbers are one number, and this is it: the wait, plus a suite's own
- * boot (a patched bundle copy, a daemon provisioning its implicit workspace, a
+ * boot (a tree-built bundle copy, a daemon provisioning its implicit workspace, a
  * bridge, a runtime).
  */
 export const HARNESS_BOOT_TIMEOUT_MS = HARNESS_LOCK_WAIT_MS + 120_000;
 
 async function acquireHarnessLock(): Promise<() => void> {
+  if (releaseProcessLock !== null) {
+    inProcessLockDepth += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      inProcessLockDepth -= 1;
+      if (inProcessLockDepth !== 0 || releaseProcessLock === null) return;
+      const release = releaseProcessLock;
+      releaseProcessLock = null;
+      release();
+    };
+  }
   const deadline = Date.now() + HARNESS_LOCK_WAIT_MS;
   for (;;) {
     try {
       mkdirSync(HARNESS_LOCK);
       writeFileSync(join(HARNESS_LOCK, "pid"), String(process.pid));
-      return () => rmSync(HARNESS_LOCK, { recursive: true, force: true });
+      releaseProcessLock = () => rmSync(HARNESS_LOCK, { recursive: true, force: true });
+      inProcessLockDepth = 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        inProcessLockDepth -= 1;
+        if (inProcessLockDepth !== 0 || releaseProcessLock === null) return;
+        const release = releaseProcessLock;
+        releaseProcessLock = null;
+        release();
+      };
     } catch {
       if (harnessLockIsStale()) {
         rmSync(HARNESS_LOCK, { recursive: true, force: true });
@@ -419,27 +479,16 @@ async function acquireHarnessLock(): Promise<() => void> {
 
 /** Boots all three, and resolves once the daemon has written its catalog. */
 export async function startLodyHarness(): Promise<LodyHarness> {
+  const sourceBundle = resolveLodyBundle();
   const releaseLock = await acquireHarnessLock();
   const root = mkdtempSync(join(tmpdir(), "lp-"));
   const dataDir = join(root, "d");
   mkdirSync(dataDir, { recursive: true });
 
-  // A COPY, patched. Never the installed bundle: the image build patches its own
-  // copy too, and mutating the box's `lody` from a test would leave it patched.
+  // Always a copy: mutating the installed package from a test would leave it
+  // changed for every later suite on this machine.
   const bundle = join(root, "lody");
-  cpSync(LODY_BUNDLE, bundle, { recursive: true });
-  for (const script of PATCH_SCRIPTS) {
-    const patch = spawn(process.execPath, [script, join(bundle, "dist", "index.js")], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const patchResult = await new Promise<number>((resolve) => patch.once("exit", (code) => resolve(code ?? 1)));
-    if (patchResult !== 0) {
-      rmSync(root, { recursive: true, force: true });
-      releaseLock();
-      throw new Error(`${script} refused the installed bundle`);
-    }
-  }
-
+  cpSync(sourceBundle, bundle, { recursive: true });
   let daemonLog = "";
   const daemon = spawn(process.execPath, [join(bundle, "dist", "index.js"), "start"], {
     cwd: root,
@@ -448,6 +497,9 @@ export async function startLodyHarness(): Promise<LodyHarness> {
       LODY_PLATFORM: "local",
       LODY_DATA_DIR: dataDir,
       LODY_MCP_HTTP_DISABLED: "1",
+      LODY_MCP_BUILTIN_DISABLED: "1",
+      LODY_SESSION_CGROUP_PARENT: "/blitz-user.slice/lody-sessions",
+      LODY_SESSION_CAPACITY_LIMITS: "0",
       ...supervisorLaunchEnv(),
     },
     // The fourth entry is the supervisor's half of the contract above: a worker
@@ -513,6 +565,7 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   mkdirSync(filesRoot, { recursive: true });
   const shareClaims = new Map<string, LodyShareClaim>();
   const gateway = startGatewayShim(bridgeSocket, port, filesRoot, shareClaims, (line) => (daemonLog += line));
+  await waitFor("the gateway shim to listen", () => gateway.listening, 10_000);
   const origin = `http://127.0.0.1:${port}`;
 
   // An ordinary crash or a failed assertion must not leave a daemon holding the

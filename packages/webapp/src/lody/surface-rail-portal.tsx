@@ -1,0 +1,52 @@
+/** One retained surface's rail subtree and shell-host ownership wrapper. */
+import { memo } from "react";
+import { createPortal } from "react-dom";
+import { SessionRailSidebar } from "./SessionRailSidebar.js";
+import { useLodySurfaceActiveState } from "./surface-active-context.js";
+
+const RetainedSessionRailSidebar = memo(SessionRailSidebar);
+
+export function LodySurfaceRailPortal(props: {
+  activeSessionId: string | null;
+  archiveOpen: boolean;
+  openSession: (sessionId: string) => void;
+  openLanding: (options?: { resetDraft?: boolean }) => void;
+  openArchive: () => void;
+}) {
+  const { active, hidden, railHost, rail } = useLodySurfaceActiveState();
+  if (railHost === null || railHost === undefined || rail === undefined) return null;
+  const shown = active;
+  return createPortal(
+    <div
+      data-lody-rail-active={shown ? "true" : "false"}
+      hidden={!shown}
+      inert={!shown}
+      aria-hidden={shown ? undefined : "true"}
+    >
+      <RetainedSessionRailSidebar
+        activeSessionId={props.activeSessionId}
+        archiveActive={props.archiveOpen}
+        surfaceVisible={!hidden}
+        onSelectSession={rail.onOpenSession ?? props.openSession}
+        onOpenLanding={rail.onOpenLanding ?? props.openLanding}
+        onOpenArchive={rail.onOpenArchive ?? props.openArchive}
+        {...(rail.newTabControl === undefined
+          ? {}
+          : { newTabControl: rail.newTabControl })}
+        {...(rail.onShareSession === undefined
+          ? {}
+          : { onShareSession: rail.onShareSession })}
+        {...(rail.sharedSessions === undefined
+          ? {}
+          : { sharedSessions: rail.sharedSessions })}
+        {...(rail.activeSharedSessionId === undefined
+          ? {}
+          : { activeSharedSessionId: rail.activeSharedSessionId })}
+        {...(rail.onSelectSharedSession === undefined
+          ? {}
+          : { onSelectSharedSession: rail.onSelectSharedSession })}
+      />
+    </div>,
+    railHost,
+  );
+}

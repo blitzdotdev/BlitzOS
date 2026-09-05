@@ -85,9 +85,10 @@ async function mountRegion(options: { path: string; tabCount: number }): Promise
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
   const surface: MountResult["surface"] = { hidden: undefined, rail: undefined };
   vi.doMock("../src/lody/SessionSurface.js", () => ({
-    default: (props: { hidden?: boolean; rail?: LodyRailBinding }) => {
-      surface.hidden = props.hidden;
-      surface.rail = props.rail;
+    default: (host: { surfaces: Array<{ hidden?: boolean; rail?: LodyRailBinding }> }) => {
+      const current = host.surfaces.find((item) => item.hidden !== true) ?? host.surfaces[0];
+      surface.hidden = current?.hidden;
+      surface.rail = current?.rail;
       return null;
     },
   }));
@@ -276,4 +277,3 @@ describe("the archive address", () => {
     await mounted.view.unmount();
   });
 });
-

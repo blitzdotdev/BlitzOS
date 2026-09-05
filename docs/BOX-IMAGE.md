@@ -52,8 +52,8 @@ configuration gate and under the `canary` environment:
 1. It checks out the merged tree, sets up Node, runs `npm ci`, writes the
    canary `wrangler.toml` from
    `CANARY_WRANGLER_TOML`, and reads `APP_URL` from that config.
-2. It computes a release id from the git object ids of `packages/box`,
-   `packages/broker`, `packages/schema/fixtures`, and `env.defaults`. The full
+2. It computes a release id from every repository input copied by the
+   Dockerfile. `BOX_IMAGE_INPUTS` is the shared source list. The full
    64-character SHA-256 becomes `<releaseId>`, the image tag is
    `blitz-box:<releaseId>`, and the R2 prefix is `box-image/<releaseId>`.
 3. It requests
@@ -67,13 +67,48 @@ configuration gate and under the `canary` environment:
    The build argument turns Lody on for canary while the committed
    `env.defaults` stays off for self-hosters; the Dockerfile rejects any
    non-empty value other than `0` or `1`.
-5. It runs
+5. It boots that enabled image through its real `/init` entrypoint with
+   `IMAGE=<imageTag> LODY_BOOT_ONLY=1 packages/box/test/smoke.sh`. The smoke has
+   a 180-second wall-clock readiness deadline and must pass before any archive
+   object is published.
+6. It runs
    `node packages/control-plane/scripts/publish-box-image.mjs --image <imageTag> --prefix <prefix> --app-url <APP_URL> --json publish.json`.
    The publisher uploads every part before `manifest.json`, so a release is
    not visible until all its parts exist.
-6. It exposes the release ref, tag, SHA-256, release id, and whether it built
+7. It exposes the release ref, tag, SHA-256, release id, and whether it built
    anything to the deploy job. The deploy pins those values and verifies that
    `/version` reports both the merged commit and the expected box-image tag.
+
+**Lody release identity.** The release key covers every repository source in a
+Dockerfile `COPY`. That includes `vendor/lody`, reviewed adapter snapshots, and
+all shared Lody build scripts. A pure Lody-input change therefore selects a new
+release ID. The key uses Git object IDs instead of walking the large trees.
+`box-image-key.test.mjs` parses the Dockerfile and rejects any uncovered source.
+Follow `docs/LODY-MERGE.md` for the upstream procedure.
+
+### Lody daemon package and provenance
+
+The `lody-build` Docker stage runs the same
+`scripts/lody-build-package.mjs --source vendor/lody` path used by the pair
+gate. It overlays the five reviewed adapter snapshots, performs the frozen pnpm
+install and CLI build, verifies the package manifest, and emits a tarball plus
+`BUILD.json`. It also derives `npm-shrinkwrap.json` from the CLI production
+graph in `pnpm-lock.yaml`. Exact registry URLs and integrities pin every runtime
+package. A BuildKit cache mount retains the pnpm 10.20 store by Node line.
+The architecture-neutral build stage does not key that cache by target platform.
+The lockfile and build inputs still invalidate the build layer. Files outside
+the Lody inputs, including `packages/webapp`, do not.
+Adapter snapshots exclude generated `dist/` and `node_modules/` trees. The
+`lody-adapters-drift.test.mjs` gate checks that every tracked Lody builder input
+survives the ordered Dockerfile ignore rules.
+
+The target-platform vendors stage extracts that tarball at the established
+global prefix. It runs `npm ci` at the package root, where npm enforces the
+shrinkwrap and checks every integrity. Lifecycle scripts stay enabled for
+native dependencies. The package remains
+`/opt/blitz/npm/lib/node_modules/lody`, and s6 still executes
+`/opt/blitz/npm/bin/lody start`. Its only stamp is `dist/BUILD.json` inside that
+package. Plan PR D will serve that file over `/lody/build`.
 
 The `canary` environment's `CLOUDFLARE_API_TOKEN` must be able to write the
 `blitz-box-images` bucket. A token that can deploy the Worker but cannot write
@@ -220,30 +255,48 @@ copy; it carries the `--privileged` and long-`--mount` reasoning with it.
 
 `packages/box/test/smoke.sh` exercises the whole surface: s6 service graph,
 key-only SSH, ttyd/tmux, files, ports, previews, DinD, and the
-unprivileged degradation path.
+unprivileged degradation path. It builds both the default-disabled image and
+the same `BLITZ_LODY_SESSIONS=1` variant canary ships, then boots the enabled
+variant. The Lody checks use a 180-second wall-clock deadline with bounded host
+commands while waiting for the supervised daemon and bridge, probe bridge
+health and `/lody/platform`, require the packaged `dist/BUILD.json`, inspect
+the live daemon environment and cgroup, and require its
+built-in-MCP-disable log. In CI the smoke also requires memory, pids, and CPU
+delegation and proves that the `blitz` user can create and remove a child under
+`lody-sessions` with `memory.max`, `pids.max`, and `cpu.max`. The shipping CLI
+has no credential-free adapter, so real session limits and cleanup are instead
+exercised by the vendor sandbox suite in the daemon pair gate.
 
 ```sh
 # Builds a throwaway blitz-box:smoke from this tree, then tests it:
 packages/box/test/smoke.sh
 
-# Tests an image you already have, and never builds:
+# Tests an already-built Lody-enabled image, and never builds:
 IMAGE=blitz-box:local packages/box/test/smoke.sh
 ```
 
 Building is the default on purpose. This is the only gate that runs the s6
 service graph, so a run that silently adopted an existing tag could pass an
 edit to `rootfs/` or an s6 unit against an image that predates it. `IMAGE=`
-skips the build, and then the freshness of that tag is yours to guarantee.
+skips the build, requires that tag's baked default to enable Lody, and leaves
+the freshness of that tag yours to guarantee. Canary runs this form with
+`LODY_BOOT_ONLY=1` immediately after its enabled build and before publishing any
+archive parts, exiting after the Lody and cgroup checks rather than repeating
+the later terminal/files/preview checks already owned by PR CI.
 
 ## Upgrade and rollback
 
 Point the `BOX_IMAGE_*` vars at the new image and redeploy the control plane.
-The vars only affect **newly created** VMs: a workspace keeps the image it
-booted with for its whole life. To move existing workspaces to a new image,
-destroy and recreate them.
+New VMs use that pin immediately. An existing cloud VM moves only after an
+owner or admin requests an update through the box-config v1 routes in
+`packages/control-plane/core/box-config.ts`; the host updater emitted by
+`packages/control-plane/core/bootstrap.ts` polls, replaces the container, and
+reports the installed ref. MicroVMs have no in-place updater and keep their old
+image until recreation.
 
-Rollback is the same operation in reverse — restore the previous values and
-redeploy. VMs created during the bad window keep the bad image until recycled.
+Rollback starts by restoring the previous immutable pin and redeploying. New
+VMs then use it; request another box update for each existing cloud VM that must
+move back. Recreate an affected microVM.
 
 This boot-time pinning is why the control plane gates some per-workspace
 behavior on the VM's creation time (the `BOX_IMAGE_*_SINCE_MS` constants in

@@ -1,0 +1,17 @@
+[
+  "package/package.json",
+  "package/npm-shrinkwrap.json",
+  "package/dist/BUILD.json",
+  "package/dist/THIRD_PARTY_NOTICES.md",
+  "package/dist/index.js",
+  "package/dist/code-collab-watch-worker.js",
+  "package/dist/diff-worker.js",
+  "package/dist/file-index-scan-worker.js",
+  "package/dist/turn-diff-store-worker.js",
+  "package/dist/zstd.wasm",
+  "package/dist/chunks/loro_wasm_bg-[hash].js",
+  "package/dist/deepseek-agent-presets/code/preset.yml",
+  "package/dist/deepseek-agent-presets/cordis/preset.yml",
+  "package/dist/deepseek-agent-presets/minimal/preset.yml",
+  "package/dist/deepseek-agent-presets/standard/preset.yml"
+]

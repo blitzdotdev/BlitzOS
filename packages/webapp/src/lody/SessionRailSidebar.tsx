@@ -15,7 +15,7 @@
  *    `buildSessionListRows` turns metas into rows. The Chats / GitHub Worktrees
  *    split is `repoFullName`, exactly as it is upstream (`:1600`).
  * 2. The NEW TAB control, in their footer through `footerLeadingContent` (seam
- *    patch 18), to the left of Archive. It used to head a Terminals section of
+ *    patch 22), to the left of Archive. It used to head a Terminals section of
  *    our own rows under their `afterSessionListContent` slot; that section is
  *    gone (2026-09-03), because a terminal is a TAB of the surface and the
  *    surface's own strip already lists and closes it — the rail listed every
@@ -132,7 +132,7 @@ export interface SessionRailSidebarProps {
   onOpenArchive?: () => void;
   /**
    * The `New tab` control — Claude / Codex / terminal — drawn in the footer to
-   * the left of Archive through `footerLeadingContent` (seam patch 18), so the
+   * the left of Archive through `footerLeadingContent` (seam patch 22), so the
    * Claude / Codex / terminal entries keep a home in the rail. It is the only
    * spawn affordance a flag-on workspace has (plans/LODY-TERMINAL-TABS.md §4.1).
    */
@@ -559,7 +559,7 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       // organize modes this rail does not have. Archive is the one entry that
       // stays, because it is the only way upstream offers into the archive page.
       footerItems={FOOTER_ITEMS}
-      // Seam patch 18. The New tab control sits at the start of that same row,
+      // Seam patch 22. The New tab control sits at the start of that same row,
       // to the left of Archive: the footer is where a rail keeps the controls
       // that are not a list entry, and a spawn is one.
       {...(props.newTabControl === undefined

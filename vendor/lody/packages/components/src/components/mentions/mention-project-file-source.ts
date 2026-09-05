@@ -15,6 +15,7 @@ import {
   createLocalProjectRpcFileTransport,
 } from '@/lib/local-project-rpc-file-provider';
 import { getIpcServices } from '@/lib/electron-ipc-client';
+import { useIpcClient } from '@/providers/ipc-client-provider';
 import {
   captureMentionFileLocalFetchError,
   type MentionLocalFetchErrorCode,
@@ -202,6 +203,7 @@ function classifyLocalFetchError(message: string | undefined): MentionLocalFetch
 }
 
 export function useMentionProjectFiles(source?: MentionProjectSource) {
+  const ipcClient = useIpcClient();
   const postHog = usePostHog();
   const analyticsWorkspaceId = useAtomValue(currentWorkspaceIdAtom);
   const runtime = useAtomValue(runtimeAtom);
@@ -437,11 +439,13 @@ export function useMentionProjectFiles(source?: MentionProjectSource) {
 
       if (sourceKind === 'local' && localWorkspaceId && localProjectId) {
         const canUseIpc =
-          Boolean(getIpcServices()) && (!localMachineId || localMachineId === localDaemonMachineId);
+          Boolean(getIpcServices(ipcClient)) &&
+          (!localMachineId || localMachineId === localDaemonMachineId);
         if (canUseIpc) {
           return await createLocalProjectIpcFileTransport({
             workspaceId: localWorkspaceId,
             localProjectId,
+            ipcClient,
           }).readFile({ relativePath: path, maxBytes: options?.maxBytes });
         }
         if (!runtime || !requestedByUserId || !localMachineId) {
@@ -458,9 +462,8 @@ export function useMentionProjectFiles(source?: MentionProjectSource) {
       }
 
       if (useLocalWorktreeSource && localWorktreeSessionId && localWorktreeRepoKey) {
-        const reader = getIpcServices()?.localProjects.readSessionWorktreeFile.bind(
-          getIpcServices()!.localProjects
-        );
+        const localProjects = getIpcServices(ipcClient)?.localProjects;
+        const reader = localProjects?.readSessionWorktreeFile.bind(localProjects);
         if (!reader) {
           throw new Error('Local worktree file API is unavailable.');
         }
@@ -471,6 +474,7 @@ export function useMentionProjectFiles(source?: MentionProjectSource) {
     },
     [
       localProjectId,
+      ipcClient,
       localMachineId,
       localDaemonMachineId,
       localWorktreeRepoKey,

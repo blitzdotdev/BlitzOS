@@ -161,12 +161,16 @@ async function mountShell(options: { path: string; state?: Map<string, unknown> 
   }));
   const surface: SurfaceRecord = { surfaceTabs: undefined };
   vi.doMock("../src/lody/SessionSurface.js", () => ({
-    default: (props: {
-      rail?: { newTabControl?: ReactNode };
-      surfaceTabs?: SurfaceRecord["surfaceTabs"];
+    default: (host: {
+      surfaces: Array<{
+        active?: boolean;
+        rail?: { newTabControl?: ReactNode };
+        surfaceTabs?: SurfaceRecord["surfaceTabs"];
+      }>;
     }) => {
-      surface.surfaceTabs = props.surfaceTabs;
-      return <div data-testid="lody-surface">{props.rail?.newTabControl}</div>;
+      const current = host.surfaces.find((item) => item.active === true);
+      surface.surfaceTabs = current?.surfaceTabs;
+      return <div data-testid="lody-surface">{current?.rail?.newTabControl}</div>;
     },
   }));
 

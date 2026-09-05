@@ -1,0 +1,24 @@
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "_meta": {
+          "lody": {
+            "goal": {
+              "objective": "Ship the goal update",
+              "status": "active",
+              "tokenBudget": null,
+              "tokensUsed": 42,
+              "timeUsedSeconds": 12,
+              "createdAtEpochSeconds": 1710000000,
+              "updatedAtEpochSeconds": 1710000012
+            }
+          }
+        }
+      }
+    }
+  ]
+}

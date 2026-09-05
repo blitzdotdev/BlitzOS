@@ -4,18 +4,17 @@
  * "`SessionSurface` mounted; the full chat loop — send, cancel, permission
  * prompts, diffs, queue — in the real webapp UI against the local daemon."
  *
- * Everything under test is real: a patched `lody@0.88.1` daemon, the box's own
+ * Everything under test is real: the tree-built Lody daemon, the box's own
  * `blitz-lody-bridge`, our `window.ipc`, our WebSocket data plane, our three
  * HTTP planes, the vendored `RuntimeProvider`, and their `ChatLanding` and
  * `SessionDetail` pages driven through the DOM. The only stand-ins are the Go
  * gateway (no toolchain here; `gateway/main_test.go` covers it) and jsdom's
  * missing measurement APIs (`lody-dom-stubs.ts`).
  *
- * TWO GATES, THE SAME TWO PHASE 2 CHOSE:
+ * ONE PAID-TURN GATE, THE SAME ONE PHASE 2 USES:
  *
- * - The suite SKIPS with no `lody` bundle installed, which is CI. A test that
- *   needs a 21 MB npm artifact cannot gate a merge, and faking it would test
- *   the fake.
+ * - The pair CI job supplies its daemon through `LODY_BUNDLE`. Local runs must
+ *   point that variable at an installed tree-built package.
  * - Anything that DISPATCHES is skipped unless `BLITZ_LODY_LIVE_TURN=1`,
  *   because a dispatch launches the ACP adapter and spends a turn of somebody's
  *   subscription.
@@ -236,10 +235,6 @@ describe.skipIf(!lodyDaemonAvailable())("phase 3: the mounted Lody session surfa
         machineId: snapshot.machineId,
         workspaceId: snapshot.workspace.workspaceId,
         configId: "blitz-claude",
-        cliType: "builtin",
-        agentType: "claude",
-        runtimeOverrides: { claudeCodeExecutable: "/usr/local/bin/claude" },
-        env: {},
       },
     });
     const elapsedMs = Date.now() - started;

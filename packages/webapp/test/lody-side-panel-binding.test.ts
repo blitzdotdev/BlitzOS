@@ -1,5 +1,5 @@
 /**
- * The shell side of seam patch 19 (`src/lody/side-panel.tsx`): the strip's
+ * The shell side of seam patch 23 (`src/lody/side-panel.tsx`): the strip's
  * fixed vocabulary of panels, two of them ours.
  */
 import { describe, expect, it } from "vitest";

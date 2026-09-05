@@ -31,8 +31,13 @@ import { expect } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..", "..");
-const componentsDir = join(repoRoot, "vendor/lody/packages/components/src");
+const sourceDirs = {
+  cli: join(repoRoot, "vendor/lody/apps/cli/src"),
+  components: join(repoRoot, "vendor/lody/packages/components/src"),
+} as const;
 const baselineDir = join(here, "upstream-baseline");
+
+export type SeamSourceTree = keyof typeof sourceDirs;
 
 /** One line the seam removes from upstream, by its line number in the pristine
  * file. The number is what makes an anchor unambiguous: `        )}` occurs
@@ -45,13 +50,17 @@ const readLines = (path: string): string[] => readFileSync(path, "utf8").split("
 /**
  * Asserts one vendored file against its pristine upstream baseline.
  *
- * `vendorPath` is relative to `vendor/lody/packages/components/src`, and the
- * baseline is `upstream-baseline/<basename>.txt`.
+ * `vendorPath` is relative to the selected source tree, and the baseline is
+ * `upstream-baseline/<basename>.txt`.
  */
-export function expectSeam(vendorPath: string, anchors: readonly SeamAnchor[]): void {
+export function expectSeam(
+  vendorPath: string,
+  anchors: readonly SeamAnchor[],
+  sourceTree: SeamSourceTree = "components",
+): void {
   const file = vendorPath.slice(vendorPath.lastIndexOf("/") + 1);
   const upstream = readLines(join(baselineDir, `${file}.txt`));
-  const patched = readLines(join(componentsDir, vendorPath));
+  const patched = readLines(join(sourceDirs[sourceTree], vendorPath));
   const removed = new Set<number>();
   for (const [line, text] of anchors) {
     expect(upstream[line - 1], `${file}:${line} is the anchor BLITZ-PATCHES.md names`).toBe(text);
@@ -75,6 +84,9 @@ export function expectSeam(vendorPath: string, anchors: readonly SeamAnchor[]): 
 
 /** The vendored file's own text, for a claim about what the patch ADDED — the
  * half a subsequence check cannot make. */
-export function readVendoredSource(vendorPath: string): string {
-  return readFileSync(join(componentsDir, vendorPath), "utf8");
+export function readVendoredSource(
+  vendorPath: string,
+  sourceTree: SeamSourceTree = "components",
+): string {
+  return readFileSync(join(sourceDirs[sourceTree], vendorPath), "utf8");
 }

@@ -3,8 +3,8 @@
  * (plans/LODY-RUNTIME-DESIGN.md §15.2, the third canary dogfood's report 4).
  *
  * `packages/webapp/test/lody-post-signin-turn.test.ts` proves the whole story
- * against a real `lody@0.88.1` and a real signed-out CLI, and it skips without
- * a 21 MB bundle — which is CI. So the DECISION lives here, over a stub runtime
+ * against the tree-built daemon and a real signed-out CLI. So the DECISION
+ * lives here, over a stub runtime
  * on our own seam, and every case gates a merge.
  *
  * What the decision is: after a turn fails `acp_auth_required`, the session's

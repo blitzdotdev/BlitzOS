@@ -1,0 +1,34 @@
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "title": "Renamed session",
+        "_meta": {
+          "lody": {
+            "titleSource": "explicit"
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "session_info_update",
+        "title": null,
+        "_meta": {
+          "lody": {
+            "titleSource": "unset"
+          }
+        }
+      }
+    }
+  ]
+}

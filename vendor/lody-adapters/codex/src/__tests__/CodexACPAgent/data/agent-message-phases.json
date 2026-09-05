@@ -1,0 +1,44 @@
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "commentary-message",
+        "content": {
+          "type": "text",
+          "text": "Checking the relevant event mapping."
+        },
+        "_meta": {
+          "lody": {
+            "turnId": "turn-1",
+            "messagePhase": "commentary"
+          }
+        }
+      }
+    }
+  ]
+}
+{
+  "method": "sessionUpdate",
+  "args": [
+    {
+      "sessionId": "test-session-id",
+      "update": {
+        "sessionUpdate": "agent_message_chunk",
+        "messageId": "final-message",
+        "content": {
+          "type": "text",
+          "text": "Yes, here is the answer."
+        },
+        "_meta": {
+          "lody": {
+            "turnId": "turn-1",
+            "messagePhase": "final_answer"
+          }
+        }
+      }
+    }
+  ]
+}

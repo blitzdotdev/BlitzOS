@@ -22,6 +22,19 @@ COPY packages/schema/fixtures /src/packages/schema/fixtures
 RUN go test ./... \
     && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w" -o /out/blitz-box-gateway .
 
+FROM --platform=$BUILDPLATFORM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS lody-build
+
+WORKDIR /src
+RUN corepack enable
+# Keep this input boundary independent of the webapp: renderer-only changes do
+# not invalidate the daemon build. The lockfile governs the persistent pnpm
+# store cache; the build script verifies and overlays the reviewed adapters.
+COPY vendor/lody /src/vendor/lody
+COPY vendor/lody-adapters /src/vendor/lody-adapters
+COPY scripts/lody-build-package.mjs scripts/lody-npm-shrinkwrap.mjs scripts/lody-sync-adapters.mjs scripts/lody-package-manifest.json /src/scripts/
+RUN --mount=type=cache,id=lody-pnpm-node22-pnpm10.20,target=/root/.local/share/pnpm/store/v10 \
+    node /src/scripts/lody-build-package.mjs --source /src/vendor/lody --out /out
+
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS vendors
 
 # Agents install into a prefix the runtime user owns, so `claude` can
@@ -32,35 +45,31 @@ FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c
 # a build-time pin therefore only decided how stale a fresh box was on its first
 # boot — it never held a version, because the first update moved it. Taking
 # `@latest` at build time costs the reproducibility of this layer and buys a box
-# that is current the moment it starts. `codex` and `lody` stay pinned: neither
-# gates a model list, and the `lody` patches below are guarded by a sha256 of
-# the bundle as published, so a floating version would fail the build.
+# that is current the moment it starts. `codex` stays pinned. Lody is the
+# reviewed, stamped tarball built above from vendor/lody.
 ENV NPM_CONFIG_PREFIX=/opt/blitz/npm
 # `ws` carries no binary: it is the only dependency of
 # /usr/local/libexec/blitz-lody-bridge, which reaches it through NODE_PATH.
-# `lody` is the session daemon (plans/LODY-SESSIONS.md §6). Its published
-# bundle is the CLOUD build and refuses to start without a Lody account, so the
-# patch below re-enables the local platform; see the script's header.
-RUN npm install --global --omit=dev \
+# `lody` is the session daemon (plans/LODY-SESSIONS.md §6). Installing its
+# tarball through npm preserves the established global prefix and binary path.
+COPY --from=lody-build /out/ /tmp/lody-build/
+RUN set -eux; \
+    set -- /tmp/lody-build/lody-*.tgz; \
+    test "$#" -eq 1; \
+    test -f "$1"; \
+    lody_tarball=$1; \
+    npm install --global --omit=dev \
       @anthropic-ai/claude-code@latest \
       @openai/codex@0.147.0 \
-      lody@0.88.1 \
       ws@8.21.0 \
-    && npm cache clean --force
-COPY packages/box/patches/lody-local-platform.mjs /tmp/lody-local-platform.mjs
-COPY packages/box/patches/lody-acp-auth-queue.mjs /tmp/lody-acp-auth-queue.mjs
-COPY packages/box/patches/lody-code-collab-worktree-root.mjs /tmp/lody-code-collab-worktree-root.mjs
-COPY packages/box/patches/lody-builtin-mcp-off.mjs /tmp/lody-builtin-mcp-off.mjs
-COPY packages/box/patches/lody-session-sandbox.mjs /tmp/lody-session-sandbox.mjs
-# Order matters only for the first: its guard is a sha256 of the bundle AS
-# PUBLISHED, so nothing may rewrite the file before it runs. The others guard on
-# the package version and their own anchor instead, for that reason.
-RUN node /tmp/lody-local-platform.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
-    && node /tmp/lody-acp-auth-queue.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
-    && node /tmp/lody-code-collab-worktree-root.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
-    && node /tmp/lody-builtin-mcp-off.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
-    && node /tmp/lody-session-sandbox.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
-    && rm /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs /tmp/lody-builtin-mcp-off.mjs /tmp/lody-session-sandbox.mjs
+    && install -d /opt/blitz/npm/lib/node_modules /opt/blitz/npm/bin /tmp/lody-unpack \
+    && tar -xzf "$lody_tarball" -C /tmp/lody-unpack \
+    && mv /tmp/lody-unpack/package /opt/blitz/npm/lib/node_modules/lody \
+    && npm ci --prefix /opt/blitz/npm/lib/node_modules/lody --omit=dev \
+    && ln -s ../lib/node_modules/lody/dist/index.js /opt/blitz/npm/bin/lody \
+    && /opt/blitz/npm/bin/lody --help >/dev/null \
+    && npm cache clean --force \
+    && rm -rf /tmp/lody-build /tmp/lody-unpack
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime-base
 

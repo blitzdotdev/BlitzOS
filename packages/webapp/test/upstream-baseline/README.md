@@ -2,7 +2,7 @@
 
 The `.tsx.txt` files here are byte-for-byte copies of vendored Lody files as
 UPSTREAM wrote them, before any BlitzOS seam patch. They are evidence, not code:
-`packages/webapp/test/lody-surface-tabs.test.tsx` reads them to prove that every
+`packages/webapp/test/lody-seam-pin.test.ts` reads them to prove that every
 line the vendored tree lost is one `vendor/lody/BLITZ-PATCHES.md` declares, and
 nothing else.
 
@@ -10,16 +10,21 @@ nothing else.
 |---|---|
 | `session-tab-bar.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx` |
 | `session-detail.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-detail.tsx` |
-| `session-side-panel-tab-bar.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-side-panel-tab-bar.tsx` (seam patch 19) |
+| `session-side-panel-tab-bar.tsx.txt` | `vendor/lody/packages/components/src/components/sessions/session-side-panel-tab-bar.tsx` (seam patch 23) |
 | `mobile-session-tab-sheet.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-session-tab-sheet.tsx` |
 | `mobile-home-screen.tsx.txt` | `vendor/lody/packages/components/src/components/mobile/mobile-home-screen.tsx` |
+| `message-processor.ts.txt` | `vendor/lody/apps/cli/src/lib/message-processor.ts` |
+| `agent-client.ts.txt` | `vendor/lody/apps/cli/src/agent/agent-client.ts` |
+| `lody-mcp-http-server.ts.txt` | `vendor/lody/apps/cli/src/mcp/lody-mcp-http-server.ts` |
 
-The two mobile files arrived with seam patch 16, which is the first patch to
-edit a mobile-only file; the side-panel tab bar with seam patch 19. `components/chat/chat-landing.tsx` is patched by seam patches 7, 15 and 16
-and has NO baseline here: adding one means declaring seam patch 7's removals in
-that file as well, which is a job for whoever needs it.
+The two mobile files arrived with seam patch 16, which is the first patch to edit
+a mobile-only file. The side-panel tab bar arrived with seam patch 23. The
+daemon message processor arrived with source seam 19. The agent and MCP server
+baselines cover seam 20's conditional fallback logs.
+`components/chat/chat-landing.tsx` is patched by seam patches 7, 15 and 16. It
+has no baseline here. Adding one requires declaring seam patch 7's removals too.
 
-**Taken from `f34748945028ffc04316861ad25edc24535c0235`**, the commit
+**Taken from `f4b1ba259eb754cd954da776d8e7384a8c30f1c9`**, the commit
 `vendor/lody/UPSTREAM.md` pins. The test reads that pin out of `UPSTREAM.md` and
 fails when this file no longer names it, so a merge cannot move the pin and
 leave these behind.
@@ -48,22 +53,5 @@ they are: data.
 
 ## Refreshing them at an upstream merge
 
-`docs/LODY-MERGE.md` §4 re-anchors every line number in `BLITZ-PATCHES.md` after
-a subtree pull. These baselines and the anchor tables in
-`lody-surface-tabs.test.tsx` are re-anchored in the same change, from a clone
-that has the new upstream commit:
-
-```sh
-PIN=<the new upstream sha>
-for f in sessions/session-tab-bar sessions/session-detail \
-         sessions/session-side-panel-tab-bar \
-         mobile/mobile-session-tab-sheet mobile/mobile-home-screen; do
-  git show "$PIN:packages/components/src/components/$f.tsx" \
-    > packages/webapp/test/upstream-baseline/"$(basename "$f").tsx.txt"
-done
-```
-
-Then update the sha named above, re-run
-`npx vitest run test/lody-surface-tabs.test.tsx`, and move each anchor's line
-number to wherever the merge put it. The test names every anchor by line number
-AND by text, so a stale number fails on the text rather than passing quietly.
+Follow the single procedure in `docs/LODY-MERGE.md`; it owns the baseline-copy,
+provenance, re-anchoring, and seam-test commands.

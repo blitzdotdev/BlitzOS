@@ -1,5 +1,10 @@
 # Lody sharing: opt-in per-session shares inside a workspace
 
+> **Historical design record.** As of 2026-09-04, daemon provenance and every
+> upstream-merge instruction are governed by `docs/LODY-MERGE.md` and
+> `plans/LODY-DAEMON-FROM-TREE.md`. References below to the npm daemon are dated
+> measurements, not a current selection rule.
+
 The design for phase 6 of `plans/LODY-SESSIONS.md`. It implements §0.1 (the
 sharing contract, user-locked) and the sharing-architecture block in §4, and it
 is written before the code so the four hard questions — where a grantee's browser

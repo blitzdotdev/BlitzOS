@@ -116,7 +116,7 @@ describe("the session rail", () => {
     expect(list?.childElementCount).toBe(0);
     // The vendored zone brings its own new-chat affordance, so the native bar
     // stands down; the same menu survives as the vendored rail's footer New tab
-    // control (`NewTabControl`, seam patch 18).
+    // control (`NewTabControl`, seam patch 22).
     expect(view.container.querySelector(".shell-newbar")).toBeNull();
     expect(view.container.querySelector(".shell-s")).toBeNull();
     // The head is untouched by the swap: it is native in both shapes.

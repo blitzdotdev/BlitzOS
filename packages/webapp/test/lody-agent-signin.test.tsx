@@ -28,12 +28,18 @@ import { Provider as JotaiProvider, createStore } from "jotai";
 import { I18nextProvider } from "react-i18next";
 import { RouterProvider } from "@tanstack/react-router";
 import { runtimeAtom } from "@lody/components/atoms/runtime";
+import { machineMetaCacheAtom } from "@lody/components/atoms/doc-meta";
 import {
   currentWorkspaceIdAtom,
   currentWorkspaceSlugAtom,
   setWorkspaceContextAtom,
 } from "@lody/components/atoms/workspace-context";
 import { useMachineAcpAuthentication } from "@lody/components/hooks/use-machine-acp-authentication";
+import {
+  ACP_AUTHENTICATION_INTERACTIONS_PROTOCOL_VERSION,
+  MACHINE_PROTOCOL_CAPABILITIES,
+  getMachineRoomId,
+} from "@lody/shared";
 import type { JsonValue } from "@blitzos/schema";
 import { AUTH_NOTICE_POLL_MS, LodyAgentAuthNotice } from "../src/lody/agent-auth-notice";
 import { sessionNeedsAgentSignIn } from "../src/lody/session-auth-recovery";
@@ -45,6 +51,7 @@ import {
 import { BLITZ_CLAUDE_CONFIG_ID, bootstrapLodyAgentConfigs } from "../src/lody/agent-configs";
 import { initLodyI18n } from "../src/lody/i18n";
 import type { LodyAtomStore, LodyWorkspaceRuntime } from "../src/lody/runtime";
+import { seedLodySurfaceWorkspaceContext } from "../src/lody/surface-workspace-context";
 import { installLodyDomStubs } from "./lody-dom-stubs";
 import { render, settle } from "./dom";
 
@@ -150,21 +157,12 @@ function AuthenticationProbe(props: {
   return null;
 }
 
-describe("the Lody surface seeds the workspace context its sign-in panel reads", () => {
-  /** Mounts the route tree at an address whose leaf renders nothing, so the
-   * `$workspaceName` route runs — and with it `useWorkspaceContextAtoms` — with
-   * none of the vendored pages loaded.
-   *
-   * A SETTINGS STUB, and it used to be the archive. The archive stopped being a
-   * stub when it got its page (`router.tsx`, `ArchiveRoute`), and a leaf that
-   * renders the real `ArchiveView` would need the whole provider stack this
-   * group deliberately does not build. Every settings address is still
-   * `EmptyRoute`, which is the property this helper wants. */
+describe("the retained surface seeds the workspace context its sign-in panel reads", () => {
+  /** Mounts a route leaf that needs no renderer provider stack. */
   async function mountRoute(
     store: LodyAtomStore,
-    options: { workspaceId?: string },
   ): Promise<{ unmount: () => Promise<void> }> {
-    const router = createLodySessionRouter(WORKSPACE_SLUG, options);
+    const router = createLodySessionRouter(WORKSPACE_SLUG);
     await act(async () => {
       await router.navigate({
         to: "/$workspaceName/settings/about",
@@ -182,22 +180,24 @@ describe("the Lody surface seeds the workspace context its sign-in panel reads",
 
   it("publishes the daemon's workspace id, not just its slug", async () => {
     const store = createStore();
-    const mounted = await mountRoute(store, { workspaceId: WORKSPACE_ID });
+    const release = seedLodySurfaceWorkspaceContext(store, {
+      workspace: { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID },
+    });
+    const mounted = await mountRoute(store);
     try {
       expect(store.get(currentWorkspaceSlugAtom)).toBe(WORKSPACE_SLUG);
-      // The regression: phase 3 passed `undefined` for the hook's `access`
-      // argument, and this stayed `null` for the whole life of the surface.
       expect(store.get(currentWorkspaceIdAtom)).toBe(WORKSPACE_ID);
     } finally {
       await mounted.unmount();
+      release();
     }
   });
 
-  it("leaves the id null when no workspace id is supplied, which is what broke", async () => {
+  it("does not let the route duplicate workspace-context ownership", async () => {
     const store = createStore();
-    const mounted = await mountRoute(store, {});
+    const mounted = await mountRoute(store);
     try {
-      expect(store.get(currentWorkspaceSlugAtom)).toBe(WORKSPACE_SLUG);
+      expect(store.get(currentWorkspaceSlugAtom)).toBeNull();
       expect(store.get(currentWorkspaceIdAtom)).toBeNull();
     } finally {
       await mounted.unmount();
@@ -225,7 +225,10 @@ describe("the Lody surface seeds the workspace context its sign-in panel reads",
 
     const store = createStore();
     store.set(runtimeAtom, runtime);
-    const router = createLodySessionRouter(WORKSPACE_SLUG, { workspaceId: WORKSPACE_ID });
+    const release = seedLodySurfaceWorkspaceContext(store, {
+      workspace: { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID },
+    });
+    const router = createLodySessionRouter(WORKSPACE_SLUG);
     await act(async () => {
       await router.navigate({
         to: "/$workspaceName/settings/about",
@@ -265,6 +268,7 @@ describe("the Lody surface seeds the workspace context its sign-in panel reads",
     } finally {
       await probe.unmount();
       await mounted.unmount();
+      release();
     }
   });
 
@@ -842,6 +846,39 @@ const AUTHORIZATION_URL =
   "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code";
 
 describe("the ACP sign-in panel, given a progress frame", () => {
+  it("asks for a machine update instead of opening a window without interactive auth", async () => {
+    const popups = installFakePopups();
+    const store = createStore();
+    store.set(runtimeAtom, stubRuntime({
+      withSessionStore: async <T,>(
+        _sessionId: string,
+        fn: (store: { getState: () => unknown }) => T,
+      ) => fn({ getState: () => ({ history: [noticeEntry("acp_auth_required")] }) }),
+    } as unknown as Partial<LodyWorkspaceRuntime>));
+    store.set(setWorkspaceContextAtom, { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID });
+    const mounted = await render(
+      <JotaiProvider store={store}>
+        <I18nextProvider i18n={initLodyI18n()}>
+          <LodyAgentAuthNotice store={store} sessionId="session-1" machineId={MACHINE_ID} />
+        </I18nextProvider>
+      </JotaiProvider>,
+    );
+    try {
+      await settle();
+      const start = [...mounted.container.querySelectorAll("button")].find((button) =>
+        /Sign in with Claude/u.test(button.textContent ?? ""),
+      );
+      expect(start?.disabled).toBe(true);
+      expect(mounted.container.textContent).toContain(
+        "Update the target Machine to use interactive authentication for this Provider.",
+      );
+      expect(popups.popups).toHaveLength(0);
+    } finally {
+      popups.restore();
+      await mounted.unmount();
+    }
+  });
+
   it("reaches its authorization state and navigates the window it opened", async () => {
     const popups = installFakePopups();
     let emit: ((message: Record<string, unknown>) => void) | null = null;
@@ -869,6 +906,15 @@ describe("the ACP sign-in panel, given a progress frame", () => {
     const store = createStore();
     store.set(runtimeAtom, runtime);
     store.set(setWorkspaceContextAtom, { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID });
+    store.set(machineMetaCacheAtom, {
+      [getMachineRoomId(MACHINE_ID)]: {
+        id: MACHINE_ID,
+        protocolCapabilities: {
+          [MACHINE_PROTOCOL_CAPABILITIES.acpAuthenticationInteractions]:
+            ACP_AUTHENTICATION_INTERACTIONS_PROTOCOL_VERSION,
+        },
+      },
+    });
     const mounted = await render(
       <JotaiProvider store={store}>
         <I18nextProvider i18n={initLodyI18n()}>

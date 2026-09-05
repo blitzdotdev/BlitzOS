@@ -133,7 +133,7 @@ describe("vendored Lody leaves", () => {
       (button) => button.textContent === "Archive",
     );
     expect(archive, "the footer's Archive entry").toBeDefined();
-    // And before it, in the same row, the New tab control: seam patch 18's
+    // And before it, in the same row, the New tab control: seam patch 22's
     // `footerLeadingContent` is the start of the footer's utility row, and the
     // trigger is a terminal glyph rather than a second "+" beside their own.
     const newTab = mounted.container.querySelector<HTMLButtonElement>(
@@ -153,11 +153,11 @@ describe("vendored Lody leaves", () => {
   });
 });
 
-describe("seam patch 18 is declared where an upstream-merge agent reads", () => {
+describe("seam patch 22 is declared where an upstream-merge agent reads", () => {
   it("names the footer slot in BLITZ-PATCHES.md and in the vendored source", () => {
     const repoRootDir = join(here, "..", "..", "..");
     const patches = readFileSync(join(repoRootDir, "vendor/lody/BLITZ-PATCHES.md"), "utf8");
-    expect(patches).toContain("### 18. `LoroSidebar`'s footer takes one host control");
+    expect(patches).toContain("### 22. `LoroSidebar`'s footer takes one host control");
     const sidebar = readFileSync(
       join(repoRootDir, "vendor/lody/packages/components/src/components/loro-sidebar.tsx"),
       "utf8",
