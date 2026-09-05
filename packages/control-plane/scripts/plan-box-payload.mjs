@@ -51,6 +51,14 @@ export async function planBoxPayload({
   if (response.status !== 200) {
     throw new Error(`GET ${ref} answered ${response.status}; refusing to treat it as unpublished`);
   }
+  // A deployment that predates the box-payload route answers every unknown
+  // path with the web app's HTML page. That is version skew on the first
+  // deploy of the channel, not a corrupt manifest: the route serves JSON.
+  const contentType = response.headers.get("content-type") ?? "";
+  if (/^text\/html\b/iu.test(contentType)) {
+    console.error(`GET ${ref} answered HTML; the deployment has no box-payload route yet, so the release counts as unpublished`);
+    return { published: false, version, prefix, ref };
+  }
   let manifest;
   try {
     manifest = validateBoxPayloadManifest(await response.json());
