@@ -244,7 +244,7 @@ class DaemonHarness {
     writeExecutable(path.join(this.bin, "blitz-cred"), "#!/bin/sh\nprintf 'machine-bearer\\n'\n");
     writeExecutable(
       path.join(this.bin, "s6-svstat"),
-      "#!/bin/sh\ncat \"$BLITZ_TEST_DAEMON_PID\"\n",
+      "#!/bin/sh\nprintf 'true %s\\n' \"$(cat \"$BLITZ_TEST_DAEMON_PID\")\"\n",
     );
     writeExecutable(
       path.join(this.bin, "s6-svc"),
@@ -369,6 +369,11 @@ class DaemonHarness {
       });
       return;
     }
+    if (request.url === "/workspaces/self/machine-stats" && request.method === "POST") {
+      request.resume();
+      request.on("end", () => response.writeHead(204).end());
+      return;
+    }
     response.writeHead(404);
     response.end();
   }
@@ -410,6 +415,8 @@ class DaemonHarness {
         daemonIdleProbeTimeoutMs: 30,
         daemonKillGraceMs: 60,
         daemonKillPollMs: 10,
+        serviceRestartTimeoutMs: 100,
+        serviceRestartPollMs: 10,
         healthTimeoutMs: 2000,
         healthIntervalMs: 10,
         requestTimeoutMs: 1000,

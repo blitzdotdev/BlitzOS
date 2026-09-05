@@ -65,6 +65,10 @@ function filesBelow(directory) {
 
 test("the payload inventory owns the complete s6 tree and every eligible rootfs file", () => {
   const discovered = [
+    "etc/blitz/sshd_config",
+    "etc/gitconfig",
+    "etc/profile.d/blitz-npm.sh",
+    "etc/tmux.conf",
     ...filesBelow(path.join(rootfs, "usr/local/bin")),
     ...filesBelow(path.join(rootfs, "usr/local/libexec")),
     ...filesBelow(path.join(rootfs, "opt/blitz/skel")),
@@ -101,7 +105,8 @@ test("restart dependencies come from service sources plus the narrow override ta
   }
   assert.ok(restart.gateway.includes("rootfs/usr/local/bin/blitz-box-gateway"));
   assert.ok(restart["lody-bridge"].includes("rootfs/usr/local/libexec/blitz-lody-bridge"));
-  assert.ok(restart["machine-stats"].includes("rootfs/usr/local/bin/blitz-machine-stats"));
+  assert.ok(restart.sshd.includes("rootfs/etc/blitz/sshd_config"));
+  assert.equal(restart["machine-stats"], undefined);
   assert.equal(restart.watch.includes("rootfs/usr/local/bin/blitz-cred"), false);
   assert.equal(restart.ttyd.includes("rootfs/usr/local/libexec/blitz-term"), false);
   for (const oneshot of ["cgroups", "init-state", "register", "rules"]) {
@@ -141,6 +146,17 @@ test("image installation symlinks the complete s6 tree and ordinary payload path
     readlinkSync(path.join(imageRoot, "etc/s6-overlay/s6-rc.d")),
     "/opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d",
   );
+  for (const configPath of [
+    "etc/blitz/sshd_config",
+    "etc/gitconfig",
+    "etc/profile.d/blitz-npm.sh",
+    "etc/tmux.conf",
+  ]) {
+    assert.equal(
+      readlinkSync(path.join(imageRoot, configPath)),
+      `/opt/blitz/payload/current/rootfs/${configPath}`,
+    );
+  }
 });
 
 test("source executable bits define modes for non-run service files", async () => {

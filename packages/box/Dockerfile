@@ -112,23 +112,13 @@ RUN set -eux; \
       iptables=1.8.9-2 \
       jq=1.6-2.1+deb12u2 \
       libstdc++6=12.2.0-14+deb12u1 \
-      nano=7.2-1+deb12u1 \
       openssh-client=1:9.2p1-2+deb12u10 \
       openssh-server=1:9.2p1-2+deb12u10 \
       passwd=1:4.13+dfsg1-1+deb12u2 \
       procps=2:4.0.2-3 \
       python3=3.11.2-1+b1 \
       tmux=3.3a-3 \
-      vim=2:9.0.1378-2+deb12u2 \
-      xz-utils=5.4.1-1+deb12u1; \
-    install -d -m 0755 /etc/apt/keyrings; \
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
-    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends gh; \
+      vim=2:9.0.1378-2+deb12u2; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     rm -f /etc/ssh/ssh_host_*; \
@@ -140,6 +130,10 @@ RUN set -eux; \
 FROM runtime-base AS artifacts
 
 ARG TARGETARCH
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends xz-utils=5.4.1-1+deb12u1; \
+    rm -rf /var/lib/apt/lists/*
 ADD --checksum=sha256:42e038a9a00fc0fef70bf0bc42f625a9c14f8ecdfe77d4ad93281edf717e10c5 https://github.com/just-containers/s6-overlay/releases/download/v3.2.1.0/s6-overlay-noarch.tar.xz /tmp/s6-overlay-noarch.tar.xz
 ADD --checksum=sha256:8bcbc2cada58426f976b159dcc4e06cbb1454d5f39252b3bb0c778ccf71c9435 https://github.com/just-containers/s6-overlay/releases/download/v3.2.1.0/s6-overlay-x86_64.tar.xz /tmp/s6-overlay-x86_64.tar.xz
 ADD --checksum=sha256:c8fd6b1f0380d399422fc986a1e6799f6a287e2cfa24813ad0b6a4fb4fa755cc https://github.com/just-containers/s6-overlay/releases/download/v3.2.1.0/s6-overlay-aarch64.tar.xz /tmp/s6-overlay-aarch64.tar.xz
@@ -149,20 +143,25 @@ ADD --checksum=sha256:817769f726613194bcff9d0e3e481eaccc86ac11208857614f36a8c02f
 ADD --checksum=sha256:1472123ae3aa07e49404d16b20305c2dec90c59883ebda9308717f7205e6511b https://github.com/sigoden/dufs/releases/download/v0.46.0/dufs-v0.46.0-aarch64-unknown-linux-musl.tar.gz /tmp/dufs-aarch64.tgz
 ADD --checksum=sha256:9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17 https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-amd64 /tmp/cloudflared-x86_64
 ADD --checksum=sha256:65259e652a7bea08bf5df603233ab22b8bf3116af8df9f9206209af6a1b955c0 https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-arm64 /tmp/cloudflared-aarch64
+# GitHub CLI 2.100.0. Checksums: https://github.com/cli/cli/releases/download/v2.100.0/gh_2.100.0_checksums.txt
+ADD --checksum=sha256:e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be https://github.com/cli/cli/releases/download/v2.100.0/gh_2.100.0_linux_amd64.tar.gz /tmp/gh-amd64.tgz
+ADD --checksum=sha256:ea4e7a581a32ccad6cc7923cb1576ac5859ba4b9a16ab22eb8f8a96e78e2e961 https://github.com/cli/cli/releases/download/v2.100.0/gh_2.100.0_linux_arm64.tar.gz /tmp/gh-arm64.tgz
 ADD --checksum=sha256:b0df4a43a98d7ecb708acbdb5a34a3416e13b6e39bcbbdf296f51f0f3442b29f https://download.docker.com/linux/static/stable/x86_64/docker-29.6.1.tgz /tmp/docker-x86_64.tgz
 ADD --checksum=sha256:917a4bb83565bcacb38c430f08daae8b59db3256331ac23f22394f0542509881 https://download.docker.com/linux/static/stable/aarch64/docker-29.6.1.tgz /tmp/docker-aarch64.tgz
 RUN set -eux; \
     mkdir -p /out/root/usr/local/bin; \
     tar -C /out/root -Jxpf /tmp/s6-overlay-noarch.tar.xz; \
     case "$TARGETARCH" in \
-      amd64) artifact_arch=x86_64 ;; \
-      arm64) artifact_arch=aarch64 ;; \
+      amd64) artifact_arch=x86_64; gh_arch=amd64 ;; \
+      arm64) artifact_arch=aarch64; gh_arch=arm64 ;; \
       *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
     tar -C /out/root -Jxpf "/tmp/s6-overlay-$artifact_arch.tar.xz"; \
     install -m 0755 "/tmp/ttyd-$artifact_arch" /out/root/usr/local/bin/ttyd; \
     install -m 0755 "/tmp/cloudflared-$artifact_arch" /out/root/usr/local/bin/cloudflared; \
     tar -C /out/root/usr/local/bin -xzpf "/tmp/dufs-$artifact_arch.tgz" dufs; \
+    tar -C /tmp -xzpf "/tmp/gh-$gh_arch.tgz"; \
+    install -m 0755 "/tmp/gh_2.100.0_linux_$gh_arch/bin/gh" /out/root/usr/local/bin/gh; \
     tar -C /out/root/usr/local/bin --strip-components=1 -xzpf "/tmp/docker-$artifact_arch.tgz"
 
 FROM runtime-base

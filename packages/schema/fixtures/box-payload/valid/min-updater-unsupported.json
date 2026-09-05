@@ -4,17 +4,17 @@
   "minUpdater": 3,
   "files": [
     {
-      "path": "rootfs/usr/local/bin/blitz-machine-stats",
+      "path": "rootfs/etc/blitz/sshd_config",
       "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "mode": "0755"
+      "mode": "0644"
     },
     {
-      "path": "rootfs/etc/s6-overlay/s6-rc.d/machine-stats/run",
+      "path": "rootfs/etc/s6-overlay/s6-rc.d/sshd/run",
       "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "mode": "0755"
     },
     {
-      "path": "rootfs/etc/s6-overlay/s6-rc.d/machine-stats/type",
+      "path": "rootfs/etc/s6-overlay/s6-rc.d/sshd/type",
       "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "mode": "0644"
     }
@@ -26,6 +26,6 @@
     "bytes": 4096
   },
   "restart": {
-    "machine-stats": ["rootfs/usr/local/bin/blitz-machine-stats"]
+    "sshd": ["rootfs/etc/blitz/sshd_config"]
   }
 }

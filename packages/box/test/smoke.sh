@@ -173,6 +173,10 @@ services=$(docker exec "$container" /command/s6-rc -a list)
 for service in init-state register payload sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
+if grep -qx machine-stats <<<"$services"; then
+  fail "machine-stats remains in the live service set"
+fi
+echo "PASS machine-stats is absent from the live service set"
 docker exec "$container" test -L /etc/s6-overlay/s6-rc.d \
   || fail "/etc/s6-overlay/s6-rc.d is not a payload indirection"
 s6_tree_target=$(docker exec "$container" readlink /etc/s6-overlay/s6-rc.d)
@@ -228,6 +232,21 @@ grep -q '\[mcp\] built-in server disabled via LODY_MCP_BUILTIN_DISABLED' "$test_
 echo "PASS enabled Lody daemon, bridge, platform catalog, provenance, service environment, and MCP-disable log"
 dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
 [ "$dufs_version" = 'dufs 0.46.0' ] || fail "unexpected dufs version: $dufs_version"
+gh_version=$(docker exec "$container" /usr/local/bin/gh --version | head -1)
+grep -Eq '^gh version 2\.100\.0([[:space:]]|$)' <<<"$gh_version" \
+  || fail "unexpected gh version: $gh_version"
+if docker exec "$container" dpkg -s xz-utils >/dev/null 2>&1; then
+  fail "xz-utils remains installed in the final image"
+fi
+if docker exec "$container" sh -c 'command -v xz' >/dev/null 2>&1; then
+  fail "xz remains on PATH in the final image"
+fi
+if docker exec "$container" sh -c 'command -v nano' >/dev/null 2>&1; then
+  fail "nano remains installed beside vim"
+fi
+docker exec "$container" sh -c 'command -v vi >/dev/null && command -v vim >/dev/null' \
+  || fail "vim no longer provides the box editor and vi fallback"
+echo "PASS gh 2.100.0 is pinned; xz-utils, xz, and nano are absent; vim provides vi"
 # dufs must NOT publish the agent HOME. The symlink that used to sit beside
 # /workspace exposed ~/.claude/.credentials.json and ~/.codex/auth.json to
 # anyone the workspace was shared with; da54646 removed it on purpose. Assert
@@ -241,6 +260,10 @@ docker exec "$container" sh -c 'test "$(readlink /opt/blitz/payload/current)" = 
 docker exec "$container" sh -c 'test "$(readlink /opt/blitz/lody/current)" = baked' \
   || fail "the baked lody prefix is not current"
 for payload_path in \
+  /etc/blitz/sshd_config \
+  /etc/gitconfig \
+  /etc/profile.d/blitz-npm.sh \
+  /etc/tmux.conf \
   /usr/local/bin/blitz \
   /usr/local/bin/blitz-box-gateway \
   /usr/local/libexec/blitz-term \
@@ -331,7 +354,7 @@ docker exec "$container" sh -c \
   'cp -p /usr/local/bin/blitz-cred /tmp/payload-live/blitz-cred.real && cp /tmp/payload-live/blitz-cred /usr/local/bin/blitz-cred.smoke && chmod 0755 /usr/local/bin/blitz-cred.smoke && mv /usr/local/bin/blitz-cred.smoke /usr/local/bin/blitz-cred'
 docker exec "$container" sh -c "printf '%s\n' 1 >/tmp/payload-live/features"
 docker exec "$container" sh -c \
-  "node /tmp/payload-live/origin.mjs $payload_origin_port /tmp/payload-live/releases /tmp/payload-live/config /tmp/payload-live/features /tmp/payload-live/results.ndjson /tmp/payload-live/ready >/tmp/payload-live/origin.log 2>&1 &"
+  "node /tmp/payload-live/origin.mjs $payload_origin_port /tmp/payload-live/releases /tmp/payload-live/config /tmp/payload-live/features /tmp/payload-live/results.ndjson /tmp/payload-live/machine-stats.ndjson /tmp/payload-live/ready >/tmp/payload-live/origin.log 2>&1 &"
 origin_ready=false
 for _attempt in $(seq 1 50); do
   if docker exec "$container" test -f /tmp/payload-live/ready; then
@@ -387,6 +410,15 @@ docker exec --env "BLITZ_PAYLOAD_TEST_CONFIG=$payload_test_config" \
   "$container" /usr/local/libexec/blitz-payload tick
 [ "$(latest_payload_outcome)" = applied ] || fail "E17 did not report applied"
 echo "PASS E17 reports applied"
+machine_stats_body=$(docker exec "$container" tail -n 1 /tmp/payload-live/machine-stats.ndjson)
+docker exec "$container" node -e '
+  const body = JSON.parse(process.argv[1]);
+  if (Object.keys(body).join(",") !== "diskUsedPercent"
+      || !Number.isInteger(body.diskUsedPercent)
+      || body.diskUsedPercent < 0
+      || body.diskUsedPercent > 100) process.exit(1);
+' "$machine_stats_body" || fail "E17 machine-stats body is invalid: $machine_stats_body"
+echo "PASS E17 tick posts one machine-stats percentage in 0..100"
 docker exec "$container" /command/s6-svstat /run/service/hello | grep -q '^up' \
   || fail "E17 hello is not up"
 echo "PASS E17 adds and starts hello"
@@ -678,6 +710,53 @@ if ssh "${ssh_common[@]}" -o PubkeyAuthentication=no -o PasswordAuthentication=y
   fail "sshd accepted password authentication"
 fi
 echo "PASS sshd key-only authentication"
+
+sshd_restart_output="$test_dir/sshd-restart-session.out"
+sshd_restart_error="$test_dir/sshd-restart-session.err"
+docker exec "$container" rm -f /workspace/sshd-restart-release
+ssh "${ssh_common[@]}" -i "$test_dir/id_ed25519" blitz@127.0.0.1 \
+  'printf "ready\n"; while [ ! -e /workspace/sshd-restart-release ]; do sleep 0.1; done; printf "survived\n"' \
+  >"$sshd_restart_output" 2>"$sshd_restart_error" &
+sshd_session_pid=$!
+sshd_session_ready=false
+for _attempt in $(seq 1 50); do
+  if grep -qx ready "$sshd_restart_output" 2>/dev/null; then
+    sshd_session_ready=true
+    break
+  fi
+  kill -0 "$sshd_session_pid" 2>/dev/null || break
+  sleep 0.1
+done
+[ "$sshd_session_ready" = true ] || fail "the SSH restart probe session did not become ready"
+sshd_listener_before=$(docker exec "$container" /command/s6-svstat -o pid /run/service/sshd)
+docker exec "$container" /command/s6-svc -r /run/service/sshd
+sshd_listener_restarted=false
+for _attempt in $(seq 1 50); do
+  sshd_listener_after=$(docker exec "$container" /command/s6-svstat -o pid /run/service/sshd)
+  if [ "$sshd_listener_after" != 0 ] && [ "$sshd_listener_after" != "$sshd_listener_before" ]; then
+    sshd_listener_restarted=true
+    break
+  fi
+  sleep 0.1
+done
+[ "$sshd_listener_restarted" = true ] || fail "sshd did not restart its listener"
+sshd_listener_accepting=false
+for _attempt in $(seq 1 50); do
+  if ssh "${ssh_common[@]}" -i "$test_dir/id_ed25519" blitz@127.0.0.1 true \
+    >/dev/null 2>&1; then
+    sshd_listener_accepting=true
+    break
+  fi
+  sleep 0.1
+done
+[ "$sshd_listener_accepting" = true ] || fail "the restarted sshd listener did not accept connections"
+docker exec "$container" touch /workspace/sshd-restart-release
+if ! wait "$sshd_session_pid"; then
+  fail "the established SSH session died during sshd restart: $(cat "$sshd_restart_error")"
+fi
+grep -qx survived "$sshd_restart_output" \
+  || fail "the established SSH session did not finish after sshd restart"
+echo "PASS an established SSH session survives s6-svc -r /run/service/sshd"
 
 # An SSH session is user work. sshd itself belongs in the reservation — it is
 # the rescue path — so its children start there and would otherwise be the one

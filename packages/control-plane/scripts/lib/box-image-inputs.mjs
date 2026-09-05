@@ -5,18 +5,14 @@
 // that commit and stamps it with that payload's daemon-inclusive version.
 //
 // Dockerfile changes are conservatively base changes. The remaining entries
-// are the base-owned rootfs files: host configuration and the payload updater.
-// The complete s6 service tree belongs to the payload.
+// are the base-owned rootfs files: the payload updater. The complete s6
+// service tree and ordinary box configuration belong to the payload.
 export const BOX_IMAGE_INPUTS = Object.freeze([
   "packages/broker/cmd/blitz-cred",
   "packages/broker/go.mod",
   "packages/broker/internal",
   "packages/box/Dockerfile",
   "packages/box/Dockerfile.dockerignore",
-  "packages/box/rootfs/etc/blitz/sshd_config",
-  "packages/box/rootfs/etc/gitconfig",
-  "packages/box/rootfs/etc/profile.d/blitz-npm.sh",
-  "packages/box/rootfs/etc/tmux.conf",
   "packages/box/rootfs/usr/local/libexec/blitz-payload",
   "packages/control-plane/scripts/box-payload-key.mjs",
   "packages/control-plane/scripts/lib/box-daemon.mjs",

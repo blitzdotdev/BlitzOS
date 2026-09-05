@@ -11,6 +11,7 @@ box_dir=$(realpath "$script_dir/..")
 for shim in blitz claude codex; do
   sh -n "$box_dir/rootfs/usr/local/bin/$shim"
 done
+sh -n "$box_dir/rootfs/etc/profile.d/blitz-npm.sh"
 
 # libexec is no longer all bash: blitz-lody-bridge and blitz-lody-projects are
 # node. Dispatch on the shebang rather than the name, so a checker is never

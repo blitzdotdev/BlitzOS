@@ -152,7 +152,7 @@ restart_daemon() {
 	local before after waited=0
 	before=$(daemon_pid)
 	echo "lody-watchdog: restarting lody-daemon"
-	# `|| true` for the same reason machine-stats has it: the sessions surface is
+	# `|| true` because the sessions surface is
 	# not worth the box. A dead daemon costs sessions; it does not cost the
 	# member their tunnel, their terminal or their files.
 	/command/s6-svc -r /run/service/lody-daemon || true

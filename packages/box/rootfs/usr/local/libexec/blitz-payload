@@ -305,6 +305,7 @@ function settings() {
   const payloadRoot = configured('payloadRoot', '/opt/blitz/payload');
   const payloadState = configured('payloadState', path.join(payloadRoot, 'state'));
   return {
+    stateDir: stateRoot,
     payloadRoot,
     payloadState,
     payloadVersions: configured('payloadVersions', path.join(payloadRoot, 'versions')),
@@ -343,7 +344,9 @@ function settings() {
       positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_WAIT', 4 * 60 * 60)),
     daemonIdleProbeTimeoutMs: configured('daemonIdleProbeTimeoutMs', 2000),
     daemonKillGraceMs: configured('daemonKillGraceMs', 30_000),
-    daemonKillPollMs: configured('daemonKillPollMs', 5000),
+    daemonKillPollMs: configured('daemonKillPollMs', 500),
+    serviceRestartTimeoutMs: configured('serviceRestartTimeoutMs', 30_000),
+    serviceRestartPollMs: configured('serviceRestartPollMs', 500),
     intervalMs: configured(
       'intervalMs',
       positiveSeconds('BLITZ_PAYLOAD_INTERVAL', 300),
@@ -506,6 +509,34 @@ async function postResult(origin, token, result, config) {
   } catch (error) {
     log(`result report failed (${errorMessage(error)})`);
     return false;
+  }
+}
+
+function diskUsedPercent(stateDir) {
+  const stats = fs.statfsSync(stateDir);
+  const used = stats.blocks - stats.bfree;
+  const percent = Math.ceil((used * 100) / (used + stats.bavail));
+  if (!Number.isInteger(percent) || percent < 0 || percent > 100) {
+    throw new Error(`statfs produced invalid disk percentage ${String(percent)}`);
+  }
+  return percent;
+}
+
+async function postMachineStats(origin, token, config) {
+  try {
+    const percent = diskUsedPercent(config.stateDir);
+    const response = await fetch(`${origin}/workspaces/self/machine-stats`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ diskUsedPercent: percent }),
+      signal: AbortSignal.timeout(config.requestTimeoutMs),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  } catch (error) {
+    log(`machine-stats report skipped (${errorMessage(error)})`);
   }
 }
 
@@ -1366,6 +1397,19 @@ async function treeHasLongrun(target, service) {
     && typeSource?.trim() === 'longrun';
 }
 
+async function captureReleaseServicePids(services, currentTarget, config) {
+  const pids = new Map();
+  for (const service of services) {
+    pids.set(
+      service,
+      await treeHasLongrun(currentTarget, service)
+        ? await supervisedServicePid(service, config)
+        : null,
+    );
+  }
+  return pids;
+}
+
 async function switchRelease(
   config,
   state,
@@ -1423,12 +1467,63 @@ async function commitRelease(config, state) {
   return committed;
 }
 
-async function restartOrdinaryService(service, config) {
+async function supervisedServicePid(service, config, timeoutMs = config.requestTimeoutMs) {
+  const output = await runCommand(
+    config,
+    config.s6Svstat,
+    ['-o', 'up,pid', path.join(config.serviceRoot, service)],
+    timeoutMs,
+  );
+  const fields = output.trim().split(/\s+/u);
+  if (fields.length !== 2 || (fields[0] !== 'true' && fields[0] !== 'false')) {
+    throw new Error(`s6-svstat returned invalid state for ${service}`);
+  }
+  if (fields[0] === 'false' && fields[1] === '-1') return null;
+  if (fields[0] === 'true' && /^[1-9][0-9]*$/u.test(fields[1])) return fields[1];
+  throw new Error(`s6-svstat returned invalid state for ${service}`);
+}
+
+async function waitForNewServicePid(service, before, config, timeoutMs, pollMs) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    try {
+      const remaining = Math.max(1, deadline - Date.now());
+      const after = await supervisedServicePid(
+        service,
+        config,
+        Math.min(config.requestTimeoutMs, remaining),
+      );
+      if (after !== null && after !== before) return after;
+    } catch {
+      // s6-rc-update may create a new supervise directory during this window.
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+  } while (Date.now() < deadline);
+  throw new Error(
+    `${service} did not report up with a new PID within ${timeoutMs / 1000}s`,
+  );
+}
+
+async function requestServiceRestart(service, config) {
   await runCommand(
     config,
     config.s6Svc,
     ['-r', path.join(config.serviceRoot, service)],
     config.requestTimeoutMs,
+  );
+}
+
+async function restartOrdinaryService(service, config, restartPids) {
+  const before = await supervisedServicePid(service, config);
+  restartPids.set(service, before);
+  await requestServiceRestart(service, config);
+  await waitForNewServicePid(
+    service,
+    before,
+    config,
+    config.serviceRestartTimeoutMs,
+    config.serviceRestartPollMs,
   );
 }
 
@@ -1503,32 +1598,21 @@ async function daemonActiveSessionCount(config) {
   }
 }
 
-async function daemonPid(config) {
+async function restartLodyDaemon(config, activationDetail, restartPids) {
+  const before = await supervisedServicePid('lody-daemon', config);
+  restartPids.set('lody-daemon', before);
+  await requestServiceRestart('lody-daemon', config);
   try {
-    const output = await runCommand(
+    await waitForNewServicePid(
+      'lody-daemon',
+      before,
       config,
-      config.s6Svstat,
-      ['-o', 'pid', path.join(config.serviceRoot, 'lody-daemon')],
-      config.requestTimeoutMs,
+      config.daemonKillGraceMs,
+      config.daemonKillPollMs,
     );
-    const pid = output.trim();
-    return /^[0-9]+$/u.test(pid) ? pid : null;
+    return activationDetail;
   } catch {
-    return null;
-  }
-}
-
-async function restartLodyDaemon(config, activationDetail) {
-  const before = await daemonPid(config);
-  await restartOrdinaryService('lody-daemon', config);
-  if (before === null) return activationDetail;
-  let waitedMs = 0;
-  while (waitedMs < config.daemonKillGraceMs) {
-    const after = await daemonPid(config);
-    if (after === null || after !== before) return activationDetail;
-    const pause = Math.min(config.daemonKillPollMs, config.daemonKillGraceMs - waitedMs);
-    await sleep(pause);
-    waitedMs += pause;
+    // The watchdog uses the same bounded TERM/PID/KILL sequence.
   }
   log(`lody-daemon ignored SIGTERM for ${config.daemonKillGraceMs / 1000}s; sending SIGKILL`);
   await runCommand(
@@ -1537,18 +1621,31 @@ async function restartLodyDaemon(config, activationDetail) {
     ['-k', path.join(config.serviceRoot, 'lody-daemon')],
     config.requestTimeoutMs,
   );
+  await waitForNewServicePid(
+    'lody-daemon',
+    before,
+    config,
+    config.serviceRestartTimeoutMs,
+    config.serviceRestartPollMs,
+  );
   return activationDetail;
 }
 
-async function restartServices(services, config, daemonActivationDetail = null) {
+async function restartServices(
+  services,
+  config,
+  daemonActivationDetail = null,
+  restartPids = new Map(),
+) {
   let daemonDetail = null;
   for (const service of services) {
     if (service === 'lody-daemon') {
       daemonDetail = await restartLodyDaemon(
         config,
         daemonActivationDetail ?? 'restarted without an idle check during rollback',
+        restartPids,
       );
-    } else await restartOrdinaryService(service, config);
+    } else await restartOrdinaryService(service, config, restartPids);
   }
   return daemonDetail;
 }
@@ -1622,23 +1719,39 @@ async function materializeFeatures(features, config) {
   const applied = await readOptionalFile(config.featuresAppliedFile);
   if (applied === bytes) {
     await enforceFeatureFileMetadata(config.featuresAppliedFile, config);
-    return [];
+    return { bytes, pending: false };
   }
 
+  return { bytes, pending: true };
+}
+
+async function applyMaterializedFeatures(materialized, config, releaseRestartPids = new Map()) {
+  if (!materialized.pending) return [];
   const readers = await featureReaderServices(config);
+  const directReaders = readers.filter((service) => !releaseRestartPids.has(service));
   log(readers.length === 0
     ? 'features pending; no reader restart required'
-    : `features pending; restarting ${readers.join(', ')}`);
+    : `features pending; restarting ${directReaders.join(', ') || 'no additional readers'}`);
   // A feature flip is a deliberate operator action. Restart its readers now;
   // unlike payload rollout, active Lody sessions do not defer this decision.
   await restartServices(
-    readers,
+    directReaders,
     config,
     'feature flag changed by deliberate operator action',
   );
+  for (const service of readers) {
+    if (!releaseRestartPids.has(service)) continue;
+    await waitForNewServicePid(
+      service,
+      releaseRestartPids.get(service),
+      config,
+      config.serviceRestartTimeoutMs,
+      config.serviceRestartPollMs,
+    );
+  }
   await atomicFeatureFile(
     config.featuresAppliedFile,
-    bytes,
+    materialized.bytes,
     config,
     'features-applied',
   );
@@ -1947,7 +2060,7 @@ async function reconcileFailedPin(config, state, pin) {
   return next;
 }
 
-async function applyPayload(pin, manifest, config, initialState) {
+async function applyPayload(pin, manifest, config, initialState, trackFeatureRestarts) {
   let state = { ...initialState };
   if (manifest.version !== pin.version) {
     return recordOutcome(
@@ -2031,7 +2144,16 @@ async function applyPayload(pin, manifest, config, initialState) {
   const previousDatabase = serviceDatabasePath(config, state.current);
   let activationFailure = null;
   let daemonRestartDetail = null;
+  let releaseSwitched = false;
+  let releaseRestartPids = new Map();
   try {
+    if (trackFeatureRestarts) {
+      releaseRestartPids = await captureReleaseServicePids(
+        [...new Set([...changedDefinitions, ...mapServices])].sort(),
+        state.currentTarget,
+        config,
+      );
+    }
     state = await switchRelease(
       config,
       state,
@@ -2048,10 +2170,16 @@ async function applyPayload(pin, manifest, config, initialState) {
       rollbackServices,
       rollbackCheckDaemon,
     );
+    releaseSwitched = true;
     testKillAt(config, 'after-switch');
     await updateServiceDatabase(config, nextDatabase);
     await traceEvent(config, 's6-rc-update');
-    daemonRestartDetail = await restartServices(mapServices, config, daemonActivationDetail);
+    daemonRestartDetail = await restartServices(
+      mapServices,
+      config,
+      daemonActivationDetail,
+      releaseRestartPids,
+    );
     await traceEvent(config, 'map-restarts');
     testKillAt(config, 'before-health');
   } catch (error) {
@@ -2081,43 +2209,47 @@ async function applyPayload(pin, manifest, config, initialState) {
         : `s6-rc updated ${[...changedDefinitions].sort().join(', ')}`,
       daemonChanged ? `daemon protocol ${manifest.daemon.protocolVersion}` : null,
     ].filter((part) => part !== null).join('; ');
-    return recordOutcome(
+    const applied = await recordOutcome(
       config,
       state,
       'applied',
       detail,
     );
+    return { ...applied, releaseRestartPids };
   }
 
   try {
     const persisted = await readState(config);
     state = persisted;
     if (pendingRelease(persisted.pending) === null) {
-      return recordOutcome(
+      const failed = await recordOutcome(
         config,
         state,
         'start-failed',
         activationFailure,
         pin.version,
       );
+      return releaseSwitched ? { ...failed, releaseRestartPids } : failed;
     }
     state = await rollbackPendingRelease(config, persisted);
   } catch (error) {
     state = await readState(config);
-    return recordPendingFailure(
+    const failed = await recordPendingFailure(
       config,
       state,
       `${activationFailure}; rollback failed: ${errorMessage(error)}`,
       pin.version,
     );
+    return releaseSwitched ? { ...failed, releaseRestartPids } : failed;
   }
-  return recordOutcome(
+  const rolledBack = await recordOutcome(
     config,
     state,
     'rolled-back',
     `${activationFailure}; previous payload restored`,
     pin.version,
   );
+  return releaseSwitched ? { ...rolledBack, releaseRestartPids } : rolledBack;
 }
 
 async function garbageCollect(config, state) {
@@ -2277,7 +2409,10 @@ async function tickUnlocked(config) {
     await garbageCollect(config, state);
     return;
   }
-  await materializeFeatures(boxConfig.features, config);
+  const finishSuccessfulTick = () => postMachineStats(origin, token, config);
+  const materializedFeatures = await materializeFeatures(boxConfig.features, config);
+  const finishFeatures = (releaseRestartPids = new Map()) =>
+    applyMaterializedFeatures(materializedFeatures, config, releaseRestartPids);
   const pin = boxConfig.payload;
 
   if (bootReportPending) {
@@ -2298,14 +2433,18 @@ async function tickUnlocked(config) {
     bootReportPending = false;
     reportedBoot = true;
     if (!delivered.delivered) {
+      await finishFeatures();
       await garbageCollect(config, state);
+      await finishSuccessfulTick();
       return;
     }
   }
   state = await reconcileDeferredPin(config, state, pin);
   state = await reconcileFailedPin(config, state, pin);
   if (pin === null) {
+    await finishFeatures();
     await garbageCollect(config, state);
+    await finishSuccessfulTick();
     return;
   }
   if (pin.version === state.current) {
@@ -2319,7 +2458,9 @@ async function tickUnlocked(config) {
       state = current.state;
       state = (await deliverResult(origin, token, state, current.result, config)).state;
     }
+    await finishFeatures();
     await garbageCollect(config, state);
+    await finishSuccessfulTick();
     return;
   }
   const failed = failedRelease(state);
@@ -2328,7 +2469,9 @@ async function tickUnlocked(config) {
     && failed.version === pin.version
     && Date.now() - failed.at < FAILED_RETRY_MS
   ) {
+    await finishFeatures();
     await garbageCollect(config, state);
+    await finishSuccessfulTick();
     return;
   }
 
@@ -2340,7 +2483,13 @@ async function tickUnlocked(config) {
       'payload manifest',
       config.requestTimeoutMs,
     );
-    applied = await applyPayload(pin, parseManifest(manifestValue), config, state);
+    applied = await applyPayload(
+      pin,
+      parseManifest(manifestValue),
+      config,
+      state,
+      materializedFeatures.pending,
+    );
   } catch (error) {
     const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
     applied = await recordOutcome(
@@ -2351,9 +2500,11 @@ async function tickUnlocked(config) {
       pin.version,
     );
   }
+  await finishFeatures(applied.releaseRestartPids);
   state = applied.state;
   state = (await deliverResult(origin, token, state, applied.result, config)).state;
   await garbageCollect(config, state);
+  await finishSuccessfulTick();
 }
 
 async function tick(config) {

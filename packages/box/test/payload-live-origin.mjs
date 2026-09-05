@@ -11,6 +11,7 @@ const [
   configPath,
   featuresPath,
   resultsPath,
+  statsPath,
   readyPath,
 ] = process.argv.slice(2);
 const port = Number(portSource);
@@ -21,10 +22,11 @@ if (
   || configPath === undefined
   || featuresPath === undefined
   || resultsPath === undefined
+  || statsPath === undefined
   || readyPath === undefined
 ) {
   throw new Error(
-    "usage: payload-live-origin.mjs <port> <release-root> <config> <features> <results> <ready>",
+    "usage: payload-live-origin.mjs <port> <release-root> <config> <features> <results> <stats> <ready>",
   );
 }
 
@@ -79,6 +81,17 @@ const server = http.createServer((request, response) => {
       const chunks = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       await appendFile(resultsPath, `${Buffer.concat(chunks).toString("utf8")}\n`);
+      response.writeHead(204).end();
+      return;
+    }
+    if (request.url === "/workspaces/self/machine-stats" && request.method === "POST") {
+      if (request.headers.authorization !== "Bearer smoke-bearer") {
+        response.writeHead(401).end();
+        return;
+      }
+      const chunks = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      await appendFile(statsPath, `${Buffer.concat(chunks).toString("utf8")}\n`);
       response.writeHead(204).end();
       return;
     }

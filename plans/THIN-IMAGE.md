@@ -24,8 +24,8 @@ interruption; this generalises that to everything we ship.
 | Base (image only) | Payload (in place) |
 |---|---|
 | Debian + node 22 + docker static + s6-overlay; `env.defaults` | every other script under `rootfs/usr/local/{bin,libexec}` |
-| cloudflared, ttyd, dufs | s6 `run`/`up` scripts of EXISTING services (the service SET is base; updated oneshots take effect at next boot) |
-| the payload updater `blitz-payload`, `blitz-cred`, and their s6/runtime dependencies | `blitz-box-gateway` (linux/amd64; arm64 later) |
+| the payload updater `blitz-payload`, `blitz-cred`, and their runtime dependencies | the full s6 source tree, except the frozen recovery floor |
+| frozen `cgroups`, `init-state`, `register`, and `payload` service definitions | `blitz-box-gateway` (linux/amd64; arm64 later) |
 | `/opt/blitz/npm` prefix with claude, codex, ws | the Lody **daemon bundle** (the `lody` package built from `vendor/lody`) |
 | a baked copy of the current payload + daemon bundle (§3) | agent rules skeleton |
 
@@ -79,9 +79,10 @@ wire copy pinned by `wire-drift.test.ts`.
 ### 2.2 `payload.tar.gz`
 
 Layout has a reserved `payload-version` root entry containing the derived
-version and otherwise mirrors the image: `rootfs/usr/local/bin/*`, `rootfs/usr/local/libexec/*`,
-`rootfs/etc/s6-overlay/s6-rc.d/<service>/{run,up}` (only for services that
-exist in the base), and `rootfs/opt/blitz/skel/*`.
+version and otherwise mirrors the image: `rootfs/usr/local/bin/*`,
+`rootfs/usr/local/libexec/*`, the full `rootfs/etc/s6-overlay/s6-rc.d` source
+tree, and `rootfs/opt/blitz/skel/*`. A release may add or remove services. It
+may not change the four frozen recovery definitions.
 `payload-version` is outside `rootfs/` and therefore is not listed in
 `manifest.files`; the updater verifies it separately against `manifest.version`.
 Built by `control-plane/scripts/publish-box-payload.mjs` from the repo tree plus
@@ -109,21 +110,25 @@ same node major as the image (22).
 ```
 /opt/blitz/payload/baked/…            image layer, the payload built into this image
 /opt/blitz/payload/current -> …       symlink; baked at first boot
-/var/lib/blitz/payload/versions/<v>/  downloaded, verified payloads (volume; survives VM replace)
-/var/lib/blitz/payload/state.json     { current, previous, pending?, failed?, unsentResult? }
-/opt/blitz/lody/baked/, /opt/blitz/lody/current -> …, /var/lib/blitz/daemon/versions/<v>/
+/opt/blitz/payload/versions/<v>/      downloaded, verified payloads in the container layer
+/opt/blitz/payload/state/state.json   { current, previous, pending?, failed?, unsentResult? }
+/opt/blitz/lody/baked/, /opt/blitz/lody/current -> …, /opt/blitz/lody/<v>/
 /usr/local/bin/<x> -> /opt/blitz/payload/current/rootfs/usr/local/bin/<x>   (every payload-owned entry)
 ```
 
-Image entries that the payload owns become symlinks into `current`. The s6
-service directories stay in the image (the service set is base); their `run`
-files become `exec /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/<svc>/run "$@"`
-one-liners, so a payload can change what a service does but not which
-services exist. (Adding a service is an image change, by design, for v1.)
+A container restart keeps updater state and downloaded releases. A recreation
+loses both, boots baked, and downloads the deployment pin on its first tick.
+
+Image entries that the payload owns become symlinks into `current`, including
+the whole s6 source tree at `/etc/s6-overlay/s6-rc.d`. The updater compiles the
+selected tree and applies its service database, so a payload may add, remove,
+or redefine services without rebuilding the base image. The four recovery
+services (`cgroups`, `init-state`, `register`, and `payload`) have frozen
+definitions so the base-owned updater can always recover a failed transition.
 
 ### 3.2 `blitz-payload` (node, CommonJS, no deps, runs as root under s6 `payload`)
 
-Loop every `BLITZ_PAYLOAD_INTERVAL` (default 300 s; first tick 60 s after boot):
+Loop every `BLITZ_PAYLOAD_INTERVAL` (default 300 s; first tick 5 s after boot):
 
 1. `GET /workspaces/self/box-config` with a bearer from `blitz-cred api-token`
    (NEVER the raw credential file — see docs/MEMORY-BOUNDARY.md on why raw
@@ -161,7 +166,7 @@ The last unacknowledged result remains in `state.json`; each tick retries it
 before fetching new configuration or replacing it with a newer result.
 JSON responses are streamed into a 1 MiB cap rather than buffered first.
 
-`/var/lib/blitz/payload/log` records the boot report, every outcome transition,
+`/opt/blitz/payload/state/log` records the boot report, every outcome transition,
 and an unchanged `tick: up-to-date <version>` heartbeat at most once per hour.
 
 Invariants (each one a guest test): never a half-applied `current` (the symlink
@@ -217,10 +222,12 @@ session in the same experiment family.
 
 ### 3.4 What the watchdog, stats and rules become
 
-Out of scope for the first cut but designed for: `machine-stats` becomes a
-gateway `/stats` read pulled by a control-plane cron; `rules` becomes a push
-through the gateway; both delete a box script and a box-credential reader. The
-watchdog stays local (kernel signals) with its thresholds from `box-config`.
+`machine-stats` is reported by the dependency-free updater after each
+successful authenticated five-minute tick. It measures the filesystem holding
+`/opt/blitz/payload/state` and POSTs the percentage to the control plane; the
+old box script and longrun are deleted. `rules` becoming a push through the
+gateway remains out of scope. The watchdog stays local (kernel signals) with
+its thresholds from `box-config`.
 
 ## 4. The control-plane side
 
@@ -238,7 +245,7 @@ watchdog stays local (kernel signals) with its thresholds from `box-config`.
   existing manifest, reuse or publish — the same shape as `plan-box-image.mjs`
   so `canary.yml` gains a `payload` job beside `image`. Every merge to main
   publishes a payload and pins it; the image job only runs when base inputs
-  change (Dockerfile base stages, updater, service set).
+  change (Dockerfile base stages and updater).
 - Rollout control v1: deployment-wide pin plus a per-machine `payload_hold`
   column an admin can set (`PATCH /machines/:id`), and `GET /workspaces/:id`
   shows each machine's versions and last outcome.
@@ -247,8 +254,8 @@ watchdog stays local (kernel signals) with its thresholds from `box-config`.
 
 Control plane `blitz-thinlab` in the canary Cloudflare account (D1
 `blitz-thinlab`, R2 `blitz-thinlab-images`, tunnels on canary's zone),
-`HETZNER_MACHINE_TYPES=cx23@hel1,cx33@hel1,cx43@hel1`, Lody on
-(`BLITZ_LODY_SESSIONS=1`), image + payload published to that R2 from the lab VM
+`HETZNER_MACHINE_TYPES=cx23@hel1,cx33@hel1,cx43@hel1`, Lody on through box
+config (`BOX_LODY_SESSIONS=1`), image + payload published to that R2 from the lab VM
 `thinlab-01`. Workspaces are created by a human in the webapp; the experiments
 drive the machine API and ssh into the boxes with the lab key.
 
@@ -271,7 +278,7 @@ drive the machine API and ssh into the boxes with the lab key.
 | E13 | apply under memory pressure (a session running `npm test` on a cx23) | bounded (the updater lives in the system slice); no half state |
 | E14 | two member machines in one workspace | each updates independently, both report |
 | E15 | old control plane (no `payload` field) + new box | box idles on baked; nothing logged as error |
-| E16 | box `stop`/`start` (volume kept) | comes back on baked, then re-applies from `versions/` without re-downloading |
+| E16 | box `stop`/`start` (same container) | keeps updater state, downloaded versions, and the selected `current` link |
 
 Every experiment is a script under `packages/box/test/payload-lab/` that uses
 the control plane API and ssh, asserts the pass column, and prints one line.

@@ -241,20 +241,42 @@ ecdsa and rsa keys to be absent when only ed25519 exists at that point.
 
 ### E. Small moves
 
-- `sshd_config`, `gitconfig`, `tmux.conf` and `blitz-npm.sh` become payload
-  files. The payload already owns the ForceCommand target and every root-run
-  script, so this changes no trust boundary.
-- `xz-utils` is only used to unpack the s6 tarballs at build time. Install it
-  in the artifacts stage only.
-- Keep one editor. Decide whether `python3` stays as a promised agent tool;
-  no box code uses it.
-- Pin `gh` as a static release binary. It is the one unpinned build input.
-- Replace the zram script and unit with one `systemd-zram-generator` config
-  as part of A.
-- Fold the `machine-stats` loop into the updater tick. One service and its
-  topology go away.
-- Later, not in this plan: `blitz-cred` leaves the base once the updater can
-  refresh its own bearer in node. That removes the Go stage from the base.
+`sshd_config`, `gitconfig`, `tmux.conf` and `blitz-npm.sh` are payload files.
+The image replaces all four installed paths with absolute symlinks through
+`/opt/blitz/payload/current`, using the same ordinary-file installation path
+as payload binaries and libexec files. The restart map derives the `sshd`
+dependency from its run file's `/etc/blitz/sshd_config` argument, so it needs
+no override. Restarting the listener does not drop an established connection:
+OpenSSH's per-connection child outlives the supervised listener. The smoke
+holds a live SSH session across `s6-svc -r /run/service/sshd` and proves it
+continues afterward.
+
+`xz-utils` is installed only in the artifacts stage, where tar uses it to
+unpack the s6-overlay `.tar.xz` files. Neither the package nor `xz` reaches the
+final stage. `nano` is removed. `vim` stays and provides both `vim` and the
+`vi` fallback used by Git and other tools. `python3` also stays: the owner has
+not answered whether it is a promised agent tool, so this slice does not make
+that product decision.
+
+GitHub CLI is the verified static Linux release binary at version `2.100.0`
+for both amd64 and arm64. Each architecture has its own Docker `ADD` checksum,
+taken from the official release asset
+`https://github.com/cli/cli/releases/download/v2.100.0/gh_2.100.0_checksums.txt`.
+The apt keyring, apt repository and unversioned package installation are gone.
+
+The updater now sends machine stats once after every successful authenticated
+tick, on the same five-minute cadence as payload polling. It measures
+`BLITZ_STATE_DIR` with `fs.statfsSync`: `used = blocks - bfree`, then
+`ceil(used * 100 / (used + bavail))`. A statfs error, an out-of-range result,
+HTTP refusal or unreachable endpoint logs one skipped report and never fails
+the tick. The old `blitz-machine-stats` executable, longrun, dependency and
+bundle membership are deleted; `s6-rc-update` removes that service on existing
+boxes. The fixture corpus remains the control-plane accept rule, and the guest
+producer test now drives the real `blitz-payload tick` against a local origin.
+
+The zram replacement remains deferred to A, where host tooling moves as a
+unit. `blitz-cred` also remains base-owned as planned; moving bearer refresh
+into the dependency-free updater is a later change.
 
 ## 3. Phases
 

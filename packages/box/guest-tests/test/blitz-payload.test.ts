@@ -151,7 +151,7 @@ function makePayloadArchive(
 
 const PROTOCOL_1_RESTART_SERVICES = [
   "cloudflared", "dockerd", "dufs", "gateway", "lody-bridge", "lody-daemon",
-  "lody-projects", "lody-watchdog", "machine-stats", "remote-control", "sshd", "ttyd", "watch",
+  "lody-projects", "lody-watchdog", "remote-control", "sshd", "ttyd", "watch",
 ];
 
 function makeProtocol1PayloadArchive(version = "protocol-1-release"): TestRelease {
@@ -309,6 +309,10 @@ class Harness {
   readonly serviceRoot = path.join(this.root, "run/service");
   readonly bin = path.join(this.root, "bin");
   readonly s6Log = path.join(this.root, "s6.log");
+  readonly s6State = path.join(this.root, "s6-state");
+  readonly s6StayDown = path.join(this.root, "s6-stay-down");
+  readonly s6UpdateRestarts = path.join(this.root, "s6-update-restarts");
+  readonly s6UpdateRestartLog = path.join(this.root, "s6-update-restart.log");
   readonly credentialLog = path.join(this.root, "credential.log");
   readonly credentialAttempts = path.join(this.root, "credential-attempts");
   readonly s6Failure = path.join(this.root, "s6-fail");
@@ -367,6 +371,7 @@ class Harness {
     mkdirSync(path.dirname(this.s6LiveCompiled), { recursive: true });
     symlinkSync(path.join(this.s6DbRoot, "db"), this.s6LiveCompiled);
     mkdirSync(this.bin, { recursive: true });
+    mkdirSync(this.s6State, { recursive: true });
     writeExecutable(
       path.join(this.bin, "blitz-cred"),
       "#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$BLITZ_TEST_CREDENTIAL_LOG\"\n"
@@ -379,7 +384,27 @@ class Harness {
         + "if [ -e \"$BLITZ_TEST_S6_FAILURE\" ]; then\n"
         + "  failure=$(cat \"$BLITZ_TEST_S6_FAILURE\")\n"
         + "  case \"$*\" in *\"$failure\"*) rm -f \"$BLITZ_TEST_S6_FAILURE\"; exit 1 ;; esac\n"
-        + "fi\n",
+        + "fi\n"
+        + "service=${2##*/}\nstate=\"$BLITZ_TEST_S6_STATE/$service\"\n"
+        + "if [ \"$1\" = -r ]; then\n"
+        + "  if [ -e \"$BLITZ_TEST_S6_STAY_DOWN\" ] "
+        + "&& grep -qx \"$service\" \"$BLITZ_TEST_S6_STAY_DOWN\"; then\n"
+        + "    printf 'false -1\\n' >\"$state\"\n"
+        + "    rm -f \"$BLITZ_TEST_S6_STAY_DOWN\"\n"
+        + "  else\n"
+        + "    pid=100\n"
+        + "    if [ -e \"$state\" ]; then set -- $(cat \"$state\"); pid=$2; fi\n"
+        + "    case \"$pid\" in ''|*[!0-9]*) pid=100 ;; esac\n"
+        + "    printf 'true %s\\n' \"$((pid + 1))\" >\"$state\"\n"
+        + "  fi\n"
+        + "fi\n"
+        + "if [ \"$1\" = -k ]; then printf 'true 999\\n' >\"$state\"; fi\n",
+    );
+    writeExecutable(
+      path.join(this.bin, "s6-svstat"),
+      "#!/bin/sh\nservice=\nfor argument do service=$argument; done\n"
+        + "service=${service##*/}\nstate=\"$BLITZ_TEST_S6_STATE/$service\"\n"
+        + "if [ -e \"$state\" ]; then cat \"$state\"; else printf 'true 100\\n'; fi\n",
     );
     writeExecutable(
       path.join(this.bin, "s6-rc-compile"),
@@ -396,6 +421,16 @@ class Harness {
         + "rm -f \"$temporary\"\nln -s \"$database\" \"$temporary\"\n"
         + "rm -f \"$BLITZ_TEST_S6_LIVE_COMPILED\"\n"
         + "mv \"$temporary\" \"$BLITZ_TEST_S6_LIVE_COMPILED\"\n"
+        + "if [ -e \"$BLITZ_TEST_S6_UPDATE_RESTARTS\" ]; then\n"
+        + "  while IFS= read -r service; do\n"
+        + "    [ -n \"$service\" ] || continue\n"
+        + "    printf '%s\\n' \"$service\" >>\"$BLITZ_TEST_S6_UPDATE_RESTART_LOG\"\n"
+        + "    state=\"$BLITZ_TEST_S6_STATE/$service\"\npid=100\n"
+        + "    if [ -e \"$state\" ]; then set -- $(cat \"$state\"); pid=$2; fi\n"
+        + "    case \"$pid\" in ''|*[!0-9]*) pid=100 ;; esac\n"
+        + "    printf 'true %s\\n' \"$((pid + 1))\" >\"$state\"\n"
+        + "  done <\"$BLITZ_TEST_S6_UPDATE_RESTARTS\"\n"
+        + "fi\n"
         + "if [ -e \"$BLITZ_TEST_S6_UPDATE_FAILURE\" ]; then "
         + "rm -f \"$BLITZ_TEST_S6_UPDATE_FAILURE\"; echo update-sentinel >&2; exit 1; fi\n",
     );
@@ -530,6 +565,11 @@ class Harness {
       });
       return;
     }
+    if (request.url === "/workspaces/self/machine-stats" && request.method === "POST") {
+      request.resume();
+      request.on("end", () => response.writeHead(204).end());
+      return;
+    }
     response.writeHead(404);
     response.end();
   }
@@ -545,6 +585,7 @@ class Harness {
         lodyRoot: this.lodyRoot,
         serviceRoot: this.serviceRoot,
         s6Svc: path.join(this.bin, "s6-svc"),
+        s6Svstat: path.join(this.bin, "s6-svstat"),
         s6RcCompile: path.join(this.bin, "s6-rc-compile"),
         s6RcUpdate: path.join(this.bin, "s6-rc-update"),
         s6Rc: path.join(this.bin, "s6-rc"),
@@ -564,12 +605,18 @@ class Harness {
         healthTimeoutMs: 2500,
         healthIntervalMs: 10,
         requestTimeoutMs: 3000,
+        serviceRestartTimeoutMs: 100,
+        serviceRestartPollMs: 10,
         firstDelayMs: 10,
         ...testOverrides,
       }),
       BLITZ_TEST_CREDENTIAL_LOG: this.credentialLog,
       BLITZ_TEST_CREDENTIAL_ATTEMPTS: this.credentialAttempts,
       BLITZ_TEST_S6_LOG: this.s6Log,
+      BLITZ_TEST_S6_STATE: this.s6State,
+      BLITZ_TEST_S6_STAY_DOWN: this.s6StayDown,
+      BLITZ_TEST_S6_UPDATE_RESTARTS: this.s6UpdateRestarts,
+      BLITZ_TEST_S6_UPDATE_RESTART_LOG: this.s6UpdateRestartLog,
       BLITZ_TEST_S6_FAILURE: this.s6Failure,
       BLITZ_TEST_S6_COMPILE_LOG: this.s6CompileLog,
       BLITZ_TEST_S6_COMPILE_FAILURE: this.s6CompileFailure,
@@ -2136,6 +2183,7 @@ describe("blitz-payload", () => {
 
   it("atomically writes and applies held-box features before restarting exact current-tree readers", async () => {
     const harness = new Harness({ pinVersion: null, features: true });
+    const previousFeatureInode = statSync(harness.featuresFile).ino;
     const services = path.join(
       harness.payloadRoot,
       "current/rootfs/etc/s6-overlay/s6-rc.d",
@@ -2161,6 +2209,7 @@ describe("blitz-payload", () => {
     expect(metadata.mode & 0o777).toBe(0o644);
     expect(metadata.uid).toBe(process.getuid?.() ?? 0);
     expect(metadata.gid).toBe(process.getgid?.() ?? 0);
+    expect(metadata.ino).not.toBe(previousFeatureInode);
     expect(harness.calls(harness.eventLog)).toEqual([
       "features-rename",
       "features-applied",
@@ -2210,6 +2259,9 @@ describe("blitz-payload", () => {
       `-r ${path.join(harness.serviceRoot, "lody-projects")}`,
       `-r ${path.join(harness.serviceRoot, "lody-watchdog")}`,
     ]);
+    for (const service of ["lody-bridge", "lody-daemon", "lody-projects", "lody-watchdog"]) {
+      expect(readFileSync(path.join(harness.s6State, service), "utf8")).toBe("true 101\n");
+    }
   });
 
   linuxRootIt("repairs root ownership and 0644 modes under a restrictive umask", async () => {
@@ -2284,11 +2336,114 @@ describe("blitz-payload", () => {
     ]);
   });
 
-  it("applies a feature and payload release transition in the same tick", async () => {
+  it("leaves the marker pending when a dispatched reader stays down, then retries", async () => {
+    const harness = new Harness({ pinVersion: null, features: true });
+    await harness.start();
+    writeFileSync(harness.s6StayDown, "lody-projects\n");
+
+    const failed = await runUpdater(harness, 3000, {
+      serviceRestartTimeoutMs: 60,
+      serviceRestartPollMs: 10,
+    });
+
+    expect(failed.status, failed.stderr).toBe(1);
+    expect(failed.stderr).toContain("lody-projects did not report up with a new PID");
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=0\n");
+    expect(harness.calls(harness.s6Log)).toEqual([
+      `-r ${path.join(harness.serviceRoot, "lody-bridge")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-daemon")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-projects")}`,
+    ]);
+    rmSync(harness.s6Log, { force: true });
+
+    await expectOneOutcome(harness, "booted");
+
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=1\n");
+    expect(harness.calls(harness.s6Log)).toEqual([
+      `-r ${path.join(harness.serviceRoot, "lody-bridge")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-daemon")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-projects")}`,
+      `-r ${path.join(harness.serviceRoot, "lody-watchdog")}`,
+    ]);
+  });
+
+  it("bounds a hanging post-restart status probe by the restart deadline", async () => {
+    const harness = new Harness({ pinVersion: null, features: true });
+    await harness.start();
+    const calls = path.join(harness.root, "slow-svstat-calls");
+    const slowSvstat = path.join(harness.bin, "slow-s6-svstat");
+    writeExecutable(
+      slowSvstat,
+      "#!/usr/bin/env node\n"
+        + "const fs = require('node:fs');\n"
+        + `const calls = ${JSON.stringify(calls)};\n`
+        + "const count = fs.existsSync(calls) ? Number(fs.readFileSync(calls, 'utf8')) + 1 : 1;\n"
+        + "fs.writeFileSync(calls, `${count}\\n`);\n"
+        + "if (count === 1) process.stdout.write('true 100\\n');\n"
+        + "else setTimeout(() => process.stdout.write('true 100\\n'), 5000);\n",
+    );
+
+    const failed = await runUpdater(harness, 3000, {
+      s6Svstat: slowSvstat,
+      requestTimeoutMs: 2000,
+      serviceRestartTimeoutMs: 60,
+      serviceRestartPollMs: 10,
+    });
+
+    expect(failed.status, failed.stderr).toBe(1);
+    expect(failed.elapsedMs).toBeLessThan(1500);
+    expect(failed.stderr).toContain("lody-bridge did not report up with a new PID");
+    expect(readFileSync(harness.featuresAppliedFile, "utf8"))
+      .toBe("BLITZ_LODY_SESSIONS=0\n");
+  });
+
+  it("coordinates added, removed, changed, mapped, and unchanged readers in one tick", async () => {
+    const featurePath = "/opt/blitz/payload/state/features";
+    const added = "added-feature-reader";
+    const removed = "removed-feature-reader";
+    const bridgeRunPath = "rootfs/etc/s6-overlay/s6-rc.d/lody-bridge/run";
+    const toolPath = "rootfs/usr/local/bin/tool";
+    const bridgeRun = readFileSync(path.join(serviceTreeSource, "lody-bridge/run"), "utf8");
     const release = makeV2PayloadArchive([
-      { path: "rootfs/usr/local/bin/tool", content: "feature-release\n" },
-    ], "feature-release-v2");
+      {
+        path: `rootfs/etc/s6-overlay/s6-rc.d/${added}/run`,
+        content: `#!/bin/sh\ncat ${featurePath}\nexec sleep infinity\n`,
+      },
+      {
+        path: `rootfs/etc/s6-overlay/s6-rc.d/${added}/type`,
+        content: "longrun\n",
+        mode: 0o644,
+      },
+      {
+        path: `rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/${added}`,
+        content: "",
+        mode: 0o644,
+      },
+      { path: bridgeRunPath, content: `${bridgeRun}# definition changed\n` },
+      { path: toolPath, content: "feature-release\n" },
+    ], "feature-release-v2", {
+      restart: {
+        "lody-bridge": [bridgeRunPath],
+        "lody-projects": [toolPath],
+      },
+    });
     const harness = new Harness({ release, features: true });
+    const oldServices = path.join(
+      harness.payloadRoot,
+      "current/rootfs/etc/s6-overlay/s6-rc.d",
+    );
+    mkdirSync(path.join(oldServices, removed), { recursive: true });
+    writeFileSync(path.join(oldServices, removed, "type"), "longrun\n");
+    writeExecutable(
+      path.join(oldServices, removed, "run"),
+      `#!/bin/sh\ncat ${featurePath}\nexec sleep infinity\n`,
+    );
+    writeFileSync(
+      harness.s6UpdateRestarts,
+      `${added}\nlody-bridge\n${removed}\n`,
+    );
     await harness.start();
 
     await expectOneOutcome(harness, "applied");
@@ -2296,8 +2451,33 @@ describe("blitz-payload", () => {
     expect(harness.currentContent()).toBe("feature-release\n");
     expect(readFileSync(harness.featuresAppliedFile, "utf8"))
       .toBe("BLITZ_LODY_SESSIONS=1\n");
-    const events = harness.calls(harness.eventLog);
-    expect(events.indexOf("features-applied")).toBeLessThan(events.indexOf("compile"));
+    expect(harness.calls(harness.eventLog)).toEqual([
+      "features-rename",
+      "compile",
+      "pending",
+      "links",
+      "s6-rc-update",
+      "map-restarts",
+      "health",
+      "commit",
+      "features-applied",
+    ]);
+    expect(harness.calls(harness.s6UpdateRestartLog)).toEqual([
+      added,
+      "lody-bridge",
+      removed,
+    ]);
+    const restartCounts = new Map<string, number>();
+    for (const call of harness.calls(harness.s6Log)) {
+      const service = path.basename(call.slice("-r ".length));
+      restartCounts.set(service, (restartCounts.get(service) ?? 0) + 1);
+    }
+    expect(restartCounts.get(added) ?? 0).toBe(0);
+    expect(restartCounts.get(removed) ?? 0).toBe(0);
+    expect(restartCounts.get("lody-bridge") ?? 0).toBe(0);
+    expect(restartCounts.get("lody-projects")).toBe(1);
+    expect(restartCounts.get("lody-daemon")).toBe(1);
+    expect(restartCounts.get("lody-watchdog")).toBe(1);
   });
 
   it("pins the production supervised first tick at five seconds", () => {

@@ -517,6 +517,10 @@ test("payload and daemon inputs do not rebuild the base image", () => {
     "packages/schema/fixtures/example.json",
     "packages/box/rootfs/usr/local/bin/blitz",
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run",
+    "packages/box/rootfs/etc/blitz/sshd_config",
+    "packages/box/rootfs/etc/gitconfig",
+    "packages/box/rootfs/etc/profile.d/blitz-npm.sh",
+    "packages/box/rootfs/etc/tmux.conf",
     "vendor/lody/UPSTREAM.md",
   ]);
   assert.equal(decision.rebuild, false);
@@ -554,8 +558,12 @@ test("IMAGE_PATHS pins the Dockerfile and updater but excludes s6 service topolo
     assert.ok(IMAGE_PATHS.includes(required), required);
   }
   for (const payloadOwned of [
+    "packages/box/rootfs/etc/blitz/sshd_config",
+    "packages/box/rootfs/etc/gitconfig",
+    "packages/box/rootfs/etc/profile.d/blitz-npm.sh",
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/payload",
     "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user",
+    "packages/box/rootfs/etc/tmux.conf",
     "env.defaults",
   ]) {
     assert.equal(IMAGE_PATHS.includes(payloadOwned), false, payloadOwned);

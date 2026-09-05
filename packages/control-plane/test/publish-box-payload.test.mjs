@@ -52,7 +52,7 @@ function sha256(bytes) {
 
 const V1_RESTART_SERVICES = new Set([
   "cloudflared", "dockerd", "dufs", "gateway", "lody-bridge", "lody-daemon",
-  "lody-projects", "lody-watchdog", "machine-stats", "remote-control", "sshd", "ttyd", "watch",
+  "lody-projects", "lody-watchdog", "remote-control", "sshd", "ttyd", "watch",
 ]);
 
 // Frozen protocol 1 grammar. Unknown top-level fields are deliberately ignored.
@@ -197,6 +197,8 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
     assert.deepEqual(readdirSync(extractedPath), [], directory);
   }
   assert.ok(manifest.restart.gateway.includes("rootfs/usr/local/bin/blitz-box-gateway"));
+  assert.ok(manifest.restart.sshd.includes("rootfs/etc/blitz/sshd_config"));
+  assert.equal(manifest.restart["machine-stats"], undefined);
   assert.equal(
     manifest.restart.ttyd.includes("rootfs/usr/local/libexec/blitz-term"),
     false,

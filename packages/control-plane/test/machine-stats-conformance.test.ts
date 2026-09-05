@@ -9,10 +9,10 @@ import {
   type BoxCredential,
 } from "./helpers.js";
 
-// Control-plane side of the `machine-stats` cross-runtime contract: this
-// Worker consumes the guest's disk report. The producer
-// (box/rootfs/usr/local/bin/blitz-machine-stats) is pinned against the same
-// corpus in packages/box/actor/test/machine-stats-conformance.test.ts.
+// Control-plane side of the machine-stats contract. This Worker consumes the
+// guest disk report. The updater at rootfs/usr/local/libexec/blitz-payload sends
+// one per successful five-minute tick. The same corpus is pinned by
+// packages/box/guest-tests/test/machine-stats-conformance.test.ts.
 
 interface StatsFixture {
   request: Record<string, unknown>;

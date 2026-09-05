@@ -655,22 +655,22 @@ STATUS — and degrades the whole workspace when the answer is structural. The
 mechanism is `packages/webapp/src/lody/box-capability.ts` and the design note is
 `plans/LODY-RUNTIME-DESIGN.md` §17.
 
-**#112's machine-stats needs no fourth cutoff either, and the reason is worth
-naming**, because it is the shape a guest feature should have. The guest POSTs
-to `/workspaces/self/machine-stats` every ten minutes and the control plane
-fills `machines.disk_used_percent`; a box on an older image simply never calls,
-`volumeUsedPercent` stays absent, and the meter renders nothing. Nothing is
-refused and nothing 403s. A capability cutoff is only needed where the OLD side
-rejects the NEW payload — which is exactly the `share` claim's problem above,
-and not this one. The recycle in §13.4 fills the meter as a side effect.
+**#112's machine-stats needs no fourth cutoff.** The updater at
+`rootfs/usr/local/libexec/blitz-payload` POSTs once per successful five-minute
+tick. The control plane fills `machines.disk_used_percent`. A box on an older
+image never calls, so `volumeUsedPercent` stays absent and the meter renders
+nothing. Nothing is refused and nothing 403s. A cutoff is only needed when the
+old side rejects a new payload, as with the `share` claim above. The recycle in
+§13.4 fills the meter as a side effect. The guest test is
+`packages/box/guest-tests/test/machine-stats-conformance.test.ts`.
 
-### 13.3 Flip the flag, box image first
+### 13.3 Flip the flag, box config first
 
 Two names for one flag, and the ORDER between them is the whole point:
 
 | # | Flag | Where | Why first |
 |---|---|---|---|
-| 1 | `BLITZ_LODY_SESSIONS` | the box image / s6 service environment | the daemon has to be running before a browser dials it. A box with the daemon and no UI is inert; a UI with no daemon is a broken screen. |
+| 1 | `BOX_LODY_SESSIONS=1` | control-plane deployment; box config materializes `BLITZ_LODY_SESSIONS=1` in the updater-owned feature file | the daemon has to be running before a browser dials it. A box with the daemon and no UI is inert; a UI with no daemon is a broken screen. |
 | 2 | `VITE_BLITZ_LODY_SESSIONS` | the webapp build (`env.defaults`, and the deployment's build env) | read at MODULE LOAD (`webapp/src/lody/flag.ts`), so it is a build-time decision and flipping it means a deploy. |
 
 Reverse the order and every member on canary sees a rail that cannot list a
@@ -700,10 +700,9 @@ so an existing VM stays incapable however new the code is.
 7. Revoke. Confirm the row goes and the live connection is cut
    (`plans/LODY-SHARING.md` §5).
 8. Terminals: open a TUI tab and confirm it is unchanged.
-9. Two things this image carries that are not ours, and that the same recycle
-   is the only chance to see: "My machine" should draw a volume meter within
-   ten minutes (#112's `machine-stats` service reporting for the first time),
-   and the daemon should sit in its own memory leaf —
+9. Check two things after the recycle. "My machine" should draw a volume meter
+   after one successful five-minute updater tick (#112). The daemon should sit
+   in its own memory leaf —
    `cat /sys/fs/cgroup/blitz-user.slice/lody.scope/memory.max` from a terminal
    tab, which is the placement the deleted actor used to hold (#113,
    `docs/MEMORY-BOUNDARY.md`). A daemon outside that leaf is a runaway agent
