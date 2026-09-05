@@ -399,10 +399,11 @@ const canaryWorkflow = parseYaml(readFileSync(
   "utf8",
 ));
 
-test("the canary payload job builds, plans, publishes, and exposes in order", () => {
+test("the canary payload job takes the image job's inputs, plans, publishes, and exposes in order", () => {
   const steps = canaryWorkflow.jobs.payload.steps;
   const positions = [
-    "Build the daemon archive",
+    "Take the payload inputs the image job built",
+    "Check the handed-over inputs",
     "Plan the box-payload release",
     "Publish the box-payload release",
     "Expose the box-payload pin",
@@ -410,8 +411,20 @@ test("the canary payload job builds, plans, publishes, and exposes in order", ()
   assert.equal(positions.every((position) => position >= 0), true, positions.join(","));
   assert.deepEqual([...positions].sort((left, right) => left - right), positions);
 
-  const plan = steps[positions[1]];
-  const publish = steps[positions[2]];
+  // One build, one set of bytes: the image job uploads the daemon archive and
+  // the gateway binary, and this job downloads that artifact by the same name
+  // instead of building again. No Go and no builder step remain here.
+  const upload = canaryWorkflow.jobs.image.steps
+    .find((step) => step.name === "Hand the payload inputs to the payload job");
+  const download = steps[positions[0]];
+  assert.match(upload.uses, /^actions\/upload-artifact@/u);
+  assert.match(download.uses, /^actions\/download-artifact@/u);
+  assert.equal(download.with.name, upload.with.name);
+  assert.equal(steps.some((step) => /go build|build-box-daemon\.mjs/u.test(step.run ?? "")), false);
+  assert.equal(steps.some((step) => /setup-go/u.test(step.uses ?? "")), false);
+
+  const plan = steps[positions[2]];
+  const publish = steps[positions[3]];
   assert.match(plan.run, /plan-box-payload\.mjs[\s\S]*--daemon "\$DAEMON_ARCHIVE"/u);
   assert.match(publish.run, /publish-box-payload\.mjs[\s\S]*--daemon "\$DAEMON_ARCHIVE"/u);
   assert.equal(publish.if, "steps.plan.outputs.published == 'false'");

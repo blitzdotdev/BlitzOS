@@ -115,6 +115,19 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-box-gateway" .
           )
 
+      # The payload job downloads these instead of rebuilding them. One build
+      # is one set of bytes; the version comparison in that job stays as a
+      # guard on the planner, not on a second build.
+      - name: Hand the payload inputs to the payload job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: box-payload-inputs
+          path: |
+            ${{ runner.temp }}/daemon.tar.gz
+            ${{ runner.temp }}/payload-binaries/
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Plan the baked payload version
         id: payload
         run: |
@@ -230,8 +243,10 @@ jobs:
       version: ${{ steps.pin.outputs.version }}
     # The image job goes first so an absent base is built with this payload's
     # daemon-inclusive version before the payload manifest becomes pinnable.
-    # Both jobs build deterministic inputs independently and the comparison in
-    # the plan step refuses to publish if their versions differ.
+    # This job publishes the exact daemon archive and gateway binary the image
+    # job built and handed over as an artifact. The comparison in the plan
+    # step still refuses to publish if the planner disagrees with the version
+    # the image was stamped with.
     if: github.ref == 'refs/heads/main' && needs.gate.outputs.configured == 'true'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -239,10 +254,6 @@ jobs:
         with:
           node-version-file: package.json
           cache: npm
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version: 1.26.5
-          cache: false
       - run: npm ci
 
       - name: Write the canary wrangler.toml
@@ -260,16 +271,17 @@ jobs:
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
-      - name: Build the daemon archive
-        run: node packages/control-plane/scripts/build-box-daemon.mjs --out "$DAEMON_ARCHIVE"
+      - name: Take the payload inputs the image job built
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: box-payload-inputs
+          path: ${{ runner.temp }}
 
-      - name: Build the payload binary
+      - name: Check the handed-over inputs
         run: |
-          mkdir -p "$PAYLOAD_BINARIES"
-          (
-            cd packages/box/gateway
-            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-box-gateway" .
-          )
+          test -s "$DAEMON_ARCHIVE" || { echo "::error::daemon.tar.gz did not arrive from the image job."; exit 1; }
+          test -s "$PAYLOAD_BINARIES/blitz-box-gateway" || { echo "::error::blitz-box-gateway did not arrive from the image job."; exit 1; }
+          chmod 0755 "$PAYLOAD_BINARIES/blitz-box-gateway"
 
       # A valid matching manifest is immutable and reusable. Only 404 means
       # publish; malformed content, a wrong version, or another status is fatal.

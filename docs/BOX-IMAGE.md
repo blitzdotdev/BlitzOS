@@ -102,9 +102,10 @@ the `canary` environment:
    `node packages/control-plane/scripts/publish-box-image.mjs --image <imageTag> --prefix <prefix> --app-url <APP_URL> --json publish.json`.
    The publisher uploads every part before `manifest.json`, so a release is
    not visible until all its parts exist.
-8. Only after the image job succeeds, the `payload` job rebuilds the daemon
-   archive and the gateway binary, plans with `--daemon`, and refuses to continue
-   unless its version equals the one used by the image job. It probes
+8. Only after the image job succeeds, the `payload` job downloads the daemon
+   archive and the gateway binary the image job built and uploaded as a
+   workflow artifact, plans with `--daemon`, and refuses to continue unless its
+   version equals the one used by the image job. It probes
    `<APP_URL>/box-payload/<version>/manifest.json`; a valid manifest for that
    version is reused, 404 is published with the same `--daemon <archive>`, and
    malformed content or any other response fails the deploy. The publisher
