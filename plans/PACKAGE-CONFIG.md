@@ -10,8 +10,8 @@ One checked-in file, `env.defaults`, at the repository root. It is dotenv
 format. It lists the shared package environment variables as
 `KEY=portable-default`, with a `#` comment above each entry stating its type and
 meaning. The box is the exception: Docker `ENV` owns its four defaults and
-generates `/etc/blitz/env.defaults` for deployed host and microVM compatibility.
-The repository file has no box section.
+generates `/etc/blitz/env.defaults` for deployed host compatibility. The
+repository file has no box section.
 
 There is no loader library, no validation engine, no schema, no generated
 files, and no CLI. Types are comments. A wrong value fails at runtime inside

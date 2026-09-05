@@ -59,6 +59,22 @@ function runnableAptSetup(providerAptSetup, aptRoot, extraLines = "") {
   return `${header}\n${section.replaceAll("/etc/apt", `${aptRoot}/etc/apt`)}\n${extraLines}`;
 }
 
+/** The emitted inotify setup, repointed at a scratch `/etc/sysctl.d`. A
+ * refusing `sysctl` stand-in proves that applying the file remains non-fatal
+ * without changing the machine that runs the test. */
+function runnableInotifySetup(root) {
+  const lines = buildBootstrapScript(BOOTSTRAP_BASE).split("\n");
+  const start = lines.indexOf("cat >/etc/sysctl.d/60-blitz-inotify.conf <<'INOTIFY'");
+  const end = lines.indexOf("systemctl enable --now docker");
+  assert.ok(start > 0, "inotify setup start was not found in the emitted script");
+  assert.ok(end > start, "Docker start was not found after the inotify setup");
+  const header = lines.slice(0, 2).join("\n");
+  assert.equal(header, "#!/bin/bash\nset -Eeuo pipefail");
+  const section = lines.slice(start, end).join("\n");
+  const sysctlRoot = path.join(root, "etc/sysctl.d");
+  return `${header}\nblitz_phase() { :; }\n${section.replaceAll("/etc/sysctl.d", sysctlRoot)}\n`;
+}
+
 /** A scratch apt tree plus a curl that answers without a network. `curlStatus`
  * is what the mirror probe sees: 0 for a mirror that answers, 22 for curl's
  * own "HTTP error" status on one that does not. */
@@ -109,6 +125,25 @@ test("manifest parts stay beneath a versioned box-image release prefix", () => {
   // the base from the complete ref must preserve box-image/<releaseId>/.
   assert.ok(bootstrap.includes('manifest_base=${manifest_ref%/*}'));
   assert.ok(bootstrap.includes('download "$manifest_base/$part_name" "$part_path"'));
+});
+
+test("the emitted inotify setup writes both limits in real bash", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "blitz-bootstrap-inotify-"));
+  try {
+    mkdirSync(path.join(root, "etc/sysctl.d"), { recursive: true });
+    mkdirSync(path.join(root, "bin"));
+    const sysctl = path.join(root, "bin/sysctl");
+    writeFileSync(sysctl, "#!/bin/sh\nexit 1\n");
+    chmodSync(sysctl, 0o755);
+    const result = runBash(runnableInotifySetup(root), root);
+    assert.equal(result.status, 0, result.report);
+    assert.equal(
+      readFileSync(path.join(root, "etc/sysctl.d/60-blitz-inotify.conf"), "utf8"),
+      "fs.inotify.max_user_instances = 1024\nfs.inotify.max_user_watches = 524288\n",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 /** The box runs Ubuntu, so the emitted `sed -i -E` is GNU sed. BSD sed reads

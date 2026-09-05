@@ -169,12 +169,7 @@ FROM runtime-base
 ENV BLITZ_STATE_DIR=/var/lib/blitz S6_KEEP_ENV=1 BLITZ_UID=1000 BLITZ_GID=1000
 RUN set -eu; \
     install -d -m 0755 /etc/blitz; \
-    printf '%s\n' \
-      '# Readers: blitz-box-run --env-file on deployed hosts and microvm-init source this file.' \
-      'BLITZ_STATE_DIR=/var/lib/blitz' \
-      'S6_KEEP_ENV=1' \
-      'BLITZ_UID=1000' \
-      'BLITZ_GID=1000' \
+    printf '%s\n' '# Kept for deployed hosts that pass it with --env-file.' \
       > /etc/blitz/env.defaults
 
 COPY --from=artifacts /out/root/ /

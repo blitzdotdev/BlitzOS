@@ -26,8 +26,10 @@ export type ProviderRowsClient = Pick<
   | 'disconnectWorkspaceConnection'
 >;
 
-/** One provider, everything this workspace knows about it. */
-type ProviderRow = {
+/** One provider, everything this workspace knows about it. Exported because
+ * `buildRows` is the ordering two surfaces share: the legacy pane panel's
+ * tiles and the workspace-details Connections tab's toggle rows. */
+export type ProviderRow = {
   /** The connection name: a catalog id, or a name an agent asked for that the
    * catalog does not know. */
   name: string;

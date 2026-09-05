@@ -166,47 +166,6 @@ test("every build-context Dockerfile COPY source is a base input or a payload in
   assert.deepEqual(uncovered, []);
 });
 
-test("the image generates both readers' environment file from its Docker ENV", () => {
-  const dockerfile = readFileSync(path.join(repositoryRoot, "packages/box/Dockerfile"), "utf8");
-  const defaults = readFileSync(path.join(repositoryRoot, "env.defaults"), "utf8");
-  const envLine = dockerfile.match(/^ENV (BLITZ_STATE_DIR=.*)$/mu)?.[1];
-  assert.ok(envLine);
-  const envAssignments = Object.fromEntries(envLine.split(" ").map((assignment) => {
-    const separator = assignment.indexOf("=");
-    assert.notEqual(separator, -1, assignment);
-    return [assignment.slice(0, separator), assignment.slice(separator + 1)];
-  }));
-  const generated = dockerfile.match(
-    /ENV BLITZ_STATE_DIR=.*\nRUN set -eu; \\\n([\s\S]*?)      > \/etc\/blitz\/env\.defaults\n/u,
-  )?.[1];
-  assert.ok(generated);
-  const generatedLines = [...generated.matchAll(/^      '([^']*)' \\$/gmu)]
-    .map((match) => match[1]);
-  assert.deepEqual(generatedLines, [
-    "# Readers: blitz-box-run --env-file on deployed hosts and microvm-init source this file.",
-    "BLITZ_STATE_DIR=/var/lib/blitz",
-    "S6_KEEP_ENV=1",
-    "BLITZ_UID=1000",
-    "BLITZ_GID=1000",
-  ]);
-  const generatedAssignments = Object.fromEntries(generatedLines.slice(1).map((assignment) => {
-    const separator = assignment.indexOf("=");
-    return [assignment.slice(0, separator), assignment.slice(separator + 1)];
-  }));
-  assert.deepEqual(generatedAssignments, envAssignments);
-  assert.doesNotMatch(dockerfile, /ARG BLITZ_LODY_SESSIONS|COPY env\.defaults/u);
-  for (const name of [
-    "BLITZ_CP_ORIGIN",
-    "BLITZ_GID",
-    "BLITZ_LODY_SESSIONS",
-    "BLITZ_STATE_DIR",
-    "BLITZ_UID",
-    "S6_KEEP_ENV",
-  ]) {
-    assert.doesNotMatch(defaults, new RegExp(`^${name}=`, "mu"), name);
-  }
-});
-
 // The key reads every declared input's Git object id at the release commit
 // and refuses a missing one. The fixture repositories above are built FROM the
 // list, so only this check notices when a deleted file stays declared: the

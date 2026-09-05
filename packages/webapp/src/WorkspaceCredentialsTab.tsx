@@ -4,23 +4,23 @@ import type { ControlPlaneClient, MemberView } from './api';
 import { caughtErrorMessage } from './error-message';
 import {
   workspaceReadPath,
-  type GrantSubjects,
+  type AccessSubjects,
   type WorkspaceReadPath,
-} from './org-credential-grants';
+} from './org-credential-access';
 import { OrgCredentialForm } from './settings/OrgCredentialForm';
 
 const PATH_LABELS = {
-  workspace: 'granted to this workspace',
+  workspace: 'this workspace has access',
   org: 'org-wide',
-  membership: 'granted to you',
+  membership: 'you have access',
   unknown: 'readable by you',
 } satisfies Record<WorkspaceReadPath, string>;
 
 /** The workspace's Credentials tab (plans/ORG-CREDENTIALS.md §9): a filtered
- * view over ORG credentials — the ones readable in this workspace through a
- * workspace grant, an org-wide grant, or the viewer's own membership grant.
- * There is no workspace store behind it: add and rotate open the org-level
- * form, and a new key is granted to this workspace by default. */
+ * view over ORG credentials — the ones readable in this workspace because the
+ * workspace has access, the whole org has it, or the viewer does. There is no
+ * workspace store behind it: add and rotate open the org-level form, and a new
+ * key gives this workspace access by default. */
 export function WorkspaceCredentialsTab({
   client,
   workspaceId,
@@ -36,7 +36,7 @@ export function WorkspaceCredentialsTab({
   orgName: string;
   viewerMembershipId: string | null;
   orgMembers: MemberView[];
-  /** The org's workspaces, for the grant picker; at least this one. */
+  /** The org's workspaces, for the access picker; at least this one. */
   workspaces: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const [credentials, setCredentials] = useState<OrgCredentialView[]>([]);
@@ -64,7 +64,7 @@ export function WorkspaceCredentialsTab({
     return () => abort.abort();
   }, [reload]);
 
-  const subjects = useMemo<GrantSubjects>(() => ({
+  const subjects = useMemo<AccessSubjects>(() => ({
     orgName,
     viewerMembershipId,
     workspaces: workspaces.some(({ id }) => id === workspaceId)
@@ -92,10 +92,6 @@ export function WorkspaceCredentialsTab({
       <div className="cfg-section">
         <div className="cfg-section-head">
           <h2 className="cfg-title">Credentials in this workspace</h2>
-          <p className="cfg-desc">
-            Organization credentials readable here. Agents pull a value at the
-            moment of use; nothing is stored on a machine.
-          </p>
         </div>
         {error !== null && <p className="workspace-details-error" role="alert">{error}</p>}
         <div className="workspace-credential-rows">
@@ -131,28 +127,19 @@ export function WorkspaceCredentialsTab({
           </div>
         )}
       </div>
+      {/* The form draws its own two cards and their headings — "Add a
+          credential" and "Members with access" — so it is mounted bare rather
+          than inside a third section that would repeat the first heading. */}
       {form !== null && (
-        <div className="cfg-section">
-          <div className="cfg-section-head">
-            <h2 className="cfg-title">
-              {form.kind === 'add' ? 'Add a credential' : <>Rotate <code>{form.name}</code></>}
-            </h2>
-            <p className="cfg-desc">
-              {form.kind === 'add'
-                ? 'Stored at organization level and granted to this workspace. Widen the audience from Settings → Credentials.'
-                : 'The new value replaces the old one on the next pull, in every workspace that reads it.'}
-            </p>
-          </div>
-          <OrgCredentialForm
-            key={form.kind === 'add' ? 'add' : form.name}
-            mode={form.kind === 'add'
-              ? { kind: 'add', initialGrants: [{ subjectKind: 'workspace', subjectId: workspaceId, access: 'read' }] }
-              : form}
-            subjects={subjects}
-            onSubmit={put}
-            onCancel={() => setForm(null)}
-          />
-        </div>
+        <OrgCredentialForm
+          key={form.kind === 'add' ? 'add' : form.name}
+          mode={form.kind === 'add'
+            ? { kind: 'add', initialGrants: [{ subjectKind: 'workspace', subjectId: workspaceId, access: 'read' }] }
+            : form}
+          subjects={subjects}
+          onSubmit={put}
+          onCancel={() => setForm(null)}
+        />
       )}
     </section>
   );

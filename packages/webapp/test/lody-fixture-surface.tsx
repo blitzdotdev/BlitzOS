@@ -196,10 +196,10 @@ function FixtureNewTabControl() {
  * - `className` drops their floating-window card chrome: inside the rail the
  *   shell already draws the column's border. `cn()` is tailwind-merge, so these
  *   override rather than stack.
- * - `topContent` carries the GitHub Worktrees heading, because the list below it
+ * - `topContent` carries the Projects heading, because the list below it
  *   is a sibling rather than a child (`loro-app-sidebar.tsx:2551`).
  *
- * The Chats / GitHub Worktrees split is `repoFullName`, exactly as upstream, so
+ * The Chats / Projects split is `repoFullName`, exactly as upstream, so
  * the worktree rows go through `sessionListProps` and the chat rows through a
  * second `SessionList` in `afterSessionListContent`.
  */
@@ -244,9 +244,9 @@ export function FixtureSidebar() {
       updatedBucketsCollapsed={{}}
       topContent={
         <SidebarSectionHeader
-          label="GitHub Worktrees"
+          label="Projects"
           collapsed={worktreesCollapsed}
-          toggleLabel="GitHub Worktrees"
+          toggleLabel="Projects"
           onToggleCollapsed={() => setWorktreesCollapsed((collapsed) => !collapsed)}
         />
       }

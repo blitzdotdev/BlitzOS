@@ -268,9 +268,9 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       throw new Error(`${String(cause)}\n--- rail ---\n${railText()}`);
     });
     // It is a CHAT: no project, so Lody's own split puts it there and not under
-    // GitHub Worktrees.
+    // Projects.
     expect(railText()).toContain("Chats");
-    expect(railText()).not.toContain("GitHub Worktrees");
+    expect(railText()).not.toContain("Projects");
   }, 90_000);
 
   it("opens a chat session when its rail row is clicked", async () => {
@@ -342,12 +342,12 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
   }, 90_000);
 
   it("draws the Lody sections only once they hold rows", () => {
-    // Chats and GitHub Worktrees are Lody's own section logic, fed from the
+    // Chats and Projects are Lody's own section logic, fed from the
     // runtime — and upstream's rule is that an empty section renders nothing at
     // all, header included (`loro-app-sidebar.tsx:2095`). One chat was seeded
     // and no worktree session exists, so exactly one of the two is drawn.
     expect(railText()).toContain("Chats");
-    expect(railText()).not.toContain("GitHub Worktrees");
+    expect(railText()).not.toContain("Projects");
   });
 
   // A DISPATCH IS A PAID TURN, and this is phase 4's whole budget: the rail's

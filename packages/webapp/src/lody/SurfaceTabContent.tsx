@@ -21,7 +21,6 @@ import type { WorkspaceTab } from '../storage';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import {
   WorkspacePanelContent,
-  type ConnectionsPanelFocus,
 } from '../WorkspaceDrawer';
 
 export type SurfaceTabContentProps = {
@@ -36,7 +35,6 @@ export type SurfaceTabContentProps = {
   activeFilesBase: string | null;
   pendingRequests: CredentialRequestView[];
   pendingRequestsError: string | null;
-  connectionsFocus: ConnectionsPanelFocus | null;
   onResolveRequest: (
     request: CredentialRequestView,
     action: 'approve' | 'deny',
@@ -64,7 +62,6 @@ export function SurfaceTabContent({
   activeFilesBase,
   pendingRequests,
   pendingRequestsError,
-  connectionsFocus,
   onResolveRequest,
   onSignInUrl,
   onOpenPreview,
@@ -80,7 +77,6 @@ export function SurfaceTabContent({
         pendingRequests={pendingRequests}
         pendingRequestsError={pendingRequestsError}
         workspaceConnections={activeWorkspace?.connections ?? []}
-        connectionsFocus={connectionsFocus}
         readOnly={activeWorkspace?.accessRole === 'viewer'}
         onResolveRequest={onResolveRequest}
       />

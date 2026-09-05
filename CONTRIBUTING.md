@@ -9,7 +9,7 @@ CLAUDE.md wins.
 ## Setup
 
 - Node.js 22.13 or newer (`engines` in the root `package.json`) and npm.
-- Go 1.26+ for the Go components (broker, box gateway, microVM host).
+- Go 1.26+ for the Go components (broker and box gateway).
 - Docker for box-image work.
 
 ```sh
@@ -50,13 +50,12 @@ pin which boundary, and which tests enforce them — is in
 
 ## Go components
 
-Three Go modules sit outside the npm workspace graph and are not touched by
+Two Go modules sit outside the npm workspace graph and are not touched by
 `npm test`. Test them directly:
 
 ```sh
 (cd packages/broker && go test ./...)
 (cd packages/box/gateway && go test ./...)
-(cd packages/microvm-host && go test ./...)
 ```
 
 The box gateway's conformance tests read the shared fixtures from

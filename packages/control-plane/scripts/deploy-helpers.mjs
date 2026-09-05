@@ -1,4 +1,3 @@
-import { parseMicrovmHosts } from "../core/compute/microvm-hosts.js";
 import {
   allowedEmailDomainsFromEnv,
   cloudWorkspaceCredentialPolicyFromEnv,
@@ -11,8 +10,7 @@ export const DB_BINDING = "DB";
 export const R2_BINDING = "BOX_IMAGES";
 // Secrets every deployment needs. OPERATOR_API_KEY is intentionally absent:
 // it is a legacy operator credential — optional, only for old operator-key
-// flows — so the deploy no longer demands it. MICROVM_<NAME>_TOKEN secrets are
-// added per configured MICROVM_HOSTS entry (see requiredSecretsForConfig).
+// flows — so the deploy no longer demands it.
 export const REQUIRED_SECRETS = Object.freeze([
   "HETZNER_API_TOKEN",
   "GOOGLE_CLIENT_ID",
@@ -227,17 +225,6 @@ export function configVarProblems(rawConfig) {
 // against `wrangler secret list` still applies to every required name.
 export function localSecretValueProblems(rawConfig, secretValues) {
   const problems = [];
-  const rawHosts = isRecord(rawConfig?.vars) ? rawConfig.vars.MICROVM_HOSTS : undefined;
-  for (const host of parseMicrovmHosts(rawHosts)) {
-    const raw = secretValues[host.tokenVar];
-    if (raw === undefined) continue;
-    const token = String(raw);
-    if (token.length < 32 || /\s/u.test(token)) {
-      problems.push(
-        `${host.tokenVar} must be at least 32 characters with no whitespace — the Worker rejects weaker microVM host tokens and then fails every request`,
-      );
-    }
-  }
   const masterKey = secretValues.CRED_MASTER_KEY;
   if (
     masterKey !== undefined &&
@@ -286,10 +273,8 @@ function secretNames(value) {
   );
 }
 
-export function requiredSecretsForConfig(rawConfig) {
-  const rawHosts = isRecord(rawConfig?.vars) ? rawConfig.vars.MICROVM_HOSTS : undefined;
-  const tokenVars = parseMicrovmHosts(rawHosts).map((host) => host.tokenVar);
-  return [...new Set([...REQUIRED_SECRETS, ...tokenVars])];
+export function requiredSecretsForConfig(_rawConfig) {
+  return [...REQUIRED_SECRETS];
 }
 
 // Wrangler prints the actionable half of a failure on stderr, and the deploy

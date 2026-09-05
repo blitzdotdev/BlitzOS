@@ -199,6 +199,9 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
       // is seam patch 15's, on its own call site.
       hideSettingsEntry={V1.hideSettingsEntry}
       hideConnectionStatus={V1.hideConnectionStatus}
+      // Seam patch 24. The mobile twin: the new-chat sheet's machine row drops
+      // with its label rather than standing empty.
+      hideMachineSelector={V1.hideMachineSelector}
     />
   );
 

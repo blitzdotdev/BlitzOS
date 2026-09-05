@@ -51,21 +51,69 @@
 /* Members, credentials and settings (plans/MEMBER-MACHINES.md §6). Their
    headings, fields and fact lists come from settings-surface.css. */
 .workspace-details-members,
+.workspace-details-connections,
 .workspace-details-credentials,
 .workspace-details-settings { min-width: 0; }
+
+/* Connections: toggle rows on the same raised card the member and credential
+   lists draw, so the tab is one list and not a stack of switch cards. The
+   switch vocabulary itself is settings.css's; `--flush` is the row minus its
+   own card — no border, no radius, no fill — plus the mark column the
+   provider rows need.
+
+   TWO CLASSES ON EVERY RULE, so the modifier beats `.settings-switch-row`
+   whatever the source order: settings.css is imported AFTER this sheet
+   (`main.tsx`), and at equal specificity the later card would win back its
+   border and its own grid. */
+.workspace-connection-rows { overflow: hidden; border: 1px solid var(--mod-12); border-radius: var(--r-card); background: var(--surface-0); }
+.settings-switch-row.settings-switch-row--flush { grid-template-columns: 22px minmax(0, 1fr) auto auto; gap: 12px; padding: 11px 16px; border: 0; border-radius: 0; background: transparent; }
+.settings-switch-row--flush + .settings-switch-row.settings-switch-row--flush { border-top: 1px solid var(--mod-8); }
+/* A row nobody can throw states that in its own ink, so a disabled switch is
+   not the only thing carrying it. */
+.settings-switch-row.settings-switch-row--flush:has(input:disabled) .settings-switch-copy strong { color: var(--muted); }
+/* Where `blitz connections open <provider>` landed. */
+.settings-switch-row.settings-switch-row--focus { background: var(--hover); }
 
 .workspace-members-search { position: relative; margin-bottom: 14px; }
 /* The add-people field joins the ladder's card language: the raised surface
  * the row lists below it wear. */
-.workspace-members-search .drive-field {
+.workspace-members-search .member-search-field {
   border-color: var(--mod-16);
   background: var(--surface-0);
 }
+
+.member-search-field {
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  background: var(--paper);
+  font: inherit;
+  outline: 0;
+}
+
+.member-search-field:focus { border-color: var(--accent); }
+.member-search-field::placeholder { color: var(--faint); }
+
+.member-suggestions { display: grid; max-height: 208px; gap: 2px; margin-top: 8px; overflow-y: auto; }
+.member-suggestion { display: grid; width: 100%; min-width: 0; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 10px; padding: 7px 8px; border: 0; border-radius: var(--r-control); color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
+.member-suggestion:hover { background: var(--hover); }
+.member-suggestion-empty { padding: 12px 8px; color: var(--faint); font-size: 12.5px; }
+.member-person-copy { display: grid; min-width: 0; }
+.member-person-copy strong,
+.member-person-copy span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-person-copy strong { color: var(--ink); font-size: 13.5px; font-weight: 500; }
+.member-person-copy span { color: var(--faint); font-size: 12px; }
 /* Row lists are raised cards (surface-0) with --mod separators, the same card
- * the settings page draws for its people and credential lists. */
+ * the settings page draws for its people and credential lists. `.org-access-rows`
+ * is here rather than in org-credentials.css so the access list IS the members
+ * list's card, not a copy of it that drifts. */
 .workspace-members-rows,
 .workspace-credential-rows,
-.workspace-repo-rows { overflow: hidden; border: 1px solid var(--mod-12); border-radius: var(--r-card); background: var(--surface-0); }
+.workspace-repo-rows,
+.org-access-rows { overflow: hidden; border: 1px solid var(--mod-12); border-radius: var(--r-card); background: var(--surface-0); }
 /* Rendered inside the raised row cards, so it carries its own inset. */
 .workspace-members-empty { margin: 14px 12px; color: var(--faint); font-size: 11px; }
 
@@ -85,14 +133,17 @@
 .workspace-member-remove { width: 24px; height: 24px; border: 0; border-radius: 50%; color: var(--faint); background: transparent; font-size: 15px; }
 .workspace-member-remove:hover,
 .workspace-member-remove:focus-visible { color: var(--ansi-red); background: var(--hover); }
+.workspace-member-remove:disabled { cursor: not-allowed; opacity: .5; }
 
-/* The machine state, in the vocabulary of MachineState. Provisioning and
- * destroying are the two that are going somewhere, so they share a colour. */
+/* Provisioning and destroying are the wire states that are going somewhere.
+ * The browser-only pending chip also covers starting, stopping and recreating,
+ * whose transitions have no distinct MachineState value. */
 .machine-chip { padding: 2px 7px; border: 1px solid var(--rule); border-radius: var(--r-pill); color: var(--faint); font-size: 10px; text-transform: capitalize; white-space: nowrap; }
 .machine-chip--running { border-color: color-mix(in oklab, var(--ansi-green) 55%, var(--rule)); color: var(--ansi-green); }
 .machine-chip--error { border-color: color-mix(in oklab, var(--ansi-red) 55%, var(--rule)); color: var(--ansi-red); }
 .machine-chip--provisioning,
-.machine-chip--destroying { border-color: color-mix(in oklab, var(--accent) 55%, var(--rule)); color: var(--accent); }
+.machine-chip--destroying,
+.machine-chip--pending { border-color: color-mix(in oklab, var(--accent) 55%, var(--rule)); color: var(--accent); }
 
 .workspace-credential-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 48px; padding: 0 12px; }
 .workspace-credential-row + .workspace-credential-row { border-top: 1px solid var(--mod-8); }

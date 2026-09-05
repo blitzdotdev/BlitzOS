@@ -514,8 +514,8 @@ package's own stamp with its renderer commit.
 
 New boxes use the newly deployed pin. Existing cloud boxes replace their
 container only after `updateRequested` is set through
-`packages/control-plane/core/box-config.ts`; microVMs have no in-place update
-path. An upstream merge never silently kills every running field box.
+`packages/control-plane/core/box-config.ts`. An upstream merge never silently
+kills every running field box.
 
 ## Where things are documented
 

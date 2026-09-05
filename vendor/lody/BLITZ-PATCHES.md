@@ -1931,6 +1931,77 @@ The browser-panel seam that main had numbered 20 was withdrawn before this
 merge. BlitzOS renders its browser as the `host:browser` tab, so Lody's built-in
 Browser panel carries no additional hunk.
 
+### 24. A host bound to one machine may drop the composer's machine picker (declared 2026-09-05)
+
+**One idea, five hunks in two files.** `ChatLanding` draws a machine picker on
+both of its composers: the desktop chip (`DesktopMachineMenu`, a Monitor glyph,
+the machine's name and a `Local` badge) above the prompt, and the machine row of
+the mobile new-chat sheet. Both exist to move a session between the machines an
+account has paired. A BlitzOS surface is served by exactly one box, which
+reports exactly one machine, so every option either picker can list is the
+machine already selected — a control whose only outcome is the state it starts
+in.
+
+**Selection is not what this touches.** `selectedMachineId` is synced from the
+chosen agent config and the selected local project (`chat-landing.tsx`'s "Sync
+selectedMachineId from selectedAgent" effect and
+`handleSelectedLocalProjectChange`), and `handleMachineChange` is the picker's
+own writer. With the picker hidden, nothing calls that writer and the two
+synchronising paths keep choosing the machine they always chose. No send path
+reads the new prop.
+
+`packages/components/src/components/chat/chat-landing.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 423 | `hideConnectionStatus?: boolean;` in `ChatLandingProps` (seam patch 15's own anchor) | declares `hideMachineSelector?: boolean` |
+| 2 | 604 | `hideConnectionStatus = false,` in the destructuring | defaults it to `false` |
+| 3 | 3771-3779 | the `<DesktopMachineMenu>` element opening `topSelectorNode`'s row | renders it only when the prop is absent |
+| 4 | 3897 | `const mobileSheetMachineNode = (` | resolves to `null` when hidden |
+
+`packages/components/src/components/mobile/mobile-new-chat-sheet.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 5 | 35, 229-231 | `machineNode: ReactNode;` and its `AnimatedSheetRow` | documents `null` and drops the row with its label |
+
+Hunk 5 is what makes hunk 4 honest. The sheet's machine row is `alwaysOn`, so a
+`null` node alone would leave the row's label ("机器" / "Machine") standing over
+nothing.
+
+#### What this patch does NOT do
+
+- **It does not touch `DesktopMachineMenu` or `MachineSelector`.** Both stay
+  exactly as upstream wrote them, and every other call site keeps them.
+- **It does not gate the session composer.** A session runs on the machine it
+  was started on, and `session-chat-input-area.tsx` draws no machine chip.
+- **It does not gate "Add machine".** That entry lives INSIDE the dropdown this
+  patch hides, so hiding the trigger takes it along; there is nothing separate
+  to decide.
+
+This is strictly additive, in seam patch 7's optional-prop shape. With the prop
+absent both files render byte-for-byte as before, and no upstream call site
+passes it.
+
+Verify this divergence using the diff from seam patch 1. **Expect THIRTY-ONE
+files after seam patch 24.** That is one more than seam patch 16.
+`chat/chat-landing.tsx` already belongs to seam patches 7, 15 and 16; the new
+file is `components/mobile/mobile-new-chat-sheet.tsx`, the thirty-first.
+
+`packages/webapp/src/lody/v1-scope.ts` holds the BlitzOS half in one field,
+`machineSelection`, and `packages/webapp/test/lody-v1-scope-sources.test.ts`
+pins this section by name.
+
+**Merge conflict drill.**
+
+- If upstream gives the landing its own single-machine collapse — drawing the
+  chip only when more than one machine is online — drop all five hunks and take
+  it.
+- If the desktop chip moves out of `topSelectorNode`, hunk 3 follows the
+  element; it is a wrapper, not a position.
+- If the mobile sheet stops rendering rows from nodes, hunks 4 and 5 go with
+  that rewrite: what they encode is "no node, no row".
+
 ## Retired compiled-bundle patches
 
 | Retired script | Disposition | Evidence |

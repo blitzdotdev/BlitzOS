@@ -12,53 +12,6 @@ export interface JsonObject {
   [key: string]: JsonValue;
 }
 
-export type FolderRole = "owner" | "admin" | "editor" | "viewer";
-
-export interface FolderGrantView {
-  id: string;
-  membershipId: string;
-  role: "editor" | "viewer";
-  createdAt: number;
-  member: { name: string; email: string; avatarUrl: string | null };
-}
-
-export interface FolderView {
-  id: string;
-  name: string;
-  role: FolderRole | null;
-  orgRole: "editor" | "viewer" | null;
-  owner: { name: string; avatarUrl: string | null };
-  attachedWorkspaceIds: string[];
-  createdAt: number;
-  updatedAt: number;
-  grants?: FolderGrantView[];
-}
-
-export interface FolderObjectView {
-  key: string;
-  size: number;
-  mtime: number;
-  editedBy: string;
-}
-
-export interface ListFolderObjectsResponse {
-  objects: FolderObjectView[];
-  cursor: string | null;
-  truncated: boolean;
-}
-
-export interface FolderAttachmentView {
-  id: string;
-  name: string;
-  role: FolderRole;
-  guestPath: string | null;
-  attachedAt: number;
-}
-
-export interface ListFolderAttachmentsResponse {
-  folders: FolderAttachmentView[];
-}
-
 export interface CredentialManifest {
   integrations: Record<string, JsonObject>;
 }
@@ -306,12 +259,10 @@ export interface WorkspaceView {
     avatarUrl: string | null;
   };
   agentRuleId: string | null;
-  /** Connection names the workspace's ceiling enables — its template's
-   * stipulated providers plus any named at create. The workspace connections
+  /** Connection names the workspace's ceiling enables — inherited providers
+   * plus any named at create. The workspace connections
    * panel draws one status row per name; gated on the viewer's role. */
   connections: string[];
-  /** Present when a recipe launch created this workspace (provenance). */
-  recipeId?: string;
   /** The member-machines fields.
    *
    * The only client of this view is the webapp in this repository, and it is
@@ -331,11 +282,7 @@ export interface WorkspaceView {
   members: WorkspaceMemberView[];
 }
 
-export interface TemplateConnectionView {
-  provider: string;
-}
-
-export interface TemplateRepoView {
+export interface WorkspaceRepoView {
   repo: string;
   private: boolean;
 }
@@ -351,7 +298,7 @@ export interface AddWorkspaceRepoRequest {
  * after it: the box clones at boot, so an existing machine keeps what it
  * already has until it is recreated. */
 export interface ListWorkspaceReposResponse {
-  repos: TemplateRepoView[];
+  repos: WorkspaceRepoView[];
 }
 
 export interface GithubInstallationView {
@@ -401,30 +348,6 @@ export interface CheckGithubRepositoriesResponse {
   results: GithubRepositoryCheckView[];
 }
 
-export interface WorkspaceTemplateView {
-  id: string;
-  name: string;
-  machineTypeId: string;
-  createdAt: number;
-  createdBy: { name: string; avatarUrl: string | null };
-  environment: WorkspaceEnvironment | null;
-  agentRuleId: string | null;
-  /** True on the org's default template — the one the create dialog
-   * preselects for every member. At most one per org. */
-  isOrgDefault: boolean;
-  /** Role is the viewer's access; null flags a folder they cannot reach yet. */
-  folders: { id: string; name: string; role: FolderRole | null }[];
-  /** Provider names only. Each name draws a status row in the workspace
-   * connections panel; creation never blocks on connections. */
-  connections: TemplateConnectionView[];
-  /** GitHub repos cloned into /workspace/<name>. Privacy lets create require
-   * the member's GitHub grant before bootstrap starts. */
-  repos: TemplateRepoView[];
-}
-
-export interface ListWorkspaceTemplatesResponse {
-  templates: WorkspaceTemplateView[];
-}
 
 /** The shared model → provider catalog.
  *
@@ -482,77 +405,6 @@ export function agentEffortsForModel(provider: AgentProvider, model?: string): r
   return AGENT_EFFORTS[provider];
 }
 
-/** A recipe is one row: a template reference plus an invocation — harness,
- * model, effort, prompt. Launching one creates a normal workspace from the
- * template and delivers the invocation to the box (plans/RECIPES.md).
- * The harness choices are the TUI harnesses. */
-export const RECIPE_HARNESSES = [...HARNESSES] as const;
-
-export type RecipeHarness = (typeof RECIPE_HARNESSES)[number];
-
-export interface RecipeView {
-  id: string;
-  name: string;
-  templateId: string;
-  harness: RecipeHarness;
-  /** A catalog model (see AGENT_MODELS); absent means the harness
-   * default. */
-  model?: string;
-  effort?: string;
-  prompt: string;
-}
-
-export interface ListRecipesResponse {
-  recipes: RecipeView[];
-}
-
-/** POST /workspace-recipes and PUT /workspace-recipes/:id share this
- * full-replacement shape, exactly like workspace templates. */
-export interface CreateRecipeRequest {
-  name: string;
-  templateId: string;
-  harness: RecipeHarness;
-  model?: string;
-  effort?: string;
-  prompt: string;
-}
-
-/** Envelope for GET /workspace-recipes/:id, POST /workspace-recipes (201),
- * and PUT /workspace-recipes/:id. POST /workspace-recipes/:id/launch answers
- * with CreateWorkspaceResponse instead. */
-export interface RecipeResponse {
-  recipe: RecipeView;
-}
-
-/** Admin switch for org-wide agent-usage capture (GET and PUT
- * /orgs/self/usage-capture). The folder is lazy-created on first enable and
- * survives a disable, so re-enabling keeps the corpus in one place. */
-export interface OrgUsageCaptureResponse {
-  enabled: boolean;
-  folderId: string | null;
-}
-
-export interface CreateWorkspaceTemplateRequest {
-  name: string;
-  machineTypeId: string;
-  folderIds: string[];
-  connections?: TemplateConnectionView[];
-  environment?: WorkspaceEnvironment;
-  /** An org agent rule to hand every workspace made from this template; null
-   * (or absent) leaves it on the built-in doc. */
-  agentRuleId?: string | null;
-  /** Repo names to clone at create. Naming any force-attaches the github
-   * connection; the server derives privacy with the caller's credential. */
-  repos?: string[];
-  /** True marks this template as the org default (admin only). False clears
-   * the mark iff it currently points at this template. Absent leaves the org
-   * pointer alone — it is org state, not template state. */
-  isOrgDefault?: boolean;
-}
-
-export interface CreateWorkspaceTemplateResponse {
-  template: WorkspaceTemplateView;
-}
 
 export interface ListMachineTypesResponse {
   machineTypes: MachineType[];
@@ -563,9 +415,6 @@ export interface ListMachineTypesResponse {
 }
 
 export interface CreateWorkspaceRequest {
-  /** Legacy spelling of `defaultMachineTypeId`; either satisfies the
-   * requirement, and `defaultMachineTypeId` wins when both are sent. */
-  machineTypeId?: string;
   /** The default a machine takes when nothing else names one. */
   defaultMachineTypeId?: string;
   /** Provision and start a machine on every member add. Default true. */
@@ -581,12 +430,8 @@ export interface CreateWorkspaceRequest {
   }[];
   /** Copies config — default machine type, agent rule, repos — and neither
    * members nor credentials (credentials are org-scoped now,
-   * plans/ORG-CREDENTIALS.md §3). The workspace is the template now, so this
-   * is "new workspace from existing". */
+   * plans/ORG-CREDENTIALS.md §3). */
   cloneFromWorkspaceId?: string;
-  /** Retired with the template tables (plans/MEMBER-MACHINES.md §0). Sending
-   * one is refused rather than ignored. */
-  templateId?: string;
   name?: string;
   volumeId?: string;
   userData?: string;
@@ -597,9 +442,8 @@ export interface CreateWorkspaceRequest {
   /** Overrides the clone source's rule; null (or absent) falls back to the
    * source's rule and then the built-in doc. */
   agentRuleId?: string | null;
-  /** GitHub repositories ("owner/name") the box clones into /workspace. Only
-   * for a create with no template: a template already carries its own list,
-   * and a request that names both is refused rather than merged. */
+  /** GitHub repositories ("owner/name") the box clones into /workspace.
+   * A request cannot combine this list with a clone source. */
   repos?: string[];
 }
 

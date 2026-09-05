@@ -43,37 +43,11 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     recreateMachine: vi.fn(async () => { throw new Error('unused'); }),
     setMachineType: vi.fn(async () => { throw new Error('unused'); }),
     destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
-    listFolders: vi.fn(async () => ({ folders: [] })),
-    createFolder: vi.fn(async () => { throw new Error('unused'); }),
-    deleteFolder: vi.fn(async () => undefined),
-    createFolderGrant: vi.fn(async () => { throw new Error('unused'); }),
-    revokeFolderGrant: vi.fn(async () => undefined),
-    listFolderObjects: vi.fn(async () => ({ objects: [], cursor: null, truncated: false })),
-    downloadFolderObject: vi.fn(async () => new Blob()),
-    uploadFolderObject: vi.fn(async () => undefined),
-    listWorkspaceFolders: vi.fn(async () => ({ folders: [] })),
-    attachFolder: vi.fn(async () => { throw new Error('unused'); }),
-    detachFolder: vi.fn(async () => undefined),
-    renameFolder: vi.fn(async () => undefined),
-    setFolderOrgRole: vi.fn(async () => undefined),
     listAgentRules: vi.fn(async () => ({ rules: [] })),
     putAgentRule: vi.fn(async () => { throw new Error('unused'); }),
     deleteAgentRule: vi.fn(async () => undefined),
-    listWorkspaceTemplates: vi.fn(async () => ({ templates: [] })),
-    createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-    updateWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-    deleteWorkspaceTemplate: vi.fn(async () => undefined),
-    listRecipes: vi.fn(async () => ({ recipes: [] })),
-    getRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    createRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    updateRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    deleteRecipe: vi.fn(async () => undefined),
-    launchRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    getUsageCapture: vi.fn(async () => ({ enabled: false, folderId: null })),
     orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     billing: vi.fn(async () => { throw new Error('unused'); }),
-    putUsageCapture: vi.fn(async (enabled: boolean) => ({ enabled, folderId: null })),
-    deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new Error('unused'); }),
     createOrg: vi.fn(async () => { throw new Error('unused'); }),
@@ -178,8 +152,8 @@ function click(button: Element): void {
   button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 }
 
-describe('settings connections panel (revoke-only)', () => {
-  it('hosts no picker and no config form; grants keep revoke and OAuth re-auth', async () => {
+describe('settings connections panel', () => {
+  it('lists connected providers with re-auth and disconnect, and no admin form', async () => {
     const wire = client({
       listConnectionGrants: vi.fn(async () => ({
         grants: [
@@ -208,19 +182,59 @@ describe('settings connections panel (revoke-only)', () => {
     });
     const view = await render(<ConnectionsPanel client={wire} />);
     await settle();
-    // The connect surfaces moved out: members connect in the workspace
-    // drawer; org-shared keys are org credentials, not connections.
+    // Two sections and no third: an agent's pending request is not a list
+    // here, it is the connect dialog in the workspace that raised it.
+    expect([...view.container.querySelectorAll('.cfg-title')].map((h) => h.textContent))
+      .toEqual(['Connected · 2', 'Available']);
+    // An org-custody admin form is not a connection: those keys are org
+    // credentials, and nothing on this page configures one.
     expect(view.container.querySelector('.connect-picker')).toBeNull();
+    // The catalog is empty in this case, so there is nothing to paste into.
     expect(view.container.querySelector('.connect-form')).toBeNull();
     // Rotation stays: an OAuth grant re-runs the dance from a plain link; a
-    // pasted key has no re-auth here — it is re-pasted in a workspace.
+    // pasted key has no re-auth here — it is re-pasted from its tile.
     const reauth = [...view.container.querySelectorAll('a')]
       .filter((anchor) => anchor.textContent === 'Re-auth');
     expect(reauth.map((anchor) => anchor.getAttribute('href')))
       .toEqual(['/connect/linear/start']);
-    const revokes = [...view.container.querySelectorAll('button')]
-      .filter((button) => button.textContent === 'Revoke');
-    expect(revokes.length).toBe(2);
+    const disconnects = [...view.container.querySelectorAll('button')]
+      .filter((button) => button.textContent === 'Disconnect');
+    expect(disconnects.length).toBe(2);
+    // The chip names which kind of credential stands behind each row.
+    expect([...view.container.querySelectorAll('.conn-chip')].map((chip) => chip.textContent))
+      .toEqual(['oauth', 'token']);
+    await view.unmount();
+  });
+
+  /** Every catalog provider the member has not connected, each tile saying how
+   * that provider connects — read off the catalog view, never off its name. */
+  it('offers the unconnected catalog as tiles that name their connect path', async () => {
+    const wire = client({
+      listConnectionGrants: vi.fn(async () => ({ grants: [] })),
+      listConnectionCatalog: vi.fn(async () => ({
+        providers: [
+          { ...adminEntry('linear', 'Linear', false), adminForm: null, oauthAvailable: true, oauthConfigured: true },
+          patEntry('youtrack', 'YouTrack'),
+          adminEntry('discord', 'Discord', false),
+        ],
+      })),
+    });
+    const view = await render(<ConnectionsPanel client={wire} />);
+    await settle();
+
+    const tiles = [...view.container.querySelectorAll('.connect-card')];
+    expect(tiles.map((tile) => tile.querySelector('.connect-card__title')?.textContent))
+      .toEqual(['Linear', 'YouTrack', 'Discord']);
+    expect(tiles.map((tile) => tile.querySelector('.connect-card__summary')?.textContent))
+      .toEqual(['Connect', 'Paste a token', 'Admin sets this up']);
+    // OAuth is a navigation; a paste opens the form under the grid; an
+    // admin-configured provider is a state, so its tile does not press.
+    expect(tiles[0]?.tagName).toBe('A');
+    expect(tiles[0]?.getAttribute('href')).toBe('/connect/linear/start');
+    expect((tiles[2] as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => click(tiles[1]!));
+    await settle();
+    expect(view.container.querySelector('.connect-form')).not.toBeNull();
     await view.unmount();
   });
 });

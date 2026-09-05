@@ -80,9 +80,7 @@
           {
             "allowFiles": [
               "packages/control-plane/core/app.ts",
-              "packages/control-plane/core/janitors.ts",
-              "packages/control-plane/core/compute/microvm-host-registry.ts",
-              "packages/control-plane/core/compute/microvm.ts"
+              "packages/control-plane/core/janitors.ts"
             ]
           }
         ]

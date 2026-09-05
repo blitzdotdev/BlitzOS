@@ -8,17 +8,16 @@ export interface RepoUrlLine {
 }
 
 const REPO_SEGMENT = /^[A-Za-z0-9_.-]+$/u;
-// Keep this shape tied to packages/control-plane/core/template-repos.ts.
+// Keep this shape tied to packages/control-plane/core/workspace-repos.ts.
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 
 const NOT_GITHUB = 'only github.com repositories can be cloned';
 const EXTRA_PATH = 'drop the path after the repository name';
 const NOT_REPOSITORY = 'not a repository URL';
 
-/** The form has two repo inputs, but the saved template has one list. Keep
- * its count and clone-folder rules here so neither input accepts a draft the
- * server will reject. */
-export const MAX_TEMPLATE_REPOS = 16;
+/** Keep repository count and clone-folder rules here so the picker cannot
+ * submit a draft the server will reject. */
+export const MAX_WORKSPACE_REPOS = 16;
 
 export function repoBasenameCollision(
   repos: readonly string[],

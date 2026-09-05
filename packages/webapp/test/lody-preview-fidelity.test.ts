@@ -17,7 +17,7 @@
  * The second half pins the two exclusions §18 added. Both are the same shape —
  * a product rule that reaches into Lody's mounts and must not — and both are
  * invisible in any harness that does not render the surface inside
- * `.drive-shell`, which is every harness this repo had.
+ * `.app-shell`, which is every harness this repo had.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -79,12 +79,12 @@ describe("the preview loads the product's stylesheets and no others", () => {
     // Every structural class on the page, checked against the file that draws
     // it in the product. A preview that invents a box can hide a missing one.
     const owners: Record<string, string[]> = {
-      "drive-shell drive-shell--workspace": ["CloudApp.tsx"],
+      "app-shell app-shell--workspace": ["CloudApp.tsx"],
       "shell-nav": ["shell/ShellNav.tsx"],
       "shell-strip": ["shell/WorkspaceStrip.tsx"],
       "session-rail": ["shell/SessionRail.tsx"],
       "shell-rhead": ["shell/SessionRail.tsx"],
-      "drive-ws-frame": ["CloudApp.tsx"],
+      "app-workspace-frame": ["CloudApp.tsx"],
       "webapp-workspace-view": ["CloudApp.tsx"],
       "session-list session-list--vendor": ["shell/SessionRail.tsx"],
     };
@@ -150,12 +150,12 @@ describe("our own CSS stays out of Lody's two mounts", () => {
 
   it("compensation: every shell-scoped rule excludes the Lody mounts", () => {
     // `lody-compensation.css` exists to give NATIVE elements their user-agent
-    // defaults back after Tailwind's preflight. Scoped to `.drive-shell`, it
+    // defaults back after Tailwind's preflight. Scoped to `.app-shell`, it
     // was also giving them back to Lody's elements — and `.lody-surface` is a
-    // `.drive-shell` descendant in the product (`CloudApp.tsx`), which is
+    // `.app-shell` descendant in the product (`CloudApp.tsx`), which is
     // exactly the ancestor the file's own docblock warned about for `#root`.
     const css = read(src, "lody", "lody-compensation.css");
-    const shellScoped = selectorsIn(css).filter((selector) => selector.includes(".drive-shell"));
+    const shellScoped = selectorsIn(css).filter((selector) => selector.includes(".app-shell"));
     expect(shellScoped.length).toBeGreaterThan(0);
     for (const selector of shellScoped) {
       expect(selector, `${selector} may reach into the surface`).toContain(EXCLUSION);

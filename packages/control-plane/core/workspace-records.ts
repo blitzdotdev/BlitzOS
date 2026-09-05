@@ -1,6 +1,5 @@
 import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
-import { isMicrovmProviderId } from "./compute/microvm.js";
 import { manifestConnectionNames } from "./connections/manifest.js";
 import type {
   BoxPayloadOutcome,
@@ -39,9 +38,7 @@ export interface WorkspaceRow {
   created_at: number;
   updated_at: number;
   manifest: string | null;
-  files_ready: number;
   agent_rule_id: string | null;
-  recipe_id: string | null;
   org_id: string | null;
   owner_membership_id: string | null;
   owner_name?: string | null;
@@ -129,14 +126,6 @@ const retryActions = {
   error: "destroy",
 } satisfies Record<Phase, RetryAction>;
 
-function machineTypeIdForRow(row: MachineRow): string {
-  return row.machine_type_id === "unknown"
-      && row.vm_id !== null
-      && isMicrovmProviderId(row.vm_id)
-    ? "mv-legacy"
-    : row.machine_type_id;
-}
-
 /** The guest's last disk report, but only for a machine that has a volume to
  * report on. A machine with no volume measures its VM's root disk, which is
  * the provider's business and not a durable thing anybody keeps files on, so
@@ -150,7 +139,7 @@ export function machineView(row: MachineRow): MachineView {
   return {
     id: row.id,
     state: row.state,
-    machineTypeId: machineTypeIdForRow(row),
+    machineTypeId: row.machine_type_id,
     volumeId: row.volume_id,
     volumeUsedPercent: volumeUsedPercentForRow(row),
     payloadVersion: row.payload_reported,
@@ -203,9 +192,7 @@ export function workspaceView(projection: WorkspaceProjection): WorkspaceView {
   const view: WorkspaceView = {
     id: row.id,
     name: row.name ?? row.id,
-    machineTypeId: mine === undefined
-      ? row.default_machine_type_id
-      : machineTypeIdForRow(mine),
+    machineTypeId: mine?.machine_type_id ?? row.default_machine_type_id,
     phase,
     retryAction: retryActions[phase],
     canObserve: canOpen && phase === "ready",
@@ -237,7 +224,6 @@ export function workspaceView(projection: WorkspaceProjection): WorkspaceView {
     myRole: projection.myRole,
     members: canOpen ? members : [],
   };
-  if (row.recipe_id !== null) view.recipeId = row.recipe_id;
   return view;
 }
 

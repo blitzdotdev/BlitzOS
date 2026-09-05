@@ -10,11 +10,9 @@ import {
   createSessionPrincipalSource,
   installControlPlaneRoutes,
   isString,
-  MicrovmPoolProvider,
   maybeScheduleLazySweep,
   OrgComputeProviderResolver,
   runInvariantSweep,
-  runFileSyncSweep,
   runLeaseSweep,
   runOrphanSweep,
   runProviderCanary,
@@ -47,7 +45,6 @@ type WorkerBindings = Env & {
   OPERATOR_API_KEY: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
-  MICROVM_HOSTS: string;
   SESSION_TTL_DAYS: string;
   SIGNUP_MODE?: string;
   ALLOWED_EMAIL_DOMAINS?: string;
@@ -103,12 +100,7 @@ function providersFor(
     warn: (warning) => console.warn(JSON.stringify(warning)),
     workspaceCredentialPolicy,
   });
-  const microvm = new MicrovmPoolProvider(
-    env.MICROVM_HOSTS,
-    (tokenVar) => dynamicBinding(env, tokenVar),
-    { db },
-  );
-  const vmProviders = [...compute.descriptors(), microvm];
+  const vmProviders = compute.descriptors();
   return {
     vmRegistry: new VmProviderRegistry(
       vmProviders,
@@ -118,7 +110,6 @@ function providersFor(
     ),
     volume: { forOrg: (orgId, requiredSource) => compute.resolveVolume(orgId, requiredSource) },
     compute,
-    microvm,
     workspaceTunnels: workspaceTunnelsFromEnv(env),
     webAppAuth: workspaceWebAppAuthFromEnv(env),
   };
@@ -138,7 +129,6 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
     db,
     // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
     blobs: env.BOX_IMAGES as BlobStore,
-    fileObjects: env.BOX_IMAGES,
     // SAFETY: Authentication middleware installs the imported CryptoKey under $credentialMasterKey.
     credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
@@ -189,7 +179,6 @@ function runtimeForScheduled(
     db,
     // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
     blobs: env.BOX_IMAGES as BlobStore,
-    fileObjects: env.BOX_IMAGES,
     credentialMasterKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
@@ -218,7 +207,6 @@ function runtimeForScheduled(
   };
 }
 
-let lastSyncedHostsConfig: string | undefined;
 let checkedWorkspaceTunnelsConfig = false;
 
 // Cloud-VM providers have no proxyWebApp of their own: without configured
@@ -254,14 +242,6 @@ const app = teenyHono<WorkerEnv>(
   async (context) => {
     const runtime = runtimeFor(context);
     warnOnceIfWorkspaceTunnelsUnconfigured(runtime);
-    // Static host URLs only move when MICROVM_HOSTS changes, so sync once
-    // per isolate per config value instead of paying D1 on every request.
-    // SAFETY: teenyHono routes this app with the declared WorkerBindings environment.
-    const hostsConfig = (context.env as WorkerBindings).MICROVM_HOSTS;
-    if (hostsConfig !== lastSyncedHostsConfig) {
-      lastSyncedHostsConfig = hostsConfig;
-      await runtime.providers.microvm?.syncStaticHosts();
-    }
     maybeScheduleLazySweep(runtime, context.req.path);
   },
 );
@@ -312,15 +292,6 @@ export default {
           executionContext,
           await credentialMasterKeyFor(env.CRED_MASTER_KEY),
         );
-        // Only the hourly and daily schedules run the full janitor set. Any
-        // other tick (the */5 backstop today) converges folder sync alone, so
-        // renaming that cron can never silently multiply the heavy sweeps.
-        if (event.cron !== HOURLY_CRON && event.cron !== "0 3 * * *") {
-          const swept = await runFileSyncSweep(runtime);
-          console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
-          return;
-        }
-        await runtime.providers.microvm?.syncStaticHosts();
         await runSessionSweep(runtime);
         await runLeaseSweep(runtime);
         await runInvariantSweep(runtime);
@@ -335,8 +306,6 @@ export default {
           const probed = await runProviderCanary(runtime);
           console.log(JSON.stringify({ event: "provider_canary_tick", cron: event.cron, probed }));
         }
-        const swept = await runFileSyncSweep(runtime);
-        console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
       })(),
     );
   },

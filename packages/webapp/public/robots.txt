@@ -31,7 +31,6 @@ Disallow: /requests
 Disallow: /sessions
 Disallow: /volumes
 Disallow: /webapp-state
-Disallow: /workspace-recipes
 Disallow: /workspace-templates
 Disallow: /workspaces
 

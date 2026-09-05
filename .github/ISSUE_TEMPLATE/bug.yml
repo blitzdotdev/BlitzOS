@@ -11,7 +11,6 @@ body:
         - webapp
         - box
         - broker
-        - microvm-host
         - schema / fixtures
         - deploy tooling
         - docs
@@ -24,8 +23,8 @@ body:
       label: VM provider in use
       options:
         - Hetzner
-        - microVM (Firecracker)
-        - both
+        - AWS
+        - multiple
         - none / not applicable
     validations:
       required: true

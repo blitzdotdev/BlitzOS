@@ -15,6 +15,7 @@
  * | `cloudSurfaces` | S7-S10, IC60, IC83, IC84, IC88, T25 | Each one advertises Lody's cloud, Lody's Discord, Lody's desktop app, a settings screen we do not serve, or a team scope a one-member workspace cannot switch. |
  * | `languageService` | SP26 | A box runs no language service, so Go to Definition and Find References answer "Host language service does not support this file" for every identifier in every file. |
  * | `connectionStatus` | IC64, IC65 | BlitzOS reports connectivity itself, in the footer. Lody's own status chip, catch-up spinners and mobile banner describe the same outage in different words. |
+ * | `machineSelection` | the composer's machine chip | A BlitzOS workspace is one member, one machine, one box. The picker moves a session between the machines an account has paired, and here every option it can list is the machine already selected. Seam patch 24. |
  *
  * `connectionStatus` IS NOT A "NOT IN V1" DECISION, and it is the one row here
  * that is not. The other five name a surface BlitzOS does not serve yet. This
@@ -94,6 +95,22 @@ export interface LodyV1Scope {
    * session…", "Syncing changes…"), which the footer cannot replace.
    */
   readonly connectionStatus: boolean;
+  /**
+   * The composer's machine picker, on the desktop landing and in the mobile
+   * new-chat sheet. DELETED for v1, and like `connectionStatus` the reason is
+   * ownership rather than scope: a surface here is served by ONE box, which
+   * is the one machine its daemon reports, so the chip's list has exactly one
+   * entry and picking it changes nothing.
+   *
+   * What stays: the selection itself. `selectedMachineId` is synced from the
+   * chosen agent config and local project (`chat-landing.tsx`), not from the
+   * chip, so a session still runs where it always ran — nothing about the
+   * send path reads this flag.
+   *
+   * Flipping it on is what a host that pairs a member with several machines
+   * would do. That is the member-machines direction, not a v1 gap.
+   */
+  readonly machineSelection: boolean;
 }
 
 /**
@@ -110,6 +127,7 @@ export const LODY_V1_SCOPE = {
   cloudSurfaces: false,
   languageService: false,
   connectionStatus: false,
+  machineSelection: false,
 } as const satisfies LodyV1Scope;
 
 /**
@@ -169,6 +187,12 @@ export interface LodyV1SuppressionProps {
    * 2's `hideHeader`, and our rail passes the pill no state either way.
    */
   readonly hideConnectionStatus: boolean;
+  /**
+   * The composer's machine picker (seam patch 24). Passed to `ChatLanding`
+   * alone: the session composer has no machine chip, because a session is
+   * already bound to the machine it was started on.
+   */
+  readonly hideMachineSelector: boolean;
 }
 
 export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
@@ -181,4 +205,5 @@ export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
   hideTeamScope: !LODY_V1_SCOPE.cloudSurfaces,
   hideSettingsEntry: !LODY_V1_SCOPE.cloudSurfaces,
   hideConnectionStatus: !LODY_V1_SCOPE.connectionStatus,
+  hideMachineSelector: !LODY_V1_SCOPE.machineSelection,
 });

@@ -117,8 +117,8 @@ the `canary` environment:
 The base release id deliberately excludes payload-owned files, the gateway
 binary, the daemon, and the repository `env.defaults`. It includes the
 base-owned credential broker sources. The Dockerfile owns the box defaults and
-writes them to `/etc/blitz/env.defaults` for deployed hosts and microVM rootfs
-boots. A payload-only merge therefore reuses the current image. Its baked stamp
+writes a comment-only `/etc/blitz/env.defaults` for deployed hosts that still
+pass it with `--env-file`. A payload-only merge therefore reuses the current image. Its baked stamp
 names only the bytes in the baked payload and may name the payload current when
 that base was built. That is informational boot state, not the rollout pin. A
 fresh machine starts there and the updater converges it to
@@ -381,8 +381,7 @@ New VMs use that pin immediately. An existing cloud VM moves only after an
 owner or admin requests an update through the box-config v1 routes in
 `packages/control-plane/core/box-config.ts`; the host updater emitted by
 `packages/control-plane/core/bootstrap.ts` polls, replaces the container, and
-reports the installed ref. MicroVMs have no in-place updater and keep their old
-image until recreation.
+reports the installed ref.
 
 Updater state and downloaded releases live under `/opt/blitz/payload` in the
 container image layer, not on the `/var/lib/blitz` state volume. Restarting the
@@ -442,10 +441,10 @@ that machine has not reported since the payload channel shipped. Compare each
 `payloadVersion` with `BOX_PAYLOAD_VERSION`, and inspect the outcome/time before
 declaring a rollout complete.
 
-Image rollback is the same operation in reverse: restore the previous
-`BOX_IMAGE_*` values and redeploy. VMs created during the bad image window keep
-that image until recycled, while their in-place payload can still be rolled
-back independently.
+Image rollback starts by restoring the previous immutable `BOX_IMAGE_*` pins
+and redeploying. New VMs then use them; request another box update for each
+existing cloud VM that must move back. The in-place payload can be rolled back
+independently.
 
 This boot-time pinning is why the control plane gates some per-workspace
 behavior on the VM's creation time (the `BOX_IMAGE_*_SINCE_MS` constants in

@@ -8,7 +8,7 @@ import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
 import type { CreateVmInput, VmProvider } from "./compute/types.js";
 import { resolveWorkspacePlacement } from "./compute/workspace-placement.js";
-import { workspaceRepos } from "./template-repos.js";
+import { workspaceRepos } from "./workspace-repos.js";
 import {
   isWorkspaceAdmin,
   requireWorkspaceAdmin,
@@ -228,11 +228,7 @@ export async function provisionMachine(
   // machine by matching the capability hash, so one route serves both.
   const phoneHomeUrl = `${input.requestOrigin}/workspaces/${workspace.id}/phone-home/${capability}`;
 
-  const orgCapture = await first<{ usage_capture: number }>(runtime.db, {
-    q: "SELECT usage_capture FROM orgs WHERE id = ?1 LIMIT 1",
-    v: [orgId],
-  });
-  const shaping: BootShaping = { usageCapture: orgCapture?.usage_capture === 1 };
+  const shaping: BootShaping = {};
   const providerAptSetup = vmProvider.bootstrapAptSetup?.();
   if (providerAptSetup !== undefined) shaping.providerAptSetup = providerAptSetup;
   const repos = await workspaceRepos(runtime.db, workspace.id);

@@ -51,8 +51,8 @@ function sha256(bytes) {
 }
 
 const V1_RESTART_SERVICES = new Set([
-  "cloudflared", "dockerd", "dufs", "gateway", "lody-bridge", "lody-daemon",
-  "lody-projects", "lody-watchdog", "remote-control", "sshd", "ttyd", "watch",
+  "box-credential", "cloudflared", "dockerd", "dufs", "gateway", "lody-bridge",
+  "lody-daemon", "lody-projects", "lody-watchdog", "remote-control", "sshd", "ttyd", "watch",
 ]);
 
 // Frozen protocol 1 grammar. Unknown top-level fields are deliberately ignored.

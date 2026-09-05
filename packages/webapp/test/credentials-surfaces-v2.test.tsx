@@ -6,16 +6,11 @@ import type {
 } from '@blitzos/schema';
 import { act, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { ControlPlaneClient } from '../src/api.js';
-import type { WorkspaceDrawerSegment } from '../src/storage.js';
-import {
-  WorkspaceConnectionsPanel,
-  WorkspaceDrawer,
-} from '../src/WorkspaceDrawer.js';
+import type { ControlPlaneClient, MemberView } from '../src/api.js';
+import { WorkspaceConnectionsPanel } from '../src/WorkspaceDrawer.js';
 import { buildRows } from '../src/connections/WorkspaceProviderRows.js';
-import { WorkspaceRailStrip } from '../src/WorkspaceRailStrip.js';
 import { MembersPanel } from '../src/settings/MembersPanel.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
@@ -49,37 +44,11 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     recreateMachine: vi.fn(async () => { throw new Error('unused'); }),
     setMachineType: vi.fn(async () => { throw new Error('unused'); }),
     destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
-    listFolders: vi.fn(async () => ({ folders: [] })),
-    createFolder: vi.fn(async () => { throw new Error('unused'); }),
-    deleteFolder: vi.fn(async () => undefined),
-    createFolderGrant: vi.fn(async () => { throw new Error('unused'); }),
-    revokeFolderGrant: vi.fn(async () => undefined),
-    listFolderObjects: vi.fn(async () => ({ objects: [], cursor: null, truncated: false })),
-    downloadFolderObject: vi.fn(async () => new Blob()),
-    uploadFolderObject: vi.fn(async () => undefined),
-    listWorkspaceFolders: vi.fn(async () => ({ folders: [] })),
-    attachFolder: vi.fn(async () => { throw new Error('unused'); }),
-    detachFolder: vi.fn(async () => undefined),
-    renameFolder: vi.fn(async () => undefined),
-    setFolderOrgRole: vi.fn(async () => undefined),
     listAgentRules: vi.fn(async () => ({ rules: [] })),
     putAgentRule: vi.fn(async () => { throw new Error('unused'); }),
     deleteAgentRule: vi.fn(async () => undefined),
-    listWorkspaceTemplates: vi.fn(async () => ({ templates: [] })),
-    createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-    updateWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-    deleteWorkspaceTemplate: vi.fn(async () => undefined),
-    listRecipes: vi.fn(async () => ({ recipes: [] })),
-    getRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    createRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    updateRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    deleteRecipe: vi.fn(async () => undefined),
-    launchRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    getUsageCapture: vi.fn(async () => ({ enabled: false, folderId: null })),
     orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     billing: vi.fn(async () => { throw new Error('unused'); }),
-    putUsageCapture: vi.fn(async (enabled: boolean) => ({ enabled, folderId: null })),
-    deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new Error('unused'); }),
     createOrg: vi.fn(async () => { throw new Error('unused'); }),
@@ -224,7 +193,8 @@ function connectionsPanel(
 
 describe('v2 credential surfaces', () => {
   it('mints an email-pinned invite from the members panel and shows its link once', async () => {
-    const createInvite = vi.fn(async () => ({
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['createInvite']>>>();
+    const response = {
       invite: {
         id: 'invite-one',
         email: 'person@example.com',
@@ -236,9 +206,14 @@ describe('v2 credential surfaces', () => {
       },
       code: 'one-time-code',
       ttlDays: 7,
-    }));
+    };
+    const createInvite = vi.fn(() => request.promise);
     const view = await render(<MembersPanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
+    // The fields are the last row of the members card, revealed by the `+`.
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.settings-person-open')?.click();
+    });
     const input = view.container.querySelector<HTMLInputElement>('input[type="email"]')!;
     const setInputValue = Object.getOwnPropertyDescriptor(
       HTMLInputElement.prototype,
@@ -252,42 +227,98 @@ describe('v2 credential surfaces', () => {
         new Event('submit', { bubbles: true, cancelable: true }),
       );
     });
+    const add = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Adding…');
+    expect(add?.disabled).toBe(true);
+    expect(input.value).toBe('person@example.com');
+    request.resolve(response);
     await settle();
 
     expect(createInvite).toHaveBeenCalledWith({ email: 'person@example.com', role: 'member' });
-    expect(view.container.querySelector<HTMLInputElement>('[aria-label="Member invite link"]')?.value)
+    expect(view.container.querySelector<HTMLInputElement>('[aria-label="Invite link"]')?.value)
       .toBe(`${window.location.origin}/invite/one-time-code`);
     await view.unmount();
   });
 
-  /** Connections is the one section left in the sheet since the Files and
-   * teenyapps panels retired, so there is no segment strip to switch. */
-  it('hosts connections as its only section and draws no segment strip', async () => {
-    const wire = client();
-    const segment: WorkspaceDrawerSegment = 'connections';
-    const view = await render(
-      <WorkspaceDrawer
-        client={wire}
-        workspaceId="workspace-one"
-        mobile={false}
-        open
-        width={264}
-        segment={segment}
-        pendingRequests={[]}
-        onWidthChange={() => undefined}
-        onSegmentChange={() => undefined}
-        onResolveRequest={async () => undefined}
-      />,
+  it('shows a member role immediately and rolls it back on rejection', async () => {
+    const member: MemberView = {
+      id: 'membership-one',
+      email: 'ada@example.com',
+      name: 'Ada',
+      avatarUrl: null,
+      role: 'member',
+      status: 'active',
+    };
+    const request = deferred<{ member: MemberView }>();
+    const view = await render(<MembersPanel
+      client={client({
+        listMembers: vi.fn(async () => ({ members: [member] })),
+        updateMember: vi.fn(() => request.promise),
+      })}
+      admin
+      orgName="Example"
+      onLeft={() => undefined}
+    />);
+    await settle();
+
+    const role = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Role for ada@example.com"]',
     );
-    expect(view.container.querySelector('[role="tablist"]')).toBeNull();
-    expect(view.container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    const panels = [...view.container.querySelectorAll('[role="tabpanel"]')];
-    expect(panels).toHaveLength(1);
-    expect(panels[0]?.hasAttribute('hidden')).toBe(false);
-    expect(panels[0]?.querySelector('.workspace-connections')).not.toBeNull();
+    if (role === null) throw new Error('member role select is missing');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')
+        ?.set?.call(role, 'admin');
+      role.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(role.value).toBe('admin');
+    expect(role.disabled).toBe(true);
+    expect(view.container.textContent).toContain('Updating…');
+
+    request.reject(new Error('last admin is protected'));
+    await settle();
+    expect(role.value).toBe('member');
+    expect(role.disabled).toBe(false);
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('last admin is protected');
     await view.unmount();
   });
 
+  it('reconciles a member status from the update response without re-listing', async () => {
+    const member: MemberView = {
+      id: 'membership-one',
+      email: 'ada@example.com',
+      name: 'Ada',
+      avatarUrl: null,
+      role: 'member',
+      status: 'active',
+    };
+    const request = deferred<{ member: MemberView }>();
+    const listMembers = vi.fn(async () => ({ members: [member] }));
+    const view = await render(<MembersPanel
+      client={client({ listMembers, updateMember: vi.fn(() => request.promise) })}
+      admin
+      orgName="Example"
+      onLeft={() => undefined}
+    />);
+    await settle();
+
+    const disable = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Disable');
+    await act(async () => disable?.click());
+    expect(view.container.textContent).toContain('disabled');
+    expect(view.container.textContent).toContain('Updating…');
+
+    request.resolve({ member: { ...member, name: 'Ada Canonical', status: 'disabled' } });
+    await settle();
+    expect(view.container.textContent).toContain('Ada Canonical');
+    expect(view.container.textContent).toContain('Enable');
+    expect(listMembers).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  /** The pane panel a persisted layout still holds. The off-canvas sheet that
+   * used to host it is gone — connections are a tab of the workspace-details
+   * dialog — but the panel body is unchanged where it is still mounted. */
   it('reads a pending request as a connect prompt and dismisses it', async () => {
     const request: CredentialRequestView = {
       id: 'request-one',
@@ -301,16 +332,10 @@ describe('v2 credential surfaces', () => {
     function Harness() {
       const [requests, setRequests] = useState([request]);
       return (
-        <WorkspaceDrawer
+        <WorkspaceConnectionsPanel
           client={client()}
           workspaceId="workspace-one"
-          mobile={false}
-          open
-          width={264}
-          segment="connections"
           pendingRequests={requests}
-          onWidthChange={() => undefined}
-          onSegmentChange={() => undefined}
           onResolveRequest={async (entry, action) => {
             if (action === 'deny') await dismiss(entry.id);
             setRequests((current) => current.filter(({ id }) => id !== entry.id));
@@ -320,9 +345,8 @@ describe('v2 credential surfaces', () => {
     }
     const view = await render(<Harness />);
     await settle();
-    // The count lives on the strip's Connections button and the mobile sheet
-    // toggle, outside this panel; the sheet's own segment strip is gone with
-    // the other segments.
+    // No count rides on this panel: the ask pops `ConnectApprovalDialog` in
+    // the workspace, and nothing draws a pending badge any more.
     expect(view.container.querySelector('.workspace-pending-badge')).toBeNull();
     // The inbox states what an agent wanted, not a decision awaiting approval.
     expect(view.container.textContent).toContain('@github');
@@ -356,22 +380,6 @@ describe('v2 credential surfaces', () => {
       .toBe('Connect inbox failed to load.');
     await view.unmount();
   });
-
-  /** The panel hides an empty inbox, so the count on the rail icon is the only
-   * thing telling a person a request is waiting while the panel is closed. */
-  it('keeps the pending count on the rail while the panel is closed', async () => {
-    const view = await render(
-      <WorkspaceRailStrip
-        sidePanel={null}
-        connectionsOpen={false}
-        pendingRequestCount={2}
-        onQuickAction={() => undefined}
-      />,
-    );
-    expect(view.container.querySelector('.workspace-pending-badge')?.textContent).toBe('2');
-    await view.unmount();
-  });
-
 
 });
 
@@ -620,38 +628,6 @@ describe('workspace provider rows', () => {
     // A grant authorized in another tab used to leave this panel offering to
     // authorize it all over again.
     expect(listConnectionGrants.mock.calls.length).toBeGreaterThan(before);
-    await view.unmount();
-  });
-
-  it('opens the focused provider row and re-opens it on a fresh focus', async () => {
-    const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
-    });
-    function Harness({ at }: { at: number }) {
-      return (
-        <WorkspaceConnectionsPanel
-          client={wire}
-          workspaceId="workspace-one"
-          pendingRequests={[]}
-          workspaceConnections={[]}
-          connectionsFocus={{ provider: 'linear', at }}
-          onResolveRequest={async () => undefined}
-        />
-      );
-    }
-    const view = await render(<Harness at={1} />);
-    await settle();
-    // The agent's `blitz connections open linear` landed: the row is
-    // highlighted and its connect surface is already open.
-    expect(view.container.querySelector('.wsc-tile--focus')?.textContent)
-      .toContain('Linear');
-    expect(view.container.querySelector('input[name="token"]')).not.toBeNull();
-
-    await act(async () => click(buttonIn(view.container, 'Cancel')));
-    expect(view.container.querySelector('input[name="token"]')).toBeNull();
-    await act(async () => view.root.render(<Harness at={2} />));
-    await settle();
-    expect(view.container.querySelector('input[name="token"]')).not.toBeNull();
     await view.unmount();
   });
 

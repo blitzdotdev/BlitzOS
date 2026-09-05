@@ -9,8 +9,8 @@ import '../webapp-shell.css';
 import '../webapp-workspace.css';
 import '../webapp-select.css';
 import '../chat-panel.css';
-import '../files-drive.css';
-import '../drive-shell.css';
+import '../app-shell.css';
+import '../member-avatar.css';
 import '../strip-rail.css';
 import '../files.css';
 import '../confirmation-dialog.css';
@@ -21,13 +21,12 @@ import '../settings.css';
 import '../org-credentials.css';
 import '../invite-redeem.css';
 import './preview.css';
-import type { CredentialRequestView, FolderView, GrantProposalView } from '@blitzos/schema';
+import type { CredentialRequestView, GrantProposalView } from '@blitzos/schema';
 import { AgentRulesPicker } from '../AgentRulesPicker';
 import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { CreateWorkspaceDialog } from '../CreateWorkspaceDialog';
-import { ShareFolderDialog } from '../files/ShareFolderDialog';
-import { GrantApprovalDialog } from '../GrantApprovalDialog';
+import { AccessApprovalDialog } from '../AccessApprovalDialog';
 import { MyMachineDialog } from '../MyMachineDialog';
 import type { SettingsSection } from '../sessions-page-state';
 import { SettingsHeader, SettingsPage } from '../SettingsPage';
@@ -36,10 +35,9 @@ import { WorkspaceConnectionsPanel } from '../WorkspaceConnectionsPanel';
 import { WorkspaceDetailsDialog, type WorkspaceDetailsTab } from '../WorkspaceDetailsDialog';
 import {
   adminViewer,
-  grantProposals,
+  accessProposals,
   listMachineTypesFixture,
   memberViewer,
-  previewFolder,
   previewWorkspace,
   wantedRequestsSeed,
 } from './fixtures';
@@ -94,10 +92,6 @@ function GalleryHeader() {
 /** One full settings page in a bounded frame, left-rail navigation live. */
 function SettingsFrame({ viewer }: { viewer: TenantMe }) {
   const [section, setSection] = useState<SettingsSection>('profile');
-  const [reviewing, setReviewing] = useState<GrantProposalView | null>(null);
-  // Requests → Review opens the grant-approval dialog on the pending
-  // proposal, as the shell does; a decision takes it off the list.
-  const pending = grantProposals.filter(({ state }) => state === 'pending');
   return (
     <div className="pv-frame">
       <div className="settings-shell">
@@ -105,28 +99,48 @@ function SettingsFrame({ viewer }: { viewer: TenantMe }) {
         <SettingsPage
           client={previewClient}
           viewer={viewer}
-          pendingGrantProposals={pending}
           section={section}
           onNavigate={setSection}
-          onOpenWorkspace={noop}
-          onReviewProposal={(id) => setReviewing(pending.find((row) => row.id === id) ?? null)}
           onSignOut={signOutSlowly}
           onLeftOrg={noop}
           onSwitchOrg={noop}
           onCreateOrg={noop}
         />
       </div>
+    </div>
+  );
+}
+
+/** The grant-approval dialog, opened on its own. It hung off the Requests
+ * panel's Review until that panel went; the shell raises it from an agent's
+ * ask now, and the gallery raises it from a button. */
+function AccessApprovalSection() {
+  const [reviewing, setReviewing] = useState<GrantProposalView | null>(null);
+  const pending = accessProposals.filter(({ state }) => state === 'pending');
+  return (
+    <Section
+      title="Access approval dialog"
+      caption="One pending grant proposal, as a member is asked to decide it."
+    >
+      <div className="pv-row">
+        <button
+          className="webapp-action"
+          type="button"
+          disabled={pending.length === 0}
+          onClick={() => setReviewing(pending[0] ?? null)}
+        >Review a proposal…</button>
+      </div>
       {reviewing !== null && (
-        <GrantApprovalDialog
+        <AccessApprovalDialog
           client={previewClient}
           proposal={reviewing}
-          viewer={{ membershipId: viewer.membership.id, orgName: viewer.org.name }}
+          viewer={{ membershipId: adminViewer.membership.id, orgName: adminViewer.org.name }}
           workspaces={[{ id: previewWorkspace.id, name: previewWorkspace.title, members: previewWorkspace.members }]}
           onClose={() => setReviewing(null)}
           onResolved={() => setReviewing(null)}
         />
       )}
-    </div>
+    </Section>
   );
 }
 
@@ -148,7 +162,7 @@ function WorkspaceDetailsSection() {
           client={previewClient}
           workspace={previewWorkspace}
           listMachineTypes={listMachineTypesFixture}
-          refreshWorkspaces={() => undefined}
+          commitWorkspaceMutation={() => undefined}
           initialTab={tab}
           viewerMembershipId="m-june"
           orgName="Acme Robotics"
@@ -178,6 +192,7 @@ function MyMachineSection() {
           workspace={previewWorkspace}
           membershipId="m-june"
           listMachineTypes={listMachineTypesFixture}
+          commitWorkspaceMutation={() => undefined}
           onClose={() => setOpen(false)}
         />
       )}
@@ -197,8 +212,6 @@ function CreateWorkspaceSection() {
       </div>
       {open && (
         <CreateWorkspaceDialog
-          busy={false}
-          error={null}
           orgName="Acme Robotics"
           orgId="org-acme"
           admin
@@ -279,48 +292,19 @@ function DrawerConnectionsSection() {
   );
 }
 
-function ShareFolderSection() {
-  const [folder, setFolder] = useState<FolderView | null>(null);
-  const [snack, setSnack] = useState<ReactNode>(null);
-  return (
-    <Section
-      title="Share folder dialog"
-      caption="Drive sharing: owner view of a folder with org-wide access and two grants."
-    >
-      <div className="pv-row">
-        <button className="webapp-action" type="button" onClick={() => setFolder(previewFolder())}>
-          Share “Design reviews”…
-        </button>
-      </div>
-      {snack !== null && <p className="pv-note" role="status">{snack}</p>}
-      {folder !== null && (
-        <ShareFolderDialog
-          client={previewClient}
-          folder={folder}
-          viewerEmail="june@acme.dev"
-          orgName="Acme Robotics"
-          onClose={() => setFolder(null)}
-          onChanged={async () => setFolder(previewFolder())}
-          onSnack={setSnack}
-        />
-      )}
-    </Section>
-  );
-}
-
 function Gallery() {
   return (
     <div className="pv-page">
       <GalleryHeader />
       <Section
         title="Settings page (admin)"
-        caption="All eight panels behind a live left rail: Profile, Members, Invites, Connections, Credentials, Compute, Requests, Usage."
+        caption="All five panels behind a live left rail: Profile, Members, Connections, Credentials, Compute."
       >
         <SettingsFrame viewer={adminViewer} />
       </Section>
       <Section
         title="Settings page (member view)"
-        caption="The same page as a non-admin: Invites, Compute and Usage disappear, Members loses its controls."
+        caption="The same page as a non-admin: Compute disappears, and Members keeps the list and the danger zone with no invite row."
       >
         <SettingsFrame viewer={memberViewer} />
       </Section>
@@ -328,9 +312,9 @@ function Gallery() {
       <MyMachineSection />
       <CreateWorkspaceSection />
       <ConfirmationSection />
+      <AccessApprovalSection />
       <AgentRulesSection />
       <DrawerConnectionsSection />
-      <ShareFolderSection />
     </div>
   );
 }

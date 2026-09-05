@@ -973,7 +973,7 @@
   color: var(--faint);
 }
 
-/* ================= blitz additions: identity + drive surfaces ============ */
+/* ================= blitz additions: identity + workspace surfaces ======== */
 
 .terminal-read-only-indicator {
   position: absolute;
@@ -1253,21 +1253,16 @@
   display: contents;
 }
 
-/* Our Connections panel as a tab of Lody's side panel (seam patch 23): the
- * panel body scrolls inside the tab, as Files and All Changes do. */
+/* Our Browser panel as a tab of Lody's side panel (seam patch 23): the panel
+ * body scrolls inside the tab, as Files and All Changes do. */
 .webapp-side-panel-host {
   height: 100%;
   min-height: 0;
   overflow: auto;
 }
 
-.webapp-rail-strip__rule {
-  width: 20px;
-  height: 1px;
-  flex: none;
-  margin: 4px 0;
-  background: var(--rule);
-}
+/* The separator above Connections went with it: the strip is four session
+   panels now, and a rule inside one group divides nothing. */
 
 .webapp-rail-strip__icon {
   width: 17px;

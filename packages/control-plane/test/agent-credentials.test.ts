@@ -34,7 +34,7 @@ async function createWorkspaceWith(
   body: Record<string, unknown> = {},
 ): Promise<WorkspaceView> {
   const created = await appRequest(app, "/workspaces", {
-    ...json({ machineTypeId: "small", ...body }),
+    ...json({ defaultMachineTypeId: "small", ...body }),
     headers: { Cookie: cookie, "Content-Type": "application/json" },
   });
   expect(created.status).toBe(201);

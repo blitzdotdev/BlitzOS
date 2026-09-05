@@ -31,7 +31,6 @@ in front of the Worker, or restrict sign-in at Google's side with an
 | `HETZNER_API_TOKEN` | Worker | Full VM and volume lifecycle in its Hetzner project — create, list, and **delete**. Use a dedicated project holding nothing but BlitzOS workspaces, so the blast radius is the fleet, not your other infrastructure. |
 | `GOOGLE_CLIENT_SECRET` | Worker | Enables OAuth token exchange for your client ID; combined with a registered redirect an attacker can phish sign-ins. Rotate in the Google console. |
 | `OPERATOR_API_KEY` | Worker | Only gates the one-time database-migration bootstrap URL. On a fresh deployment it authorizes nothing. |
-| `MICROVM_*_TOKEN` | Worker + host | Bearer token for a Firecracker host agent: create and destroy microVMs on that host. Rotate by updating the Worker secret and the host's token file together. |
 
 Worker secrets are set with `wrangler secret put`; updating one creates a new
 deployment, and running isolates drain.
@@ -47,9 +46,9 @@ Treat a workspace as a single trust boundary. Inside it:
 - anyone with an interactive terminal or agent session can act with every
   credential the workspace holds.
 
-Isolation is per-VM, not per-process: the boundary is the single-tenant VM
-(or your Firecracker guest), never the container. Scope what you put into a
-workspace accordingly — a shared workspace is full-trust for all its members.
+Isolation is per-VM, not per-process: the boundary is the single-tenant VM,
+never the container. Scope what you put into a workspace accordingly — a
+shared workspace is full-trust for all its members.
 
 ## Provisioning invariants
 

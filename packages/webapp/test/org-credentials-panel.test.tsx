@@ -15,6 +15,10 @@ const viewer: TenantMe = {
   organizations: [],
 };
 
+/** The same person with the whole store in front of them: an admin reads
+ * every credential, so the panel gives them one list instead of the split. */
+const adminViewer: TenantMe = { ...viewer, membership: { id: 'membership-1', role: 'admin' } };
+
 const stripe: OrgCredentialView = {
   id: 'cred-1',
   name: 'STRIPE_API_KEY',
@@ -91,20 +95,33 @@ function buttonNamed(root: ParentNode, text: string): HTMLButtonElement {
 }
 
 describe('OrgCredentialsPanel', () => {
-  it('lists names, comments, creators and grant chips — never a value', async () => {
+  it("splits a member's own credentials from the ones shared with them", async () => {
     const view = await render(<OrgCredentialsPanel client={client()} viewer={viewer} />);
     await settle();
 
-    expect(view.container.textContent).toContain('STRIPE_API_KEY');
-    expect(view.container.textContent).toContain('test-mode key, safe for CI');
-    expect(view.container.textContent).toContain('added by you');
-    expect(view.container.textContent).toContain('added by Dana Reyes');
-    // Grant chips name the kind, the receiver and the level, in words.
-    const chips = [...view.container.querySelectorAll('.org-grant-chip')].map((chip) => chip.textContent);
-    expect(chips).toEqual(['workspace payments · read', 'member You · write']);
-    // A plain reader's row has no audience and no controls.
+    // MINE: the viewer created STRIPE_API_KEY, and an access row names their
+    // membership. Either fact alone would put it here.
+    const mine = field<HTMLElement>(view.container, 'section[aria-label="My credentials"]');
+    expect(field(mine, '.cfg-title').textContent).toBe('My credentials · 1');
+    expect(mine.textContent).toContain('STRIPE_API_KEY');
+    expect(mine.textContent).toContain('test-mode key, safe for CI');
+    // SHARED: a plain reader's row — readable, audience withheld — reaches the
+    // viewer through something other than their own name.
+    const shared = field<HTMLElement>(view.container, 'section[aria-label="Shared credentials"]');
+    expect(field(shared, '.cfg-title').textContent).toBe('Shared credentials · 1');
+    expect(shared.textContent).toContain('SENTRY_DSN');
+    // A SHARED row names who gave it; a row of the viewer's own would only
+    // ever say "you", so the owner rides one side of the split and not both.
+    expect(shared.textContent).toContain('added by');
+    expect(mine.textContent).not.toContain('added by');
+    // No audience on the wire means no faces, no chevron and no controls.
+    expect(shared.querySelector('.org-access-face')).toBeNull();
+    expect(shared.querySelector('.org-access-chevron')).toBeNull();
     expect(view.container.querySelector('button[aria-label="Rotate SENTRY_DSN"]')).toBeNull();
     expect(view.container.querySelector('button[aria-label="Rotate STRIPE_API_KEY"]')).not.toBeNull();
+    // One workspace and one member: two stacks of one, and no counter.
+    expect(mine.querySelectorAll('.org-access-class')).toHaveLength(2);
+    expect(mine.querySelector('.org-access-more')).toBeNull();
     // Write-only: the add field exists, but nothing reads a value back.
     const value = field<HTMLInputElement>(view.container, '[aria-label="Credential value"]');
     expect(value.type).toBe('password');
@@ -112,7 +129,23 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
-  it('adds a credential with a picked grant set, and warns on an org-wide write', async () => {
+  it('gives an admin one list, with the owner on every row', async () => {
+    const view = await render(<OrgCredentialsPanel client={client()} viewer={adminViewer} />);
+    await settle();
+
+    expect(view.container.querySelector('section[aria-label="My credentials"]')).toBeNull();
+    expect(view.container.querySelector('section[aria-label="Shared credentials"]')).toBeNull();
+    const stored = field<HTMLElement>(view.container, 'section[aria-label="Stored"]');
+    expect(field(stored, '.cfg-title').textContent).toBe('Stored · 2');
+    expect(stored.textContent).toContain('added by you');
+    expect(stored.textContent).toContain('added by Dana Reyes');
+    // An admin reads the whole store, so an empty audience is still theirs to
+    // edit — the withheld list is a member's signal, not an admin's.
+    expect(view.container.querySelector('button[aria-label="Rotate SENTRY_DSN"]')).not.toBeNull();
+    await view.unmount();
+  });
+
+  it('adds a credential with a picked access list, and warns on an org-wide write', async () => {
     const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
     const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
     await settle();
@@ -123,28 +156,42 @@ describe('OrgCredentialsPanel', () => {
       typeInto(field(form, '[aria-label="Credential value"]'), 'postgres://secret');
       typeInto(field(form, '[aria-label="Credential comment"]'), 'staging postgres');
     });
-    // A workspace grant: the picker lists the org's workspaces by name.
-    const workspaceSelect = field<HTMLSelectElement>(form, '[aria-label="Grant workspace"]');
+    // THE PICKER IS BEHIND THE `+`, and the list is what a member reads first.
+    expect(form.querySelector('[aria-label="Access subject kind"]')).toBeNull();
+    const openPicker = () => field<HTMLButtonElement>(form, 'button[aria-label="Add access"]').click();
+
+    // A workspace: the picker lists the org's workspaces by name.
+    await act(async () => openPicker());
+    const workspaceSelect = field<HTMLSelectElement>(form, '[aria-label="Access workspace"]');
     expect([...workspaceSelect.options].map((option) => option.textContent)).toEqual(['payments', 'api-v2']);
     await act(async () => choose(workspaceSelect, 'workspace-two'));
-    await act(async () => buttonNamed(form, 'Add grant').click());
-    // A member grant: only active members are offered, and the viewer is "You".
-    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Grant subject kind"]'), 'membership'));
-    const memberSelect = field<HTMLSelectElement>(form, '[aria-label="Grant member"]');
+    await act(async () => buttonNamed(form, 'Add access').click());
+    // Adding closes the picker again: it is a step, not a permanent fixture.
+    expect(form.querySelector('[aria-label="Access subject kind"]')).toBeNull();
+
+    // A member: only active members are offered, and the viewer is "You".
+    await act(async () => openPicker());
+    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Access subject kind"]'), 'membership'));
+    const memberSelect = field<HTMLSelectElement>(form, '[aria-label="Access member"]');
     expect([...memberSelect.options].map((option) => option.textContent)).toEqual(['You', 'Dana Reyes']);
     await act(async () => choose(memberSelect, 'membership-2'));
-    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Grant access"]'), 'write'));
-    await act(async () => buttonNamed(form, 'Add grant').click());
+    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Access level"]'), 'write'));
+    await act(async () => buttonNamed(form, 'Add access').click());
     expect(form.textContent).toContain('api-v2');
     expect(form.textContent).toContain('Dana Reyes');
 
-    // Org-wide read is quiet; org-wide write is said out loud (decision 3).
-    expect(form.querySelector('.org-grants-warning')).toBeNull();
-    await act(async () => field<HTMLInputElement>(form, 'input[type="checkbox"]').click());
-    expect(form.querySelector('.org-grants-warning')).toBeNull();
+    // Everyone in the org is a row like the others, not a checkbox above them:
+    // the broadest audience of all belongs in the list that states the
+    // audience. Org-wide read is quiet; org-wide write is said out loud
+    // (decision 3).
+    expect(form.querySelector('.org-access-warning')).toBeNull();
+    await act(async () => openPicker());
+    await act(async () => choose(field<HTMLSelectElement>(form, '[aria-label="Access subject kind"]'), 'org'));
+    await act(async () => buttonNamed(form, 'Add access').click());
+    expect(form.querySelector('.org-access-warning')).toBeNull();
     const orgToggle = field<HTMLElement>(form, '[aria-label="Org-wide access"]');
     await act(async () => buttonNamed(orgToggle, 'write').click());
-    expect(form.querySelector('.org-grants-warning')?.textContent).toBe('Anyone in the org can rotate this.');
+    expect(form.querySelector('.org-access-warning')?.textContent).toBe('Anyone in the org can rotate this.');
 
     await act(async () => buttonNamed(form, 'Save credential').click());
     expect(putOrgCredential).toHaveBeenCalledWith({
@@ -162,7 +209,7 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
-  it('rotates with a write-only value field and touches neither comment nor grants', async () => {
+  it('rotates with a write-only value field and touches neither comment nor access', async () => {
     const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
     const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
     await settle();
@@ -172,9 +219,10 @@ describe('OrgCredentialsPanel', () => {
     const name = field<HTMLInputElement>(form, '[aria-label="Credential name"]');
     expect(name.value).toBe('STRIPE_API_KEY');
     expect(name.readOnly).toBe(true);
-    // No comment field and no grant picker: rotation changes the secret only.
+    // No comment field and no access card: rotation changes the secret only.
     expect(form.querySelector('[aria-label="Credential comment"]')).toBeNull();
-    expect(form.querySelector('.org-grants-editor')).toBeNull();
+    expect(form.querySelector('.org-access-editor')).toBeNull();
+    expect(form.textContent).not.toContain('Members with access');
 
     await act(async () => typeInto(field(form, '[aria-label="Credential value"]'), 'sk_live_new'));
     await act(async () => buttonNamed(form, 'Rotate').click());
@@ -197,24 +245,50 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
-  it('edits a grant set and saves the whole audience', async () => {
+  it('expands a row in place from the chevron, and saves the whole audience', async () => {
     const replaceOrgCredentialGrants = vi.fn().mockResolvedValue({ credential: stripe });
     const view = await render(<OrgCredentialsPanel client={client({ replaceOrgCredentialGrants })} viewer={viewer} />);
     await settle();
 
-    await act(async () => field<HTMLButtonElement>(view.container, 'button[aria-label="Edit grants for STRIPE_API_KEY"]').click());
-    const editor = field<HTMLElement>(view.container, '[aria-label="Grants for STRIPE_API_KEY"]');
+    // COLLAPSED BY DEFAULT: the faces are the whole answer until asked.
+    expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).toBeNull();
+    const chevron = field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Show who has access to STRIPE_API_KEY"]');
+    expect(chevron.getAttribute('aria-expanded')).toBe('false');
+    await act(async () => chevron.click());
+    expect(chevron.getAttribute('aria-expanded')).toBe('true');
+
+    const editor = field<HTMLElement>(view.container, '[aria-label="Access to STRIPE_API_KEY"]');
     expect(editor.textContent).toContain('payments');
-    // Widen the workspace to write, and drop the viewer's own grant.
+    // The expanded rows carry the same marks the collapsed stack drew, and
+    // still print the kind in words: a shape alone may not say member.
+    expect(editor.querySelectorAll('.org-access-row .org-access-face')).toHaveLength(2);
+    expect([...editor.querySelectorAll('.org-access-row .machine-chip')].map((chip) => chip.textContent))
+      .toEqual(['workspace', 'member']);
+
+    // Widen the workspace to write, and drop the viewer's own access.
     const level = field<HTMLElement>(editor, '[aria-label="Access for payments"]');
     await act(async () => buttonNamed(level, 'write').click());
-    await act(async () => field<HTMLButtonElement>(editor, 'button[aria-label="Remove grant for You"]').click());
-    await act(async () => buttonNamed(editor, 'Save grants').click());
+    await act(async () => field<HTMLButtonElement>(editor, 'button[aria-label="Remove access for You"]').click());
+    await act(async () => buttonNamed(editor, 'Save access').click());
     expect(replaceOrgCredentialGrants).toHaveBeenCalledWith('STRIPE_API_KEY', {
       grants: [{ subjectKind: 'workspace', subjectId: 'workspace-one', access: 'write' }],
     });
     await settle();
-    expect(view.container.querySelector('[aria-label="Grants for STRIPE_API_KEY"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it('closes the access rows from the same chevron that opened them', async () => {
+    const view = await render(<OrgCredentialsPanel client={client()} viewer={viewer} />);
+    await settle();
+
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Show who has access to STRIPE_API_KEY"]').click());
+    expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).not.toBeNull();
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Hide who has access to STRIPE_API_KEY"]').click());
+    expect(view.container.querySelector('[aria-label="Access to STRIPE_API_KEY"]')).toBeNull();
     await view.unmount();
   });
 

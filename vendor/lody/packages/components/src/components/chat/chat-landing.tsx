@@ -421,6 +421,20 @@ interface ChatLandingProps {
    * Off by default, so every upstream call site keeps the banner.
    */
   hideConnectionStatus?: boolean;
+  /**
+   * Drop the machine picker from both composers — the desktop chip and the
+   * mobile new-chat sheet's machine row.
+   *
+   * For a host that binds a workspace to exactly one machine. The picker is
+   * how a member moves a session between the machines their account has
+   * paired; where there is only ever one, the chip is a control whose every
+   * option is the machine already selected. Selection itself is unaffected:
+   * it keeps flowing from the chosen agent config and local project, which is
+   * where `selectedMachineId` is synced from anyway.
+   *
+   * Off by default, so every upstream call site keeps both pickers.
+   */
+  hideMachineSelector?: boolean;
   resetDraftKey?: string;
   resetDraftOnKeyChange?: boolean;
 }
@@ -602,6 +616,7 @@ function WorkspaceChatLanding({
   hideAgentRoles = false,
   hideSettingsEntry = false,
   hideConnectionStatus = false,
+  hideMachineSelector = false,
   resetDraftKey,
   resetDraftOnKeyChange = true,
 }: ChatLandingProps) {
@@ -3768,15 +3783,17 @@ function WorkspaceChatLanding({
       }
     >
       <div className="flex w-full min-w-0 items-center gap-2">
-        <DesktopMachineMenu
-          value={desktopSelectedMachineId}
-          visibleLocalMachineId={visibleLocalMachineId}
-          selectedLabel={desktopSelectedMachineLabel}
-          options={desktopMachineOptions}
-          onChange={handleMachineChange}
-          disabled={isInitialDataLoading}
-          onAddMachine={handleAddMachine}
-        />
+        {hideMachineSelector ? null : (
+          <DesktopMachineMenu
+            value={desktopSelectedMachineId}
+            visibleLocalMachineId={visibleLocalMachineId}
+            selectedLabel={desktopSelectedMachineLabel}
+            options={desktopMachineOptions}
+            onChange={handleMachineChange}
+            disabled={isInitialDataLoading}
+            onAddMachine={handleAddMachine}
+          />
+        )}
         <UnifiedProjectSelectorView
           value={desktopProjectSelection}
           onChange={handleDesktopProjectChange}
@@ -3894,7 +3911,7 @@ function WorkspaceChatLanding({
     if (!selectedMachineId) return null;
     return mobileSheetMachineOptions.find((opt) => opt.value === selectedMachineId)?.label ?? null;
   }, [mobileSheetMachineOptions, selectedMachineId]);
-  const mobileSheetMachineNode = (
+  const mobileSheetMachineNode = hideMachineSelector ? null : (
     <MobileInlinePicker<MachineId>
       id="mobile-sheet-machine"
       value={selectedMachineId}

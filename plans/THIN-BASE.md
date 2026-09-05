@@ -23,8 +23,8 @@ Recorded from the discussion on 2026-09-05.
 
 ## Deviations from the draft
 
-- Features travel through box-config only. Deployed phone-home guests reject
-  an added response field.
+- Features travel through box-config only: fewer parts, one writer, one reader,
+  one file.
 - Updater state and releases live in the container image layer. The `blitz`
   user cannot rename a directory that root executes from.
 - Protocol 2 boxes refuse protocol 1 releases.
@@ -158,17 +158,15 @@ Adding or redefining a service no longer rebuilds the base image.
 The image now declares `BLITZ_STATE_DIR`, `S6_KEEP_ENV`, `BLITZ_UID`, and
 `BLITZ_GID` with Docker `ENV`. `BLITZ_CP_ORIGIN` stays unset, so
 `blitz-init-state` acts only when an operator deliberately supplies it. The
-repository `env.defaults` retains the broker, control-plane, microVM-host, and
-webapp documentation but has no box section and is no longer a base-image
-input.
+repository `env.defaults` retains the broker, control-plane, and webapp
+documentation but has no box section and is no longer a base-image input.
 
 Deployed phase-1 hosts are the compatibility boundary. Their existing
 `blitz-box-run` still extracts `/etc/blitz/env.defaults` from every candidate
 image and passes it to Docker with `--env-file`; deleting that path would stop
-every such host from starting a new container. `microvm-init` also sources that
-file when an OCI image becomes a rootfs. The Dockerfile therefore writes the
-same four assignments to the file with one `printf`. The file and Docker `ENV`
-must stay equal. This move deliberately does not edit either reader.
+every such host from starting a new container. The Dockerfile therefore writes
+a comment-only file, which Docker accepts as an env file. This move deliberately
+does not edit the deployed host reader.
 
 Box config v1 has an optional `features` object, currently
 `{lodySessions: boolean}`. The Worker always emits it and treats only
@@ -190,10 +188,9 @@ four Lody launchers wait for the file, match one exact record with `grep`, and
 idle with `sleep infinity` while the flag is off. They never evaluate the file
 as shell.
 
-Phone-home is unchanged. The deployed microVM guest parser accepts only its
-exact three- or five-field response, while both box-config consumers already
-ignore unknown top-level members. Features therefore travel through
-box-config only.
+Phone-home stays unchanged with its three-token response. Both box-config
+consumers ignore unknown top-level members. Features travel through box-config
+only: fewer parts, one writer, one reader, one file.
 
 Before the updater has fetched one valid box-config in its process lifetime,
 a missing origin or bearer retries after 15 seconds. After first contact it

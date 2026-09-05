@@ -68,7 +68,7 @@ export interface WorkspaceVolumeRequest {
  *
  * Returns null when the provider cannot place one: either it has no volumes,
  * or it cannot name a location for the machine type. Both are ordinary
- * answers, not errors — a microVM workspace simply has no volume.
+ * answers, not errors — a provider without volume support has no volume.
  *
  * The provider is asked for the location rather than parsing the machine type
  * here, because the id format belongs to the provider (`cx23@hel1` is a

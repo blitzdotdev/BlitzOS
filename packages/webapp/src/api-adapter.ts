@@ -68,7 +68,6 @@ type WebAppWireClient = Pick<
   | "poll"
   | "create"
   | "destroy"
-  | "launchRecipe"
   | "listMachineTypes"
   | "listVolumes"
 >;
@@ -189,13 +188,6 @@ export class ApiAdapter {
 
   public async deleteWorkspace(id: string): Promise<void> {
     await this.call(() => this.client.destroy(id));
-  }
-
-  /** A recipe launch answers with the create-workspace envelope, so it maps
-   * through the same wire adapter and rides the same navigation flow. */
-  public async launchRecipe(recipeId: string): Promise<V2WorkspaceRecord> {
-    const response = await this.call(() => this.client.launchRecipe(recipeId));
-    return workspaceFromWire(response.workspace);
   }
 
   public listMachineTypes(): Promise<ListMachineTypesResponse> {

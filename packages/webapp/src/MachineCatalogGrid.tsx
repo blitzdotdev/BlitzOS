@@ -33,7 +33,6 @@ export function monthlyPriceLabel(price: MachinePrice | null | undefined): strin
 
 function machineGroup(machine: MachineType): string {
   const location = machine.location || machine.id.split('@').at(-1) || 'unknown';
-  if (machine.providerId === 'microvm') return 'Local lab';
   if (machine.providerId === 'hetzner') return `Hetzner · ${location}`;
   return `${machine.providerId} · ${location}`;
 }

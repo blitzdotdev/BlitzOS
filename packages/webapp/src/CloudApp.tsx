@@ -9,17 +9,12 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { createClient, type WebDAVClient } from 'webdav';
-import {
-  ApiAdapter,
-  ApiError,
-  type V2WorkspaceRecord,
-} from './api-adapter';
+import { ApiAdapter, ApiError, type TenantMe } from './api-adapter';
 import type { ControlPlaneClient } from './api';
 import type { CredentialRequestView } from '@blitzos/schema';
 import { SPAWN_SESSION_LABELS, type SpawnSessionType } from './NewTabMenu';
 import type { WebAppTabModel } from './SessionTypeIcon';
-import { GenericProviderIcon } from './WebAppIcons';
-import type { DriveRailSession } from './shell/rail-sessions';
+import type { RailSession } from './shell/rail-sessions';
 import { workspaceStatusLine } from './shell/workspace-status-line';
 import { useBoxGatewayHealth } from './box-gateway-health';
 import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
@@ -36,9 +31,9 @@ import {
 } from './mobile-webapp';
 import { PasteCodeModal } from './shell/PasteCodeModal';
 import { ShellDialogs, type WebAppConfirmation } from './shell/ShellDialogs';
-import { GrantApprovalDialog } from './GrantApprovalDialog';
-import { useGrantProposals } from './use-grant-proposals';
-import type { WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
+import { AccessApprovalDialog } from './AccessApprovalDialog';
+import { useAccessProposals } from './use-access-proposals';
+import type { ConnectionsFocus, WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
 import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { NewTabControl } from './shell/NewTabControl';
@@ -48,7 +43,6 @@ import { BrowserPanel } from './browser/BrowserPanel';
 import { browserFrameUrl, browserTargetFromFocus, type BrowserTarget } from './browser/browser-target';
 import {
   BROWSER_SIDE_PANEL_ID,
-  CONNECTIONS_SIDE_PANEL_ID,
   sidePanelQuickActionIcon,
   useSidePanelHostState,
   type SessionHostSidePanelTab,
@@ -74,7 +68,6 @@ import { LODY_SESSIONS_ENABLED } from './lody/flag';
 import { useSharedSessions } from './lody/use-shared-sessions';
 import type { LodySessionSurfaceApi } from './lody/SessionSurface';
 import {
-  drivePath,
   parseAppRoute,
   settingsPath,
   workspacePath,
@@ -96,13 +89,11 @@ import {
   appendTab,
   closeTab as closePaneTab,
   paneRegions,
-  panelTab,
   regionActiveId,
   renameTab,
-  showPanelTab,
   withRegionActiveId,
 } from './workspace-panes';
-import { WorkspaceConnectionsPanel } from './WorkspaceConnectionsPanel';
+import { ConnectApprovalDialog } from './ConnectApprovalDialog';
 import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
@@ -113,6 +104,7 @@ import {
   initialWorkspaceStore,
   selectControllableWorkspaceId,
   workspaceReducer,
+  type WorkspaceAction,
 } from './workspace-store';
 import {
   isPreviewPath,
@@ -127,7 +119,6 @@ import { LoginForm } from './components/LoginForm';
 import { CreateOrgPage } from './components/CreateOrgPage';
 import type { IdentityRecord } from './protocol';
 import { FILES_DAV_ROOT, type EndpointResolver } from './resolver';
-import { type ConnectionsPanelFocus, WorkspaceDrawer } from './WorkspaceDrawer';
 import {
   rememberWorkspaceEndpoints,
   type WorkspaceEndpoints,
@@ -140,6 +131,9 @@ import {
 import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
 import { useWorkspaceConnectionsFocus } from './use-workspace-connections-focus';
 import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
+import { ErrorReporterProvider } from './error-dialog/ErrorReporter';
+import { useWorkspaceOptimisticCreate } from './use-workspace-optimistic-create';
+import { useOrganizationOptimisticTransitions } from './use-organization-optimistic-transitions';
 
 /** Shared empty list for a workspace whose tabs have not loaded. A fresh `[]`
  * per render would give every callback derived from it a new identity, and the
@@ -185,7 +179,7 @@ export type CloudAppProps = {
   resolver: EndpointResolver;
 };
 
-export default function CloudApp({ client, resolver }: CloudAppProps) {
+function CloudAppContent({ client, resolver }: CloudAppProps) {
   const mobileWebApp = useMobileWebApp();
   const [store, dispatch] = useReducer(workspaceReducer, initialWorkspaceStore);
   const [route, setRoute] = useState(() => parseAppRoute(window.location.pathname));
@@ -196,6 +190,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [error, setError] = useState<string | null>(null);
   const [updateAvailableHash, setUpdateAvailableHash] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
+  const [signOutPending, setSignOutPending] = useState(false);
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
@@ -203,31 +198,28 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
    * blank create. Cleared with the dialog. */
   const [cloneFromWorkspaceId, setCloneFromWorkspaceId] = useState<string | null>(null);
   const [details, setDetails] = useState<
-    { workspaceId: string; tab: WorkspaceDetailsTab; focusAddMember?: boolean } | null
+    {
+      workspaceId: string;
+      tab: WorkspaceDetailsTab;
+      focusAddMember?: boolean;
+      focusProvider?: ConnectionsFocus;
+    } | null
   >(null);
   const [machineWorkspaceId, setMachineWorkspaceId] = useState<string | null>(null);
-  const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
-  const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  // Below the mobile breakpoint the workspace panels live in an off-canvas
-  // sheet (`WorkspaceDrawer`); this is whether that sheet is open.
-  const [mobilePanelsOpen, setMobilePanelsOpen] = useState(false);
   const [terminalSignInUrl, setTerminalSignInUrl] = useState<string | null>(null);
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
   const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
-  // The grant-approval feed (plans/ORG-CREDENTIALS.md §7a): a pending
+  // The access-approval feed (plans/ORG-CREDENTIALS.md §7a): a pending
   // proposal addressed to this member pops the dialog on whichever page they
   // are on, so it polls whenever they are signed in to an org.
-  const grantProposals = useGrantProposals(
+  const accessProposals = useAccessProposals(
     client,
     !signedOut && store.viewer !== null,
     store.viewer?.membership.id ?? null,
   );
-  // The latest `blitz connections open` focus for the active workspace; a
-  // fresh object per event so the panel re-selects on a repeat ask.
-  const [connectionsFocus, setConnectionsFocus] = useState<ConnectionsPanelFocus | null>(null);
   // Lody's side panel as it last reported itself (seam patch 23), and `null`
   // while no session detail is on screen. The right icon strip draws from it
   // and drives it through `sidePanelRequest`, one `seq` per press.
@@ -243,6 +235,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const requestSidePanel = useCallback((tabId: string, action: 'open' | 'close') => {
     setSidePanelRequest((previous) => ({ tabId, action, seq: (previous?.seq ?? 0) + 1 }));
   }, []);
+  // The member's most recently active session, reported by the rail from Lody's
+  // own session mirror, and the strip press waiting for it to arrive on screen.
+  //
+  // WHY THE STRIP NEEDS BOTH. Files, All Changes, Browser and Side Chat are
+  // panels of a SESSION. Pressed on the landing there is no session detail
+  // mounted, so there is nothing to open them in — which is why the four
+  // buttons used to be drawn disabled there. They are live now: the press opens
+  // the most recent session, the panel request is HELD, and the effect below
+  // replays it the moment the session's panel reports itself.
+  const [mostRecentSessionId, setMostRecentSessionId] = useState<string | null>(null);
+  const [pendingQuickAction, setPendingQuickAction] = useState<SidePanelQuickAction | null>(null);
   // Which column the keyboard, statusline and rail follow. Not persisted: the
   // panes are, but the focus between them is a per-view detail.
   const [focusedRegion, setFocusedRegion] = useState<WorkspaceRegion>('main');
@@ -256,6 +259,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const activeWorkspaceIdRef = useRef(activeWorkspaceId);
   const storeRef = useRef(store);
   const workspaceEndpoints = useRef(new Map<string, WorkspaceEndpoints>());
+  // A workspace list request that began before a successful local mutation can
+  // finish afterward with the older snapshot. Mutation responses are the
+  // authority for their own rows, so such a request is discarded rather than
+  // briefly (or permanently) rolling the UI backward.
+  const workspaceMutationEpoch = useRef(0);
   const firstWorkspacePrompted = useRef(false);
   // Visit once, then retain: tab switches preserve live state without eagerly
   // opening every saved terminal and WebGL surface.
@@ -271,24 +279,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [loaded, mobileWebApp]);
 
   useEffect(() => {
-    if (!mobileWebApp) {
-      setDrawerOpen(false);
-      setMobilePanelsOpen(false);
-    }
+    if (!mobileWebApp) setDrawerOpen(false);
   }, [mobileWebApp]);
 
   useEffect(() => {
     setDrawerOpen(false);
-    setMobilePanelsOpen(false);
   }, [route.page, route.workspaceId]);
 
   useEffect(() => {
     if (!mobileWebApp) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setDrawerOpen(false);
-        setMobilePanelsOpen(false);
-      }
+      if (event.key === 'Escape') setDrawerOpen(false);
     };
     let edgeStart: { x: number; y: number; pointerId: number } | null = null;
     const startEdgeSwipe = (event: PointerEvent) => {
@@ -317,6 +318,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [drawerOpen, mobileWebApp]);
 
   const handleUnauthorized = useCallback(() => {
+    setSignOutPending(false);
     setSignedOut(true);
     setLoaded(true);
   }, []);
@@ -328,17 +330,53 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (cause instanceof ApiError && cause.status === 401) return;
     setError(caughtErrorMessage(cause, 'Could not save webApp state.'));
   }, []);
+  const {
+    transitionStage: organizationTransitionStage,
+    createOrgName,
+    setCreateOrgName,
+    openCreateOrganization,
+    closeCreateOrganization,
+    createOrganizationFromIdentity,
+    createOrganizationFromDialog,
+    switchOrganization,
+    leaveOrganization,
+  } = useOrganizationOptimisticTransitions({
+    api,
+    client,
+    viewer: store.viewer,
+    setIdentityOnly,
+    setLoaded,
+    setBootstrapVersion,
+    setShowCreateOrg,
+    setError,
+  });
   const signOut = useCallback(async () => {
+    setError(null);
+    setSignOutPending(true);
     try {
       await api.logout();
-    } finally {
       setSignedOut(true);
+    } catch (cause) {
+      // An auth refusal says there is no usable logout session left.
+      if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
+        setSignedOut(true);
+        return;
+      }
+      setSignedOut(false);
+      setError(`Could not sign out: ${caughtErrorMessage(
+        cause,
+        'The control plane request failed.',
+      )}`);
+    } finally {
+      setSignOutPending(false);
     }
   }, [api]);
   const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
   const refreshWorkspaceRecords = useCallback(async () => {
+    const mutationEpoch = workspaceMutationEpoch.current;
     try {
       const records = await api.listWorkspaces();
+      if (mutationEpoch !== workspaceMutationEpoch.current) return;
       rememberWorkspaceEndpoints(workspaceEndpoints.current, records, resolver, true);
       dispatch({ type: 'workspace_records_refreshed', records });
     } catch (refreshError) {
@@ -347,11 +385,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }
     }
   }, [api, resolver]);
-  /** The poll as a dialog asks for it: a settled write wants its rows now,
-   * and has no answer of its own to report. */
-  const refreshWorkspacesNow = useCallback(() => {
-    void refreshWorkspaceRecords();
-  }, [refreshWorkspaceRecords]);
+  const commitWorkspaceMutation = useCallback((action: WorkspaceAction) => {
+    workspaceMutationEpoch.current += 1;
+    dispatch(action);
+  }, []);
 
   const activeWorkspace = useMemo(
     () => store.workspaces.find(({ id, canControl }) => id === activeWorkspaceId && canControl),
@@ -372,7 +409,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setWorkspaceFiles,
   } = useWorkspacePersistence(
     api,
-    storageNamespace !== null,
+    storageNamespace !== null && activeWorkspace?.pendingCreate !== true,
     activeWorkspaceId,
     persistenceMetadata,
     handlePersistenceError,
@@ -395,24 +432,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // Below the mobile breakpoint the panes never split: the workspace keeps one
   // tab strip and the panels stay an off-canvas sheet.
   const splitEnabled = !mobileWebApp;
-  // Connections is the one panel left, so the mobile sheet has one segment
-  // and nothing to choose between.
-  const drawerSegment: WorkspaceDrawerSegment = 'connections';
-  const connectionsTab = activeWorkspaceTabs === null
-    ? null
-    : panelTab(activeWorkspaceTabs, 'connections');
-  // Whether the member is looking at the connections panel right now: the
-  // open sheet on mobile, the panel tab in front of its pane on the desktop.
-  // The pending-request poll hurries while they are.
-  const connectionsTabShowing = mobileWebApp
-    ? mobilePanelsOpen
-    : activeWorkspaceTabs !== null
-      && connectionsTab !== null
-      && regionActiveId(activeWorkspaceTabs, tabRegion(connectionsTab)) === connectionsTab.id;
-  const connectionsShowing = connectionsTabShowing
-    || (sidePanelState !== null
-      && sidePanelState.open
-      && sidePanelState.activeTabId === CONNECTIONS_SIDE_PANEL_ID);
   const { livePorts, previewLinks } = useWorkspacePreviewSources(
     route.page === 'webApp' && activeWorkspaceRunning,
     activeWorkspaceId,
@@ -445,38 +464,27 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
 
   // The in-box agent's `blitz connections open <provider>` raises the other
-  // focus: open the connections panel and point at the provider, so the
-  // person lands exactly where the agent sent them to authorize. Same
-  // temporal-position note as above for the setters referenced below.
+  // focus. The MARKER is unchanged (`connections-focus`, version 2 with a
+  // `kind`, pinned by fixtures on three runtimes); what it opens is the
+  // workspace-details dialog on its Connections tab, with that provider's row
+  // brought into view — the one surface a workspace's connections live on now.
   useWorkspaceConnectionsFocus(
     route.page === 'webApp' && activeWorkspaceRunning,
     activeWorkspaceId,
     activeFilesBase,
     (focus) => {
-      // The marker's own `requestedAt`, not `Date.now()`: the panel re-selects
-      // on a fresh `at`, and a focus replayed from the box must carry the time
-      // the box raised it.
-      setConnectionsFocus({ provider: focus.provider, at: focus.requestedAt });
-      if (mobileWebApp) setMobilePanelsOpen(true);
-      // With a session on screen the panel is a tab of Lody's side panel;
-      // otherwise the native panel tab. `showPanel`, not the pane write it
-      // used to make: with the strip drawing the tabs, a panel tab nothing
-      // selects is a panel the member never sees, and the whole point of this
-      // marker is that the agent sent them here.
-      if (sidePanelDriven) {
-        requestSidePanel(CONNECTIONS_SIDE_PANEL_ID, 'open');
-        return;
-      }
-      showPanel('connections');
-      if (!mobileWebApp) setFocusedRegion('side');
+      // The marker's own `requestedAt`, not `Date.now()`: the row re-highlights
+      // on a fresh ask, and a focus replayed from the box must carry the time
+      // the box raised it. It rides the dialog's own state beside `tab` and
+      // `focusAddMember`, which is where "open this dialog pointed at a thing"
+      // already lives.
+      setDetails({
+        workspaceId: activeWorkspaceId,
+        tab: 'connections',
+        focusProvider: { provider: focus.provider, at: focus.requestedAt },
+      });
     },
   );
-
-  // A focus belongs to the workspace whose box raised it; a switch drops it
-  // rather than highlighting the same provider name somewhere else.
-  useEffect(() => {
-    setConnectionsFocus(null);
-  }, [activeWorkspaceId]);
 
   useEffect(() => {
     if (route.page !== 'webApp' || !activeWorkspaceId || signedOut) {
@@ -505,13 +513,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }
     };
     void poll();
-    const timer = window.setInterval(() => { void poll(); }, connectionsShowing ? 5_000 : 15_000);
+    // One cadence now: nothing on screen is a connect inbox to hurry for. A
+    // pending request pops `ConnectApprovalDialog` wherever the member is.
+    const timer = window.setInterval(() => { void poll(); }, 15_000);
     return () => {
       disposed = true;
       request?.abort();
       window.clearInterval(timer);
     };
-  }, [activeWorkspaceId, client, connectionsShowing, route.page, signedOut]);
+  }, [activeWorkspaceId, client, route.page, signedOut]);
 
   // The box's dufs WebDAV server, for the drop-to-upload path below.
   const filesClient = useMemo<WebDAVClient | null>(() => {
@@ -635,6 +645,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [loaded, store.workspaces]);
 
   useEffect(() => {
+    if (!loaded || signedOut || route.page !== 'home') return;
+    const workspaceId = selectControllableWorkspaceId(store.workspaces, '');
+    if (workspaceId === '') return;
+    activeWorkspaceIdRef.current = workspaceId;
+    setActiveWorkspaceId(workspaceId);
+    window.history.replaceState({}, '', workspacePath(workspaceId));
+    setRoute({ workspaceId, page: 'webApp', chat: null });
+  }, [loaded, route.page, signedOut, store.workspaces]);
+
+  useEffect(() => {
     const createWorkspaceRoute = window.location.pathname === '/workspaces/new';
     if (
       !loaded
@@ -680,7 +700,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   });
 
   useEffect(() => {
-    if (!loaded || !storageNamespace) return;
+    if (
+      !loaded
+      || !storageNamespace
+      || store.workspaces.some(({ pendingCreate }) => pendingCreate)
+    ) return;
     const timer = window.setTimeout(() => {
       void api.putGlobalWebAppState({
         version: 1,
@@ -728,7 +752,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       return;
     }
     window.history.pushState({}, '', '/');
-    setRoute({ workspaceId: null, page: 'drive' });
+    setRoute({ workspaceId: null, page: 'home' });
   }, [navigateToWorkspacePage]);
 
   const deleteWorkspace = useCallback((workspaceId: string) => {
@@ -749,7 +773,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       if (nextId) navigateToWorkspacePage(nextId);
       else {
         window.history.pushState({}, '', '/');
-        setRoute({ workspaceId: null, page: 'drive' });
+        setRoute({ workspaceId: null, page: 'home' });
       }
     }
     void api.deleteWorkspace(workspaceId)
@@ -777,36 +801,32 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     navigateToWorkspacePage(workspaceId);
   }, [navigateToWorkspacePage, store.workspaces]);
 
-  // One tail for everything that mints a workspace: the create dialog and
-  // recipe launches both adopt the record and navigate to it the same way.
-  const adoptCreatedWorkspace = useCallback(async (
-    create: () => Promise<V2WorkspaceRecord>,
-  ) => {
-    setCreateWorkspaceBusy(true);
-    setCreateWorkspaceError(null);
-    try {
-      const record = await create();
-      rememberWorkspaceEndpoints(workspaceEndpoints.current, [record], resolver);
-      dispatch({ type: 'workspace_created', record, agentDefault: 'claude' });
-      if (record.canControl) {
-        activeWorkspaceIdRef.current = record.id;
-        setActiveWorkspaceId(record.id);
-        navigateToWorkspacePage(record.id);
-      }
-      setShowCreateWorkspace(false);
-    } catch (createFailure) {
-      setCreateWorkspaceError(caughtErrorMessage(createFailure, 'The control plane request failed.'));
-    } finally {
-      setCreateWorkspaceBusy(false);
-    }
-  }, [navigateToWorkspacePage, resolver]);
+  const closeCreateWorkspace = useCallback(() => {
+    setShowCreateWorkspace(false);
+    setCloneFromWorkspaceId(null);
+  }, []);
+  // Clone submissions carry `cloneFromWorkspaceId` in the same input and use
+  // this tail. Recipes have been removed.
+  const adoptCreatedWorkspace = useWorkspaceOptimisticCreate({
+    resolver,
+    workspaceEndpoints,
+    storeRef,
+    activeWorkspaceIdRef,
+    commitWorkspaceMutation,
+    setActiveWorkspaceId,
+    setRoute,
+    setError,
+    closeCreateDialog: closeCreateWorkspace,
+    navigateToWorkspacePage,
+  });
   const createWorkspace = useCallback(
-    (input: CreateWorkspaceDialogInput) => adoptCreatedWorkspace(() => api.createWorkspace(input)),
+    (input: CreateWorkspaceDialogInput, viewer: TenantMe) => adoptCreatedWorkspace(
+      input,
+      viewer,
+      () => api.createWorkspace(input),
+    ),
     [adoptCreatedWorkspace, api],
   );
-  // A recipe launch has no caller while the recipes surface is disabled; the
-  // adapter keeps `launchRecipe`, so restoring the surface restores the flow.
-
   const setSidePaneWidth = useCallback((width: number) => {
     setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
       ? { ...current, value: { ...current.value, width } }
@@ -997,10 +1017,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
   const [lodyApi, setLodyApi] = useState<LodySessionSurfaceApi | null>(null);
   // Which session the share dialog is open on. One piece of state, because the
-  // dialog reads and writes its own grants (plans/LODY-SHARING.md §8).
+  // dialog reads and writes its own access list (plans/LODY-SHARING.md §8).
   const [sharingSessionId, setSharingSessionId] = useState<string | null>(null);
-  // Bumped when the share dialog closes, so a grant the viewer just received
-  // from themselves — an admin granting on somebody's behalf — reaches the rail
+  // Bumped when the share dialog closes, so access the viewer just gave
+  // themselves — an admin acting on somebody's behalf — reaches the rail
   // without a reload.
   const [shareRevision, setShareRevision] = useState(0);
   // The OTHER half of sharing: what other members shared with this one, and
@@ -1061,7 +1081,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
     return tab;
   }), [ttydSessions]);
-  const railSessions = useMemo<DriveRailSession[]>(() => ttydTabs
+  const railSessions = useMemo<RailSession[]>(() => ttydTabs
     .filter((tab) => tab.agent !== 'panel' && tab.agent !== 'preview')
     .map((tab) => ({ id: tab.id, label: tab.label, agent: tab.agent })), [ttydTabs]);
   const railActiveSessionId = (() => {
@@ -1163,69 +1183,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     selectWorkspaceTab(String(id));
   }, [selectWorkspaceTab, ttydSessions]);
 
-  // OPENING A UTILITY PANEL ALSO HAS TO SHOW IT (wave-3 finding S4).
-  //
-  // `showPanelTab` and `togglePanelTab` are PANE verbs: they write the pane's
-  // own `activeId`, which is where the selection used to live. With the strip
-  // drawing the tabs the selection is the ADDRESS instead, so every one of
-  // these paths added a panel tab that nothing brought forward — Cmd/Ctrl+B,
-  // the three buttons of the right icon strip, and the box's own
-  // `blitz connections open`, all of them apparently dead.
-  //
-  // Two verbs, and the split is upstream's own: `showPanel` never closes,
-  // because the box's focus marker and the mobile sheet's segment strip both
-  // need a selection rather than a toggle.
-  const showPanel = useCallback((panel: WorkspaceDrawerSegment) => {
-    // On mobile the panels live in the off-canvas sheet, which reads the pane
-    // write directly and has no strip to select in.
-    if (mobileWebApp) {
-      updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));
-      return;
-    }
-    if (activeWorkspaceTabs === null) return;
-    const existing = panelTab(activeWorkspaceTabs, panel);
-    // The same write `showPanelTab` makes when the panel is not open, through
-    // the one place that knows how to follow a fresh tab's id.
-    if (existing === null) addWorkspaceTab((id) => ({ id, type: 'panel', panel }), 'side');
-    else selectTtydSession(String(existing.id));
-  }, [
-    activeWorkspaceTabs,
-    addWorkspaceTab,
-    mobileWebApp,
-    selectTtydSession,
-    updateWorkspaceTabs,
-  ]);
-  const togglePanel = useCallback((panel: WorkspaceDrawerSegment) => {
-    if (activeWorkspaceTabs === null) return;
-    const existing = panelTab(activeWorkspaceTabs, panel);
-    if (existing !== null) {
-      // "The tab you are looking at" is the address while the strip draws the
-      // tabs and the pane's own selection otherwise. Reading only the pane made
-      // a second press re-open what the first press had never shown.
-      const showing = surfaceTabsEnabled
-        ? addressTerminalId === String(existing.id)
-        : regionActiveId(activeWorkspaceTabs, tabRegion(existing)) === existing.id;
-      if (showing) {
-        updateWorkspaceTabs((tabs) => closePaneTab(tabs, existing.id));
-        return;
-      }
-    }
-    showPanel(panel);
-  }, [
-    activeWorkspaceTabs,
-    addressTerminalId,
-    showPanel,
-    surfaceTabsEnabled,
-    updateWorkspaceTabs,
-  ]);
-  // The mobile statusline's sheet toggle. The navigation drawer and the panel
-  // sheet are both off-canvas, and only one of them is open at a time.
-  const toggleMobilePanels = useCallback(() => {
-    if (!activeWorkspaceId) return;
-    setDrawerOpen(false);
-    setMobilePanelsOpen((open) => !open);
-  }, [activeWorkspaceId]);
-
+  // THE PANEL VERBS ARE GONE. `showPanel`/`togglePanel` wrote a pane tab for
+  // one panel — Connections — and that panel is a tab of the workspace-details
+  // dialog now. `workspace-panes.ts` keeps `panelTab`/`showPanelTab` for a
+  // layout persisted before this change, whose tab still draws its body
+  // through `SurfaceTabContent`; nothing in the shell creates a new one.
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -1297,9 +1259,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     return true;
   };
   
-  // Both feed the Connections host tab (`hostTabs` below), so both hold their
-  // identity across a render: a tab list rebuilt every render is a report of
-  // the side panel every render (`useSidePanelHostState`).
+  // Held across a render: a handler declared in the render body is a new
+  // identity every render, and the side panel reports itself on every input
+  // that changes (`useSidePanelHostState`).
 
   const resolveWorkspaceRequest = useCallback(async (
     request: CredentialRequestView,
@@ -1313,20 +1275,56 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     () => pendingRequests.filter(({ workspace_id }) => workspace_id === activeWorkspaceId),
     [activeWorkspaceId, pendingRequests],
   );
+  // THE ASK POPS WHERE THE PERSON IS. A pending credential request used to
+  // wait in a list nobody opens; it opens `ConnectApprovalDialog` over the
+  // workspace instead, one at a time, oldest first.
+  //
+  // "Not now" and the close button both land here: the request stays PENDING
+  // on the server, so nothing is denied and the agent asks again. What is
+  // waved off is this id, for this tab — the next ask is a new row with a new
+  // id, and it pops.
+  const [dismissedRequests, setDismissedRequests] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const askingRequest = activePendingRequests.find(({ id }) => !dismissedRequests.has(id)) ?? null;
   const closeTtydSession = (id: string) => {
     // The one place a terminal tab is CLOSED, from either strip. The tmux
     // session outlives its websocket by design — that is what a reload, a
     // workspace switch and a lost tunnel all re-attach to — so this is also
     // the one place that ends one, and nothing on an unmount may do it.
-    const closing = ttydSessions.find((entry) => String(entry.id) === id);
-    if (closing !== undefined && isManagedWorkspaceTab(closing) && activeFilesBase !== null) {
-      void killTerminalSession(activeFilesBase, { type: closing.type, key: id });
-    }
+    const closingIndex = ttydSessions.findIndex((entry) => String(entry.id) === id);
+    const closing = ttydSessions[closingIndex];
+    const closingRegion = closing === undefined ? null : tabRegion(closing);
+    const closingWasActive = closing !== undefined
+      && activeWorkspaceTabs !== null
+      && closingRegion !== null
+      && regionActiveId(activeWorkspaceTabs, closingRegion) === closing.id;
+    const closingWasRetained = retainedSessionIdsRef.current.ids.has(id);
     updateWorkspaceTabs((tabs) => {
       const tab = tabs.tabs.find((entry) => String(entry.id) === id);
       return tab === undefined ? tabs : closePaneTab(tabs, tab.id);
     });
     retainedSessionIdsRef.current.ids.delete(id);
+    if (closing === undefined || !isManagedWorkspaceTab(closing) || activeFilesBase === null) return;
+    void killTerminalSession(activeFilesBase, { type: closing.type, key: id }).then((killed) => {
+      if (killed) return;
+      updateWorkspaceTabs((tabs) => {
+        if (tabs.tabs.some((entry) => entry.id === closing.id)) return tabs;
+        const restored = [...tabs.tabs];
+        restored.splice(Math.min(Math.max(closingIndex, 0), restored.length), 0, closing);
+        const next = { ...tabs, tabs: restored };
+        if (closingWasActive && closingRegion === 'main') next.activeId = closing.id;
+        if (closingWasActive && closingRegion === 'side') next.sideActiveId = closing.id;
+        return next;
+      });
+      if (
+        closingWasRetained
+        && retainedSessionIdsRef.current.workspaceId === activeWorkspaceId
+      ) {
+        retainedSessionIdsRef.current.ids.add(id);
+      }
+      setError('Could not close the terminal tab. Its session may still be running.');
+    });
   };
   const renameTtydSession = (id: string, title: string | undefined) => {
     const numericId = Number(id);
@@ -1361,7 +1359,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const workspaceWakingStage = workspaceWaking
     ? activeWorkspace?.lifecycleStatus === 'parked'
       ? 'waking · requesting compute'
-      : 'waking · reattaching drive'
+      : 'waking · reattaching volume'
     : undefined;
   const workspaceErrored = activeWorkspace !== undefined && (
     activeWorkspace.lifecycleStatus === 'error'
@@ -1482,6 +1480,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       </button>
     </div>
   );
+  const actionErrorNotice = error === null ? null : (
+    <div className="webapp-notice" role="alert">
+      <span>{error}</span>
+      <button type="button" onClick={() => setError(null)}>Dismiss</button>
+    </div>
+  );
 
   // ONE BODY PER TAB, IN EXACTLY ONE HOST
   // (plans/LODY-TERMINAL-TABS.md §4.6).
@@ -1522,18 +1526,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         activeFilesBase={activeFilesBase}
         pendingRequests={activePendingRequests}
         pendingRequestsError={pendingRequestsError}
-        connectionsFocus={connectionsFocus}
         onResolveRequest={resolveWorkspaceRequest}
         onSignInUrl={setTerminalSignInUrl}
         onOpenPreview={openPreviewPort}
       />
     );
   };
-  // Our Browser and Connections panels as tabs of Lody's side panel (seam
-  // patch 23), rebuilt only when what they show changes; each icon is the same
-  // glyph the strip's button wears, in the size Lody's tab bar draws its own.
-  const connectionsReadOnly = activeWorkspace?.accessRole === 'viewer';
-  const workspaceConnections = activeWorkspace?.connections;
+  // Our Browser panel as a tab of Lody's side panel (seam patch 23), rebuilt
+  // only when what it shows changes; the icon is the same glyph the strip's
+  // button wears, in the size Lody's tab bar draws its own. Connections was
+  // the second host tab and is a tab of the workspace-details dialog now.
   const hostTabs = useMemo<SessionHostSidePanelTab[]>(() => (
     activeWorkspaceId === ''
       ? []
@@ -1550,37 +1552,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               />
             </div>
           ),
-        }, {
-          id: CONNECTIONS_SIDE_PANEL_ID,
-          label: 'Connections',
-          icon: sidePanelQuickActionIcon(CONNECTIONS_SIDE_PANEL_ID, 'h-3.5 w-3.5 opacity-70'),
-          content: (
-            <div className="webapp-side-panel-host">
-              <WorkspaceConnectionsPanel
-                client={client}
-                workspaceId={activeWorkspaceId}
-                readOnly={connectionsReadOnly}
-                pendingRequests={activePendingRequests}
-                pendingRequestsError={pendingRequestsError}
-                workspaceConnections={workspaceConnections ?? []}
-                connectionsFocus={connectionsFocus}
-                onResolveRequest={resolveWorkspaceRequest}
-              />
-            </div>
-          ),
         }]
-  ), [
-    activeFilesBase,
-    activePendingRequests,
-    activeWorkspaceId,
-    browserTarget,
-    client,
-    connectionsFocus,
-    connectionsReadOnly,
-    pendingRequestsError,
-    resolveWorkspaceRequest,
-    workspaceConnections,
-  ]);
+  ), [activeFilesBase, activeWorkspaceId, browserTarget]);
   const sidePanel = useMemo<SidePanelBinding | undefined>(() => (
     surfaceTabsEnabled
       ? {
@@ -1592,8 +1565,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   ), [hostTabs, setSidePanelState, sidePanelRequest, surfaceTabsEnabled]);
   // One press of the right icon strip. With a session on screen every button
   // is a request to Lody's side panel — a second press on the tab in front
-  // closes it, and Side Chat launches rather than toggles. Without one, only
-  // Connections is offered, on the native panel tab it always had.
+  // closes it, and Side Chat launches rather than toggles.
+  //
+  // WITHOUT ONE, THE PRESS STILL LANDS. All four are session panels now, so
+  // the press opens the most recent session first and is replayed into it by
+  // the effect below. Only a member with NO session at all is left with
+  // nothing to press — there is no session to show the files of — and the
+  // strip says so.
   const runQuickAction = useCallback((action: SidePanelQuickAction) => {
     if (sidePanelDriven && sidePanelState !== null) {
       const showing = action !== 'side-session'
@@ -1602,10 +1580,42 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       requestSidePanel(action, showing ? 'close' : 'open');
       return;
     }
-    if (action !== CONNECTIONS_SIDE_PANEL_ID) return;
-    togglePanel('connections');
-    setFocusedRegion('side');
-  }, [requestSidePanel, setFocusedRegion, sidePanelDriven, sidePanelState, togglePanel]);
+    if (!surfaceTabsEnabled || mostRecentSessionId === null) return;
+    // Held, not sent: `sidePanelRequest` is read by the session detail, and
+    // there is none mounted yet. A press that replaced a held one is the
+    // member changing their mind before the session arrived, so the last press
+    // wins rather than queueing two panels.
+    setPendingQuickAction(action);
+    lodyRail.openSession(mostRecentSessionId);
+  }, [
+    lodyRail,
+    mostRecentSessionId,
+    requestSidePanel,
+    sidePanelDriven,
+    sidePanelState,
+    surfaceTabsEnabled,
+  ]);
+
+  // The held press, once the session it was made for is on screen.
+  //
+  // The panel reports itself as soon as the detail mounts, which is exactly
+  // when a request can be honoured — earlier is a request nothing reads, and
+  // `handledSidePanelRequestSeqRef` would swallow the seq. A request for a
+  // panel that session does not offer is ignored by the detail itself, so this
+  // does not have to re-check `availableOptions`: it clears either way, because
+  // a press is not a standing order.
+  useEffect(() => {
+    if (pendingQuickAction === null) return;
+    if (!sidePanelDriven || sidePanelState === null) return;
+    requestSidePanel(pendingQuickAction, 'open');
+    setPendingQuickAction(null);
+  }, [pendingQuickAction, requestSidePanel, sidePanelDriven, sidePanelState]);
+
+  // A workspace switch drops it: the session it named is on the box being left.
+  useEffect(() => {
+    setPendingQuickAction(null);
+    setMostRecentSessionId(null);
+  }, [activeWorkspaceId]);
   const surfaceTabs: SurfaceTabsBinding | undefined = surfaceTabsEnabled
     ? {
         tabs: toSessionSurfaceTabs(ttydTabs, surfaceTabBody),
@@ -1675,7 +1685,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         setDetails({ workspaceId, tab: 'members', focusAddMember: true });
       }}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
-      onOpenDrive={() => navigateTo(drivePath())}
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
       onCloseSession={closeTtydSession}
@@ -1697,55 +1706,73 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCloseDrawer={() => setDrawerOpen(false)}
     />
   );
+  const dialogViewer = store.viewer;
   const railOverlays = (
     <>
-    {grantProposals.active !== null && store.viewer !== null && (
-      <GrantApprovalDialog
-        key={grantProposals.active.id}
+    {accessProposals.active !== null && store.viewer !== null && (
+      <AccessApprovalDialog
+        key={accessProposals.active.id}
         client={client}
-        proposal={grantProposals.active}
+        proposal={accessProposals.active}
         viewer={{
           membershipId: store.viewer.membership.id,
           orgName: store.viewer.org.name || store.viewer.org.slug,
         }}
         workspaces={store.workspaces.map(({ id, title, members }) => ({ id, name: title, members }))}
         onClose={() => {
-          if (grantProposals.active !== null) grantProposals.dismiss(grantProposals.active.id);
+          if (accessProposals.active !== null) accessProposals.dismiss(accessProposals.active.id);
         }}
-        onResolved={grantProposals.settled}
+        onResolved={accessProposals.settled}
       />
     )}
-    <ShellDialogs
+    {/* One ask at a time: an access proposal and a connect request are the
+      * same interruption, and two modals over each other is neither. */}
+    {askingRequest !== null
+      && accessProposals.active === null
+      && activeWorkspace !== undefined
+      && activeWorkspace !== null && (
+      <ConnectApprovalDialog
+        key={askingRequest.id}
+        client={client}
+        request={askingRequest}
+        workspace={{
+          id: activeWorkspace.id,
+          name: activeWorkspace.title,
+          members: activeWorkspace.members,
+        }}
+        onDismiss={() => setDismissedRequests(
+          (current) => new Set([...current, askingRequest.id]),
+        )}
+        onConnected={(request) => {
+          // The workspace may pull it now, so the request that asked is
+          // answered and the records are re-read for the allow-list this
+          // shell holds.
+          void resolveWorkspaceRequest(request, 'approve');
+          void refreshWorkspaceRecords();
+        }}
+      />
+    )}
+    {dialogViewer !== null && <ShellDialogs
       client={client}
-      viewer={store.viewer}
+      viewer={dialogViewer}
       workspaces={store.workspaces}
       showCreateOrg={showCreateOrg}
-      onCreateOrg={async (name) => {
-        await api.createOrg(name);
-        // POST /orgs rebinds the session to the org it just made, so the
-        // reload lands inside it, exactly as switching does.
-        window.location.reload();
-      }}
-      onCloseCreateOrg={() => setShowCreateOrg(false)}
+      createOrgName={createOrgName}
+      onCreateOrgNameChange={setCreateOrgName}
+      onCreateOrg={createOrganizationFromDialog}
+      onCloseCreateOrg={closeCreateOrganization}
       showCreateWorkspace={showCreateWorkspace}
-      createWorkspaceBusy={createWorkspaceBusy}
-      createWorkspaceError={createWorkspaceError}
       listMachineTypes={listMachineTypes}
-      refreshWorkspaces={refreshWorkspacesNow}
+      commitWorkspaceMutation={commitWorkspaceMutation}
       cloneFromWorkspaceId={cloneFromWorkspaceId}
-      onCancelCreateWorkspace={() => {
-        if (createWorkspaceBusy) return;
-        setShowCreateWorkspace(false);
-        setCloneFromWorkspaceId(null);
-      }}
-      onCreateWorkspace={(input) => { void createWorkspace(input); }}
+      onCancelCreateWorkspace={closeCreateWorkspace}
+      onCreateWorkspace={(input) => { void createWorkspace(input, dialogViewer); }}
       details={details}
       onCloseDetails={() => setDetails(null)}
       machineWorkspaceId={machineWorkspaceId}
       onCloseMachine={() => setMachineWorkspaceId(null)}
       onCloneWorkspace={(workspaceId) => {
-        // "New workspace from existing" IS the template now (§0): the create
-        // dialog opens carrying the source, and the server copies its config.
+        // The create dialog carries the source, and the server copies its config.
         setDetails(null);
         setCloneFromWorkspaceId(workspaceId);
         setShowCreateWorkspace(true);
@@ -1754,23 +1781,48 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       confirmation={confirmation}
       onCancelConfirmation={cancelConfirmation}
       onConfirmDelete={confirmWebAppAction}
-    />
+    />}
     </>
   );
-  if (signedOut) {
-    return <LoginForm loginUrl={api.googleLoginUrl()} />;
+  if (signedOut || signOutPending) {
+    return (
+      <>
+        <LoginForm loginUrl={api.googleLoginUrl()} />
+        {actionErrorNotice}
+      </>
+    );
+  }
+
+  if (organizationTransitionStage !== null) {
+    return (
+      <main
+        ref={shellRef}
+        className="webapp-shell webapp-shell--booting"
+        aria-busy="true"
+      >
+        <WebAppLoadingShell
+          stage={organizationTransitionStage}
+          mobile={mobileWebApp}
+          drawerOpen={drawerOpen}
+          onOpenDrawer={() => setDrawerOpen(true)}
+          onCloseDrawer={() => setDrawerOpen(false)}
+        />
+        {actionErrorNotice}
+        {updateNotice}
+      </main>
+    );
   }
 
   if (identityOnly !== null) {
     return (
-      <CreateOrgPage
-        onCreate={async (name) => {
-          await api.createOrg(name);
-          setIdentityOnly(null);
-          setLoaded(false);
-          setBootstrapVersion((version) => version + 1);
-        }}
-      />
+      <>
+        <CreateOrgPage
+          name={createOrgName}
+          onNameChange={setCreateOrgName}
+          onCreate={createOrganizationFromIdentity}
+        />
+        {actionErrorNotice}
+      </>
     );
   }
 
@@ -1782,23 +1834,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         viewer={store.viewer}
         loaded={loaded}
         rail={shellNav(null)}
-        pendingGrantProposals={grantProposals.pending}
         dialogs={railOverlays}
         updateNotice={updateNotice}
         error={error}
         onDismissError={() => setError(null)}
-        onNavigate={navigateTo}
-        onOpenRail={() => setDrawerOpen(true)}
         onNavigateToSettings={navigateToSettings}
-        onOpenWorkspace={navigateToWorkspacePage}
-        onReviewProposal={grantProposals.reopen}
         onLeaveSettings={returnToWebApp}
         onSignOut={signOut}
-        onLeftOrg={() => window.location.reload()}
-        onSwitchOrg={(orgId) => {
-          void client.switchOrg(orgId).then(() => window.location.reload());
-        }}
-        onCreateOrg={() => setShowCreateOrg(true)}
+        onLeftOrg={leaveOrganization}
+        onSwitchOrg={switchOrganization}
+        onCreateOrg={openCreateOrganization}
         activeWorkspaceTitle={activeWorkspace?.title}
       />
     );
@@ -1818,7 +1863,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           onOpenDrawer={() => setDrawerOpen(true)}
           onCloseDrawer={() => setDrawerOpen(false)}
         />
-        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+        {actionErrorNotice}
         {updateNotice}
       </main>
     );
@@ -1827,7 +1872,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   return (
     <main
       ref={shellRef}
-      className="drive-shell drive-shell--workspace"
+      className="app-shell app-shell--workspace"
       onDragOver={(event) => {
         if (filesClient === null) return;
         if (!event.dataTransfer?.types.includes('Files')) return;
@@ -1857,7 +1902,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       {shellNav(activeWorkspaceId)}
       {railOverlays}
 
-      <div className="drive-ws-frame">
+      <div className="app-workspace-frame">
           <section className="webapp-workspace-view">
             {activeWorkspace?.accessRole === 'viewer' && (
               <div className="ws-viewer-hold" role="status">
@@ -1888,6 +1933,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               onOpenSession={lodyRail.openSession}
               onOpenLanding={openFreshLanding}
               onOpenArchive={lodyRail.openArchive}
+              onMostRecentSessionChange={setMostRecentSessionId}
               newTabControl={(
                 <NewTabControl
                   variant="footer"
@@ -1935,11 +1981,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               previewLinks={orderedPreviewLinks}
               pendingRequests={activePendingRequests}
               pendingRequestsError={pendingRequestsError}
-              connectionsFocus={connectionsFocus}
-              onOpenDrawer={() => {
-                setMobilePanelsOpen(false);
-                setDrawerOpen(true);
-              }}
+              onOpenDrawer={() => setDrawerOpen(true)}
               onOpenPreview={openPreviewPort}
               onOpenPreviewLink={openPreviewLink}
               onResolveRequest={resolveWorkspaceRequest}
@@ -1969,15 +2011,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 setPaneResizing(true);
               }}
             />
-            {mobileWebApp && activeWorkspace && (
-              <button
-                className={`files-drawer-scrim${mobilePanelsOpen ? ' files-drawer-scrim--open' : ''}`}
-                type="button"
-                aria-label="Close workspace drawer"
-                tabIndex={-1}
-                onClick={() => setMobilePanelsOpen(false)}
-              />
-            )}
           </section>
 
           {/* The statusline is mobile chrome: the touch terminal's paste /
@@ -2095,26 +2128,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   )}
                 </>
               )}
-              {mobileWebApp && activeWorkspace && (
-                <button
-                  className="webapp-statusline__files"
-                  type="button"
-                  aria-label={mobilePanelsOpen ? 'Close workspace drawer' : 'Open workspace drawer'}
-                  aria-controls="webapp-workspace-drawer"
-                  aria-expanded={mobilePanelsOpen}
-                  aria-pressed={mobilePanelsOpen}
-                  title={`${mobilePanelsOpen ? 'Hide' : 'Show'} connections`}
-                  onClick={toggleMobilePanels}
-                >
-                  <GenericProviderIcon aria-hidden="true" />
-                  <span>Connections</span>
-                  {activePendingRequests.length > 0 && (
-                    <span className="workspace-pending-badge" aria-label={`${activePendingRequests.length} pending requests`}>
-                      {activePendingRequests.length}
-                    </span>
-                  )}
-                </button>
-              )}
             </footer>
           )}
 
@@ -2132,33 +2145,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       {activeWorkspace && !mobileWebApp && (
         <WorkspaceRailStrip
           sidePanel={sidePanelDriven ? sidePanelState : null}
-          connectionsOpen={connectionsTabShowing}
-          pendingRequestCount={activePendingRequests.length}
+          // What a press opens a session panel IN while none is on screen. Null
+          // with the surface off, on a box that serves no daemon, and for a
+          // member who has not started a session yet — the three cases where
+          // there is genuinely nothing to open.
+          landingSessionId={surfaceTabsEnabled ? mostRecentSessionId : null}
           onQuickAction={runQuickAction}
         />
       )}
 
-      {activeWorkspace && mobileWebApp && (
-        <WorkspaceDrawer
-          client={client}
-          workspaceId={activeWorkspace.id}
-          mobile
-          open={mobilePanelsOpen}
-          width={activeFiles.width}
-          segment={drawerSegment}
-          pendingRequests={activePendingRequests}
-          pendingRequestsError={pendingRequestsError}
-          workspaceConnections={activeWorkspace.connections}
-          connectionsFocus={connectionsFocus}
-          readOnly={activeWorkspace.accessRole === 'viewer'}
-          onWidthChange={setSidePaneWidth}
-          // One segment: there is nothing to switch to.
-          onSegmentChange={() => undefined}
-          onResolveRequest={resolveWorkspaceRequest}
-        />
-      )}
-
-      {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+      {actionErrorNotice}
       {updateNotice}
       {sharingSessionId !== null && activeWorkspace !== undefined && activeWorkspace !== null && store.viewer !== null && (
         <SessionShareDialog
@@ -2179,5 +2175,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         />
       )}
     </main>
+  );
+}
+
+/** One action-error host for every first-party screen. Lody keeps its own
+ * provider tree and error surfaces inside the lazy-loaded session region. */
+export default function CloudApp(props: CloudAppProps) {
+  return (
+    <ErrorReporterProvider>
+      <CloudAppContent {...props} />
+    </ErrorReporterProvider>
   );
 }

@@ -3,6 +3,7 @@ import {
   appendFileSync,
   chmodSync,
   cpSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { boxPayloadPrefix } from "../scripts/box-payload-key.mjs";
+import { PAYLOAD_ROOTFS_PATHS } from "../scripts/lib/box-payload-files.mjs";
 import {
   buildPlannedPayload,
   planBoxPayload,
@@ -198,6 +200,15 @@ test("base edits stay stable while service graphs and source modes move the payl
     path.join(repository, "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user2/type"),
     "bundle\n",
   );
+  // A no-commit merge can add payload files that `git clone` cannot see yet.
+  // Mirror the current payload inventory into the fixture so both builds use
+  // the same working-tree content the imported planner owns.
+  for (const relativePath of PAYLOAD_ROOTFS_PATHS) {
+    const source = path.join(repoRoot, "packages/box/rootfs", relativePath);
+    const destination = path.join(repository, "packages/box/rootfs", relativePath);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    copyFileSync(source, destination);
+  }
   const binariesDirectory = binaries();
   const before = await buildPlannedPayload({ repo: repository, binariesDirectory });
   appendFileSync(

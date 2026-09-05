@@ -246,12 +246,12 @@ describe("agent rule library", () => {
     };
 
     // 1. No rule anywhere: the built-in doc.
-    const plain = await create({ machineTypeId: "small" });
+    const plain = await create({ defaultMachineTypeId: "small" });
     expect(plain.agentRuleId).toBeNull();
     expect((await served(plain.id)).content).toBe(AGENT_RULES_DOC);
 
     // The clone source carries the rule a clone inherits.
-    const source = await create({ machineTypeId: "small", agentRuleId: "rule-template" });
+    const source = await create({ defaultMachineTypeId: "small", agentRuleId: "rule-template" });
     expect(source.agentRuleId).toBe("rule-template");
 
     // 2. From the clone source: the source's rule.
@@ -287,8 +287,8 @@ describe("agent rule library", () => {
     await putRule(app, outsider, "rule-other", { name: "Theirs", content: "# theirs\n" });
 
     for (const body of [
-      { machineTypeId: "small", agentRuleId: "rule-other" },
-      { machineTypeId: "small", agentRuleId: "missing" },
+      { defaultMachineTypeId: "small", agentRuleId: "rule-other" },
+      { defaultMachineTypeId: "small", agentRuleId: "missing" },
     ]) {
       expect((await appRequest(app, "/workspaces", {
         ...json(body, "POST"),
@@ -296,12 +296,12 @@ describe("agent rule library", () => {
       })).status).toBe(404);
     }
     expect((await appRequest(app, "/workspaces", {
-      ...json({ machineTypeId: "small", agentRuleId: 7 }, "POST"),
+      ...json({ defaultMachineTypeId: "small", agentRuleId: 7 }, "POST"),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
     })).status).toBe(400);
 
     const workspaceResponse = await appRequest(app, "/workspaces", {
-      ...json({ machineTypeId: "small", agentRuleId: "rule-1" }, "POST"),
+      ...json({ defaultMachineTypeId: "small", agentRuleId: "rule-1" }, "POST"),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
     });
     const workspace = (await workspaceResponse.json<{ workspace: WorkspaceView }>()).workspace;
