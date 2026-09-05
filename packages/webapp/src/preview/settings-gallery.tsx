@@ -146,7 +146,7 @@ function WorkspaceDetailsSection() {
           client={previewClient}
           workspace={previewWorkspace}
           listMachineTypes={listMachineTypesFixture}
-          refreshWorkspaces={() => undefined}
+          commitWorkspaceMutation={() => undefined}
           initialTab={tab}
           viewerMembershipId="m-june"
           orgName="Acme Robotics"
@@ -176,6 +176,7 @@ function MyMachineSection() {
           workspace={previewWorkspace}
           membershipId="m-june"
           listMachineTypes={listMachineTypesFixture}
+          commitWorkspaceMutation={() => undefined}
           onClose={() => setOpen(false)}
         />
       )}
@@ -195,8 +196,6 @@ function CreateWorkspaceSection() {
       </div>
       {open && (
         <CreateWorkspaceDialog
-          busy={false}
-          error={null}
           orgName="Acme Robotics"
           orgId="org-acme"
           admin

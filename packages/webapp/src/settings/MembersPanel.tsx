@@ -13,17 +13,17 @@ export function MembersPanel({
   client: ControlPlaneClient;
   admin: boolean;
   orgName: string;
-  /** Called after the server has removed the caller from the org. The session
-   * is now bound elsewhere, or to no org at all, so the caller reloads. */
+  /** Starts the shell-level leave after this panel confirms the request. */
   onLeft: () => void;
 }) {
   const [members, setMembers] = useState<MemberView[]>([]);
   const [confirmLeave, setConfirmLeave] = useState(false);
-  const [leaving, setLeaving] = useState(false);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [oneTimeLink, setOneTimeLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creatingInvite, setCreatingInvite] = useState(false);
+  const [pendingMemberIds, setPendingMemberIds] = useState<Set<string>>(() => new Set());
   const load = useCallback(async () => {
     try {
       setMembers((await client.listMembers()).members);
@@ -38,26 +38,59 @@ export function MembersPanel({
   // before it is pressed; the 409 stays the authority.
   const soleMember = members.filter((member) => member.status === 'active').length <= 1;
 
+  const mutateMember = (
+    member: MemberView,
+    input: { role?: 'admin' | 'member'; status?: 'disabled' | 'active' },
+  ) => {
+    const optimistic = { ...member, ...input };
+    setMembers((current) => current.map((row) => row.id === member.id ? optimistic : row));
+    setPendingMemberIds((current) => new Set(current).add(member.id));
+    setError(null);
+    void client.updateMember(member.id, input)
+      .then(({ member: canonical }) => {
+        setMembers((current) => current.map((row) => (
+          row.id === member.id ? canonical : row
+        )));
+      })
+      .catch((cause: unknown) => {
+        setMembers((current) => current.map((row) => (
+          row.id === member.id ? member : row
+        )));
+        setError(cause instanceof Error ? cause.message : 'Could not update member.');
+      })
+      .finally(() => {
+        setPendingMemberIds((current) => {
+          const next = new Set(current);
+          next.delete(member.id);
+          return next;
+        });
+      });
+  };
+
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Members">
       <PanelHeader eyebrow="Organization" title="Members" detail="People who can work in this organization." />
       {admin && (
         <form className="settings-form" onSubmit={(event) => {
           event.preventDefault();
+          setCreatingInvite(true);
+          setError(null);
           void client.createInvite({ email, role }).then((created) => {
-            setOneTimeLink(`${window.location.origin}/invite/${created.code}`);
+            setOneTimeLink(window.location.origin + '/invite/' + created.code);
             setEmail('');
-          }).catch((caught: Error) => setError(caught.message));
+          }).catch((cause: unknown) => {
+            setError(cause instanceof Error ? cause.message : 'Could not create invite.');
+          }).finally(() => setCreatingInvite(false));
         }}>
           <label className="cfg-field">
             <span>Email</span>
-            <input type="email" required placeholder="person@example.com" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
+            <input type="email" required disabled={creatingInvite} placeholder="person@example.com" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
           </label>
           <label className="cfg-field cfg-field--compact">
             <span>Role</span>
-            <select value={role} onChange={(event) => setRole(event.currentTarget.value === 'admin' ? 'admin' : 'member')}><option value="member">Member</option><option value="admin">Admin</option></select>
+            <select value={role} disabled={creatingInvite} onChange={(event) => setRole(event.currentTarget.value === 'admin' ? 'admin' : 'member')}><option value="member">Member</option><option value="admin">Admin</option></select>
           </label>
-          <button className="webapp-action webapp-action--primary" type="submit">Add member</button>
+          <button className="webapp-action webapp-action--primary" type="submit" disabled={creatingInvite}>{creatingInvite ? 'Adding…' : 'Add member'}</button>
         </form>
       )}
       {oneTimeLink && (
@@ -71,27 +104,41 @@ export function MembersPanel({
       )}
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       <div className="settings-people">
-        {members.map((member) => (
-          <div className={`settings-person${member.status === 'disabled' ? ' settings-person--disabled' : ''}`} key={member.id}>
-            <MemberAvatar name={member.name || member.email} avatarUrl={member.avatarUrl} size="lg" />
-            <span className="settings-person-copy">
-              <strong>{member.name || member.email}</strong>
-              <span>{member.email}{member.status === 'disabled' ? ' · disabled' : ''}</span>
-            </span>
-            {admin ? (
-              <span className="settings-person-actions">
-                <select aria-label={`Role for ${member.email}`} value={member.role} onChange={(event) => {
-                  const next = event.currentTarget.value === 'admin' ? 'admin' : 'member';
-                  void client.updateMember(member.id, { role: next }).then(load).catch((caught: Error) => setError(caught.message));
-                }}><option value="member">member</option><option value="admin">admin</option></select>
-                {member.status === 'active' && <button className="webapp-action" type="button" onClick={() => void client.updateMember(member.id, { status: 'disabled' }).then(load).catch((caught: Error) => setError(caught.message))}>Disable</button>}
-                {member.status === 'disabled' && <button className="webapp-action" type="button" onClick={() => void client.updateMember(member.id, { status: 'active' }).then(load).catch((caught: Error) => setError(caught.message))}>Enable</button>}
+        {members.map((member) => {
+          const pending = pendingMemberIds.has(member.id);
+          return (
+            <div className={`settings-person${member.status === 'disabled' ? ' settings-person--disabled' : ''}`} key={member.id}>
+              <MemberAvatar name={member.name || member.email} avatarUrl={member.avatarUrl} size="lg" />
+              <span className="settings-person-copy">
+                <strong>{member.name || member.email}</strong>
+                <span>{member.email}{member.status === 'disabled' ? ' · disabled' : ''}</span>
               </span>
-            ) : (
-              <span className="settings-person-role">{member.role}</span>
-            )}
-          </div>
-        ))}
+              {admin ? (
+                <span className="settings-person-actions">
+                  <select
+                    aria-label={'Role for ' + member.email}
+                    value={member.role}
+                    disabled={pending}
+                    onChange={(event) => {
+                      const next = event.currentTarget.value === 'admin' ? 'admin' : 'member';
+                      mutateMember(member, { role: next });
+                    }}
+                  ><option value="member">member</option><option value="admin">admin</option></select>
+                  <button
+                    className="webapp-action"
+                    type="button"
+                    disabled={pending}
+                    onClick={() => mutateMember(member, {
+                      status: member.status === 'active' ? 'disabled' : 'active',
+                    })}
+                  >{pending ? 'Updating…' : member.status === 'active' ? 'Disable' : 'Enable'}</button>
+                </span>
+              ) : (
+                <span className="settings-person-role">{member.role}</span>
+              )}
+            </div>
+          );
+        })}
       </div>
       {/* The redesign gave the zone a name; the zone itself stays the
         * settings-surface one, so the heading is a `cfg-` section head and
@@ -110,9 +157,9 @@ export function MembersPanel({
           <button
             className="cfg-danger-action"
             type="button"
-            disabled={soleMember || leaving}
+            disabled={soleMember}
             onClick={() => setConfirmLeave(true)}
-          >{leaving ? 'Leaving\u2026' : 'Leave'}</button>
+          >Leave</button>
         </div>
       </div>
       {confirmLeave && (
@@ -124,11 +171,7 @@ export function MembersPanel({
           onCancel={() => setConfirmLeave(false)}
           onConfirm={() => {
             setConfirmLeave(false);
-            setLeaving(true);
-            void client.leaveOrg().then(onLeft).catch((caught: Error) => {
-              setLeaving(false);
-              setError(caught.message);
-            });
+            onLeft();
           }}
         />
       )}

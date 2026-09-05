@@ -150,7 +150,9 @@ export function WorkspaceStrip({
                   ? `${workspace.title} — ${stateLabel(workspace)}`
                   : `${workspace.title} — shared by ${owner}`}
                 onClick={() => onSelectWorkspace(workspace.id)}
-                onContextMenu={(event) => openTileMenu(event, workspace)}
+                onContextMenu={workspace.pendingCreate
+                  ? undefined
+                  : (event) => openTileMenu(event, workspace)}
               >
                 <span className="shell-wtile__indicator" aria-hidden="true" />
                 <span

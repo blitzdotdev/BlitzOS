@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   ListMachineTypesResponse,
   MachineType,
@@ -12,8 +12,17 @@ import { monthlyPriceLabel } from './MachineCatalogGrid';
 import { MachineTypeSelect } from './MachineTypeSelect';
 import { ModalOverlay } from './ModalOverlay';
 import { VolumeMeter } from './VolumeMeter';
-import { machineActionsFor, type MachineAction } from './WorkspaceMembersEditor';
-import type { CloudWorkspaceModel } from './workspace-store';
+import {
+  machineActionsFor,
+  machinePendingLabel,
+  type MachineAction,
+} from './WorkspaceMembersEditor';
+import type { CloudWorkspaceModel, WorkspaceAction } from './workspace-store';
+import { useErrorReporter } from './error-dialog/ErrorReporter';
+import {
+  type MachineOverlay,
+  runMachineOverlayAction,
+} from './machine-overlay';
 
 const ACTION_LABELS = {
   provision: 'Provision',
@@ -122,6 +131,7 @@ export function MyMachineDialog({
   workspace,
   membershipId,
   listMachineTypes,
+  commitWorkspaceMutation,
   onClose,
 }: {
   client: ControlPlaneClient;
@@ -129,6 +139,7 @@ export function MyMachineDialog({
   /** The requesting member's membership, which is what keys a machine. */
   membershipId: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  commitWorkspaceMutation: (action: WorkspaceAction) => void;
   onClose: () => void;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -138,6 +149,8 @@ export function MyMachineDialog({
   const [catalog, setCatalog] = useState<ListMachineTypesResponse>(NO_CATALOG);
   const [error, setError] = useState<string | null>(null);
   const [pendingTypeId, setPendingTypeId] = useState<string | null>(null);
+  const [machineOverlay, setMachineOverlay] = useState<MachineOverlay | null>(null);
+  const reportError = useErrorReporter();
   const machines: MachineType[] = catalog.machineTypes;
 
   useEffect(() => { closeButton.current?.focus(); }, []);
@@ -155,29 +168,66 @@ export function MyMachineDialog({
     return () => { cancelled = true; };
   }, [listMachineTypes]);
 
-  const run = useCallback((action: Promise<unknown>) => {
-    void action.then(() => setError(null)).catch((caught: Error) => setError(caught.message));
-  }, []);
-
   const member = workspace.members.find((row) => row.membershipId === membershipId);
-  const machine = member?.machine ?? null;
+  const machine = machineOverlay?.machine ?? member?.machine ?? null;
+  const pendingAction = machineOverlay?.pendingAction ?? null;
+
   // A workspace admin, or an org admin reaching in implicitly (§3).
   const admin = workspace.myRole === 'admin' || workspace.myRole === null;
   const type = machines.find(({ id }) => id === machine?.machineTypeId);
   const price = monthlyPriceLabel(type?.monthlyPrice);
 
+  const runMachineAction = (
+    action: MachineAction,
+    request: () => Promise<MachineView | null>,
+    title?: string,
+  ) => {
+    if (member === undefined) return;
+    runMachineOverlayAction({
+      action,
+      machine,
+      request,
+      setOverlay: setMachineOverlay,
+      commitWorkspaceMutation,
+      workspaceId: workspace.id,
+      membershipId: member.membershipId,
+      reportError,
+      errorAction: `Your machine in ${workspace.title}.`,
+      title,
+    });
+  };
+
   const act = (action: MachineAction) => {
     if (machine === null) {
       if (action === 'provision') {
-        run(client.provisionMemberMachine(workspace.id, membershipId ?? '', {}));
+        runMachineAction(action, () => client.provisionMemberMachine(
+          workspace.id,
+          membershipId ?? '',
+          {},
+        ).then(({ member: updated }) => updated.machine));
       }
       return;
     }
-    if (action === 'provision') run(client.provisionMachine(machine.id));
-    if (action === 'stop') run(client.stopMachine(machine.id));
-    if (action === 'start') run(client.startMachine(machine.id));
-    if (action === 'recreate') run(client.recreateMachine(machine.id));
-    if (action === 'destroy') run(client.destroyMachine(machine.id));
+    if (action === 'provision') runMachineAction(
+      action,
+      () => client.provisionMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'stop') runMachineAction(
+      action,
+      () => client.stopMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'start') runMachineAction(
+      action,
+      () => client.startMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'recreate') runMachineAction(
+      action,
+      () => client.recreateMachine(machine.id).then(({ machine: updated }) => updated),
+    );
+    if (action === 'destroy') runMachineAction(
+      action,
+      () => client.destroyMachine(machine.id).then(({ machine: updated }) => updated),
+    );
   };
 
   const actions = member === undefined || member.role === 'viewer'
@@ -217,7 +267,9 @@ export function MyMachineDialog({
                     <dt>Status</dt>
                     {/* `MachineState` is a wire term shown to a person. */}
                     <dd className="cfg-meta-term">
-                      {machine === null ? 'No machine' : machine.state}
+                      {pendingAction === null
+                        ? machine === null ? 'No machine' : machine.state
+                        : machinePendingLabel(pendingAction)}
                     </dd>
                   </div>
                   <Detail
@@ -260,6 +312,7 @@ export function MyMachineDialog({
                     defaultMachineTypeId={workspace.defaultMachineTypeId}
                     volumeLocation={volumeLocationOf(machine, machines)}
                     ariaLabel="Change my machine type"
+                    disabled={pendingAction !== null}
                     onChange={(machineTypeId) => {
                       if (machineTypeId !== machine.machineTypeId) setPendingTypeId(machineTypeId);
                     }}
@@ -294,7 +347,7 @@ export function MyMachineDialog({
                           : 'webapp-action'}
                         type="button"
                         key={action}
-                        disabled={blocked}
+                        disabled={blocked || pendingAction !== null}
                         title={blocked ? askLine(workspace.members) : undefined}
                         onClick={() => act(action)}
                       >
@@ -318,8 +371,14 @@ export function MyMachineDialog({
           confirmLabel="Yes, change the type"
           onCancel={() => setPendingTypeId(null)}
           onConfirm={() => {
+            const machineTypeId = pendingTypeId;
             setPendingTypeId(null);
-            run(client.setMachineType(machine.id, { machineTypeId: pendingTypeId }));
+            runMachineAction(
+              'recreate',
+              () => client.setMachineType(machine.id, { machineTypeId })
+                .then(({ machine: updated }) => updated),
+              'Couldn’t change machine type',
+            );
           }}
         />
       )}

@@ -192,6 +192,31 @@ docker image inspect "$BOX_IMAGE_REF" >/dev/null
 box_image="$BOX_IMAGE_REF"`;
 }
 
+/** Host inotify capacity for the box, emitted into the bootstrap.
+ *
+ * Every process in the box container runs as the same uid. Node consumes one
+ * inotify instance for each `fs.watch()`, so the kernel's per-uid defaults are
+ * one shared ceiling for the session daemon and every agent it starts. Once
+ * that ceiling is full, a new session can fail or hang while installing its
+ * settings watchers and block the daemon's single local dispatch queue.
+ *
+ * This belongs on the host, before Docker starts. The drop-in is the durable
+ * half: systemd-sysctl replays it after every reboot. `sysctl -p` applies the
+ * same values to the boot already in progress. A kernel that refuses either
+ * value still has to boot the workspace, so applying the file is non-fatal.
+ *
+ * KEEP THIS TERSE. Every byte here is cloud-init user-data, and Hetzner caps
+ * that at HETZNER_USER_DATA_MAX_BYTES. Reasoning belongs in this comment,
+ * which never ships; the emitted script carries only what bash must read. */
+const INOTIFY_SETUP = `cat >/etc/sysctl.d/60-blitz-inotify.conf <<'INOTIFY'
+fs.inotify.max_user_instances = 1024
+fs.inotify.max_user_watches = 524288
+INOTIFY
+sysctl -q -p /etc/sysctl.d/60-blitz-inotify.conf || echo "blitz bootstrap: inotify sysctl failed, continuing"
+blitz_phase inotify-ready
+
+`;
+
 /** Compressed swap for the VM, emitted into the bootstrap.
  *
  * A Hetzner Ubuntu image ships no swap at all. With none, a workspace that
@@ -439,12 +464,12 @@ else
   apt_watchdog update
   apt_watchdog install -y docker.io curl
 fi
-systemctl enable --now docker
 
 # Every phase marker carries seconds since the script started. Without these
 # the only way to attribute boot time was subtraction, which turned every
 # tuning decision into an estimate (tools/e2e/GAPS.md).
 blitz_phase() { echo "blitz-phase: $1 seconds=$SECONDS"; }
+${INOTIFY_SETUP}systemctl enable --now docker
 blitz_phase apt-done
 
 mkdir -p /var/lib/blitz

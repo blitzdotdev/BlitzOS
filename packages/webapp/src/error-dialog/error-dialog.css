@@ -1,0 +1,52 @@
+.webapp-error-dialog {
+  width: min(640px, 100%);
+}
+
+.webapp-error-dialog__icon {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  margin-right: 10px;
+  border: 1px solid var(--ansi-red);
+  border-radius: 50%;
+  color: var(--ansi-red);
+  font-size: 12px;
+  font-weight: 700;
+  place-items: center;
+}
+
+.webapp-error-dialog__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.webapp-error-dialog__tags span {
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  color: var(--faint);
+  background: var(--sunken);
+  font: 10px/1.5 var(--font-mono);
+}
+
+.webapp-error-dialog pre {
+  max-height: 45vh;
+  margin: 10px 0 0;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  background: var(--sunken);
+  font: 11.5px/1.6 var(--font-mono);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.webapp-confirmation-body .webapp-error-dialog__copy-failed {
+  margin-top: 10px;
+  color: var(--ansi-red);
+  font-size: 11px;
+}

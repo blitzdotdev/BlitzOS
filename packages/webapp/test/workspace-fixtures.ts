@@ -46,6 +46,7 @@ export function workspaceModelFixture(
 ): CloudWorkspaceModel {
   return {
     id: 'workspace-one',
+    pendingCreate: false,
     ownerMembershipId: 'membership-1',
     canControl: true,
     shared: false,

@@ -44,6 +44,18 @@ const MACHINE_ACTION_LABELS = {
   destroy: 'Destroy',
 } satisfies Record<MachineAction, string>;
 
+const MACHINE_PENDING_LABELS = {
+  provision: 'Provisioning',
+  stop: 'Stopping',
+  start: 'Starting',
+  recreate: 'Recreating',
+  destroy: 'Destroying',
+} satisfies Record<MachineAction, string>;
+
+export function machinePendingLabel(action: MachineAction): string {
+  return MACHINE_PENDING_LABELS[action];
+}
+
 /**
  * Which verbs this machine's state can accept.
  *
@@ -64,11 +76,19 @@ export function machineActionsFor(machine: MachineView | null): MachineAction[] 
   return ['stop', 'recreate', 'destroy'];
 }
 
-function MachineStateChip({ machine }: { machine: MachineView | null }) {
-  const state = machine?.state ?? 'none';
+function MachineStateChip({
+  machine,
+  pendingAction,
+}: {
+  machine: MachineView | null;
+  pendingAction: MachineAction | null;
+}) {
+  const state = pendingAction === null ? machine?.state ?? 'none' : 'pending';
   return (
     <span className={`machine-chip machine-chip--${state}`}>
-      {machine === null ? 'No machine' : machine.state}
+      {pendingAction === null
+        ? machine === null ? 'No machine' : machine.state
+        : machinePendingLabel(pendingAction)}
     </span>
   );
 }
@@ -161,6 +181,8 @@ function MemberRow({
   defaultMachineTypeId,
   pinned,
   readOnly,
+  pending,
+  pendingAction,
   onRoleChange,
   onMachineTypeChange,
   onPersistentVolumeChange,
@@ -179,6 +201,12 @@ function MemberRow({
   /** The creator, who is the first workspace admin and cannot be removed. */
   pinned: boolean;
   readOnly: boolean;
+  /** An optimistic add has no server row yet, so every write on it waits for
+   * the add to reconcile before it can target anything. */
+  pending: boolean;
+  /** A client-only lifecycle transition. Start/stop/recreate have no distinct
+   * MachineState value, so the row labels them without changing the wire. */
+  pendingAction: MachineAction | null;
   onRoleChange: (role: WorkspaceMemberRole) => void;
   onMachineTypeChange: (machineTypeId: string) => void;
   onPersistentVolumeChange: (persistentVolume: boolean) => void;
@@ -196,7 +224,8 @@ function MemberRow({
   // The pinned creator row of a draft has no choice to make: the workspace
   // creator's own machine is provisioned before any member row is read.
   const showVolume = showMachine && (volumeDecided || !pinned);
-  const actions = onMachineAction === null ? [] : machineActionsFor(machine);
+  const rowBusy = readOnly || pending || pendingAction !== null;
+  const actions = onMachineAction === null || rowBusy ? [] : machineActionsFor(machine);
   return (
     <div className="workspace-member-row">
       <MemberAvatar name={name} avatarUrl={avatarUrl} size="md" />
@@ -212,13 +241,14 @@ function MemberRow({
           className="workspace-member-role"
           value={role}
           options={ROLE_OPTIONS}
+          disabled={rowBusy}
           onChange={(next) => {
             // SAFETY: the options are exactly WORKSPACE_MEMBER_ROLES.
             onRoleChange(next as WorkspaceMemberRole);
           }}
         />
       )}
-      {showMachine && <MachineStateChip machine={machine} />}
+      {showMachine && <MachineStateChip machine={machine} pendingAction={pendingAction} />}
       {showMachine && (
         <MachineTypeSelect
           machines={machines}
@@ -226,7 +256,7 @@ function MemberRow({
           defaultMachineTypeId={defaultMachineTypeId}
           volumeLocation={machineLocation(machine, machines)}
           ariaLabel={`Machine type for ${name}`}
-          disabled={readOnly}
+          disabled={rowBusy}
           onChange={onMachineTypeChange}
         />
       )}
@@ -236,7 +266,7 @@ function MemberRow({
             type="checkbox"
             aria-label={`Persistent volume for ${name}`}
             checked={persistentVolume}
-            disabled={readOnly}
+            disabled={rowBusy}
             onChange={(event) => onPersistentVolumeChange(event.currentTarget.checked)}
           />
           <span>Persistent volume</span>
@@ -264,6 +294,7 @@ function MemberRow({
           className="workspace-member-remove"
           type="button"
           aria-label={`Remove ${name}`}
+          disabled={rowBusy}
           onClick={onRemove}
         >
           ×
@@ -284,13 +315,15 @@ export type WorkspaceMembersEditorMode =
     members: WorkspaceMemberView[];
     readOnly: boolean;
     ownerMembershipId: string | null;
+    pendingMembershipIds: ReadonlySet<string>;
+    pendingMachineActions: ReadonlyMap<string, MachineAction>;
     onAdd: (input: {
       membershipId: string;
       role: WorkspaceMemberRole;
       machineTypeId: string;
       persistentVolume: boolean;
     }) => void;
-    onRoleChange: (membershipId: string, role: WorkspaceMemberRole) => void;
+    onRoleChange: (member: WorkspaceMemberView, role: WorkspaceMemberRole) => void;
     onMachineTypeChange: (member: WorkspaceMemberView, machineTypeId: string) => void;
     onMachineAction: (
       member: WorkspaceMemberView,
@@ -381,6 +414,8 @@ export function WorkspaceMembersEditor({
             defaultMachineTypeId={defaultMachineTypeId}
             pinned
             readOnly
+            pending={false}
+            pendingAction={null}
             onRoleChange={() => undefined}
             onMachineTypeChange={() => undefined}
             onPersistentVolumeChange={() => undefined}
@@ -402,6 +437,8 @@ export function WorkspaceMembersEditor({
               defaultMachineTypeId={defaultMachineTypeId}
               pinned={false}
               readOnly={false}
+              pending={false}
+              pendingAction={null}
               onRoleChange={(role) => mode.onChange(mode.members.map((current, at) =>
                 at === index ? { ...current, role } : current))}
               onMachineTypeChange={(machineTypeId) => mode.onChange(mode.members.map((current, at) =>
@@ -426,7 +463,9 @@ export function WorkspaceMembersEditor({
               defaultMachineTypeId={defaultMachineTypeId}
               pinned={member.membershipId === mode.ownerMembershipId}
               readOnly={readOnly}
-              onRoleChange={(role) => mode.onRoleChange(member.membershipId, role)}
+              pending={mode.pendingMembershipIds.has(member.membershipId)}
+              pendingAction={mode.pendingMachineActions.get(member.membershipId) ?? null}
+              onRoleChange={(role) => mode.onRoleChange(member, role)}
               onMachineTypeChange={(machineTypeId) => mode.onMachineTypeChange(member, machineTypeId)}
               onPersistentVolumeChange={(persistentVolume) => setVolumeIntent((current) => ({
                 ...current,

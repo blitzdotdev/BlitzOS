@@ -1,23 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
-  AddWorkspaceMemberRequest,
   ListMachineTypesResponse,
   MachineType,
   WorkspaceRepoView,
-  WorkspaceMemberRole,
+  UpdateWorkspaceRequest,
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient, MemberView } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ModalOverlay } from './ModalOverlay';
-import { WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
-import {
-  WorkspaceMembersEditor,
-  type MachineAction,
-} from './WorkspaceMembersEditor';
+import { WorkspaceMembersEditor } from './WorkspaceMembersEditor';
 import { WorkspaceCredentialsTab } from './WorkspaceCredentialsTab';
 import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
-import type { CloudWorkspaceModel } from './workspace-store';
+import type { CloudWorkspaceModel, WorkspaceAction } from './workspace-store';
+import { caughtErrorMessage } from './error-message';
+import { useErrorReporter } from './error-dialog/ErrorReporter';
+import { useWorkspaceOptimisticMembers } from './use-workspace-optimistic-members';
 
 /** Members, the org credentials readable here (plans/ORG-CREDENTIALS.md §9
  * — a filtered view, not a store), and the settings. */
@@ -28,26 +26,6 @@ const TAB_LABELS = {
   credentials: 'Credentials',
   settings: 'Settings',
 } satisfies Record<WorkspaceDetailsTab, string>;
-
-/** "Workspace default" travels as an absent field, not as an empty string
- * the server would have to read as a type id. */
-function addMember(input: {
-  membershipId: string;
-  role: WorkspaceMemberRole;
-  machineTypeId: string;
-  persistentVolume: boolean;
-}): AddWorkspaceMemberRequest {
-  const request: AddWorkspaceMemberRequest = {
-    membershipId: input.membershipId,
-    role: input.role,
-  };
-  if (input.machineTypeId !== WORKSPACE_DEFAULT_MACHINE_TYPE) {
-    request.machineTypeId = input.machineTypeId;
-  }
-  // True is the server's default, so only the refusal travels.
-  if (!input.persistentVolume) request.persistentVolume = false;
-  return request;
-}
 
 /** The `SetMachineType` confirmation of §6: the disk survives, the VM does
  * not. Held as state so the confirm can run the write it describes. */
@@ -72,8 +50,8 @@ export function WorkspaceDetailsDialog({
   client,
   workspace,
   listMachineTypes,
-  refreshWorkspaces,
   initialTab = 'members',
+  commitWorkspaceMutation,
   focusAddMember = false,
   viewerMembershipId = null,
   orgName = 'the organization',
@@ -91,10 +69,7 @@ export function WorkspaceDetailsDialog({
   orgName?: string;
   /** The org's workspaces, for the grant picker in the credential form. */
   orgWorkspaces?: ReadonlyArray<{ id: string; name: string }>;
-  /** Runs the workspace poll now. The rows this dialog administers are the
-   * polled ones, so a settled write asks for the next poll rather than
-   * leaving the list stale until the 15 s tick. */
-  refreshWorkspaces: () => void;
+  commitWorkspaceMutation: (action: WorkspaceAction) => void;
   initialTab?: WorkspaceDetailsTab;
   /** Opens with the add-member field focused, for the tile menu's Invite. */
   focusAddMember?: boolean;
@@ -113,12 +88,19 @@ export function WorkspaceDetailsDialog({
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<WorkspaceDetailsTab>(initialTab);
   const [pendingTypeChange, setPendingTypeChange] = useState<PendingTypeChange | null>(null);
+  const reportError = useErrorReporter();
 
   // Workspace admin runs the workspace; an org admin passes every ✓ in that
   // column through implicit reach, which the wire reports as a null role on a
   // workspace they can still open (§3).
   const canManage = workspace.myRole === 'admin' || workspace.myRole === null;
   const workspaceId = workspace.id;
+  const optimistic = useWorkspaceOptimisticMembers({
+    client,
+    workspace,
+    orgMembers,
+    commitWorkspaceMutation,
+  });
 
   // Invite lands on the picker rather than on the close button: the one thing
   // it opened the dialog to do is type a teammate's name.
@@ -138,74 +120,79 @@ export function WorkspaceDetailsDialog({
         setRepos(repoResponse.repos);
         setError(null);
       })
-      .catch((caught: Error) => {
-        if (!cancelled) setError(caught.message || 'Could not load workspace details.');
+      .catch((caught) => {
+        if (!cancelled) {
+          setError(caughtErrorMessage(caught, 'Could not load workspace details.'));
+        }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [client, listMachineTypes, workspaceId]);
 
-  /** Every write reports its own failure and leaves the poll to refresh the
-   * rows, so no edit invents a row the server has not agreed to. A settled
-   * write runs that poll at once. */
-  const run = useCallback((action: Promise<unknown>) => {
-    void action
-      .then(() => {
-        setError(null);
-        refreshWorkspaces();
-      })
-      .catch((caught: Error) => setError(caught.message));
-  }, [refreshWorkspaces]);
-
-  const machineAction = (
-    member: WorkspaceMemberView,
-    action: MachineAction,
-    options: { persistentVolume: boolean },
-  ) => {
-    const machine = member.machine;
-    // A member with no machine has no id to act on, so their one verb goes to
-    // the route keyed by the membership instead. The row's type select shows
-    // the workspace default until a machine exists, so nothing overrides it.
-    if (machine === null) {
-      if (action === 'provision') {
-        run(client.provisionMemberMachine(
-          workspaceId,
-          member.membershipId,
-          options.persistentVolume ? {} : { persistentVolume: false },
-        ));
-      }
-      return;
+  const saveSettings = useCallback(async (input: UpdateWorkspaceRequest) => {
+    try {
+      const { workspace: updated } = await client.updateWorkspace(workspaceId, input);
+      commitWorkspaceMutation({
+        type: 'workspace_settings_updated',
+        workspaceId,
+        settings: {
+          serverName: updated.name,
+          defaultMachineTypeId: updated.defaultMachineTypeId,
+          autoProvision: updated.autoProvision,
+          agentRuleId: updated.agentRuleId,
+          updatedAt: updated.updatedAt,
+        },
+      });
+      return {
+        name: updated.name,
+        defaultMachineTypeId: updated.defaultMachineTypeId,
+        autoProvision: updated.autoProvision,
+        agentRuleId: updated.agentRuleId,
+      };
+    } catch (caught) {
+      reportError(caught instanceof Error ? caught : new Error('The settings could not be saved.'), {
+        title: 'Couldn’t save workspace settings',
+        action: 'Saving settings for ' + workspace.title + '.',
+        workspaceId,
+      });
+      throw caught;
     }
-    if (action === 'provision') run(client.provisionMachine(machine.id));
-    if (action === 'stop') run(client.stopMachine(machine.id));
-    if (action === 'start') run(client.startMachine(machine.id));
-    if (action === 'recreate') run(client.recreateMachine(machine.id));
-    if (action === 'destroy') run(client.destroyMachine(machine.id));
-  };
+  }, [client, commitWorkspaceMutation, reportError, workspace.title, workspaceId]);
 
   /** A repo write answers with the list it produced, so the panel shows what
    * the server holds rather than what the browser hoped for. A remove answers
    * 204, and the row the server agreed to delete is the one dropped here. */
   const addRepo = (repo: string) => {
     void client.addWorkspaceRepo(workspaceId, { repo })
-      .then((response) => { setRepos(response.repos); setError(null); })
-      .catch((caught: Error) => setError(caught.message));
+      .then((response) => { setRepos(response.repos); })
+      .catch((caught) => reportError(caught, {
+        title: 'Couldn’t add repository',
+        action: `Adding ${repo} to ${workspace.title}.`,
+        workspaceId,
+      }));
   };
 
   const removeRepo = (repo: string) => {
     void client.removeWorkspaceRepo(workspaceId, repo)
       .then(() => {
         setRepos((current) => current.filter((entry) => entry.repo !== repo));
-        setError(null);
       })
-      .catch((caught: Error) => setError(caught.message));
+      .catch((caught) => reportError(caught, {
+        title: 'Couldn’t remove repository',
+        action: `Removing ${repo} from ${workspace.title}.`,
+        workspaceId,
+      }));
   };
 
   const changeMachineType = (member: WorkspaceMemberView, machineTypeId: string) => {
     // A machine that does not exist has no type to change; the row's type
     // select only writes once there is a VM behind it.
     if (member.machine === null) {
-      setError('This member has no machine yet, so there is no type to change.');
+      reportError(new Error('This member has no machine yet, so there is no type to change.'), {
+        title: 'Couldn’t change machine type',
+        action: `${member.name}’s machine in ${workspace.title}.`,
+        workspaceId,
+      });
       return;
     }
     setPendingTypeChange({ member, machineTypeId });
@@ -252,22 +239,22 @@ export function WorkspaceDetailsDialog({
                   <h2 className="cfg-title">Who has access</h2>
                 </div>
                 <WorkspaceMembersEditor
-                mode={{
-                  kind: 'live',
-                  members: workspace.members,
-                  readOnly: !canManage,
-                  ownerMembershipId: workspace.ownerMembershipId,
-                  onAdd: (input) => run(client.addWorkspaceMember(workspace.id, addMember(input))),
-                  onRoleChange: (membershipId, role: WorkspaceMemberRole) =>
-                    run(client.updateWorkspaceMember(workspace.id, membershipId, { role })),
-                  onMachineTypeChange: changeMachineType,
-                  onMachineAction: machineAction,
-                  onRemove: (member) =>
-                    run(client.removeWorkspaceMember(workspace.id, member.membershipId)),
-                }}
-                orgMembers={orgMembers}
-                machines={machines}
-                defaultMachineTypeId={workspace.defaultMachineTypeId}
+                  mode={{
+                    kind: 'live',
+                    members: optimistic.displayedMembers,
+                    readOnly: !canManage,
+                    ownerMembershipId: workspace.ownerMembershipId,
+                    pendingMembershipIds: optimistic.pendingMembershipIds,
+                    pendingMachineActions: optimistic.pendingMachineActions,
+                    onAdd: optimistic.addWorkspaceMember,
+                    onRoleChange: optimistic.updateWorkspaceMemberRole,
+                    onMachineTypeChange: changeMachineType,
+                    onMachineAction: optimistic.machineAction,
+                    onRemove: optimistic.removeWorkspaceMember,
+                  }}
+                  orgMembers={orgMembers}
+                  machines={machines}
+                  defaultMachineTypeId={workspace.defaultMachineTypeId}
                   autoFocusAdd={focusAddMember}
                 />
               </div>
@@ -291,7 +278,7 @@ export function WorkspaceDetailsDialog({
               machines={machines}
               repos={repos}
               canManage={canManage}
-              onSave={(input) => run(client.updateWorkspace(workspaceId, input))}
+              onSave={saveSettings}
               onAddRepo={addRepo}
               onRemoveRepo={removeRepo}
             />
@@ -319,12 +306,18 @@ export function WorkspaceDetailsDialog({
           confirmLabel="Yes, change the type"
           onCancel={() => setPendingTypeChange(null)}
           onConfirm={() => {
-            const machine = pendingTypeChange.member.machine;
+            const change = pendingTypeChange;
+            const machine = change.member.machine;
             setPendingTypeChange(null);
             if (machine === null) return;
-            run(client.setMachineType(machine.id, {
-              machineTypeId: pendingTypeChange.machineTypeId,
-            }));
+            optimistic.runMachineAction(
+              change.member,
+              'recreate',
+              () => client.setMachineType(machine.id, {
+                machineTypeId: change.machineTypeId,
+              }).then(({ machine: updated }) => updated),
+              'Couldn’t change machine type',
+            );
           }}
         />
       )}
