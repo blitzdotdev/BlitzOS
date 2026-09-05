@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -14,6 +15,14 @@ const updater = fileURLToPath(
 const fixtures = fileURLToPath(
   new URL("../../../schema/fixtures/box-payload/", import.meta.url),
 );
+const configFixtures = fileURLToPath(
+  new URL("../../../schema/fixtures/box-config/", import.meta.url),
+);
+
+interface ConfigFixture {
+  response: Record<string, unknown>;
+  payloadAccepts?: boolean;
+}
 
 interface InvalidCases {
   [fixture: string]: string;
@@ -48,6 +57,34 @@ function validate(fixture: string): { status: number | null; stderr: string } {
 }
 
 describe("blitz-payload fixture conformance", () => {
+  it("runs the real payload config parser over every box-config fixture", () => {
+    const names = readdirSync(configFixtures)
+      .filter((name) => name.startsWith("config-") && name.endsWith(".json"))
+      .sort();
+    expect(names).toHaveLength(13);
+    const temporary = mkdtempSync(path.join(tmpdir(), "blitz-payload-config-"));
+    try {
+      for (const name of names) {
+        // SAFETY: this repository fixture is checked immediately before use.
+        const fixture = JSON.parse(
+          readFileSync(path.join(configFixtures, name), "utf8"),
+        ) as ConfigFixture;
+        const responsePath = path.join(temporary, name);
+        writeFileSync(responsePath, JSON.stringify(fixture.response));
+        const result = spawnSync(
+          process.execPath,
+          [updater, "validate-config", responsePath],
+          { encoding: "utf8" },
+        );
+        expect(result.status, `${name}: ${result.stderr}`).toBe(
+          fixture.payloadAccepts === false ? 1 : 0,
+        );
+      }
+    } finally {
+      rmSync(temporary, { recursive: true, force: true });
+    }
+  });
+
   it("accepts every valid manifest, including an unsupported updater version", () => {
     const names = fixtureNames("valid");
     expect(names).toEqual([

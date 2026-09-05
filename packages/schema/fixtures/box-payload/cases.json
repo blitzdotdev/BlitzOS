@@ -4,6 +4,7 @@
   "invalid/archive.sha256--uppercase.json": "manifest.archive.sha256",
   "invalid/archive.url--relative.json": "manifest.archive.url",
   "invalid/createdAt--negative.json": "manifest.createdAt",
+  "invalid/createdAt--zero.json": "manifest.createdAt",
   "invalid/daemon--not-object.json": "manifest.daemon",
   "invalid/daemon.bytes--negative.json": "manifest.daemon.bytes",
   "invalid/daemon.protocolVersion--zero.json": "manifest.daemon.protocolVersion",

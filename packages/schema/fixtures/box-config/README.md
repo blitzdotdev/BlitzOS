@@ -26,6 +26,11 @@ URL-shaped refs report `unsupported` rather than being passed to `docker
 pull`, so the origin refresh still happens. On a rejected envelope the host
 changes nothing and keeps polling.
 
+The in-box updater independently parses only the additive `payload` member.
+`payloadAccepts` records that consumer's expectation and defaults to `true`;
+this lets malformed payload pins remain valid fixtures for the legacy host,
+which deliberately ignores that forward-compatible member.
+
 `result-*.json` fixtures pair a candidate update-result request body
 (`request`) with whether the control-plane consumer must accept it
 (`accepts`): `ref` is one image-reference token and `outcome` is one of
@@ -39,4 +44,6 @@ or the workspace's update flag would stay set forever.
 Conformance: the control-plane side is
 `packages/control-plane/test/box-config-conformance.test.ts`; the host side
 (the parser and producer embedded in the emitted updater, run with real
-`python3`) is `packages/control-plane/test/box-update-conformance.test.mjs`.
+`python3`) is `packages/control-plane/test/box-update-conformance.test.mjs`;
+the real in-box updater parser runs the same config fixtures in
+`packages/box/guest-tests/test/box-payload-conformance.test.ts`.

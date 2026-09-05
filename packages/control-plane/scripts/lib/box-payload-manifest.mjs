@@ -2,6 +2,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const PAYLOAD_PATH_PATTERN = /^rootfs\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/u;
 const SERVICE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const MODE_PATTERN = /^0[0-7]{3}$/u;
+const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
 
 function record(value, label) {
   if (value === null || Object(value) !== value || Array.isArray(value)) {
@@ -21,6 +22,12 @@ function keysExactly(value, expected, label) {
 function string(value, label) {
   if (String(value) !== value || value === "") throw new Error(`${label} must be a non-empty string`);
   return value;
+}
+
+function version(value, label) {
+  if (String(value) !== value || !VERSION_PATTERN.test(value)) {
+    throw new Error(`${label} must be a version token`);
+  }
 }
 
 function positiveBytes(value, label) {
@@ -63,9 +70,9 @@ export function validateBoxPayloadManifest(value, knownServices) {
       : ["version", "createdAt", "minUpdater", "files", "archive", "daemon", "restart"],
     "box-payload manifest",
   );
-  string(manifest.version, "version");
-  if (!Number.isSafeInteger(manifest.createdAt) || manifest.createdAt < 0) {
-    throw new Error("createdAt must be a non-negative integer timestamp");
+  version(manifest.version, "version");
+  if (!Number.isSafeInteger(manifest.createdAt) || manifest.createdAt <= 0) {
+    throw new Error("createdAt must be a positive integer timestamp");
   }
   if (!Number.isSafeInteger(manifest.minUpdater) || manifest.minUpdater <= 0) {
     throw new Error("minUpdater must be a positive integer");
@@ -73,16 +80,17 @@ export function validateBoxPayloadManifest(value, knownServices) {
   if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
     throw new Error("files must be a non-empty array");
   }
-  let previousPath = "";
   const payloadPaths = new Set();
   for (const [index, entryValue] of manifest.files.entries()) {
     const entry = record(entryValue, `files[${index}]`);
     keysExactly(entry, ["path", "sha256", "mode"], `files[${index}]`);
-    if (String(entry.path) !== entry.path || !PAYLOAD_PATH_PATTERN.test(entry.path)) {
+    if (
+      String(entry.path) !== entry.path
+      || !PAYLOAD_PATH_PATTERN.test(entry.path)
+      || entry.path.split("/").some((segment) => segment === "." || segment === "..")
+    ) {
       throw new Error(`files[${index}].path is invalid`);
     }
-    if (entry.path <= previousPath) throw new Error("files must be sorted with unique paths");
-    previousPath = entry.path;
     payloadPaths.add(entry.path);
     digest(entry.sha256, `files[${index}].sha256`);
     if (String(entry.mode) !== entry.mode || !MODE_PATTERN.test(entry.mode)) {
@@ -93,7 +101,7 @@ export function validateBoxPayloadManifest(value, knownServices) {
   if (manifest.daemon !== undefined) {
     const daemon = record(manifest.daemon, "daemon");
     keysExactly(daemon, ["version", "protocolVersion", "url", "sha256", "bytes"], "daemon");
-    string(daemon.version, "daemon.version");
+    version(daemon.version, "daemon.version");
     if (!Number.isSafeInteger(daemon.protocolVersion) || daemon.protocolVersion <= 0) {
       throw new Error("daemon.protocolVersion must be a positive integer");
     }
@@ -108,15 +116,10 @@ export function validateBoxPayloadManifest(value, knownServices) {
       throw new Error(`restart names unknown service: ${service}`);
     }
     if (!Array.isArray(paths)) throw new Error(`restart.${service} must be an array`);
-    let previousDependency = "";
     for (const dependency of paths) {
       if (String(dependency) !== dependency || !payloadPaths.has(dependency)) {
         throw new Error(`restart.${service} names a file outside the payload`);
       }
-      if (dependency <= previousDependency) {
-        throw new Error(`restart.${service} must be sorted with unique paths`);
-      }
-      previousDependency = dependency;
     }
   }
   return manifest;

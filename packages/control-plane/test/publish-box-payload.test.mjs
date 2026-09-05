@@ -4,6 +4,7 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -21,11 +22,12 @@ import {
   stageBoxPayloadRelease,
 } from "../scripts/publish-box-payload.mjs";
 import { validateBoxPayloadManifest } from "../scripts/lib/box-payload-manifest.mjs";
-import { PAYLOAD_FILES } from "../scripts/lib/box-payload-files.mjs";
+import { PAYLOAD_FILES, PAYLOAD_SERVICES } from "../scripts/lib/box-payload-files.mjs";
 import { readLodyDaemonMetadata } from "../scripts/lib/box-daemon.mjs";
 import { boxPayloadVersion } from "../scripts/box-payload-key.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const fixtureRoot = path.join(repoRoot, "packages/schema/fixtures/box-payload");
 const temporaryDirectories = [];
 
 function temporaryDirectory(prefix) {
@@ -43,6 +45,18 @@ test.after(() => {
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
+
+test("publisher manifest validation matches the entire shared corpus", () => {
+  for (const accepted of [true, false]) {
+    const directory = path.join(fixtureRoot, accepted ? "valid" : "invalid");
+    for (const name of readdirSync(directory).filter((entry) => entry.endsWith(".json"))) {
+      const manifest = JSON.parse(readFileSync(path.join(directory, name), "utf8"));
+      const validate = () => validateBoxPayloadManifest(manifest, new Set(PAYLOAD_SERVICES));
+      if (accepted) assert.doesNotThrow(validate, name);
+      else assert.throws(validate, undefined, name);
+    }
+  }
+});
 
 function binaries() {
   const directory = temporaryDirectory("blitz-payload-binaries-");
