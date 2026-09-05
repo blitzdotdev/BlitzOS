@@ -37,7 +37,7 @@ LAB_REMOTE_CLEANUP_COMMAND="tmux kill-session -t '=$pressure_session' 2>/dev/nul
 box_ssh "$WORKSPACE_ID" "tmux has-session -t '=$pressure_session'" \
   || experiment_fail "npm test pressure session exited before apply"
 payload_group=$(box_ssh "$WORKSPACE_ID" \
-  'pid=$(cat /run/service/payload/supervise/pid); sed -n "s|^0::||p" "/proc/$pid/cgroup"')
+  'pid=$(pgrep -f "^node /usr/local/libexec/blitz-payload" | head -1); sed -n "s|^0::||p" "/proc/$pid/cgroup"')
 assert_equal "$payload_group" /blitz-system.slice \
   "payload updater is outside the reserved system slice"
 
