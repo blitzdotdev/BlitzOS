@@ -678,11 +678,41 @@ _mutate_published_variant() {
   esac
 }
 
+# Makes a distinct daemon identity from the supplied, already-built archive.
+# The lab only needs a healthy daemon restart boundary; rebuilding the Docker
+# daemon target for every experiment would add no coverage. Keep its executable
+# bytes and protocol stamp, but write the variant repo's release serial into a
+# fresh archive so the updater has a real version and digest change to apply.
+_prepare_daemon_variant() {
+  local repo=$1 base_archive=$2 output_archive=$3 prefix version
+  prefix=${output_archive%.tar.gz}.root
+  mkdir -p "$prefix"
+  tar -xzf "$base_archive" -C "$prefix"
+  version=$(node --input-type=module - "$repo" <<'NODE'
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const repo = process.argv[2];
+const metadataModule = await import(pathToFileURL(
+  path.join(repo, "packages/control-plane/scripts/lib/box-daemon.mjs"),
+));
+const metadata = await metadataModule.readLodyDaemonMetadata(repo);
+process.stdout.write(metadata.version);
+NODE
+  )
+  [ -n "$version" ] || experiment_fail "could not derive daemon variant version"
+  printf '%s\n' "$version" >"$prefix/daemon-version"
+  tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+    -czf "$output_archive" -C "$prefix" \
+    bin daemon-protocol-version daemon-version lib
+}
+
 # Materialises an overlay in an isolated clone because the production
 # publisher intentionally has no test-only --overlay option. The publisher is
 # then called against that overlaid repo and remains the only artifact writer.
 publish_variant() {
-  local name=$1 run_id marker root repo overlay release published daemon_args=()
+  local name=$1 run_id marker root repo overlay release published daemon_archive
+  local daemon_args=()
   if payload_lab_dry; then
     dry_command "materialize overlay $name; publish-box-payload.mjs --repo <overlay-$name>"
     PUBLISHED_VERSION="dry-$name"
@@ -710,7 +740,9 @@ publish_variant() {
   if [[ "$name" = daemon-* ]]; then
     require_env LAB_DAEMON_ARCHIVE
     [ -r "$LAB_DAEMON_ARCHIVE" ] || experiment_fail "LAB_DAEMON_ARCHIVE is not readable"
-    daemon_args=(--daemon "$LAB_DAEMON_ARCHIVE")
+    daemon_archive="$root/daemon-$name.tar.gz"
+    _prepare_daemon_variant "$repo" "$LAB_DAEMON_ARCHIVE" "$daemon_archive"
+    daemon_args=(--daemon "$daemon_archive")
   fi
   published="$root/published.json"
   payload_lab_trace "publishing variant $name"

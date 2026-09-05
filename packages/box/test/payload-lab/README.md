@@ -25,7 +25,10 @@ Required for a real run:
   `blitz-thinlab`, plus the Cloudflare credentials used by the existing
   publisher and deploy scripts.
 - `LAB_DAEMON_ARCHIVE`: a daemon archive built by
-  `build-box-daemon.mjs`; E3, E4, and E7 use it without rebuilding Docker.
+  `build-box-daemon.mjs`; E3, E4, and E7 use its executable bytes without
+  rebuilding Docker. Each daemon experiment re-stamps a temporary copy with
+  the overlay repo's unique release serial, producing a real daemon version
+  and archive-digest change rather than republishing the base payload.
 - `HETZNER_API_TOKEN`: only E7, for the provider-level reset action.
 - `LAB_OLD_CP_ORIGIN`: only E15. It must be an old/no-payload-field fixture
   deployment that accepts the workspace's existing box bearer.
