@@ -9,8 +9,9 @@ import type {
   ComputeCredentialsClient,
 } from '../src/compute-credentials-api.js';
 import { ComputeCredentialsPanel } from '../src/settings/ComputeCredentialsPanel.js';
+import { InlineComputeCredentialSetup } from '../src/InlineComputeCredentialSetup.js';
 import { SettingsPage } from '../src/SettingsPage.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 
 function missing(): ApiRequestError {
   return new ApiRequestError('compute credential not found', 404, null);
@@ -126,6 +127,32 @@ describe('compute credential settings', () => {
     await view.unmount();
   });
 
+  it('marks a compute row validating immediately and restores not-set on rejection', async () => {
+    const request = deferred<ComputeCredentialMetadata>();
+    const view = await render(<ComputeCredentialsPanel
+      client={client({ putComputeCredential: vi.fn(() => request.promise) })}
+      orgId="org-one"
+    />);
+    await settle();
+    const card = providerCard(view.container, 'Hetzner Cloud');
+    await act(async () => button(card, 'Add key').click());
+    card.querySelector<HTMLInputElement>('input[name="token"]')!.value = 'one-use-secret';
+    await act(async () => card.querySelector('form')?.dispatchEvent(new Event('submit', {
+      bubbles: true,
+      cancelable: true,
+    })));
+    expect(card.textContent).toContain('validating');
+    expect(card.textContent).not.toContain('validated');
+
+    request.reject(new Error('compute save refused'));
+    await settle();
+    expect(card.textContent).toContain('not set');
+    expect(card.textContent).not.toContain('validating');
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('compute save refused');
+    await view.unmount();
+  });
+
   it('replaces the paste form with metadata and never renders the saved key', async () => {
     const metadata: ComputeCredentialMetadata = {
       provider: 'hetzner',
@@ -213,6 +240,68 @@ describe('compute credential settings', () => {
 
     expect(deleteComputeCredential).toHaveBeenCalledWith('org-one', 'aws');
     expect(button(card, 'Add key')).not.toBeNull();
+    await view.unmount();
+  });
+
+  it('removes compute metadata immediately and restores it on delete rejection', async () => {
+    const stored: ComputeCredentialMetadata = {
+      provider: 'aws',
+      validated_at: 1_700_000_000_000,
+      created_by: 'membership-one',
+    };
+    const request = deferred<void>();
+    const view = await render(<ComputeCredentialsPanel
+      client={client({
+        getComputeCredential: vi.fn(async (_orgId, provider) => {
+          if (provider === 'aws') return stored;
+          throw missing();
+        }),
+        deleteComputeCredential: vi.fn(() => request.promise),
+      })}
+      orgId="org-one"
+    />);
+    await settle();
+    const card = providerCard(view.container, 'Amazon Web Services');
+    await act(async () => button(card, 'Delete').click());
+    await act(async () => button(document.body, 'Delete credential').click());
+    expect(card.textContent).toContain('deleting');
+    expect(card.querySelector('time')).toBeNull();
+
+    request.reject(new Error('compute delete refused'));
+    await settle();
+    expect(card.textContent).toContain('validated');
+    expect(card.querySelector('time')?.dateTime).toBe('2023-11-14T22:13:20.000Z');
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('compute delete refused');
+    await view.unmount();
+  });
+
+  it('marks inline compute setup validating and restores the form on rejection', async () => {
+    const request = deferred<ComputeCredentialMetadata>();
+    const view = await render(<InlineComputeCredentialSetup
+      providers={['hetzner']}
+      orgId="org-one"
+      admin
+      saveCredential={vi.fn(() => request.promise)}
+      onSaved={vi.fn(async () => undefined)}
+    />);
+    const input = view.container.querySelector<HTMLInputElement>('input[name="token"]');
+    if (input === null) throw new Error('inline token field is missing');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        ?.set?.call(input, 'inline-secret');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => button(view.container, 'Validate and show machines').click());
+    expect(view.container.textContent).toContain('validating');
+    expect(button(view.container, 'Validating…').disabled).toBe(true);
+
+    request.reject(new Error('inline compute refused'));
+    await settle();
+    expect(view.container.textContent).not.toContain('validating');
+    expect(button(view.container, 'Validate and show machines').disabled).toBe(false);
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('inline compute refused');
     await view.unmount();
   });
 });

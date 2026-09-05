@@ -161,6 +161,9 @@ export function GrantApprovalDialog({
   workspaces,
   onClose,
   onResolved,
+  onResolveStarted,
+  onResolveFailed,
+  initialError,
 }: {
   client: Pick<ControlPlaneClient, 'listOrgCredentials' | 'listMembers' | 'resolveGrantProposal'>;
   proposal: GrantProposalView;
@@ -170,13 +173,18 @@ export function GrantApprovalDialog({
   onClose: () => void;
   /** The server's answer, once the person approved or rejected. */
   onResolved: (proposal: GrantProposalView) => void;
+  /** Hide the pending proposal while its decision is in flight. */
+  onResolveStarted?: (proposalId: string) => void;
+  /** Restore a rejected optimistic decision with its visible refusal. */
+  onResolveFailed?: (proposalId: string, message: string) => void;
+  initialError?: string | null;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const [credentials, setCredentials] = useState<OrgCredentialView[] | null>(null);
   const [members, setMembers] = useState<MemberView[]>([]);
   const [edits, setEdits] = useState<ProposalEdit[]>(() => initialEdits(proposal));
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
 
   useEffect(() => { closeButton.current?.focus(); }, []);
   useEffect(() => {
@@ -217,6 +225,7 @@ export function GrantApprovalDialog({
     if (busy) return;
     setBusy(true);
     setError(null);
+    onResolveStarted?.(proposal.id);
     try {
       const response = await client.resolveGrantProposal(proposal.id, {
         approve,
@@ -224,7 +233,9 @@ export function GrantApprovalDialog({
       });
       onResolved(response.proposal);
     } catch (caught) {
-      setError(caughtErrorMessage(caught, approve ? 'Approval failed.' : 'Rejection failed.'));
+      const message = caughtErrorMessage(caught, approve ? 'Approval failed.' : 'Rejection failed.');
+      if (onResolveFailed === undefined) setError(message);
+      else onResolveFailed(proposal.id, message);
     } finally {
       setBusy(false);
     }

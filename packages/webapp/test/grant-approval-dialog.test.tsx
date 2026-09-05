@@ -1,5 +1,5 @@
 import type { GrantProposalView, OrgCredentialView } from '@blitzos/schema';
-import { act } from 'react';
+import { act, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
 import {
@@ -13,7 +13,7 @@ import {
   initialEdits,
   isEdited,
 } from '../src/grant-approval-model.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 
 /** The mock's scenario (plans/mockups/grant-approval.html), on the wire. */
 function credential(name: string, comment: string, grants: OrgCredentialView['grants']): OrgCredentialView {
@@ -254,6 +254,45 @@ describe('GrantApprovalDialog', () => {
     await settle();
     expect(onResolved).toHaveBeenCalledWith(expect.objectContaining({ state: 'denied' }));
     expect(view.container.querySelector('.ga-done')).toBeNull();
+    await view.unmount();
+  });
+
+  it.each([
+    ['Approve 4 changes', 'approval refused'],
+    ['Reject all', 'rejection refused'],
+  ])('hides %s immediately and reopens the proposal with its refusal', async (label, refusal) => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['resolveGrantProposal']>>>();
+    const wire = client({ resolveGrantProposal: vi.fn(() => request.promise) });
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      const [error, setError] = useState<string | null>(null);
+      return open ? <GrantApprovalDialog
+        client={wire}
+        proposal={proposal}
+        viewer={{ membershipId: 'me', orgName: 'acme' }}
+        workspaces={workspaces}
+        initialError={error}
+        onClose={() => setOpen(false)}
+        onResolveStarted={() => {
+          setError(null);
+          setOpen(false);
+        }}
+        onResolveFailed={(_proposalId, message) => {
+          setError(message);
+          setOpen(true);
+        }}
+        onResolved={() => setOpen(false)}
+      /> : null;
+    }
+    const view = await render(<Harness />);
+    await settle();
+    await act(async () => button(view.container, label).click());
+    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+
+    request.reject(new Error(refusal));
+    await settle();
+    expect(view.container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(refusal);
     await view.unmount();
   });
 

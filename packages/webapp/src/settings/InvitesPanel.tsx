@@ -12,12 +12,19 @@ interface SeatRefusal {
   seatsNeeded: number;
 }
 
+interface PendingInvite {
+  id: string;
+  email: string | null;
+  role: 'admin' | 'member';
+}
+
 function currency(seats: number, monthlyPerSeat: number): string {
   return `$${(seats * monthlyPerSeat).toLocaleString('en-US')}`;
 }
 
 export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
   const [invites, setInvites] = useState<InviteView[]>([]);
+  const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [usage, setUsage] = useState<OrgUsageResponse | null>(null);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
@@ -99,10 +106,17 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
         event.preventDefault();
         if (loading || creating) return;
         const input = { email: email.trim() || undefined, role };
+        const pending: PendingInvite = {
+          id: `pending-invite-${crypto.randomUUID()}`,
+          email: input.email ?? null,
+          role,
+        };
+        setPendingInvites((current) => [pending, ...current]);
         setCreating(true);
         setError(null);
         setRefusal(null);
         void client.createInvite(input).then((created) => {
+          setPendingInvites((current) => current.filter(({ id }) => id !== pending.id));
           setOneTimeLink(window.location.origin + '/invite/' + created.code);
           setInvites((current) => [
             created.invite,
@@ -110,6 +124,7 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
           ]);
           setEmail('');
         }).catch((caught: Error) => {
+          setPendingInvites((current) => current.filter(({ id }) => id !== pending.id));
           if (caught instanceof ApiRequestError && caught.paymentUrl !== null) {
             setRefusal({
               message: caught.message,
@@ -161,6 +176,14 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
       )}
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       <div className="settings-people">
+        {pendingInvites.map((invite) => (
+          <div className="settings-person" key={invite.id}>
+            <span className="settings-person-copy">
+              <strong>{invite.email ?? 'Anyone with the link'}</strong>
+              <span>{invite.role} · creating</span>
+            </span>
+          </div>
+        ))}
         {invites.map((invite) => (
           <div className="settings-person" key={invite.id}>
             <span className="settings-person-copy">

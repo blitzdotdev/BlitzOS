@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ControlPlaneClient, MemberView } from '../api';
+import type { ControlPlaneClient, InviteView, MemberView } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { DriveAvatar } from '../files/DriveAvatar';
 import { PanelHeader } from './primitives';
@@ -17,6 +17,12 @@ export function MembersPanel({
   onLeft: () => void;
 }) {
   const [members, setMembers] = useState<MemberView[]>([]);
+  const [createdInvites, setCreatedInvites] = useState<InviteView[]>([]);
+  const [pendingInvite, setPendingInvite] = useState<{
+    id: string;
+    email: string;
+    role: 'admin' | 'member';
+  } | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
@@ -73,12 +79,24 @@ export function MembersPanel({
       {admin && (
         <form className="settings-form" onSubmit={(event) => {
           event.preventDefault();
+          const pending = {
+            id: `pending-invite-${crypto.randomUUID()}`,
+            email: email.trim(),
+            role,
+          };
+          setPendingInvite(pending);
           setCreatingInvite(true);
           setError(null);
           void client.createInvite({ email, role }).then((created) => {
+            setPendingInvite(null);
+            setCreatedInvites((current) => [
+              created.invite,
+              ...current.filter(({ id }) => id !== created.invite.id),
+            ]);
             setOneTimeLink(window.location.origin + '/invite/' + created.code);
             setEmail('');
           }).catch((cause: unknown) => {
+            setPendingInvite(null);
             setError(cause instanceof Error ? cause.message : 'Could not create invite.');
           }).finally(() => setCreatingInvite(false));
         }}>
@@ -104,6 +122,22 @@ export function MembersPanel({
       )}
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       <div className="settings-people">
+        {pendingInvite !== null && (
+          <div className="settings-person" key={pendingInvite.id}>
+            <span className="settings-person-copy">
+              <strong>{pendingInvite.email}</strong>
+              <span>{pendingInvite.role} · creating invite</span>
+            </span>
+          </div>
+        )}
+        {createdInvites.map((invite) => (
+          <div className="settings-person" key={invite.id}>
+            <span className="settings-person-copy">
+              <strong>{invite.email ?? 'Anyone with the link'}</strong>
+              <span>{invite.role} · invited</span>
+            </span>
+          </div>
+        ))}
         {members.map((member) => {
           const pending = pendingMemberIds.has(member.id);
           return (

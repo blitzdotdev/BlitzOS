@@ -15,6 +15,7 @@ import {
 import { buildRows } from '../src/connections/WorkspaceProviderRows.js';
 import { WorkspaceRailStrip } from '../src/WorkspaceRailStrip.js';
 import { MembersPanel } from '../src/settings/MembersPanel.js';
+import { RequestsPanel } from '../src/settings/RequestsPanel.js';
 import { deferred, render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -258,12 +259,80 @@ describe('v2 credential surfaces', () => {
       .find((button) => button.textContent === 'Adding…');
     expect(add?.disabled).toBe(true);
     expect(input.value).toBe('person@example.com');
+    expect(view.container.textContent).toContain('person@example.commember · creating invite');
+    expect(view.container.querySelector('[aria-label="Member invite link"]')).toBeNull();
     request.resolve(response);
     await settle();
 
     expect(createInvite).toHaveBeenCalledWith({ email: 'person@example.com', role: 'member' });
     expect(view.container.querySelector<HTMLInputElement>('[aria-label="Member invite link"]')?.value)
       .toBe(`${window.location.origin}/invite/one-time-code`);
+    expect(view.container.textContent).toContain('person@example.commember · invited');
+    expect(view.container.textContent).not.toContain('creating invite');
+    await view.unmount();
+  });
+
+  it('removes a rejected member invite placeholder and shows the refusal', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['createInvite']>>>();
+    const view = await render(<MembersPanel
+      client={client({ createInvite: vi.fn(() => request.promise) })}
+      admin
+      orgName="Example"
+      onLeft={() => undefined}
+    />);
+    await settle();
+    const input = view.container.querySelector<HTMLInputElement>('input[type="email"]');
+    if (input === null) throw new Error('member invite input is missing');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        ?.set?.call(input, 'rejected@example.com');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(view.container.textContent).toContain('rejected@example.commember · creating invite');
+
+    request.reject(new Error('member invite refused'));
+    await settle();
+    expect(view.container.textContent).not.toContain('creating invite');
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('member invite refused');
+    await view.unmount();
+  });
+
+  it('marks an org request denied immediately and restores pending on rejection', async () => {
+    const request: CredentialRequestView = {
+      id: 'org-request',
+      workspace_id: 'workspace-one',
+      connection_name: 'linear',
+      requested_scopes: [],
+      created_at: Date.now(),
+      requester: null,
+    };
+    const denial = deferred<void>();
+    const view = await render(<RequestsPanel
+      client={client({
+        listCredentialRequests: vi.fn(async (_signal, state) => ({
+          requests: state === 'pending' ? [request] : [],
+        })),
+        denyCredentialRequest: vi.fn(() => denial.promise),
+      })}
+      proposals={[]}
+      onOpenWorkspace={() => undefined}
+      onReviewProposal={() => undefined}
+    />);
+    await settle();
+    await act(async () => click(buttonIn(view.container, 'Dismiss')));
+    expect(view.container.querySelector('.settings-request-row .workspace-state-badge')?.textContent)
+      .toBe('denied');
+
+    denial.reject(new Error('org deny refused'));
+    await settle();
+    expect(view.container.querySelector('.settings-request-row .workspace-state-badge')?.textContent)
+      .toBe('pending');
+    expect(buttonIn(view.container, 'Dismiss').disabled).toBe(false);
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe('org deny refused');
     await view.unmount();
   });
 
@@ -420,6 +489,33 @@ describe('v2 credential surfaces', () => {
     // apologising for having nothing to say.
     expect(view.container.textContent).not.toContain('Wanted here');
     expect(view.container.textContent).not.toContain('No agent has asked for a connection here.');
+    await view.unmount();
+  });
+
+  it('hides a denied request immediately and restores it with the refusal', async () => {
+    const request: CredentialRequestView = {
+      id: 'request-rejected',
+      workspace_id: 'workspace-one',
+      connection_name: 'github',
+      requested_scopes: [],
+      created_at: Date.now(),
+      requester: null,
+    };
+    const denial = deferred<void>();
+    const view = await render(<WorkspaceConnectionsPanel
+      client={client()}
+      workspaceId="workspace-one"
+      pendingRequests={[request]}
+      onResolveRequest={() => denial.promise}
+    />);
+    await settle();
+    await act(async () => click(buttonIn(view.container, 'Dismiss')));
+    expect(view.container.textContent).not.toContain('@github');
+
+    denial.reject(new Error('deny refused'));
+    await settle();
+    expect(view.container.textContent).toContain('@github');
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe('deny refused');
     await view.unmount();
   });
 
@@ -649,6 +745,56 @@ describe('workspace provider rows', () => {
     await view.unmount();
   });
 
+  it('shows an existing-grant connect immediately and restores it on mint rejection', async () => {
+    const mint = deferred<Awaited<ReturnType<ControlPlaneClient['mintWorkspaceConnection']>>>();
+    const wire = client({
+      mintWorkspaceConnection: vi.fn(() => mint.promise),
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connecting');
+
+    mint.reject(new Error('mint refused'));
+    await settle();
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connect');
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe('mint refused');
+    await view.unmount();
+  });
+
+  it('shows paste-and-connect immediately and restores it on mint rejection', async () => {
+    const mint = deferred<Awaited<ReturnType<ControlPlaneClient['mintWorkspaceConnection']>>>();
+    const wire = client({
+      putConnectionGrant: vi.fn(async () => undefined),
+      mintWorkspaceConnection: vi.fn(() => mint.promise),
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
+    const token = rowFor(view.container, 'Linear').querySelector<HTMLInputElement>('input[name="token"]');
+    if (token === null) throw new Error('linear token field is missing');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        ?.set?.call(token, 'lin-secret');
+      token.dispatchEvent(new Event('input', { bubbles: true }));
+      rowFor(view.container, 'Linear').querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+      await Promise.resolve();
+    });
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connecting');
+
+    mint.reject(new Error('paste mint refused'));
+    await settle();
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connect');
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe('paste mint refused');
+    await view.unmount();
+  });
+
   it('offers a connected row Replace key and a Disconnect that acts at once', async () => {
     const disconnectWorkspaceConnection = vi.fn(async () => undefined);
     const deleteConnectionGrant = vi.fn(async () => undefined);
@@ -686,6 +832,80 @@ describe('workspace provider rows', () => {
     expect(disconnectWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
     expect(deleteConnectionGrant).not.toHaveBeenCalled();
     expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connect');
+    await view.unmount();
+  });
+
+  it('disconnects a provider immediately and restores it on rejection', async () => {
+    const disconnect = deferred<void>();
+    const wire = client({
+      disconnectWorkspaceConnection: vi.fn(() => disconnect.promise),
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
+    });
+    const view = await render(connectionsPanel(wire, ['linear']));
+    await settle();
+    await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Disconnect')));
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connect');
+
+    disconnect.reject(new Error('disconnect refused'));
+    await settle();
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('disconnect refused');
+    await view.unmount();
+  });
+
+  it('restores an auto-approved request when approval fails after connecting', async () => {
+    const approval = deferred<void>();
+    const request: CredentialRequestView = {
+      id: 'request-linear',
+      workspace_id: 'workspace-one',
+      connection_name: 'linear',
+      requested_scopes: [],
+      created_at: Date.now(),
+      requester: null,
+    };
+    const wire = client({
+      mintWorkspaceConnection: vi.fn(async () => ({ lease: mintedLease('linear') })),
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
+    });
+    function Harness() {
+      const [requests, setRequests] = useState([request]);
+      return <WorkspaceConnectionsPanel
+        client={wire}
+        workspaceId="workspace-one"
+        pendingRequests={requests}
+        onResolveRequest={async (entry) => {
+          const index = requests.findIndex(({ id }) => id === entry.id);
+          setRequests((current) => current.filter(({ id }) => id !== entry.id));
+          try {
+            await approval.promise;
+          } catch (caught) {
+            setRequests((current) => {
+              const restored = [...current];
+              restored.splice(index, 0, entry);
+              return restored;
+            });
+            throw caught;
+          }
+        }}
+      />;
+    }
+    const view = await render(<Harness />);
+    await settle();
+    const linearRow = rowFor(view.container, 'Linear');
+    await act(async () => click(pressTile(linearRow)));
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
+    await settle();
+    expect(view.container.textContent).not.toContain('@linear');
+
+    approval.reject(new Error('approval refused'));
+    await settle();
+    expect(view.container.textContent).toContain('@linear');
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('approval refused');
     await view.unmount();
   });
 

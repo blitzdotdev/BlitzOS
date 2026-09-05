@@ -43,6 +43,7 @@ export function WorkspaceCredentialsTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<{ kind: 'add' } | { kind: 'rotate'; name: string } | null>(null);
+  const [pendingPut, setPendingPut] = useState<PutOrgCredentialRequest | null>(null);
 
   const reload = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -77,10 +78,24 @@ export function WorkspaceCredentialsTab({
     { credential, path: workspaceReadPath(credential, workspaceId, viewerMembershipId) }));
 
   const put = async (input: PutOrgCredentialRequest) => {
-    await client.putOrgCredential(input);
-    setForm(null);
-    await reload();
+    setPendingPut(input);
+    try {
+      const { credential } = await client.putOrgCredential(input);
+      setCredentials((current) => {
+        const index = current.findIndex(({ name }) => name === credential.name);
+        if (index < 0) return [credential, ...current];
+        const next = [...current];
+        next[index] = credential;
+        return next;
+      });
+      setForm(null);
+    } finally {
+      setPendingPut(null);
+    }
   };
+
+  const pendingAddsRow = pendingPut !== null
+    && !credentials.some(({ name }) => name === pendingPut.name);
 
   return (
     <section
@@ -100,8 +115,18 @@ export function WorkspaceCredentialsTab({
         {error !== null && <p className="workspace-details-error" role="alert">{error}</p>}
         <div className="workspace-credential-rows">
           {loading && <p className="workspace-members-empty" role="status">Loading credentials…</p>}
-          {!loading && visible.length === 0 && (
+          {!loading && visible.length === 0 && !pendingAddsRow && (
             <p className="workspace-members-empty">No organization credential reaches this workspace yet.</p>
+          )}
+          {pendingAddsRow && pendingPut !== null && (
+            <div className="workspace-credential-row" key={`pending:${pendingPut.name}`}>
+              <span className="workspace-credential-name">
+                <strong><code>{pendingPut.name}</code></strong>
+                {pendingPut.comment !== undefined && pendingPut.comment !== null && <small>{pendingPut.comment}</small>}
+              </span>
+              <span className="workspace-credential-added">saving</span>
+              <span />
+            </div>
           )}
           {visible.map(({ credential, path }) => (
             <div className="workspace-credential-row" key={credential.id}>
@@ -109,7 +134,9 @@ export function WorkspaceCredentialsTab({
                 <strong><code>{credential.name}</code></strong>
                 {credential.comment !== null && <small>{credential.comment}</small>}
               </span>
-              <span className="workspace-credential-added">{PATH_LABELS[path]}</span>
+              <span className="workspace-credential-added">
+                {pendingPut?.name === credential.name ? 'rotating' : PATH_LABELS[path]}
+              </span>
               {credential.grants.length > 0 ? (
                 <button
                   className="webapp-action"

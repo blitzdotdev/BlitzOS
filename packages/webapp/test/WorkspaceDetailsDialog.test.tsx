@@ -485,12 +485,23 @@ describe('WorkspaceDetailsDialog', () => {
   });
 
   it('adds and rotates through the org-level form, a new key granted to this workspace', async () => {
-    const putOrgCredential = vi.fn().mockResolvedValue({ credential: null });
-    const listOrgCredentials = vi.fn().mockResolvedValue({ credentials: [{
+    const existing: OrgCredentialView = {
       id: 'cred-1', name: 'STRIPE_API_KEY', comment: null, createdByMembershipId: 'membership-1',
       createdAt: 1, updatedAt: 1,
       grants: [{ subjectKind: 'workspace', subjectId: workspace.id, access: 'read' }],
-    }] });
+    };
+    const putOrgCredential = vi.fn(async (input: { name: string; grants?: OrgCredentialView['grants'] }) => ({
+      credential: input.name === existing.name
+        ? { ...existing, updatedAt: 3 }
+        : {
+            ...existing,
+            id: 'cred-database',
+            name: input.name,
+            updatedAt: 2,
+            grants: input.grants ?? [],
+          },
+    }));
+    const listOrgCredentials = vi.fn().mockResolvedValue({ credentials: [existing] });
     const view = await render(dialog({ client: client({ listOrgCredentials, putOrgCredential }) }));
     await settle();
     await act(async () => tab(view.container, 'Credentials')?.click());
@@ -515,8 +526,9 @@ describe('WorkspaceDetailsDialog', () => {
       grants: [{ subjectKind: 'workspace', subjectId: workspace.id, access: 'read' }],
     });
     await settle();
-    // The tab re-reads after the write rather than inventing a row.
-    expect(listOrgCredentials).toHaveBeenCalledTimes(2);
+    // The returned canonical row replaces the placeholder without another read.
+    expect(view.container.textContent).toContain('DATABASE_URLgranted to this workspace');
+    expect(listOrgCredentials).toHaveBeenCalledTimes(1);
 
     await act(async () => view.container.querySelector<HTMLButtonElement>('button[aria-label="Rotate STRIPE_API_KEY"]')?.click());
     const rotateForm = view.container.querySelector('form[aria-label="Rotate STRIPE_API_KEY"]');
@@ -527,6 +539,41 @@ describe('WorkspaceDetailsDialog', () => {
     // The form's own verb, not the row's "Rotate" that opened it.
     await act(async () => rotateForm.querySelector<HTMLButtonElement>('button[type="submit"]')?.click());
     expect(putOrgCredential).toHaveBeenLastCalledWith({ name: 'STRIPE_API_KEY', value: 'sk_new' });
+    await view.unmount();
+  });
+
+  it('shows a workspace credential placeholder and removes it with an error on rejection', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['putOrgCredential']>>>();
+    const view = await render(dialog({
+      client: client({
+        listOrgCredentials: vi.fn(async () => ({ credentials: [] })),
+        putOrgCredential: vi.fn(() => request.promise),
+      }),
+    }));
+    await settle();
+    await act(async () => tab(view.container, 'Credentials')?.click());
+    await settle();
+    const buttonNamed = (text: string) => [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === text);
+    await act(async () => buttonNamed('Add a credential')?.click());
+    const form = view.container.querySelector<HTMLFormElement>('form[aria-label="Add a credential"]');
+    if (form === null) throw new Error('workspace credential form is missing');
+    const name = form.querySelector<HTMLInputElement>('[aria-label="Credential name"]');
+    const value = form.querySelector<HTMLInputElement>('[aria-label="Credential value"]');
+    if (name === null || value === null) throw new Error('workspace credential fields are missing');
+    await act(async () => {
+      typeInto(name, 'DATABASE_URL');
+      typeInto(value, 'never-render-this');
+      buttonNamed('Save credential')?.click();
+    });
+    expect(view.container.textContent).toContain('DATABASE_URLsaving');
+    expect(view.container.textContent).not.toContain('never-render-this');
+
+    request.reject(new Error('workspace credential refused'));
+    await settle();
+    expect(view.container.textContent).not.toContain('DATABASE_URLsaving');
+    expect(form.querySelector('[role="alert"]')?.textContent)
+      .toBe('workspace credential refused');
     await view.unmount();
   });
 

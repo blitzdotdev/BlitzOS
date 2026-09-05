@@ -50,15 +50,29 @@ export function WorkspaceRequestsPanel({
   onConnect?: (connectionName: string) => void;
 }) {
   const [resolving, setResolving] = useState<string | null>(null);
+  const [pendingRemovals, setPendingRemovals] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
+  const requestKey = requests.map(({ id }) => id).join(' ');
+  useEffect(() => {
+    const serverIds = new Set(requestKey === '' ? [] : requestKey.split(' '));
+    setPendingRemovals((current) => new Set(
+      [...current].filter((id) => serverIds.has(id)),
+    ));
+  }, [requestKey]);
 
   const resolve = async (request: CredentialRequestView, action: 'approve' | 'deny') => {
     if (resolving !== null) return;
     setResolving(request.id);
+    setPendingRemovals((current) => new Set([...current, request.id]));
     setError(null);
     try {
       await onResolve(request, action);
     } catch (caught) {
+      setPendingRemovals((current) => {
+        const next = new Set(current);
+        next.delete(request.id);
+        return next;
+      });
       setError(caughtErrorMessage(caught, `Request ${action} failed.`));
     } finally {
       setResolving(null);
@@ -70,7 +84,7 @@ export function WorkspaceRequestsPanel({
       {(error ?? loadError) && <p className="webapp-form-message" role="alert">{error ?? loadError}</p>}
       {requests.length > 0 && (
         <div className="wsc-list">
-          {requests.map((request) => (
+          {requests.filter(({ id }) => !pendingRemovals.has(id)).map((request) => (
             <article className="wsc-tile wsc-tile--static wsc-tile--wanted" key={request.id}>
               <div className="wsc-tile__head">
                 <ProviderGlyph className="wsc-tile__glyph" provider={request.connection_name} />
@@ -227,6 +241,7 @@ export function WorkspaceConnectionsPanel({
   ) => Promise<void>;
 }) {
   const [connected, noteConnected] = useConnectedProviders(workspaceConnections ?? []);
+  const [autoResolveError, setAutoResolveError] = useState<string | null>(null);
   // Which provider row to open, and a version so asking twice for the same
   // one re-opens a row the person closed. Two things ask: an agent's
   // `blitz connections open`, and Connect on a request in the inbox.
@@ -239,17 +254,23 @@ export function WorkspaceConnectionsPanel({
     ask(connectionsFocus.provider);
   }, [ask, connectionsFocus]);
 
-  /** A provider just became usable here. The inbox entry that asked for it is
-   * the same question, so answering one answers the other. Nothing is pushed
-   * at the box: the next token ask reads the allow-list this write just
-   * changed. */
+  /** The local allow-list follows the press while the request is in flight. */
   const onConnected = useCallback((connectionName: string) => {
     noteConnected(connectionName, true);
+  }, [noteConnected]);
+
+  /** The mint is now authoritative, so the inbox entry can be approved. */
+  const onConnectionAcknowledged = useCallback((connectionName: string) => {
+    setAutoResolveError(null);
     const pending = pendingRequests.find(
       (request) => request.connection_name === connectionName,
     );
-    if (pending !== undefined) void onResolveRequest(pending, 'approve');
-  }, [noteConnected, onResolveRequest, pendingRequests]);
+    if (pending !== undefined) {
+      void onResolveRequest(pending, 'approve').catch((caught) => {
+        setAutoResolveError(caughtErrorMessage(caught, 'Request approval failed.'));
+      });
+    }
+  }, [onResolveRequest, pendingRequests]);
 
   const onDisconnected = useCallback((connectionName: string) => {
     noteConnected(connectionName, false);
@@ -261,6 +282,9 @@ export function WorkspaceConnectionsPanel({
   const wanted = pendingRequests.length > 0 || (pendingRequestsError ?? null) !== null;
   return (
     <div className="workspace-connections">
+      {autoResolveError !== null && (
+        <p className="webapp-form-message" role="alert">{autoResolveError}</p>
+      )}
       {wanted && (
         <>
           <h3 className="workspace-sect workspace-sect--pending">Wanted here</h3>
@@ -290,6 +314,7 @@ export function WorkspaceConnectionsPanel({
         focusVersion={opened?.version ?? 0}
         readOnly={readOnly}
         onConnected={onConnected}
+        onConnectionAcknowledged={onConnectionAcknowledged}
         onDisconnected={onDisconnected}
       />
     </div>

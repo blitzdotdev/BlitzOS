@@ -5,7 +5,7 @@ import type { ControlPlaneClient } from '../src/api.js';
 import type { TenantMe } from '../src/api-adapter.js';
 import { OrgCredentialsPanel } from '../src/settings/OrgCredentialsPanel.js';
 import { IMPORT_PREVIEW_DEBOUNCE_MS } from '../src/settings/OrgCredentialImport.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 import { workspaceViewFixture } from './workspace-fixtures.js';
 
 const viewer: TenantMe = {
@@ -162,6 +162,29 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
+  it('shows a pending credential row immediately and removes it on rejection', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['putOrgCredential']>>>();
+    const view = await render(<OrgCredentialsPanel
+      client={client({ putOrgCredential: vi.fn(() => request.promise) })}
+      viewer={viewer}
+    />);
+    await settle();
+    const form = field<HTMLFormElement>(view.container, 'form[aria-label="Add a credential"]');
+    await act(async () => {
+      typeInto(field(form, '[aria-label="Credential name"]'), 'DATABASE_URL');
+      typeInto(field(form, '[aria-label="Credential value"]'), 'postgres://secret');
+      buttonNamed(form, 'Save credential').click();
+    });
+    expect(view.container.textContent).toContain('DATABASE_URLsaving');
+    expect(view.container.textContent).not.toContain('postgres://secret');
+
+    request.reject(new Error('credential refused'));
+    await settle();
+    expect(view.container.textContent).not.toContain('DATABASE_URLsaving');
+    expect(form.querySelector('[role="alert"]')?.textContent).toBe('credential refused');
+    await view.unmount();
+  });
+
   it('rotates with a write-only value field and touches neither comment nor grants', async () => {
     const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
     const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
@@ -185,6 +208,28 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
+  it('marks a rotation immediately and restores the canonical row on rejection', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['putOrgCredential']>>>();
+    const view = await render(<OrgCredentialsPanel
+      client={client({ putOrgCredential: vi.fn(() => request.promise) })}
+      viewer={viewer}
+    />);
+    await settle();
+    await act(async () => field<HTMLButtonElement>(view.container, 'button[aria-label="Rotate STRIPE_API_KEY"]').click());
+    const form = field<HTMLFormElement>(view.container, 'form[aria-label="Rotate STRIPE_API_KEY"]');
+    await act(async () => {
+      typeInto(field(form, '[aria-label="Credential value"]'), 'new-secret');
+      buttonNamed(form, 'Rotate').click();
+    });
+    expect(view.container.textContent).toContain('STRIPE_API_KEYrotating');
+
+    request.reject(new Error('rotation refused'));
+    await settle();
+    expect(view.container.textContent).not.toContain('STRIPE_API_KEYrotating');
+    expect(form.querySelector('[role="alert"]')?.textContent).toBe('rotation refused');
+    await view.unmount();
+  });
+
   it('revokes after a confirmation', async () => {
     const revokeOrgCredential = vi.fn().mockResolvedValue(undefined);
     const view = await render(<OrgCredentialsPanel client={client({ revokeOrgCredential })} viewer={viewer} />);
@@ -194,6 +239,26 @@ describe('OrgCredentialsPanel', () => {
     expect(revokeOrgCredential).not.toHaveBeenCalled();
     await act(async () => buttonNamed(document.body, 'Revoke credential').click());
     expect(revokeOrgCredential).toHaveBeenCalledWith('STRIPE_API_KEY');
+    await view.unmount();
+  });
+
+  it('removes a credential immediately and restores its row on revoke rejection', async () => {
+    const request = deferred<void>();
+    const view = await render(<OrgCredentialsPanel
+      client={client({ revokeOrgCredential: vi.fn(() => request.promise) })}
+      viewer={viewer}
+    />);
+    await settle();
+    await act(async () => field<HTMLButtonElement>(view.container, 'button[aria-label="Revoke STRIPE_API_KEY"]').click());
+    await act(async () => buttonNamed(document.body, 'Revoke credential').click());
+    expect(view.container.textContent).not.toContain('STRIPE_API_KEY');
+
+    request.reject(new Error('revoke refused'));
+    await settle();
+    const names = [...view.container.querySelectorAll('.org-credential-row h3')]
+      .map((heading) => heading.textContent);
+    expect(names).toEqual(['STRIPE_API_KEY', 'SENTRY_DSN']);
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe('revoke refused');
     await view.unmount();
   });
 
@@ -215,6 +280,28 @@ describe('OrgCredentialsPanel', () => {
     });
     await settle();
     expect(view.container.querySelector('[aria-label="Grants for STRIPE_API_KEY"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it('shows replacement grants immediately and restores them on rejection', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['replaceOrgCredentialGrants']>>>();
+    const view = await render(<OrgCredentialsPanel
+      client={client({ replaceOrgCredentialGrants: vi.fn(() => request.promise) })}
+      viewer={viewer}
+    />);
+    await settle();
+    await act(async () => field<HTMLButtonElement>(view.container, 'button[aria-label="Edit grants for STRIPE_API_KEY"]').click());
+    const editor = field<HTMLElement>(view.container, '[aria-label="Grants for STRIPE_API_KEY"]');
+    await act(async () => buttonNamed(field(editor, '[aria-label="Access for payments"]'), 'write').click());
+    await act(async () => buttonNamed(editor, 'Save grants').click());
+    expect([...view.container.querySelectorAll('.org-credential-row .org-grant-chip')]
+      .map((chip) => chip.textContent)).toContain('workspace payments · write');
+
+    request.reject(new Error('grants refused'));
+    await settle();
+    expect([...view.container.querySelectorAll('.org-credential-row .org-grant-chip')]
+      .map((chip) => chip.textContent)).toContain('workspace payments · read');
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe('grants refused');
     await view.unmount();
   });
 
@@ -260,6 +347,42 @@ describe('OrgCredentialsPanel', () => {
     expect(view.container.textContent).toContain('Imported');
     // The list re-reads once the keys have landed.
     expect(listOrgCredentials).toHaveBeenCalledTimes(2);
+    await view.unmount();
+  });
+
+  it('uses preview rows while an import is pending and removes them on rejection', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['importOrgCredentials']>>>();
+    const preview = {
+      results: [
+        { name: 'STRIPE_API_KEY', line: 1, outcome: 'rotated' as const },
+        { name: 'NEW_KEY', line: 2, outcome: 'stored' as const },
+      ],
+      linesRead: 2,
+    };
+    const importOrgCredentials = vi.fn((input: { text: string; dryRun?: boolean }) => (
+      input.dryRun === true ? Promise.resolve(preview) : request.promise
+    ));
+    const view = await render(<OrgCredentialsPanel
+      client={client({ importOrgCredentials })}
+      viewer={viewer}
+    />);
+    await settle();
+    await act(async () => typeInto(
+      field(view.container, '[aria-label="Env file text"]'),
+      'STRIPE_API_KEY=new\nNEW_KEY=value',
+    ));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, IMPORT_PREVIEW_DEBOUNCE_MS + 50));
+    });
+    await act(async () => buttonNamed(view.container, 'Import 2 keys').click());
+    expect(view.container.textContent).toContain('STRIPE_API_KEYimporting');
+    expect(view.container.textContent).toContain('NEW_KEYimporting');
+
+    request.reject(new Error('import refused'));
+    await settle();
+    expect(view.container.textContent).not.toContain('STRIPE_API_KEYimporting');
+    expect(view.container.textContent).not.toContain('NEW_KEYimporting');
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe('import refused');
     await view.unmount();
   });
 });
