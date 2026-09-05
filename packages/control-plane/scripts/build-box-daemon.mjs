@@ -65,7 +65,7 @@ export async function stageDaemonArchive(sourceDirectory, outputPath, metadata) 
 }
 
 function usage() {
-  return `Build the patched Lody prefix as a deterministic daemon.tar.gz.
+  return `Build the Dockerfile's tree-built Lody prefix (its daemon stage) as a deterministic daemon.tar.gz.
 
 Usage:
   node packages/control-plane/scripts/build-box-daemon.mjs --out <daemon.tar.gz> [options]
@@ -126,7 +126,7 @@ export async function main(argv = process.argv.slice(2)) {
     const prefix = path.join(temporary, "prefix");
     await mkdir(prefix);
     await run("docker", ["cp", `${container}:/opt/blitz/lody/baked/.`, prefix]);
-    const metadata = await readLodyDaemonMetadata(options.repo);
+    const metadata = await readLodyDaemonMetadata(options.repo, prefix);
     const archive = await stageDaemonArchive(prefix, options.outPath, metadata);
     const result = { ...metadata, ...archive, path: options.outPath };
     const json = `${JSON.stringify(result)}\n`;

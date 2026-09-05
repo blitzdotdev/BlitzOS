@@ -23,7 +23,11 @@ import {
 } from "../scripts/publish-box-payload.mjs";
 import { validateBoxPayloadManifest } from "../scripts/lib/box-payload-manifest.mjs";
 import { PAYLOAD_FILES, PAYLOAD_SERVICES } from "../scripts/lib/box-payload-files.mjs";
-import { readLodyDaemonMetadata } from "../scripts/lib/box-daemon.mjs";
+import {
+  lodyDaemonVersion,
+  readLodyDaemonMetadata,
+  readLodyUpstreamPin,
+} from "../scripts/lib/box-daemon.mjs";
 import { boxPayloadVersion } from "../scripts/box-payload-key.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -146,14 +150,29 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
   }
 });
 
-test("an optional daemon archive fills all daemon contract fields", async () => {
+/** A prefix the way the Dockerfile's daemon stage leaves it, stamped with the
+ * upstream commit this tree pins unless a test says otherwise. */
+async function stampedDaemonPrefix(upstreamSha) {
   const prefix = temporaryDirectory("blitz-payload-daemon-prefix-");
   mkdirSync(path.join(prefix, "bin"), { recursive: true });
   mkdirSync(path.join(prefix, "lib/node_modules/lody/dist"), { recursive: true });
   writeFileSync(path.join(prefix, "lib/node_modules/lody/dist/index.js"), "daemon\n");
+  const stamp = {
+    upstreamSha: upstreamSha ?? await readLodyUpstreamPin(repoRoot),
+    distSha256: "3c1e9a7b5d20".padEnd(64, "0"),
+  };
+  writeFileSync(
+    path.join(prefix, "lib/node_modules/lody/dist/BUILD.json"),
+    `${JSON.stringify({ ...stamp, node: "22.20.0", pnpm: "10.20.0" })}\n`,
+  );
   symlinkSync("../lib/node_modules/lody/dist/index.js", path.join(prefix, "bin/lody"));
+  return { prefix, stamp };
+}
+
+test("an optional daemon archive fills all daemon contract fields", async () => {
+  const { prefix, stamp } = await stampedDaemonPrefix();
   const daemonPath = path.join(temporaryDirectory("blitz-payload-daemon-archive-"), "daemon.tar.gz");
-  await stageDaemonArchive(prefix, daemonPath, await readLodyDaemonMetadata(repoRoot));
+  await stageDaemonArchive(prefix, daemonPath, await readLodyDaemonMetadata(repoRoot, prefix));
 
   const staged = await stage(
     temporaryDirectory("blitz-payload-with-daemon-"),
@@ -167,7 +186,7 @@ test("an optional daemon archive fills all daemon contract fields", async () => 
     restart: manifest.restart,
   }));
   assert.deepEqual(manifest.daemon, {
-    version: "0.88.1+blitz.3",
+    version: lodyDaemonVersion(stamp),
     protocolVersion: 7,
     url: `https://cp.example/box-payload/${manifest.version}/daemon.tar.gz`,
     sha256: sha256(readFileSync(staged.daemonArchivePath)),
@@ -179,7 +198,10 @@ test("an optional daemon archive fills all daemon contract fields", async () => 
     encoding: "utf8",
   });
   assert.equal(extract.status, 0, extract.stderr);
-  assert.equal(readFileSync(path.join(extracted, "daemon-version"), "utf8"), "0.88.1+blitz.3\n");
+  assert.equal(
+    readFileSync(path.join(extracted, "daemon-version"), "utf8"),
+    `${lodyDaemonVersion(stamp)}\n`,
+  );
   assert.equal(readFileSync(path.join(extracted, "daemon-protocol-version"), "utf8"), "7\n");
   assert.deepEqual(
     payloadUploadObjects("box-payload/version", staged).map(({ logicalPath }) => logicalPath),
@@ -188,5 +210,19 @@ test("an optional daemon archive fills all daemon contract fields", async () => 
       "box-payload/version/daemon.tar.gz",
       "box-payload/version/manifest.json",
     ],
+  );
+});
+
+test("a daemon archive built from another upstream commit is refused", async () => {
+  const { prefix } = await stampedDaemonPrefix("0".repeat(40));
+  const daemonPath = path.join(temporaryDirectory("blitz-payload-foreign-daemon-"), "daemon.tar.gz");
+  await stageDaemonArchive(prefix, daemonPath, await readLodyDaemonMetadata(repoRoot, prefix));
+  await assert.rejects(
+    () => stage(
+      temporaryDirectory("blitz-payload-foreign-"),
+      temporaryDirectory("blitz-payload-foreign-stage-"),
+      { daemonPath },
+    ),
+    /daemon archive was built from upstream 0{40}, but vendor\/lody\/UPSTREAM\.md pins/u,
   );
 });

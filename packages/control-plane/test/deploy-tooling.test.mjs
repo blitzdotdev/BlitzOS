@@ -490,7 +490,7 @@ test("payload and daemon inputs do not rebuild the base image", () => {
   assert.deepEqual(decision.paths, []);
 });
 
-test("Lody source, adapters, and build scripts require a rebuild", () => {
+test("Lody source, adapters, and build scripts move the payload, not the base image", () => {
   for (const file of [
     "vendor/lody/apps/cli/package.json",
     "vendor/lody-adapters/core/package.json",
@@ -499,7 +499,7 @@ test("Lody source, adapters, and build scripts require a rebuild", () => {
     "scripts/lody-sync-adapters.mjs",
     "scripts/lody-package-manifest.json",
   ]) {
-    assert.equal(boxImageDecision("abc", [file]).rebuild, true, file);
+    assert.equal(boxImageDecision("abc", [file]).rebuild, false, file);
   }
 });
 

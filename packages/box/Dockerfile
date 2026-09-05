@@ -5,7 +5,7 @@ FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm@sha256:53eeac89074db483fdf
 ARG TARGETARCH
 WORKDIR /src/packages/broker
 COPY packages/broker/go.mod ./
-COPY packages/broker/cmd ./cmd
+COPY packages/broker/cmd/blitz-cred ./cmd/blitz-cred
 COPY packages/broker/internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/blitz-cred ./cmd/blitz-cred
 
@@ -59,28 +59,30 @@ RUN npm install --global --omit=dev \
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS daemon
 
 # Lody moves independently from the member-owned agent CLI prefix. The
-# publisher exports this target's baked prefix as daemon.tar.gz.
-ENV NPM_CONFIG_PREFIX=/opt/blitz/lody/baked
+# publisher exports this target's baked prefix as daemon.tar.gz. The package is
+# the reviewed, stamped tarball built above from vendor/lody. Installing it
+# with `npm ci` at the package root makes npm enforce its shrinkwrap and check
+# every integrity, the same way the pair gate installs it in CI. The version
+# stamp beside the prefix names the upstream commit and dist digest from the
+# package's own dist/BUILD.json; the protocol stamp is read from the source
+# file that declares it.
 COPY packages/control-plane/scripts/lib/box-daemon.mjs /tmp/box-daemon.mjs
-COPY vendor/lody/UPSTREAM.md /src/vendor/lody/UPSTREAM.md
 COPY vendor/lody/packages/shared/src/local-loro-data-plane.ts /src/vendor/lody/packages/shared/src/local-loro-data-plane.ts
-RUN npm install --global --omit=dev lody@0.88.1 \
-    && npm cache clean --force
-COPY packages/box/patches/lody-local-platform.mjs /tmp/lody-local-platform.mjs
-COPY packages/box/patches/lody-acp-auth-queue.mjs /tmp/lody-acp-auth-queue.mjs
-COPY packages/box/patches/lody-code-collab-worktree-root.mjs /tmp/lody-code-collab-worktree-root.mjs
-COPY packages/box/patches/lody-builtin-mcp-off.mjs /tmp/lody-builtin-mcp-off.mjs
-COPY packages/box/patches/lody-session-sandbox.mjs /tmp/lody-session-sandbox.mjs
-# Order matters only for the first: its guard is a sha256 of the bundle AS
-# PUBLISHED, so nothing may rewrite the file before it runs. The others guard on
-# the package version and their own anchor instead, for that reason.
-RUN node /tmp/lody-local-platform.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
-    && node /tmp/lody-acp-auth-queue.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
-    && node /tmp/lody-code-collab-worktree-root.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
-    && node /tmp/lody-builtin-mcp-off.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
-    && node /tmp/lody-session-sandbox.mjs /opt/blitz/lody/baked/lib/node_modules/lody/dist/index.js \
-    && node --input-type=module --eval 'import { readLodyDaemonMetadata, writeLodyDaemonVersionStamps } from "/tmp/box-daemon.mjs"; const metadata = await readLodyDaemonMetadata("/src"); await writeLodyDaemonVersionStamps("/opt/blitz/lody/baked", metadata);' \
-    && rm /tmp/box-daemon.mjs /tmp/lody-local-platform.mjs /tmp/lody-acp-auth-queue.mjs /tmp/lody-code-collab-worktree-root.mjs /tmp/lody-builtin-mcp-off.mjs /tmp/lody-session-sandbox.mjs
+COPY --from=lody-build /out/ /tmp/lody-build/
+RUN set -eux; \
+    set -- /tmp/lody-build/lody-*.tgz; \
+    test "$#" -eq 1; \
+    test -f "$1"; \
+    lody_tarball=$1; \
+    install -d /opt/blitz/lody/baked/lib/node_modules /opt/blitz/lody/baked/bin /tmp/lody-unpack; \
+    tar -xzf "$lody_tarball" -C /tmp/lody-unpack; \
+    mv /tmp/lody-unpack/package /opt/blitz/lody/baked/lib/node_modules/lody; \
+    npm ci --prefix /opt/blitz/lody/baked/lib/node_modules/lody --omit=dev; \
+    ln -s ../lib/node_modules/lody/dist/index.js /opt/blitz/lody/baked/bin/lody; \
+    /opt/blitz/lody/baked/bin/lody --help >/dev/null; \
+    npm cache clean --force; \
+    node --input-type=module --eval 'import { readLodyDaemonMetadata, writeLodyDaemonVersionStamps } from "/tmp/box-daemon.mjs"; const metadata = await readLodyDaemonMetadata("/src", "/opt/blitz/lody/baked"); await writeLodyDaemonVersionStamps("/opt/blitz/lody/baked", metadata);'; \
+    rm -rf /tmp/box-daemon.mjs /tmp/lody-build /tmp/lody-unpack
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS payload-build
 

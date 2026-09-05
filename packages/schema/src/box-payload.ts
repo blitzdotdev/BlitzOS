@@ -13,7 +13,6 @@ export const BOX_PAYLOAD_RESTART_SERVICES = [
   "cloudflared",
   "dockerd",
   "dufs",
-  "enroll",
   "gateway",
   "lody-bridge",
   "lody-daemon",

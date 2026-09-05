@@ -26,7 +26,7 @@ interruption; this generalises that to everything we ship.
 | Debian + node 22 + docker static + s6-overlay; `env.defaults` | every other script under `rootfs/usr/local/{bin,libexec}` |
 | cloudflared, ttyd, dufs | s6 `run`/`up` scripts of EXISTING services (the service SET is base; updated oneshots take effect at next boot) |
 | the payload updater `blitz-payload`, `blitz-cred`, and their s6/runtime dependencies | `blitz-box-gateway` (linux/amd64; arm64 later) |
-| `/opt/blitz/npm` prefix with claude, codex, ws | the Lody **daemon bundle** (the patched `lody` install) |
+| `/opt/blitz/npm` prefix with claude, codex, ws | the Lody **daemon bundle** (the `lody` package built from `vendor/lody`) |
 | a baked copy of the current payload + daemon bundle (§3) | agent rules skeleton |
 
 `claude`/`codex` keep self-updating as today; not part of this.
@@ -46,7 +46,7 @@ the way `/box-image/<releaseId>/…` is served today (`core/box-image-routes`).
   "minUpdater": 1,
   "files": [{ "path": "rootfs/usr/local/libexec/blitz-term", "sha256": "…", "mode": "0755" }],
   "archive": { "url": "…/box-payload/<version>/payload.tar.gz", "sha256": "…", "bytes": 1234 },
-  "daemon": { "version": "0.88.1+blitz.3", "url": "…/box-payload/<version>/daemon.tar.gz", "sha256": "…", "bytes": 1234 },
+  "daemon": { "version": "f4b1ba259eb7+dist.3c1e9a7b5d20", "url": "…/box-payload/<version>/daemon.tar.gz", "sha256": "…", "bytes": 1234 },
   "restart": { "gateway": ["rootfs/usr/local/bin/blitz-box-gateway"], "…": [] }
 }
 ```
@@ -58,8 +58,9 @@ the way `/box-image/<releaseId>/…` is served today (`core/box-image-routes`).
 - `files` lists every file in `payload.tar.gz` with its digest; the updater
   verifies each file after extraction, not just the archive.
 - `daemon` is a separate archive so a script-only release does not re-download
-  the daemon. Its `version` is the npm version plus a `+blitz.N` patch-set
-  serial; two releases with the same daemon version share the object.
+  the daemon. Its `version` is the upstream commit plus the dist digest from
+  the package's build stamp (`<upstream12>+dist.<dist12>`); two releases with
+  the same daemon version share the object.
 - `restart` maps each payload-owned longrun service to the payload paths it depends on; the
   updater restarts a service iff one of its paths changed between the running
   payload and the new one. Oneshot scripts remain in `files` but apply on the
@@ -92,10 +93,11 @@ produces the file list; both the Dockerfile stage and the publisher call it.
 
 ### 2.3 `daemon.tar.gz`
 
-The installed, patched Lody prefix: `lib/node_modules/lody/**`, `bin/lody`, and
+The installed Lody prefix: `lib/node_modules/lody/**`, `bin/lody`, and
 the reserved root entries `daemon-version` and `daemon-protocol-version`,
-as produced by the `vendors` stage of the Dockerfile today (npm install of the
-pinned version + the five patch scripts + their guards). Extracted to
+as produced by the `daemon` stage of the Dockerfile (the tarball that
+`scripts/lody-build-package.mjs` builds from `vendor/lody`, installed with
+`npm ci` so npm enforces its shrinkwrap). Extracted to
 `/opt/blitz/lody/<daemon version>/`; `/opt/blitz/lody/current` is the symlink
 the s6 `lody-daemon` run script and the `lody` PATH shim resolve. Built on the
 same node major as the image (22).

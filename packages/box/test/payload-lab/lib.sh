@@ -680,7 +680,7 @@ assert_no_orphans() {
 }
 
 _variant_overlay() {
-  local name=$1 repo=$2 overlay=$3 marker=$4 source target serial
+  local name=$1 repo=$2 overlay=$3 marker=$4 source target
   case "$name" in
     e2-* | e6-*)
       source=packages/box/gateway/main.go
@@ -696,14 +696,8 @@ _variant_overlay() {
       fi
       ;;
     daemon-*)
-      source=packages/control-plane/scripts/lib/box-daemon.mjs
-      target="$overlay/$source"
-      mkdir -p "$(dirname "$target")"
-      cp "$repo/$source" "$target"
-      serial=$(printf '%s' "$marker" | cksum)
-      serial=${serial%% *}
-      sed -i -E \
-        "s/(LODY_PATCHSET_SERIAL = )[0-9]+/\\1$serial/" "$target"
+      # A daemon-only release changes no payload source. Its distinct identity
+      # is stamped into the archive by _prepare_daemon_variant instead.
       ;;
     *)
       source=packages/box/rootfs/usr/local/libexec/blitz-term
@@ -754,27 +748,19 @@ _mutate_published_variant() {
 # Makes a distinct daemon identity from the supplied, already-built archive.
 # The lab only needs a healthy daemon restart boundary; rebuilding the Docker
 # daemon target for every experiment would add no coverage. Keep its executable
-# bytes and protocol stamp, but write the variant repo's release serial into a
-# fresh archive so the updater has a real version and digest change to apply.
+# bytes and protocol stamp, but suffix its version with a serial derived from
+# the experiment marker, so the updater has a real version and digest change
+# to apply. The suffix keeps the stamp a version token.
 _prepare_daemon_variant() {
-  local repo=$1 base_archive=$2 output_archive=$3 prefix version
+  local base_archive=$1 output_archive=$2 marker=$3 prefix base_version serial
   prefix=${output_archive%.tar.gz}.root
   mkdir -p "$prefix"
   tar -xzf "$base_archive" -C "$prefix"
-  version=$(node --input-type=module - "$repo" <<'NODE'
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-
-const repo = process.argv[2];
-const metadataModule = await import(pathToFileURL(
-  path.join(repo, "packages/control-plane/scripts/lib/box-daemon.mjs"),
-));
-const metadata = await metadataModule.readLodyDaemonMetadata(repo);
-process.stdout.write(metadata.version);
-NODE
-  )
-  [ -n "$version" ] || experiment_fail "could not derive daemon variant version"
-  printf '%s\n' "$version" >"$prefix/daemon-version"
+  base_version=$(tr -d '\n' <"$prefix/daemon-version")
+  [ -n "$base_version" ] || experiment_fail "the base daemon archive carries no daemon-version stamp"
+  serial=$(printf '%s' "$marker" | cksum)
+  serial=${serial%% *}
+  printf '%s+lab.%s\n' "$base_version" "$serial" >"$prefix/daemon-version"
   tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
     -czf "$output_archive" -C "$prefix" \
     bin daemon-protocol-version daemon-version lib
@@ -808,20 +794,20 @@ publish_variant() {
     cd "$repo"
     git add --all
     git -c user.name=payload-lab -c user.email=payload-lab@invalid \
-      commit --quiet -m "payload lab variant $name"
+      commit --quiet --allow-empty -m "payload lab variant $name"
   )
   ln -s "$PAYLOAD_LAB_REPO/node_modules" "$repo/node_modules"
   # Execute the publisher from the overlay checkout so its imported release
-  # metadata (including LODY_PATCHSET_SERIAL) comes from the same tree as the
-  # payload sources. Keep the lab deployment config, which is intentionally
-  # uncommitted, rather than the clone's tracked production defaults.
+  # metadata comes from the same tree as the payload sources. Keep the lab
+  # deployment config, which is intentionally uncommitted, rather than the
+  # clone's tracked production defaults.
   cp "$LAB_DEPLOY_REPO/packages/control-plane/wrangler.toml" \
     "$repo/packages/control-plane/wrangler.toml"
   if [[ "$name" = daemon-* ]]; then
     require_env LAB_DAEMON_ARCHIVE
     [ -r "$LAB_DAEMON_ARCHIVE" ] || experiment_fail "LAB_DAEMON_ARCHIVE is not readable"
     daemon_archive="$root/daemon-$name.tar.gz"
-    _prepare_daemon_variant "$repo" "$LAB_DAEMON_ARCHIVE" "$daemon_archive"
+    _prepare_daemon_variant "$LAB_DAEMON_ARCHIVE" "$daemon_archive" "$marker"
     daemon_args=(--daemon "$daemon_archive")
   fi
   published="$root/published.json"

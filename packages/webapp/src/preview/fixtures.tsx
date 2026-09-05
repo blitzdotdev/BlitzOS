@@ -185,7 +185,7 @@ const juneMachine: MachineView = {
   volumeId: 'vol-june',
   volumeUsedPercent: 62,
   payloadVersion: '20260904T2130Z-9f3c1a2b',
-  daemonVersion: '0.88.1+blitz.3',
+  daemonVersion: 'f4b1ba259eb7+dist.3c1e9a7b5d20',
   payloadOutcome: 'applied',
   payloadReportedAt: NOW - 2 * HOUR,
   membershipId: 'm-june',

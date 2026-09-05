@@ -94,18 +94,22 @@ the `canary` environment:
    The other build argument turns Lody on for canary while the committed
    `env.defaults` stays off for self-hosters; the Dockerfile rejects any
    non-empty value other than `0` or `1`.
-6. It runs
+6. It boots that enabled image through its real `/init` entrypoint with
+   `IMAGE=<imageTag> LODY_BOOT_ONLY=1 packages/box/test/smoke.sh`. The smoke has
+   a 180-second wall-clock readiness deadline and must pass before any archive
+   object is published.
+7. It runs
    `node packages/control-plane/scripts/publish-box-image.mjs --image <imageTag> --prefix <prefix> --app-url <APP_URL> --json publish.json`.
    The publisher uploads every part before `manifest.json`, so a release is
    not visible until all its parts exist.
-7. Only after the image job succeeds, the `payload` job rebuilds the daemon
+8. Only after the image job succeeds, the `payload` job rebuilds the daemon
    archive and the gateway binary, plans with `--daemon`, and refuses to continue
    unless its version equals the one used by the image job. It probes
    `<APP_URL>/box-payload/<version>/manifest.json`; a valid manifest for that
    version is reused, 404 is published with the same `--daemon <archive>`, and
    malformed content or any other response fails the deploy. The publisher
    uploads `payload.tar.gz` and `daemon.tar.gz` before `manifest.json`.
-8. The payload job exposes `ref` and `version`. The deploy pins those alongside
+9. The payload job exposes `ref` and `version`. The deploy pins those alongside
    the image outputs and verifies that `/version` reports the merged commit and
    expected box-image tag.
 
@@ -122,12 +126,15 @@ pin. A fresh machine starts there and the updater converges it to
 the daemon-inclusive payload version published by the same run. The Dockerfile,
 the updater, and the s6 service set/topology remain image inputs.
 
-**Lody release identity.** The release key covers every repository source in a
-Dockerfile `COPY`. That includes `vendor/lody`, reviewed adapter snapshots, and
-all shared Lody build scripts. A pure Lody-input change therefore selects a new
-release ID. The key uses Git object IDs instead of walking the large trees.
-`box-image-key.test.mjs` parses the Dockerfile and rejects any uncovered source.
-Follow `docs/LODY-MERGE.md` for the upstream procedure.
+**Lody release identity.** The daemon is a payload input, not a base input.
+`vendor/lody`, the reviewed adapter snapshots and the shared Lody build scripts
+feed the Dockerfile's `lody-build` and `daemon` stages, and the payload version
+hashes the resulting `daemon.tar.gz`. A pure Lody-input change therefore
+publishes a new payload and reuses the base image. `box-image-key.test.mjs`
+parses the Dockerfile and rejects any `COPY` source that is neither a base
+input (`BOX_IMAGE_INPUTS`) nor a payload input (`BOX_PAYLOAD_SOURCE_INPUTS`
+plus the payload-owned rootfs files). Follow `docs/LODY-MERGE.md` for the
+upstream procedure.
 
 ### Lody daemon package and provenance
 
@@ -145,13 +152,17 @@ Adapter snapshots exclude generated `dist/` and `node_modules/` trees. The
 `lody-adapters-drift.test.mjs` gate checks that every tracked Lody builder input
 survives the ordered Dockerfile ignore rules.
 
-The target-platform vendors stage extracts that tarball at the established
-global prefix. It runs `npm ci` at the package root, where npm enforces the
-shrinkwrap and checks every integrity. Lifecycle scripts stay enabled for
-native dependencies. The package remains
-`/opt/blitz/npm/lib/node_modules/lody`, and s6 still executes
-`/opt/blitz/npm/bin/lody start`. Its only stamp is `dist/BUILD.json` inside that
-package. Plan PR D will serve that file over `/lody/build`.
+The target-platform `daemon` stage extracts that tarball into the switchable
+prefix `/opt/blitz/lody/baked`. It runs `npm ci` at the package root, where npm
+enforces the shrinkwrap and checks every integrity. Lifecycle scripts stay
+enabled for native dependencies. The package is
+`/opt/blitz/lody/current/lib/node_modules/lody`, and s6 executes
+`/opt/blitz/lody/current/bin/lody start`. The package's own stamp is
+`dist/BUILD.json`. The stage also writes `daemon-version` (the upstream commit
+and the dist digest from that stamp) and `daemon-protocol-version` beside the
+prefix; the payload updater reads and reports both. The publisher exports the
+whole prefix as `daemon.tar.gz`. Plan PR D will serve `dist/BUILD.json` over
+`/lody/build`.
 
 The `canary` environment's `CLOUDFLARE_API_TOKEN` must be able to write the
 `blitz-box-images` bucket. A token that can deploy the Worker but cannot write

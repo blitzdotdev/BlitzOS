@@ -170,8 +170,13 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: |
-          payload_version="$(node packages/control-plane/scripts/plan-box-payload.mjs --print-version)"
-          docker build --platform linux/amd64 \
-            --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
-            -f packages/box/Dockerfile .
+      - name: Build and boot the Lody-enabled image
+        run: packages/box/test/smoke.sh
+      - name: Upload box smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: box-smoke-diagnostics
+          path: packages/box/test/.smoke-tmp/**
+          if-no-files-found: warn
+          include-hidden-files: true

@@ -29,7 +29,7 @@ this runbook for every row marked manual.
 | Build, check, pack, and stamp the daemon from the merged tree | **Automated by `npm run lody:build` and the image's `lody-build` stage** | shared `scripts/lody-build-package.mjs` |
 | Run the real-daemon pair matrix against the PR artifact | **Required in the `lody-daemon` CI job** | `LODY_BUNDLE` and `LODY_CLAUDE_BINARY` select the job's installed artifact |
 | Serve and compare daemon provenance | **Inspect `BUILD.json` locally until plan PR D** | `/lody/build` plus browser comparison; legacy boxes have no route |
-| Publish and deploy a canary box image after merge | **Automated now by `.github/workflows/canary.yml`** | The release key covers every repository path copied by the Dockerfile, including all Lody build inputs |
+| Publish and deploy after merge | **Automated now by `.github/workflows/canary.yml`** | A vendor-only merge publishes a new daemon-inclusive payload and reuses the base image; the daemon archive digest is part of the payload version (`docs/BOX-IMAGE.md`) |
 
 The shipping image builds and installs the daemon package from this same
 vendored tree. There is no npm daemon release to select or bump during an
@@ -489,30 +489,28 @@ Do not merge it. A person reviews the upstream behavior and clicks merge.
 
 ## What happens after the human merge
 
-Every push to `main` runs the `image` job in
-`.github/workflows/canary.yml`. It derives a SHA-256 release ID from the Git
-object IDs for every repository path copied by the Dockerfile. These inputs
-include `packages/box`, `packages/broker`, `packages/schema/fixtures`,
-`env.defaults`, `vendor/lody`, `vendor/lody-adapters`, and all Lody build scripts.
-The canonical list lives in
-`packages/control-plane/scripts/lib/box-image-inputs.mjs` and
-`packages/control-plane/scripts/box-image-key.mjs`. It validates and reuses an
-existing matching manifest or builds an amd64 image with Lody sessions enabled,
-boot-smokes that enabled image, publishes parts before the manifest under
-immutable `box-image/<releaseId>/` keys through
-`packages/control-plane/scripts/publish-box-image.mjs`, passes the exact
-ref/tag/archive digest to `deploy`, and verifies both commit and image tag through
-`/version`.
+Every push to `main` runs the `image` and `payload` jobs in
+`.github/workflows/canary.yml`. The image job derives a SHA-256 release ID from
+the Git object IDs of the base-owned inputs listed in
+`packages/control-plane/scripts/lib/box-image-inputs.mjs`. `vendor/lody`,
+`vendor/lody-adapters` and the Lody build scripts are NOT base inputs: they
+feed the Dockerfile's `lody-build` and `daemon` stages, and the payload version
+hashes the resulting `daemon.tar.gz`. A base-input change builds an amd64
+image with Lody sessions enabled, boot-smokes it, publishes parts before the
+manifest under immutable `box-image/<releaseId>/` keys, passes the exact
+ref/tag/archive digest to `deploy`, and verifies both commit and image tag
+through `/version`. The payload job then publishes or reuses
+`box-payload/<version>/` and the deploy pins it.
 
 `box-image-key.test.mjs` parses build-context `COPY` instructions and rejects
-an uncovered source. It also proves each Lody input changes the release ID.
-The key reads Git tree and blob IDs, so large adapter trees remain fast.
-Gitlinks inside `vendor/lody` contribute to its tree ID without a file walk.
+a source that is neither a base input nor a payload input. It also proves a
+Lody-only change keeps the base release ID.
 
-A vendor-only merge therefore selects a matching immutable image. The image is
-reused or baked, published, pinned, and deployed without a follow-up source
-commit. Plan PR D adds `/lody/build` so the browser can compare the package's
-own stamp with its renderer commit.
+A vendor-only merge therefore reuses the current base image and publishes a
+new payload. Every running box applies the new daemon in place at an idle
+boundary (`docs/BOX-IMAGE.md`, `plans/THIN-IMAGE.md`), without a follow-up
+source commit. Plan PR D adds `/lody/build` so the browser can compare the
+package's own stamp with its renderer commit.
 
 New boxes use the newly deployed pin. Existing cloud boxes replace their
 container only after `updateRequested` is set through

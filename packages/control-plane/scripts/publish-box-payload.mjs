@@ -21,7 +21,13 @@ import {
   readBoxPayloadCreatedAt,
   writeBoxPayloadVersionStamp,
 } from "./box-payload-key.mjs";
-import { readLodyDaemonMetadata } from "./lib/box-daemon.mjs";
+import {
+  LODY_DAEMON_BUILD_STAMP,
+  LODY_DAEMON_VERSION_PATTERN,
+  parseLodyDaemonBuildStamp,
+  readLodyDaemonProtocolVersion,
+  readLodyUpstreamPin,
+} from "./lib/box-daemon.mjs";
 import { validateBoxPayloadManifest } from "./lib/box-payload-manifest.mjs";
 import { createDeterministicTarGzip, hashFile } from "./lib/deterministic-archive.mjs";
 import {
@@ -144,7 +150,13 @@ async function commandOutput(command, args) {
   });
 }
 
-async function verifyDaemonArchive(daemonPath, expected) {
+/** Reads the daemon identity from the archive's own stamps, and refuses an
+ * archive that does not belong to this tree: its packed build stamp must name
+ * the upstream commit `vendor/lody` is pinned to, and its protocol stamp must
+ * be the version the vendored schema declares. The version token itself is
+ * the builder's: `build-box-daemon.mjs` derives it from the build stamp, and
+ * the payload lab suffixes it to make a distinct daemon from the same bytes. */
+async function readDaemonArchiveMetadata(daemonPath, repoRoot) {
   const listing = await commandOutput("tar", ["-tzf", daemonPath]);
   const entries = listing.split("\n").filter((entry) => entry !== "");
   if (!entries.includes("bin/lody")) throw new Error("daemon archive is missing bin/lody");
@@ -171,19 +183,40 @@ async function verifyDaemonArchive(daemonPath, expected) {
     ) continue;
     throw new Error(`daemon archive contains a path outside the lody prefix: ${entry}`);
   }
-  const [versionStamp, protocolStamp] = await Promise.all([
-    commandOutput("tar", ["-xOzf", daemonPath, "daemon-version"]),
-    commandOutput("tar", ["-xOzf", daemonPath, "daemon-protocol-version"]),
-  ]);
-  if (versionStamp !== `${expected.version}\n`) {
-    throw new Error("daemon archive version stamp does not match daemon metadata");
+  if (!entries.includes(LODY_DAEMON_BUILD_STAMP)) {
+    throw new Error(`daemon archive is missing ${LODY_DAEMON_BUILD_STAMP}`);
   }
-  if (protocolStamp !== `${expected.protocolVersion}\n`) {
+  const [versionStamp, protocolStamp, buildStamp, protocolVersion, pinnedUpstream] =
+    await Promise.all([
+      commandOutput("tar", ["-xOzf", daemonPath, "daemon-version"]),
+      commandOutput("tar", ["-xOzf", daemonPath, "daemon-protocol-version"]),
+      commandOutput("tar", ["-xOzf", daemonPath, LODY_DAEMON_BUILD_STAMP]),
+      readLodyDaemonProtocolVersion(repoRoot),
+      readLodyUpstreamPin(repoRoot),
+    ]);
+  const version = versionStamp.slice(0, -1);
+  if (!versionStamp.endsWith("\n") || !LODY_DAEMON_VERSION_PATTERN.test(version)) {
+    throw new Error(`daemon archive version stamp is not a version token: ${JSON.stringify(versionStamp)}`);
+  }
+  if (protocolStamp !== `${protocolVersion}\n`) {
     throw new Error(
       `daemon archive protocol stamp ${JSON.stringify(protocolStamp)}`
-      + ` does not match ${JSON.stringify(`${expected.protocolVersion}\n`)}`,
+      + ` does not match ${JSON.stringify(`${protocolVersion}\n`)}`,
     );
   }
+  const stamp = parseLodyDaemonBuildStamp(buildStamp, `daemon archive ${LODY_DAEMON_BUILD_STAMP}`);
+  if (stamp.upstreamSha !== pinnedUpstream) {
+    throw new Error(
+      `daemon archive was built from upstream ${stamp.upstreamSha},`
+      + ` but vendor/lody/UPSTREAM.md pins ${pinnedUpstream}`,
+    );
+  }
+  return {
+    version,
+    protocolVersion,
+    upstreamSha: stamp.upstreamSha,
+    distSha256: stamp.distSha256,
+  };
 }
 
 export async function prepareBoxPayloadContent({
@@ -197,8 +230,7 @@ export async function prepareBoxPayloadContent({
   let daemonMetadata;
   let daemonArchive;
   if (daemonPath !== undefined) {
-    daemonMetadata = await readLodyDaemonMetadata(repoRoot);
-    await verifyDaemonArchive(daemonPath, daemonMetadata);
+    daemonMetadata = await readDaemonArchiveMetadata(daemonPath, repoRoot);
     daemonArchive = await hashFile(daemonPath);
   }
   const content = await readBoxPayloadContent({ repoRoot, payloadRoot: stagingDirectory });

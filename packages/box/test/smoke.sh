@@ -188,25 +188,27 @@ done
 [ "$ready" = true ] || fail "enabled Lody services and loopback endpoints did not become ready within 180 seconds"
 
 services=$(docker exec "$container" /command/s6-rc -a list)
-for service in init-state enroll register payload sshd ttyd dufs gateway watch dockerd; do
+for service in init-state register payload sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
-for service in payload sshd ttyd dufs gateway watch dockerd; do
+for service in payload sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
 
-docker exec "$container" test -f /opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json \
+docker exec "$container" test -f /opt/blitz/lody/current/lib/node_modules/lody/dist/BUILD.json \
   || fail "the packaged Lody BUILD.json is missing"
-docker exec "$container" /opt/blitz/npm/bin/lody --help >/dev/null \
+docker exec "$container" /opt/blitz/lody/current/bin/lody --help >/dev/null \
   || fail "the tree-built Lody CLI does not answer --help"
-docker exec "$container" grep -Eq '^[[:space:]]*/opt/blitz/npm/bin/lody start$' \
-  /etc/s6-overlay/s6-rc.d/lody-daemon/run \
-  || fail "the lody daemon service no longer points at /opt/blitz/npm/bin/lody"
+# The image's /etc/s6-overlay/s6-rc.d/lody-daemon/run is a wrapper that execs
+# the payload-owned run script; that script is the one that names the daemon.
+docker exec "$container" grep -Eq '^[[:space:]]*/opt/blitz/lody/current/bin/lody start$' \
+  /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run \
+  || fail "the lody daemon service no longer points at /opt/blitz/lody/current/bin/lody"
 docker exec "$container" node -e '
   const catalog = JSON.parse(process.argv[1]);
   if (!catalog.identity || !Array.isArray(catalog.workspaces) || !catalog.machine) process.exit(1);
 ' "$platform_json" || fail "/lody/platform did not return the local identity/workspace/machine catalog: $platform_json"
-lody_pid=$(docker exec "$container" pgrep -f '/opt/blitz/npm/bin/lody start$' | head -1)
+lody_pid=$(docker exec "$container" pgrep -f '/opt/blitz/lody/current/bin/lody start$' | head -1)
 [ -n "$lody_pid" ] || fail "the enabled Lody daemon process was not found"
 docker exec "$container" sh -c \
   "tr '\\0' '\\n' </proc/$lody_pid/environ | grep -qx 'LODY_MCP_BUILTIN_DISABLED=1'" \
@@ -322,14 +324,9 @@ for service in sshd ttyd dufs blitz-box-gatew; do
   [ "$where" = /blitz-system.slice ] \
     || fail "$service must sit in the reservation, but it is in [$where]"
 done
-# The actor that used to hold user/actor.scope is gone; the Lody daemon
-# inherited the placement. It is dark by default, so a smoke box idles it in
-# `sleep infinity` and there is no node to look at here. The placement is
-# asserted by reading its run script instead — see the boundary lab
-# (packages/box/test/memory-load.sh) for the live check on an enabled box.
-docker exec "$container" grep -q 'blitz-cgroup enter user/lody.scope' \
-  /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run \
-  || fail "the lody daemon does not enter the user ceiling"
+where=$(docker exec "$container" sed -n 's|^0::||p' "/proc/$lody_pid/cgroup")
+[ "$where" = /blitz-user.slice/lody.scope ] \
+  || fail "the enabled Lody daemon must run in its user leaf, but it is in [$where]"
 where=$(cgroup_of dockerd) || fail "dockerd is not running"
 [ "$where" = /blitz-user.slice/dockerd.scope ] \
   || fail "dockerd must sit beside its containers, not in them: [$where]"

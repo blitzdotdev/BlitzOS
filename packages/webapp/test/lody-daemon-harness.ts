@@ -60,7 +60,7 @@ export function repoRoot(): string {
     directory = parent;
   }
 }
-const INSTALLED_LODY_BUNDLE = "/opt/blitz/npm/lib/node_modules/lody";
+const INSTALLED_LODY_BUNDLE = "/opt/blitz/lody/current/lib/node_modules/lody";
 
 /**
  * A package directory, resolved in pair-by-construction order:

@@ -1,20 +1,9 @@
-import type { AgentProvider } from "./wire.js";
 import {
   BOX_IMAGE_MANIFEST_LOADER_INSTALL,
   BOX_IMAGE_MANIFEST_LOADER_PATH,
 } from "./box-image-manifest-loader.js";
 
 export { BOX_IMAGE_MANIFEST_LOADER_INSTALL } from "./box-image-manifest-loader.js";
-
-/** A recipe launch adds only the two invocation files; `blitz-term` consumes
- * them when the first TUI session starts. Built by core/recipes.ts from a
- * validated recipe row. */
-export interface RecipeBootstrap {
-  harness: AgentProvider;
-  model?: string;
-  effort?: string;
-  prompt: string;
-}
 
 export interface BootstrapOptions {
   boxImageSha256: string;

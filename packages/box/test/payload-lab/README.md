@@ -26,9 +26,10 @@ Required for a real run:
   Live runs refuse to fall back to the experiment checkout.
 - `LAB_DAEMON_ARCHIVE`: a daemon archive built by
   `build-box-daemon.mjs`; E3, E4, and E7 use its executable bytes without
-  rebuilding Docker. Each daemon experiment re-stamps a temporary copy with
-  the overlay repo's unique release serial, producing a real daemon version
-  and archive-digest change rather than republishing the base payload.
+  rebuilding Docker. Each daemon experiment re-stamps a temporary copy with a
+  `+lab.<serial>` suffix derived from the experiment marker, producing a real
+  daemon version and archive-digest change rather than republishing the base
+  payload.
 - `HETZNER_API_TOKEN`: only E7, for the provider-level reset action.
 - `LAB_OLD_CP_ORIGIN`: only E15. The harness and supplied workspace must
   already be attached to this old/no-payload-field deployment; the harness
