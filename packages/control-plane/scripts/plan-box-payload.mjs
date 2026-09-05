@@ -4,10 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  boxPayloadPrefix,
-  readBoxPayloadCreatedAt,
-} from "./box-payload-key.mjs";
+import { boxPayloadPrefix } from "./box-payload-key.mjs";
 import { validateBoxPayloadManifest } from "./lib/box-payload-manifest.mjs";
 import { PAYLOAD_SERVICES } from "./lib/box-payload-files.mjs";
 import {
@@ -32,7 +29,6 @@ function errorMessage(error) {
 
 export async function planBoxPayload({
   url,
-  rev = "HEAD",
   repo = DEFAULT_REPO,
   binariesDirectory,
   daemonPath,
@@ -40,7 +36,6 @@ export async function planBoxPayload({
 }) {
   const version = await buildPlannedPayload({
     repo,
-    rev,
     binariesDirectory,
     daemonPath,
     appUrl: url,
@@ -79,7 +74,6 @@ export async function planBoxPayload({
 
 export async function buildPlannedPayload({
   repo = DEFAULT_REPO,
-  rev = "HEAD",
   binariesDirectory,
   daemonPath,
   appUrl = "https://payload.invalid",
@@ -94,7 +88,10 @@ export async function buildPlannedPayload({
       outputDirectory: path.join(temporary, "release"),
       binariesDirectory: builtBinaries,
       daemonPath,
-      createdAt: await readBoxPayloadCreatedAt({ repo, rev }),
+      // createdAt is informational and excluded from the content version.
+      // Planning therefore does not require Git metadata (git archives have
+      // none); publishing reads the real commit time when it emits a manifest.
+      createdAt: 1,
       appUrl,
     });
     return staged.version;
@@ -111,7 +108,6 @@ Usage:
 
 Options:
   --url <origin>    Control-plane origin whose R2-backed route should be probed.
-  --rev <revision>  Git revision used only for informational createdAt (default: HEAD).
   --repo <dir>      Repository whose current payload content is built.
   --daemon <file>   Include this daemon archive's SHA-256 in the version.
   --binaries <dir>  Use prebuilt blitz-box-gateway and blitz-cred binaries.
@@ -123,7 +119,6 @@ Options:
 function parseCli(argv) {
   const options = {
     url: undefined,
-    rev: "HEAD",
     repo: undefined,
     daemonPath: undefined,
     binariesDirectory: undefined,
@@ -141,14 +136,13 @@ function parseCli(argv) {
       options.printVersion = true;
       continue;
     }
-    if (!["--url", "--rev", "--repo", "--daemon", "--binaries", "--json"].includes(flag)) {
+    if (!["--url", "--repo", "--daemon", "--binaries", "--json"].includes(flag)) {
       throw new Error(`unknown argument: ${flag}`);
     }
     const value = argv[index + 1];
     if (value === undefined) throw new Error(`${flag} requires a value`);
     index += 1;
     if (flag === "--url") options.url = value;
-    else if (flag === "--rev") options.rev = value;
     else if (flag === "--repo") options.repo = path.resolve(value);
     else if (flag === "--daemon") options.daemonPath = path.resolve(value);
     else if (flag === "--binaries") options.binariesDirectory = path.resolve(value);
@@ -167,7 +161,6 @@ export async function main(argv = process.argv.slice(2), fetchImpl = fetch) {
   if (options.printVersion) {
     const version = await buildPlannedPayload({
       repo: options.repo ?? DEFAULT_REPO,
-      rev: options.rev,
       daemonPath: options.daemonPath,
       binariesDirectory: options.binariesDirectory,
     });

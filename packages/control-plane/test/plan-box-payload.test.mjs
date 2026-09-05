@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { appendFileSync, chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -160,6 +170,36 @@ test("--print-version dry-builds the Docker stamp without probing an origin", ()
     "--binaries", binaries(),
     "--print-version",
   ], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^[a-f0-9]{64}\n$/u);
+});
+
+test("--print-version runs from a git archive without workspace dependencies", () => {
+  const directory = temporaryDirectory("blitz-box-payload-clean-archive-");
+  const archivePath = path.join(directory, "head.tar");
+  const checkout = path.join(directory, "checkout");
+  const archived = spawnSync("git", ["archive", "--format=tar", "--output", archivePath, "HEAD"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  assert.equal(archived.status, 0, archived.stderr);
+  const extracted = spawnSync("tar", ["-xf", archivePath, "-C", directory], { encoding: "utf8" });
+  assert.equal(extracted.status, 0, extracted.stderr);
+  // Move the extracted tree under one explicit root so the absence assertion
+  // cannot accidentally inspect this test's dependency-bearing checkout.
+  mkdirSync(checkout);
+  for (const entry of readdirSync(directory)) {
+    if (entry === "checkout" || entry === "head.tar") continue;
+    renameSync(path.join(directory, entry), path.join(checkout, entry));
+  }
+  assert.equal(existsSync(path.join(checkout, "node_modules")), false);
+
+  const run = spawnSync(process.execPath, [
+    path.join(checkout, "packages/control-plane/scripts/plan-box-payload.mjs"),
+    "--repo", checkout,
+    "--binaries", binaries(),
+    "--print-version",
+  ], { cwd: checkout, encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /^[a-f0-9]{64}\n$/u);
 });

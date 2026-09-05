@@ -14,7 +14,6 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parse as parseToml } from "smol-toml";
 import {
   boxPayloadVersion,
   boxPayloadPrefix,
@@ -306,6 +305,9 @@ function tomlString(value) {
 async function wranglerDefaults() {
   const text = await readFile(WRANGLER_CONFIG_PATH, "utf8").catch(() => null);
   if (text === null) return { bucket: undefined, appUrl: undefined };
+  // Publishing is the only path that reads wrangler.toml. Keep this dependency
+  // lazy so the planner's --print-version path works in clean release jobs.
+  const { parse: parseToml } = await import("smol-toml");
   const config = tomlRecord(parseToml(text)) ?? {};
   const buckets = Array.isArray(config.r2_buckets) ? config.r2_buckets : [];
   const boxImages = buckets.map(tomlRecord)
