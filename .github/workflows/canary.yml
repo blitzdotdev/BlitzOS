@@ -47,12 +47,16 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     environment: canary
+    env:
+      DAEMON_ARCHIVE: ${{ runner.temp }}/daemon.tar.gz
+      PAYLOAD_BINARIES: ${{ runner.temp }}/payload-binaries
     outputs:
       ref: ${{ steps.pin.outputs.ref }}
       tag: ${{ steps.pin.outputs.tag }}
       sha256: ${{ steps.pin.outputs.sha256 }}
       release_id: ${{ steps.pin.outputs.release_id }}
       built: ${{ steps.pin.outputs.built }}
+      payload_version: ${{ steps.payload.outputs.version }}
     # The push trigger is already main-only, but workflow_dispatch lets a person
     # pick any ref in the Actions UI. Without this, the one failure mode this
     # workflow exists to remove — a branch deployed to the shared canary Worker —
@@ -60,13 +64,17 @@ jobs:
     # gate's notice.
     if: github.ref == 'refs/heads/main' && needs.gate.outputs.configured == 'true'
     steps:
-      # A depth-one checkout is enough: the release key reads the four image
-      # inputs' Git object ids directly from HEAD and never needs a merge base.
+      # A depth-one checkout is enough: the release key reads the base inputs'
+      # Git object ids directly from HEAD and never needs a merge base.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: package.json
           cache: npm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: 1.26.5
+          cache: false
       - run: npm ci
 
       # The publisher always passes this config to wrangler, and both it and the
@@ -87,10 +95,40 @@ jobs:
         run: |
           url="$(node -e 'const fs=require("node:fs");import("smol-toml").then(({parse})=>{const v=parse(fs.readFileSync("packages/control-plane/wrangler.toml","utf8")).vars||{};process.stdout.write(v.APP_URL||"")})')"
           if [ -z "$url" ]; then
-            echo "::error::CANARY_WRANGLER_TOML must set vars.APP_URL so the box-image release can be planned and published."
+            echo "::error::CANARY_WRANGLER_TOML must set vars.APP_URL so box releases can be planned and published."
             exit 1
           fi
           echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      # The payload version includes the daemon archive digest and the built Go
+      # binaries. Build exactly those inputs before planning either release.
+      # Go 1.26.5 matches the Dockerfile builders, keeping the staged binary
+      # bytes identical to the ones baked into an amd64 image.
+      - name: Build the daemon archive
+        run: node packages/control-plane/scripts/build-box-daemon.mjs --out "$DAEMON_ARCHIVE"
+
+      - name: Build the payload binaries
+        run: |
+          mkdir -p "$PAYLOAD_BINARIES"
+          (
+            cd packages/box/gateway
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-box-gateway" .
+          )
+          (
+            cd packages/broker
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-cred" ./cmd/blitz-cred
+          )
+
+      - name: Plan the baked payload version
+        id: payload
+        run: |
+          version="$(node packages/control-plane/scripts/plan-box-payload.mjs \
+            --print-version --daemon "$DAEMON_ARCHIVE" --binaries "$PAYLOAD_BINARIES")"
+          if [[ ! "$version" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "::error::The payload plan did not produce a content version."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # This is a gate now, not an advisory. A valid matching manifest reuses
       # its immutable pin; only a 404 means build. Invalid content, a wrong tag,
@@ -120,11 +158,11 @@ jobs:
         if: steps.plan.outputs.published == 'false'
         env:
           IMAGE_TAG: ${{ steps.plan.outputs.tag }}
+          PAYLOAD_VERSION: ${{ steps.payload.outputs.version }}
         run: |
-          payload_version="$(node packages/control-plane/scripts/plan-box-payload.mjs --print-version)"
           docker build --platform linux/amd64 \
             --build-arg BLITZ_LODY_SESSIONS=1 \
-            --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
+            --build-arg "BLITZ_PAYLOAD_VERSION=$PAYLOAD_VERSION" \
             -f packages/box/Dockerfile -t "$IMAGE_TAG" .
 
       - name: Boot-smoke the Lody-enabled image
@@ -183,9 +221,137 @@ jobs:
             printf 'built=%s\n' "$built"
           } >> "$GITHUB_OUTPUT"
 
+  payload:
+    name: Plan and publish the canary box payload
+    needs: [gate, image]
+    runs-on: ubuntu-latest
+    environment: canary
+    env:
+      DAEMON_ARCHIVE: ${{ runner.temp }}/daemon.tar.gz
+      PAYLOAD_BINARIES: ${{ runner.temp }}/payload-binaries
+    outputs:
+      ref: ${{ steps.pin.outputs.ref }}
+      version: ${{ steps.pin.outputs.version }}
+    # The image job goes first so an absent base is built with this payload's
+    # daemon-inclusive version before the payload manifest becomes pinnable.
+    # Both jobs build deterministic inputs independently and the comparison in
+    # the plan step refuses to publish if their versions differ.
+    if: github.ref == 'refs/heads/main' && needs.gate.outputs.configured == 'true'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: package.json
+          cache: npm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: 1.26.5
+          cache: false
+      - run: npm ci
+
+      - name: Write the canary wrangler.toml
+        env:
+          CANARY_WRANGLER_TOML: ${{ secrets.CANARY_WRANGLER_TOML }}
+        run: printf '%s\n' "$CANARY_WRANGLER_TOML" > packages/control-plane/wrangler.toml
+
+      - name: Read the deployment origin
+        id: origin
+        run: |
+          url="$(node -e 'const fs=require("node:fs");import("smol-toml").then(({parse})=>{const v=parse(fs.readFileSync("packages/control-plane/wrangler.toml","utf8")).vars||{};process.stdout.write(v.APP_URL||"")})')"
+          if [ -z "$url" ]; then
+            echo "::error::CANARY_WRANGLER_TOML must set vars.APP_URL so the payload can be planned and published."
+            exit 1
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Build the daemon archive
+        run: node packages/control-plane/scripts/build-box-daemon.mjs --out "$DAEMON_ARCHIVE"
+
+      - name: Build the payload binaries
+        run: |
+          mkdir -p "$PAYLOAD_BINARIES"
+          (
+            cd packages/box/gateway
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-box-gateway" .
+          )
+          (
+            cd packages/broker
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -ldflags='-s -w' -o "$PAYLOAD_BINARIES/blitz-cred" ./cmd/blitz-cred
+          )
+
+      # A valid matching manifest is immutable and reusable. Only 404 means
+      # publish; malformed content, a wrong version, or another status is fatal.
+      - name: Plan the box-payload release
+        id: plan
+        env:
+          APP_URL: ${{ steps.origin.outputs.url }}
+          EXPECTED_VERSION: ${{ needs.image.outputs.payload_version }}
+        run: |
+          node packages/control-plane/scripts/plan-box-payload.mjs \
+            --url "$APP_URL" --daemon "$DAEMON_ARCHIVE" \
+            --binaries "$PAYLOAD_BINARIES" --json payload-plan.json
+          version="$(jq -r '.version' payload-plan.json)"
+          published="$(jq -r '.published' payload-plan.json)"
+          if [ "$version" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Payload planning produced $version after the image was stamped with $EXPECTED_VERSION."
+            exit 1
+          fi
+          if [ "$published" != "true" ] && [ "$published" != "false" ]; then
+            echo "::error::The box-payload plan did not report whether the release is published."
+            exit 1
+          fi
+          {
+            printf 'published=%s\n' "$published"
+            printf 'version=%s\n' "$version"
+            printf 'prefix=%s\n' "$(jq -r '.prefix' payload-plan.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      # Archives go first and manifest.json last, so an interrupted upload is
+      # never visible as a release the planner can reuse.
+      - name: Publish the box-payload release
+        if: steps.plan.outputs.published == 'false'
+        env:
+          APP_URL: ${{ steps.origin.outputs.url }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PREFIX: ${{ steps.plan.outputs.prefix }}
+        run: |
+          node packages/control-plane/scripts/publish-box-payload.mjs \
+            --app-url "$APP_URL" --prefix "$PREFIX" \
+            --daemon "$DAEMON_ARCHIVE" --binaries "$PAYLOAD_BINARIES" \
+            --json payload-publish.json
+
+      - name: Expose the box-payload pin
+        id: pin
+        env:
+          PUBLISHED: ${{ steps.plan.outputs.published }}
+        run: |
+          expected_ref="$(jq -r '.ref' payload-plan.json)"
+          expected_version="$(jq -r '.version' payload-plan.json)"
+          expected_prefix="$(jq -r '.prefix' payload-plan.json)"
+          if [ "$PUBLISHED" = "true" ]; then
+            ref="$expected_ref"
+            version="$expected_version"
+          else
+            ref="$(jq -r '.ref' payload-publish.json)"
+            version="$(jq -r '.version' payload-publish.json)"
+            prefix="$(jq -r '.prefix' payload-publish.json)"
+            if [ "$ref" != "$expected_ref" ] || [ "$version" != "$expected_version" ] || [ "$prefix" != "$expected_prefix" ]; then
+              echo "::error::Published box-payload metadata does not match the planned release."
+              exit 1
+            fi
+          fi
+          if [ -z "$ref" ] || [ "$ref" = "null" ] || [[ ! "$version" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "::error::The box-payload release did not produce a complete pin."
+            exit 1
+          fi
+          {
+            printf 'ref=%s\n' "$ref"
+            printf 'version=%s\n' "$version"
+          } >> "$GITHUB_OUTPUT"
+
   deploy:
     name: Deploy canary from main
-    needs: image
+    needs: [image, payload]
     runs-on: ubuntu-latest
     environment: canary
     steps:
@@ -271,6 +437,11 @@ jobs:
           BLITZ_DEPLOY_VAR_BOX_IMAGE_REF: ${{ needs.image.outputs.ref }}
           BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: ${{ needs.image.outputs.tag }}
           BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: ${{ needs.image.outputs.sha256 }}
+          # Existing machines apply this content-addressed payload in place.
+          # Both halves come from the validated manifest release; the ref tells
+          # the updater where to fetch and the version is its desired state.
+          BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF: ${{ needs.payload.outputs.ref }}
+          BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION: ${{ needs.payload.outputs.version }}
           # The Lody session surface, half two (plans/LODY-SESSIONS.md §13.3).
           # Half one is baked into new canary archives by the image job's
           # BLITZ_LODY_SESSIONS=1 build arg: the daemon has to be listening

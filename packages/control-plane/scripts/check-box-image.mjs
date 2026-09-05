@@ -1,9 +1,9 @@
 // Answers one question: does this deploy need a new box image?
 //
-// Repository inputs copied by the Dockerfile ride the image, and a box never
-// upgrades in place, so they reach new workspaces only. Worker and webapp
-// changes ride the deploy and reach every workspace at once. Mixing the two up
-// ships half a change.
+// Base-owned inputs require a replacement image. Payload and daemon inputs are
+// intentionally excluded: the in-place updater delivers those to old boxes,
+// and a newly created box converges from its baked payload to the current pin.
+// Worker and webapp changes ride the deploy and reach every workspace at once.
 //
 // The self-host runbook offers this advisory before a manual image publish.
 // It needs the deployed SHA, which is what GET /version reports, so an operator
@@ -32,13 +32,13 @@ export function boxImageDecision(deployedCommit, changedPaths) {
   if (touched.length === 0) {
     return {
       rebuild: false,
-      reason: `No image path changed since ${deployedCommit}. A worker-only deploy is enough, and the current box image pin still stands.`,
+      reason: `No base-image path changed since ${deployedCommit}. The current box image pin still stands; payload changes ship in place.`,
       paths: [],
     };
   }
   return {
     rebuild: true,
-    reason: `${touched.length} file(s) under ${IMAGE_PATHS.join(" and ")} changed since ${deployedCommit}. Publish a new image, or the change reaches no workspace. A v* tag does this for you.`,
+    reason: `${touched.length} base-image file(s) changed since ${deployedCommit}. Publish a new image, or the change reaches no workspace. A v* tag does this for you.`,
     paths: touched,
   };
 }

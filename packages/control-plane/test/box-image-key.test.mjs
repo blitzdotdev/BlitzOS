@@ -61,21 +61,10 @@ function createInputRepository() {
   git(repository, ["init", "-q"]);
   git(repository, ["config", "user.email", "box-image-test@example.com"]);
   git(repository, ["config", "user.name", "Box Image Test"]);
-  const files = new Map([
-    ["packages/box/Dockerfile", "FROM scratch\n"],
-    ["packages/broker/main.go", "package main\n"],
-    ["packages/schema/fixtures/example.json", "{}\n"],
-    ["packages/control-plane/scripts/box-payload-key.mjs", "export {};\n"],
-    ["packages/control-plane/scripts/lib/box-daemon.mjs", "export {};\n"],
-    ["packages/control-plane/scripts/lib/box-payload-files.mjs", "export {};\n"],
-    ["vendor/lody/UPSTREAM.md", "fixture\n"],
-    ["vendor/lody/packages/shared/src/local-loro-data-plane.ts", "export {};\n"],
-    ["env.defaults", "BLITZ_LODY_SESSIONS=0\n"],
-  ]);
-  for (const [relativePath, contents] of files) {
+  for (const [index, relativePath] of BOX_IMAGE_INPUTS.entries()) {
     const filePath = path.join(repository, relativePath);
     mkdirSync(path.dirname(filePath), { recursive: true });
-    writeFileSync(filePath, contents);
+    writeFileSync(filePath, `base input ${index}\n`);
   }
   const gitlink = path.join(repository, "vendor/lody/packages/example-adapter");
   mkdirSync(gitlink, { recursive: true });
@@ -191,13 +180,38 @@ test("a change under every Lody build input moves the release id", async () => {
 
 test("a missing input at the requested revision is a hard error", async () => {
   const repository = createInputRepository();
-  git(repository, ["rm", "-q", "env.defaults"]);
+  const missing = "packages/box/rootfs/usr/local/libexec/blitz-payload";
+  git(repository, ["rm", "-q", missing]);
   git(repository, ["commit", "-qm", "remove required input"]);
 
   await assert.rejects(
     () => readBoxImageInputIds({ repo: repository, rev: "HEAD" }),
-    /box-image input is missing at HEAD: env\.defaults/u,
+    new RegExp(`box-image input is missing at HEAD: ${missing}`, "u"),
   );
+});
+
+test("payload and daemon-only commits keep the base image release id", async () => {
+  const repository = createInputRepository();
+  const before = boxImageReleaseId(await readBoxImageInputIds({ repo: repository }));
+  for (const [relativePath, contents] of [
+    ["packages/box/rootfs/usr/local/bin/blitz", "payload edit\n"],
+    ["packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run", "payload run edit\n"],
+    ["vendor/lody/UPSTREAM.md", "daemon edit\n"],
+    ["env.defaults", "payload defaults edit\n"],
+  ]) {
+    const filePath = path.join(repository, relativePath);
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, contents);
+  }
+  git(repository, ["add", "."]);
+  git(repository, ["commit", "-qm", "payload only"]);
+
+  assert.equal(boxImageReleaseId(await readBoxImageInputIds({ repo: repository })), before);
+
+  writeFileSync(path.join(repository, "packages/box/Dockerfile"), "changed base\n");
+  git(repository, ["add", "."]);
+  git(repository, ["commit", "-qm", "base change"]);
+  assert.notEqual(boxImageReleaseId(await readBoxImageInputIds({ repo: repository })), before);
 });
 
 test("CLI prints the contracted JSON and mirrors it to --json", () => {
