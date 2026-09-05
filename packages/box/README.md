@@ -330,3 +330,5 @@ It verifies the `gh` pin, `vim`, and the absence of `nano`.
 Run the local image with the [Install](#install) command.
 Use `blitz-box:local` instead of the registry reference.
 See [docs/BOX-IMAGE.md](../../docs/BOX-IMAGE.md) for registry and R2 publishing.
+
+Design record: `RECORD.md`.
