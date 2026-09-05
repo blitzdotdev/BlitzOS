@@ -8,7 +8,7 @@ if payload_lab_dry; then
   turn_id=$(start_turn "$WORKSPACE_ID" "request a shell command containing sleep 60" ask)
   dry_command "wait for exact session $turn_id to request permission; record running payload and daemon pid"
   pin_payload "$PUBLISHED_VERSION"
-  dry_command "wait for deferred outcome and staged target; assert neither payload nor daemon switched"
+  dry_command "wait for normal updater poll to report deferred with the staged target; assert neither payload nor daemon switched"
   set_turn_permissions "$WORKSPACE_ID" "$turn_id" allow
   dry_command "drive the allowed turn; while its sleep 60 runs assert payload and daemon stay unchanged"
   wait_turn "$WORKSPACE_ID" "$turn_id" "$LAB_TURN_TIMEOUT"
