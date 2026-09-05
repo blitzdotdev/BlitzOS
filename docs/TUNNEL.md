@@ -10,9 +10,6 @@ the control plane, which proxies terminal, files, and previews through the
 tunnel and authenticates every hop. Destroying the workspace removes the
 tunnel and the DNS record.
 
-MicroVM workspaces do not use this path; they ride their host agent. Design
-and evidence: [plans/CONNECTIVITY.md](../plans/CONNECTIVITY.md).
-
 This page is step 8 of the [self-host guide](SELF-HOST.md).
 
 ## Requirements
@@ -81,9 +78,7 @@ WORKSPACE_TUNNEL_ZONE = "<your-domain>"
 Leaving these three vars empty does not degrade gracefully for cloud VMs: a
 cloud-VM workspace still boots and reports `ready`, but every browser
 active surface — terminal, files, and previews — routes through this tunnel and
-returns `503 workspace has no webapp tunnel` without it. Only microVM
-workspaces are unaffected; their host agent carries webApp traffic itself.
-Leave the vars empty only for a microVM-only deployment.
+returns `503 workspace has no webapp tunnel` without it.
 
 ### 5. Set the secrets
 

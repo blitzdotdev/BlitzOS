@@ -291,12 +291,11 @@ New VMs use that pin immediately. An existing cloud VM moves only after an
 owner or admin requests an update through the box-config v1 routes in
 `packages/control-plane/core/box-config.ts`; the host updater emitted by
 `packages/control-plane/core/bootstrap.ts` polls, replaces the container, and
-reports the installed ref. MicroVMs have no in-place updater and keep their old
-image until recreation.
+reports the installed ref.
 
 Rollback starts by restoring the previous immutable pin and redeploying. New
 VMs then use it; request another box update for each existing cloud VM that must
-move back. Recreate an affected microVM.
+move back.
 
 This boot-time pinning is why the control plane gates some per-workspace
 behavior on the VM's creation time (the `BOX_IMAGE_*_SINCE_MS` constants in
