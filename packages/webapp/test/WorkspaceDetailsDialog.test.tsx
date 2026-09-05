@@ -1,10 +1,13 @@
 import { act, useCallback, useState } from 'react';
 import type {
+  AgentRuleView,
   MachineState,
   MachineResponse,
   MachineType,
   MachineView,
   OrgCredentialView,
+  PutAgentRuleRequest,
+  PutAgentRuleResponse,
   WorkspaceMemberView,
   WorkspaceMemberResponse,
 } from '@blitzos/schema';
@@ -79,6 +82,22 @@ const workspace = workspaceModelFixture({
   title: 'Details test',
   members: [ada, grace],
 });
+
+const builtInRule: AgentRuleView = {
+  id: null,
+  name: 'Default (built-in)',
+  content: '# Blitz box — agent rules\n',
+  updatedAt: null,
+  builtIn: true,
+};
+
+const orgRule: AgentRuleView = {
+  id: 'rule-1',
+  name: 'House rules',
+  content: '# House rules\n',
+  updatedAt: 3,
+  builtIn: false,
+};
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
@@ -566,8 +585,9 @@ describe('WorkspaceDetailsDialog', () => {
     expect(save()?.disabled).toBe(false);
     const saveButton = save();
     await act(async () => saveButton?.click());
-    expect(saveButton?.textContent).toBe('Saving…');
-    expect(name.disabled).toBe(true);
+    expect(saveButton?.textContent).toBe('Save settings');
+    expect(saveButton?.disabled).toBe(true);
+    expect(name.disabled).toBe(false);
     // The default machine type and the agent rule were never touched, so they
     // travel as absent fields rather than as a restatement of what is stored.
     expect(updateWorkspace).toHaveBeenCalledWith(workspace.id, {
@@ -585,6 +605,48 @@ describe('WorkspaceDetailsDialog', () => {
     expect(saveButton?.textContent).toBe('Save settings');
     expect(name.value).toBe('server-normalized');
     expect(saveButton?.disabled).toBe(true);
+    await view.unmount();
+  });
+
+  it('commits settings immediately and restores the snapshot with an error on rejection', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['updateWorkspace']>>>();
+    const updateWorkspace = vi.fn(() => request.promise);
+    const view = await render(dialog({ client: client({ updateWorkspace }) }));
+    await settle();
+    await act(async () => tab(view.container, 'Settings')?.click());
+
+    const name = view.container.querySelector<HTMLInputElement>('[aria-label="Workspace name"]');
+    const toggle = view.container.querySelector<HTMLInputElement>(
+      '[aria-label="Provision a machine when a member is added"]',
+    );
+    if (name === null || toggle === null) throw new Error('the settings fields are missing');
+    await act(async () => {
+      typeInto(name, 'renamed-workspace');
+      toggle.click();
+    });
+    const save = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Save settings');
+    await act(async () => {
+      save?.click();
+      await Promise.resolve();
+    });
+
+    expect(updateWorkspace).toHaveBeenCalledWith(workspace.id, {
+      name: 'renamed-workspace',
+      autoProvision: false,
+    });
+    expect(save?.textContent).toBe('Save settings');
+    expect(save?.disabled).toBe(true);
+    expect(name.disabled).toBe(false);
+
+    request.reject(new ApiRequestError('settings conflict', 409, 'poll'));
+    await settle();
+    expect(name.value).toBe(workspace.serverName);
+    expect(toggle.checked).toBe(workspace.autoProvision);
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Couldn’t save workspace settings');
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Status: HTTP 409');
     await view.unmount();
   });
 
@@ -621,6 +683,234 @@ describe('WorkspaceDetailsDialog', () => {
     await act(async () => remove?.click());
     expect(removeWorkspaceRepo).toHaveBeenCalledWith(workspace.id, 'acme/tools');
     expect(view.container.querySelector('button[aria-label="Remove acme/tools"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it('adds a pending repository immediately and removes it with an error on rejection', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['addWorkspaceRepo']>>>();
+    const addWorkspaceRepo = vi.fn(() => request.promise);
+    const view = await render(dialog({ client: client({ addWorkspaceRepo }) }));
+    await settle();
+    await act(async () => tab(view.container, 'Settings')?.click());
+
+    const field = view.container.querySelector<HTMLInputElement>('[aria-label="Repository"]');
+    if (field === null) throw new Error('the settings tab has no repository field');
+    await act(async () => typeInto(field, 'acme/tools'));
+    const add = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Add repository');
+    await act(async () => {
+      add?.click();
+      await Promise.resolve();
+    });
+
+    expect(addWorkspaceRepo).toHaveBeenCalledWith(workspace.id, { repo: 'acme/tools' });
+    expect(view.container.querySelector('button[aria-label="Remove acme/tools"]'))
+      .not.toBeNull();
+
+    request.reject(new ApiRequestError('repository refused', 422, null));
+    await settle();
+    expect(view.container.querySelector('button[aria-label="Remove acme/tools"]')).toBeNull();
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Couldn’t add repository');
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Status: HTTP 422');
+    await view.unmount();
+  });
+
+  it('removes a repository immediately and restores its index with an error on rejection', async () => {
+    const request = deferred<void>();
+    const removeWorkspaceRepo = vi.fn(() => request.promise);
+    const repos = [
+      { repo: 'acme/first', private: false },
+      { repo: 'acme/tools', private: true },
+      { repo: 'acme/last', private: false },
+    ];
+    const view = await render(dialog({
+      client: client({
+        listWorkspaceRepos: vi.fn().mockResolvedValue({ repos }),
+        removeWorkspaceRepo,
+      }),
+    }));
+    await settle();
+    await act(async () => tab(view.container, 'Settings')?.click());
+
+    const remove = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove acme/tools"]',
+    );
+    await act(async () => {
+      remove?.click();
+      await Promise.resolve();
+    });
+    expect(removeWorkspaceRepo).toHaveBeenCalledWith(workspace.id, 'acme/tools');
+    expect(view.container.querySelector('button[aria-label="Remove acme/tools"]')).toBeNull();
+
+    request.reject(new ApiRequestError('repository is required', 409, null));
+    await settle();
+    expect([...view.container.querySelectorAll('.workspace-repo-name strong')]
+      .map((entry) => entry.textContent)).toEqual(repos.map(({ repo }) => repo));
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Couldn’t remove repository');
+    expect(view.container.querySelector('.webapp-error-dialog')?.textContent)
+      .toContain('Status: HTTP 409');
+    await view.unmount();
+  });
+
+  it('creates and selects an agent rule immediately, then restores the editor on rejection', async () => {
+    const request = deferred<PutAgentRuleResponse>();
+    const putAgentRule = vi.fn((_id: string, _input: PutAgentRuleRequest) => request.promise);
+    const view = await render(dialog({
+      client: client({
+        listAgentRules: vi.fn().mockResolvedValue({ rules: [builtInRule, orgRule] }),
+        putAgentRule,
+      }),
+    }));
+    await settle();
+    await act(async () => tab(view.container, 'Settings')?.click());
+
+    const select = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Agent rules document"]',
+    );
+    const selectSetter = Object.getOwnPropertyDescriptor(
+      HTMLSelectElement.prototype,
+      'value',
+    )?.set;
+    const newRuleValue = [...(select?.options ?? [])]
+      .find((option) => option.textContent === 'New rule…')?.value;
+    if (select === null || selectSetter === undefined || newRuleValue === undefined) {
+      throw new Error('the new-rule option is missing');
+    }
+    await act(async () => {
+      selectSetter.call(select, newRuleValue);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const name = view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Agent rules name"]',
+    );
+    const content = view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Agent rules content"]',
+    );
+    if (name === null || content === null) throw new Error('the rules editor is missing');
+    await act(async () => {
+      typeInto(name, 'Review rules');
+      typeInto(content, '# Review rules\n');
+    });
+    const save = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Save rules');
+    await act(async () => {
+      save?.click();
+      await Promise.resolve();
+    });
+
+    const pendingId = putAgentRule.mock.calls[0]?.[0];
+    expect(pendingId).toEqual(expect.any(String));
+    expect(view.container.querySelector('.blueprint-agent-rules-dialog')).toBeNull();
+    expect(select.value).toBe(pendingId);
+    expect([...select.options].map((option) => option.textContent)).toContain('Review rules');
+
+    request.reject(new Error('rule create refused'));
+    await settle();
+    expect(select.value).toBe('');
+    expect([...select.options].map((option) => option.textContent)).not.toContain('Review rules');
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Agent rules name"]',
+    )?.value).toBe('Review rules');
+    expect(view.container.querySelector('.blueprint-agent-rules-dialog [role="alert"]')
+      ?.textContent).toContain('rule create refused');
+    await view.unmount();
+  });
+
+  it('updates an agent rule immediately, then restores the canonical snapshot on rejection', async () => {
+    const request = deferred<PutAgentRuleResponse>();
+    const putAgentRule = vi.fn((_id: string, _input: PutAgentRuleRequest) => request.promise);
+    const view = await render(dialog({
+      workspace: { ...workspace, agentRuleId: orgRule.id },
+      client: client({
+        listAgentRules: vi.fn().mockResolvedValue({ rules: [builtInRule, orgRule] }),
+        putAgentRule,
+      }),
+    }));
+    await settle();
+    await act(async () => tab(view.container, 'Settings')?.click());
+    const select = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Agent rules document"]',
+    );
+    const edit = view.container.querySelector<HTMLButtonElement>('.blueprint-agent-rules-edit');
+    await act(async () => edit?.click());
+    const name = view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Agent rules name"]',
+    );
+    if (select === null || name === null) throw new Error('the rules editor is missing');
+    await act(async () => typeInto(name, 'Revised rules'));
+    const save = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Save rules');
+    await act(async () => {
+      save?.click();
+      await Promise.resolve();
+    });
+
+    expect(putAgentRule).toHaveBeenCalledWith(orgRule.id, {
+      name: 'Revised rules',
+      content: orgRule.content,
+    });
+    expect(view.container.querySelector('.blueprint-agent-rules-dialog')).toBeNull();
+    expect([...select.options].find((option) => option.value === orgRule.id)?.textContent)
+      .toBe('Revised rules');
+
+    request.reject(new Error('rule update refused'));
+    await settle();
+    expect(select.value).toBe(orgRule.id);
+    expect([...select.options].find((option) => option.value === orgRule.id)?.textContent)
+      .toBe(orgRule.name);
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Agent rules name"]',
+    )?.value).toBe('Revised rules');
+    expect(view.container.querySelector('.blueprint-agent-rules-dialog [role="alert"]')
+      ?.textContent).toContain('rule update refused');
+    await view.unmount();
+  });
+
+  it('deletes an agent rule immediately, then restores its selection and editor on rejection', async () => {
+    const request = deferred<void>();
+    const deleteAgentRule = vi.fn(() => request.promise);
+    const view = await render(dialog({
+      workspace: { ...workspace, agentRuleId: orgRule.id },
+      client: client({
+        listAgentRules: vi.fn().mockResolvedValue({ rules: [builtInRule, orgRule] }),
+        deleteAgentRule,
+      }),
+    }));
+    await settle();
+    await act(async () => tab(view.container, 'Settings')?.click());
+    const select = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Agent rules document"]',
+    );
+    if (select === null) throw new Error('the rules picker is missing');
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.blueprint-agent-rules-edit')?.click();
+    });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.blueprint-agent-rules-delete')?.click();
+    });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
+      await Promise.resolve();
+    });
+
+    expect(deleteAgentRule).toHaveBeenCalledWith(orgRule.id);
+    expect(view.container.querySelector('.webapp-confirmation-dialog')).toBeNull();
+    expect(view.container.querySelector('.blueprint-agent-rules-dialog')).toBeNull();
+    expect(select.value).toBe('');
+    expect([...select.options].map((option) => option.textContent)).not.toContain(orgRule.name);
+
+    request.reject(new Error('rule delete refused'));
+    await settle();
+    expect(select.value).toBe(orgRule.id);
+    expect([...select.options].map((option) => option.textContent)).toContain(orgRule.name);
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Agent rules name"]',
+    )?.value).toBe(orgRule.name);
+    expect(view.container.querySelector('.blueprint-agent-rules-dialog [role="alert"]')
+      ?.textContent).toContain('rule delete refused');
     await view.unmount();
   });
 
