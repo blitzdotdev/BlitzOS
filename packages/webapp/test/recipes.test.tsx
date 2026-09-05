@@ -520,7 +520,7 @@ describe('usage capture settings', () => {
       <SettingsPage
         client={wire}
         viewer={viewer}
-        pendingGrantProposals={[]}
+        pendingAccessProposals={[]}
         section={section}
         onNavigate={() => undefined}
         onOpenWorkspace={() => undefined}

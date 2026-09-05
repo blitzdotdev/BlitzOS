@@ -27,7 +27,7 @@ import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { CreateWorkspaceDialog } from '../CreateWorkspaceDialog';
 import { ShareFolderDialog } from '../files/ShareFolderDialog';
-import { GrantApprovalDialog } from '../GrantApprovalDialog';
+import { AccessApprovalDialog } from '../AccessApprovalDialog';
 import { MyMachineDialog } from '../MyMachineDialog';
 import type { SettingsSection } from '../sessions-page-state';
 import { SettingsHeader, SettingsPage } from '../SettingsPage';
@@ -36,7 +36,7 @@ import { WorkspaceConnectionsPanel } from '../WorkspaceConnectionsPanel';
 import { WorkspaceDetailsDialog, type WorkspaceDetailsTab } from '../WorkspaceDetailsDialog';
 import {
   adminViewer,
-  grantProposals,
+  accessProposals,
   listMachineTypesFixture,
   memberViewer,
   previewFolder,
@@ -97,7 +97,7 @@ function SettingsFrame({ viewer }: { viewer: TenantMe }) {
   const [reviewing, setReviewing] = useState<GrantProposalView | null>(null);
   // Requests → Review opens the grant-approval dialog on the pending
   // proposal, as the shell does; a decision takes it off the list.
-  const pending = grantProposals.filter(({ state }) => state === 'pending');
+  const pending = accessProposals.filter(({ state }) => state === 'pending');
   return (
     <div className="pv-frame">
       <div className="settings-shell">
@@ -105,7 +105,7 @@ function SettingsFrame({ viewer }: { viewer: TenantMe }) {
         <SettingsPage
           client={previewClient}
           viewer={viewer}
-          pendingGrantProposals={pending}
+          pendingAccessProposals={pending}
           section={section}
           onNavigate={setSection}
           onOpenWorkspace={noop}
@@ -117,7 +117,7 @@ function SettingsFrame({ viewer }: { viewer: TenantMe }) {
         />
       </div>
       {reviewing !== null && (
-        <GrantApprovalDialog
+        <AccessApprovalDialog
           client={previewClient}
           proposal={reviewing}
           viewer={{ membershipId: viewer.membership.id, orgName: viewer.org.name }}

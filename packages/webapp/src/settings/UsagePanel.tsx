@@ -69,7 +69,7 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
           {state.folderId !== null && (
             <p className="cfg-help">
               <a href={folderPagePath(state.folderId)}>Open the usage folder in Drive</a>
-              {' — share it explicitly to grant access; it has no org-wide role.'}
+              {' — share it explicitly to give access; it has no org-wide role.'}
             </p>
           )}
         </>

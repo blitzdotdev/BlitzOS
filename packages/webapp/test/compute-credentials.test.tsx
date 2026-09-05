@@ -62,7 +62,7 @@ describe('compute credential settings', () => {
     };
     const common = {
       client: wire,
-      pendingGrantProposals: [],
+      pendingAccessProposals: [],
       onNavigate: () => undefined,
       onOpenWorkspace: () => undefined,
       onReviewProposal: () => undefined,

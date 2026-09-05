@@ -7,7 +7,7 @@ import type {
 } from '@blitzos/schema';
 import { ApiRequestError, type ControlPlaneClient, type InviteView } from '../api';
 import type { ComputeCredentialMetadata } from '../compute-credentials-api';
-import { workspaceReadPath } from '../org-credential-grants';
+import { workspaceReadPath } from '../org-credential-access';
 import {
   agentRules,
   computeCredentials,
@@ -17,7 +17,7 @@ import {
   delay,
   folderGrants,
   folderState,
-  grantProposals,
+  accessProposals,
   HOUR,
   invites,
   machineFor,
@@ -375,7 +375,7 @@ const methods: PreviewClientMethods = {
 
   resolveGrantProposal: async (proposalId, input) => {
     await delay();
-    const found = grantProposals.find((row) => row.id === proposalId);
+    const found = accessProposals.find((row) => row.id === proposalId);
     if (found === undefined) throw new ApiRequestError('No such proposal.', 404, null);
     found.state = input.approve ? 'approved' : 'denied';
     found.applied = input.approve ? [...input.changes] : [];

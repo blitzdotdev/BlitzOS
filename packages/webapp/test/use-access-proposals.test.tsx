@@ -2,7 +2,7 @@ import type { GrantProposalView } from '@blitzos/schema';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
-import { useGrantProposals } from '../src/use-grant-proposals.js';
+import { useAccessProposals } from '../src/use-access-proposals.js';
 import { render, settle } from './dom.js';
 
 function proposal(id: string, membershipId: string, createdAt: number): GrantProposalView {
@@ -22,10 +22,10 @@ function proposal(id: string, membershipId: string, createdAt: number): GrantPro
  * from another member's agent, the other one older. */
 const FEED = [proposal('theirs', 'm-other', 1), proposal('mine', 'm-me', 2)];
 
-let latest: ReturnType<typeof useGrantProposals> | null = null;
+let latest: ReturnType<typeof useAccessProposals> | null = null;
 
 function Probe({ client, viewer }: { client: Pick<ControlPlaneClient, 'listGrantProposals'>; viewer: string | null }) {
-  const feed = useGrantProposals(client, true, viewer);
+  const feed = useAccessProposals(client, true, viewer);
   latest = feed;
   return (
     <p>
@@ -34,7 +34,7 @@ function Probe({ client, viewer }: { client: Pick<ControlPlaneClient, 'listGrant
   );
 }
 
-describe('useGrantProposals (plans/ORG-CREDENTIALS.md §7a: the pop-up is for the acting member)', () => {
+describe('useAccessProposals (plans/ORG-CREDENTIALS.md §7a: the pop-up is for the acting member)', () => {
   it('pops only the proposal the viewer\'s own agent filed, and keeps the whole feed for Requests', async () => {
     const client = { listGrantProposals: vi.fn(async () => ({ proposals: FEED })) };
     const view = await render(<Probe client={client} viewer="m-me" />);

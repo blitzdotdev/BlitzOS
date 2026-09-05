@@ -3,8 +3,8 @@
  *
  * `shell/SessionRail.tsx` keeps `div.shell-rhead` native and hands the list
  * region to this component, which mounts Lody's own `LoroSidebar` body: their
- * Chats and GitHub Worktrees sections, their rows, their context menus, their
- * empty and loading states. Nothing about a session row is re-implemented here
+ * Chats and repository sections — the second headed "Projects" here — their
+ * rows, their context menus, their empty and loading states. Nothing about a session row is re-implemented here
  * — §0's bias rule — so what this file owns is exactly three things:
  *
  * 1. The DATA. `loro-app-sidebar.tsx` is 3003 lines because most of it is cloud:
@@ -12,8 +12,8 @@
  *    entitlement, an Electron updater banner, local-project management. What is
  *    left when those are removed is the pair below, and both are theirs:
  *    `useVisibleSessionMetas` reads the runtime's session mirror, and
- *    `buildSessionListRows` turns metas into rows. The Chats / GitHub Worktrees
- *    split is `repoFullName`, exactly as it is upstream (`:1600`).
+ *    `buildSessionListRows` turns metas into rows. The Chats / Projects split
+ *    is `repoFullName`, exactly as it is upstream (`:1600`).
  * 2. The NEW TAB control, in their footer through `footerLeadingContent` (seam
  *    patch 22), to the left of Archive. It used to head a Terminals section of
  *    our own rows under their `afterSessionListContent` slot; that section is
@@ -29,7 +29,7 @@
  *    rest, so nothing about the entry point is ours.
  *
  * SECTION ORDER IS UPSTREAM'S, NOT THE PLAN'S SKETCH. §8 draws Chats above
- * GitHub Worktrees; `LoroSidebar` renders `sessionListProps` before
+ * the repository section; `LoroSidebar` renders `sessionListProps` before
  * `afterSessionListContent`, and their own comment says why ("so Chats reads as
  * the last section"). Reordering means either a second seam patch or rebuilding
  * their scroll region, and §0's bias rule settles it: theirs wins, ours goes.
@@ -73,6 +73,10 @@ interface LodySessionRow {
   sessionId: string;
   repoFullName: string | null;
   isPinned?: boolean;
+  /** When this session last said anything, rolled up over its children
+   * (`session-list-rows.ts`'s `getEffectiveLatestMessageAt`). Read here for
+   * one purpose: naming the session the rail strip opens from the landing. */
+  latestMessageAt?: number | string;
   /** What their row's context menu draws for the Share entry
    * (`session-list.tsx:820`). Upstream fills it from a cloud visibility flip;
    * BlitzOS fills it from §0.1's rule that a session is private until granted,
@@ -165,6 +169,21 @@ export interface SessionRailSidebarProps {
   /** The shared session the surface is showing, or `null`. */
   activeSharedSessionId?: string | null;
   onSelectSharedSession?: (row: SharedSessionRow) => void;
+  /**
+   * The member's most recently active session, reported whenever it changes,
+   * and `null` while they have none.
+   *
+   * THE RAIL IS WHERE THIS IS KNOWN. The shell draws the right icon strip, and
+   * every panel that strip opens — Files, All Changes, Browser — lives inside a
+   * SESSION. Pressed on the landing there is no session to open one in, and the
+   * shell has no session list of its own to pick from: the list is Lody's
+   * mirror, read here. So the rail names the session, the shell opens it, and
+   * the strip's request lands in it (`CloudApp`'s pending quick action).
+   *
+   * Optional: a headless mount and a grantee's surface report nothing, and the
+   * strip keeps the disabled landing state it had.
+   */
+  onMostRecentSessionChange?: (sessionId: string | null) => void;
 }
 
 /** Repo names in first-seen order — upstream's `getStableRepoFullNames`
@@ -330,6 +349,27 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
   const { onSelectSession, onOpenLanding, onOpenArchive, onShareSession, onSelectSharedSession } =
     props;
   const sharedSessions = props.sharedSessions ?? [];
+
+  // The most recently active session, for the shell's right icon strip.
+  //
+  // BY ACTIVITY, NOT BY THE ORDER THE RAIL DRAWS. A pinned session sits at the
+  // top of the list however long ago it last spoke, and "the one at the top"
+  // would send a member pressing Files on the landing into a conversation they
+  // pinned last week. `latestMessageAt` is the field the rail already sorts
+  // and dates rows by, rolled up over a session's children.
+  const mostRecentSessionId = useMemo(() => {
+    let best: { id: string; at: number } | null = null;
+    for (const row of rows) {
+      const at = new Date(row.latestMessageAt ?? 0).getTime();
+      const stamp = Number.isFinite(at) ? at : 0;
+      if (best === null || stamp > best.at) best = { id: row.sessionId, at: stamp };
+    }
+    return best?.id ?? null;
+  }, [rows]);
+  const { onMostRecentSessionChange } = props;
+  useEffect(() => {
+    onMostRecentSessionChange?.(mostRecentSessionId);
+  }, [mostRecentSessionId, onMostRecentSessionChange]);
   // Every row is private and every row is the caller's own — the rail lists the
   // sessions on the caller's box, because that is the only daemon this runtime
   // is connected to — so `canManage` is simply "is the affordance offered".
@@ -484,13 +524,22 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
   const showWorktrees = isLoading || worktrees.length > 0;
   const showChats = isLoading || chats.length > 0;
 
-  // Their own top slot carries the GitHub Worktrees heading, because the list
-  // below it is a sibling rather than a child (`loro-app-sidebar.tsx:2551`).
+  // Their own top slot carries the Projects heading, because the list below it
+  // is a sibling rather than a child (`loro-app-sidebar.tsx:2551`).
+  //
+  // "Projects", not upstream's "GitHub Worktrees": the heading names what the
+  // section holds HERE. A row under it is a session in one of the workspace's
+  // own repository clones — `blitz-lody-projects` registers each
+  // `/workspace/<repo>`, and the split is `repoFullName` — and a member on a
+  // box has no reason to read that as a worktree of theirs. The string is
+  // ours to write because this header is ours: upstream's own heading comes
+  // from `t('sidebar.githubWorktrees')` in `loro-app-sidebar.tsx`, which this
+  // rail does not mount.
   const topContent = showWorktrees ? (
     <SidebarSectionHeader
-      label="GitHub Worktrees"
+      label="Projects"
       collapsed={worktreesCollapsed}
-      toggleLabel="GitHub Worktrees"
+      toggleLabel="Projects"
       onToggleCollapsed={() => setWorktreesCollapsed((collapsed) => !collapsed)}
     />
   ) : null;

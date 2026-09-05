@@ -81,17 +81,17 @@ export function RequestsPanel({
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       {proposals.length > 0 && (
-        <section className="cfg-section" aria-label="Grant proposals">
+        <section className="cfg-section" aria-label="Access proposals">
           <div className="cfg-section-head">
-            <h2 className="cfg-title">Grant proposals</h2>
-            <p className="cfg-desc">Credential grant changes an agent proposed and nobody has decided on yet.</p>
+            <h2 className="cfg-title">Access proposals</h2>
+            <p className="cfg-desc">Credential access changes an agent proposed and nobody has decided on yet.</p>
           </div>
           <div className="settings-credential-list">
             {proposals.map((proposal) => (
               <article className="settings-credential-row settings-request-row" key={proposal.id}>
                 <div>
                   <div className="settings-credential-row__title">
-                    <h3>{proposal.proposed.length} grant change{proposal.proposed.length === 1 ? '' : 's'}</h3>
+                    <h3>{proposal.proposed.length} access change{proposal.proposed.length === 1 ? '' : 's'}</h3>
                     <span className="workspace-state-badge workspace-state-badge--pending">pending</span>
                   </div>
                   <p>{[...new Set(proposal.proposed.map(({ name }) => name))].join(', ')}</p>

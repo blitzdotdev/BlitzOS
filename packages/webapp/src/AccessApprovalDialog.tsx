@@ -13,13 +13,13 @@ import {
   isEdited,
   type ApprovalRow,
   type ProposalEdit,
-} from './grant-approval-model';
+} from './access-approval-model';
 import { ModalOverlay } from './ModalOverlay';
 import {
-  grantSubjectLabel,
-  grantSubjectTag,
-  type GrantSubjects,
-} from './org-credential-grants';
+  accessSubjectLabel,
+  accessSubjectTag,
+  type AccessSubjects,
+} from './org-credential-access';
 import { AccessToggle } from './settings/OrgCredentialForm';
 
 /** A workspace as the dialog needs it: its name, and whose machine is whose,
@@ -66,14 +66,14 @@ function Row({
   onEdit,
 }: {
   row: ApprovalRow;
-  subjects: GrantSubjects;
+  subjects: AccessSubjects;
   onEdit: (changeIndex: number, edit: Partial<ProposalEdit>) => void;
 }) {
-  const label = grantSubjectLabel(row, subjects);
+  const label = accessSubjectLabel(row, subjects);
   const subject = (
     <span className="ga-subj">
       <em>{label}</em>
-      <span className="machine-chip ga-tag">{grantSubjectTag(row.subjectKind)}</span>
+      <span className="machine-chip ga-tag">{accessSubjectTag(row.subjectKind)}</span>
     </span>
   );
   if (row.kind === 'kept') {
@@ -104,8 +104,8 @@ function Row({
         <button
           className="ga-xb"
           type="button"
-          title="Keep this grant"
-          aria-label={`Keep the grant for ${label}`}
+          title="Keep this access"
+          aria-label={`Keep the access for ${label}`}
           onClick={() => onEdit(row.changeIndex, { skipped: true })}
         >{X_ICON}</button>
       </div>
@@ -119,7 +119,7 @@ function Row({
           className="ga-xb"
           type="button"
           title="Restore this change"
-          aria-label={`Restore the grant for ${label}`}
+          aria-label={`Restore the access for ${label}`}
           onClick={() => onEdit(row.changeIndex, { skipped: false })}
         >{UNDO_ICON}</button>
       </div>
@@ -138,7 +138,7 @@ function Row({
         className="ga-xb"
         type="button"
         title="Skip this change"
-        aria-label={`Skip the grant for ${label}`}
+        aria-label={`Skip the access for ${label}`}
         onClick={() => onEdit(row.changeIndex, { skipped: true })}
       >{X_ICON}</button>
     </div>
@@ -146,15 +146,15 @@ function Row({
 }
 
 /**
- * The grant-approval dialog (plans/ORG-CREDENTIALS.md §7a; canonical mock
- * `plans/mockups/grant-approval.html`). An agent proposed grant changes; the
- * person reviews one merged grant list per credential with the changes as
+ * The access-approval dialog (plans/ORG-CREDENTIALS.md §7a; canonical mock
+ * `plans/mockups/grant-approval.html`). An agent proposed access changes; the
+ * person reviews one merged access list per credential with the changes as
  * inline diff rows, edits them, and approves exactly what goes through.
  *
  * Close is neither approve nor reject: the proposal stays pending and the
  * requests feed can reopen it. Only Reject sends the agent a denial.
  */
-export function GrantApprovalDialog({
+export function AccessApprovalDialog({
   client,
   proposal,
   viewer,
@@ -184,11 +184,11 @@ export function GrantApprovalDialog({
     void client.listOrgCredentials(abort.signal)
       .then((response) => { if (!abort.signal.aborted) setCredentials(response.credentials); })
       .catch((caught: Error) => {
-        // The rows still draw from the proposal alone; only the kept grants
-        // are missing, and the person is told why.
+        // The rows still draw from the proposal alone; only the access the
+        // credential already has is missing, and the person is told why.
         if (!abort.signal.aborted) {
           setCredentials([]);
-          setError(caughtErrorMessage(caught, 'Current grants failed to load.'));
+          setError(caughtErrorMessage(caught, 'The current access lists failed to load.'));
         }
       });
     void client.listMembers()
@@ -197,7 +197,7 @@ export function GrantApprovalDialog({
     return () => abort.abort();
   }, [client]);
 
-  const subjects = useMemo<GrantSubjects>(() => ({
+  const subjects = useMemo<AccessSubjects>(() => ({
     orgName: viewer.orgName,
     viewerMembershipId: viewer.membershipId,
     workspaces,
@@ -235,13 +235,13 @@ export function GrantApprovalDialog({
   return (
     <ModalOverlay onDismiss={onClose} dismissible={!busy}>
       <section
-        className="workspace-details-dialog grant-approval-dialog"
+        className="workspace-details-dialog access-approval-dialog"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="grant-approval-title"
+        aria-labelledby="access-approval-title"
       >
             <header className="workspace-details-header">
-              <h1 id="grant-approval-title">Approve credential grants</h1>
+              <h1 id="access-approval-title">Approve credential access</h1>
               <button
                 ref={closeButton}
                 type="button"
@@ -266,7 +266,7 @@ export function GrantApprovalDialog({
             </div>
             <div className="workspace-details-body ga-body">
               <div className="ga-caps">
-                <h2 className="cfg-title">Grants after approval</h2>
+                <h2 className="cfg-title">Access after approval</h2>
                 {edited && (
                   <button
                     className="ga-restore"
@@ -276,14 +276,14 @@ export function GrantApprovalDialog({
                 )}
               </div>
               {error !== null && <p className="workspace-details-error" role="alert">{error}</p>}
-              {credentials === null && <p className="workspace-details-status" role="status">Loading current grants…</p>}
+              {credentials === null && <p className="workspace-details-status" role="status">Loading current access…</p>}
               {groups.map((group) => (
                 <div key={group.name}>
                   <div className="ga-cname">
                     <code>{group.name}</code>
                     {group.comment !== null && <span className="ga-cmt">{group.comment}</span>}
                   </div>
-                  <div className="ga-col" role="list" aria-label={`Grants on ${group.name}`}>
+                  <div className="ga-col" role="list" aria-label={`Access to ${group.name}`}>
                     {group.rows.map((row, index) => (
                       <div role="listitem" key={`${row.kind}:${row.subjectKind}:${row.subjectId ?? ''}:${row.access}:${index}`}>
                         <Row row={row} subjects={subjects} onEdit={edit} />

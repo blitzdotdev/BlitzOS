@@ -36,8 +36,8 @@ import {
 } from './mobile-webapp';
 import { PasteCodeModal } from './shell/PasteCodeModal';
 import { ShellDialogs, type WebAppConfirmation } from './shell/ShellDialogs';
-import { GrantApprovalDialog } from './GrantApprovalDialog';
-import { useGrantProposals } from './use-grant-proposals';
+import { AccessApprovalDialog } from './AccessApprovalDialog';
+import { useAccessProposals } from './use-access-proposals';
 import type { WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
 import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
@@ -217,10 +217,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
   const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
-  // The grant-approval feed (plans/ORG-CREDENTIALS.md §7a): a pending
+  // The access-approval feed (plans/ORG-CREDENTIALS.md §7a): a pending
   // proposal addressed to this member pops the dialog on whichever page they
   // are on, so it polls whenever they are signed in to an org.
-  const grantProposals = useGrantProposals(
+  const accessProposals = useAccessProposals(
     client,
     !signedOut && store.viewer !== null,
     store.viewer?.membership.id ?? null,
@@ -243,6 +243,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const requestSidePanel = useCallback((tabId: string, action: 'open' | 'close') => {
     setSidePanelRequest((previous) => ({ tabId, action, seq: (previous?.seq ?? 0) + 1 }));
   }, []);
+  // The member's most recently active session, reported by the rail from Lody's
+  // own session mirror, and the strip press waiting for it to arrive on screen.
+  //
+  // WHY THE STRIP NEEDS BOTH. Files, All Changes, Browser and Side Chat are
+  // panels of a SESSION. Pressed on the landing there is no session detail
+  // mounted, so there is nothing to open them in — which is why the four
+  // buttons used to be drawn disabled there. They are live now: the press opens
+  // the most recent session, the panel request is HELD, and the effect below
+  // replays it the moment the session's panel reports itself.
+  const [mostRecentSessionId, setMostRecentSessionId] = useState<string | null>(null);
+  const [pendingQuickAction, setPendingQuickAction] = useState<SidePanelQuickAction | null>(null);
   // Which column the keyboard, statusline and rail follow. Not persisted: the
   // panes are, but the focus between them is a per-view detail.
   const [focusedRegion, setFocusedRegion] = useState<WorkspaceRegion>('main');
@@ -997,10 +1008,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
   const [lodyApi, setLodyApi] = useState<LodySessionSurfaceApi | null>(null);
   // Which session the share dialog is open on. One piece of state, because the
-  // dialog reads and writes its own grants (plans/LODY-SHARING.md §8).
+  // dialog reads and writes its own access list (plans/LODY-SHARING.md §8).
   const [sharingSessionId, setSharingSessionId] = useState<string | null>(null);
-  // Bumped when the share dialog closes, so a grant the viewer just received
-  // from themselves — an admin granting on somebody's behalf — reaches the rail
+  // Bumped when the share dialog closes, so access the viewer just gave
+  // themselves — an admin acting on somebody's behalf — reaches the rail
   // without a reload.
   const [shareRevision, setShareRevision] = useState(0);
   // The OTHER half of sharing: what other members shared with this one, and
@@ -1592,8 +1603,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   ), [hostTabs, setSidePanelState, sidePanelRequest, surfaceTabsEnabled]);
   // One press of the right icon strip. With a session on screen every button
   // is a request to Lody's side panel — a second press on the tab in front
-  // closes it, and Side Chat launches rather than toggles. Without one, only
-  // Connections is offered, on the native panel tab it always had.
+  // closes it, and Side Chat launches rather than toggles.
+  //
+  // WITHOUT ONE, THE PRESS STILL LANDS. Connections is ours and opens on the
+  // native panel tab it always had. The other four are session panels, so the
+  // press opens the most recent session first and is replayed into it by the
+  // effect below. Only a member with NO session at all is left with nothing to
+  // press — there is no session to show the files of — and the strip says so.
   const runQuickAction = useCallback((action: SidePanelQuickAction) => {
     if (sidePanelDriven && sidePanelState !== null) {
       const showing = action !== 'side-session'
@@ -1602,10 +1618,49 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       requestSidePanel(action, showing ? 'close' : 'open');
       return;
     }
-    if (action !== CONNECTIONS_SIDE_PANEL_ID) return;
-    togglePanel('connections');
-    setFocusedRegion('side');
-  }, [requestSidePanel, setFocusedRegion, sidePanelDriven, sidePanelState, togglePanel]);
+    if (action === CONNECTIONS_SIDE_PANEL_ID) {
+      togglePanel('connections');
+      setFocusedRegion('side');
+      return;
+    }
+    if (!surfaceTabsEnabled || mostRecentSessionId === null) return;
+    // Held, not sent: `sidePanelRequest` is read by the session detail, and
+    // there is none mounted yet. A press that replaced a held one is the
+    // member changing their mind before the session arrived, so the last press
+    // wins rather than queueing two panels.
+    setPendingQuickAction(action);
+    lodyRail.openSession(mostRecentSessionId);
+  }, [
+    lodyRail,
+    mostRecentSessionId,
+    requestSidePanel,
+    setFocusedRegion,
+    sidePanelDriven,
+    sidePanelState,
+    surfaceTabsEnabled,
+    togglePanel,
+  ]);
+
+  // The held press, once the session it was made for is on screen.
+  //
+  // The panel reports itself as soon as the detail mounts, which is exactly
+  // when a request can be honoured — earlier is a request nothing reads, and
+  // `handledSidePanelRequestSeqRef` would swallow the seq. A request for a
+  // panel that session does not offer is ignored by the detail itself, so this
+  // does not have to re-check `availableOptions`: it clears either way, because
+  // a press is not a standing order.
+  useEffect(() => {
+    if (pendingQuickAction === null) return;
+    if (!sidePanelDriven || sidePanelState === null) return;
+    requestSidePanel(pendingQuickAction, 'open');
+    setPendingQuickAction(null);
+  }, [pendingQuickAction, requestSidePanel, sidePanelDriven, sidePanelState]);
+
+  // A workspace switch drops it: the session it named is on the box being left.
+  useEffect(() => {
+    setPendingQuickAction(null);
+    setMostRecentSessionId(null);
+  }, [activeWorkspaceId]);
   const surfaceTabs: SurfaceTabsBinding | undefined = surfaceTabsEnabled
     ? {
         tabs: toSessionSurfaceTabs(ttydTabs, surfaceTabBody),
@@ -1699,20 +1754,20 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
   const railOverlays = (
     <>
-    {grantProposals.active !== null && store.viewer !== null && (
-      <GrantApprovalDialog
-        key={grantProposals.active.id}
+    {accessProposals.active !== null && store.viewer !== null && (
+      <AccessApprovalDialog
+        key={accessProposals.active.id}
         client={client}
-        proposal={grantProposals.active}
+        proposal={accessProposals.active}
         viewer={{
           membershipId: store.viewer.membership.id,
           orgName: store.viewer.org.name || store.viewer.org.slug,
         }}
         workspaces={store.workspaces.map(({ id, title, members }) => ({ id, name: title, members }))}
         onClose={() => {
-          if (grantProposals.active !== null) grantProposals.dismiss(grantProposals.active.id);
+          if (accessProposals.active !== null) accessProposals.dismiss(accessProposals.active.id);
         }}
-        onResolved={grantProposals.settled}
+        onResolved={accessProposals.settled}
       />
     )}
     <ShellDialogs
@@ -1782,7 +1837,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         viewer={store.viewer}
         loaded={loaded}
         rail={shellNav(null)}
-        pendingGrantProposals={grantProposals.pending}
+        pendingAccessProposals={accessProposals.pending}
         dialogs={railOverlays}
         updateNotice={updateNotice}
         error={error}
@@ -1791,7 +1846,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         onOpenRail={() => setDrawerOpen(true)}
         onNavigateToSettings={navigateToSettings}
         onOpenWorkspace={navigateToWorkspacePage}
-        onReviewProposal={grantProposals.reopen}
+        onReviewProposal={accessProposals.reopen}
         onLeaveSettings={returnToWebApp}
         onSignOut={signOut}
         onLeftOrg={() => window.location.reload()}
@@ -1888,6 +1943,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               onOpenSession={lodyRail.openSession}
               onOpenLanding={openFreshLanding}
               onOpenArchive={lodyRail.openArchive}
+              onMostRecentSessionChange={setMostRecentSessionId}
               newTabControl={(
                 <NewTabControl
                   variant="footer"
@@ -2133,6 +2189,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         <WorkspaceRailStrip
           sidePanel={sidePanelDriven ? sidePanelState : null}
           connectionsOpen={connectionsTabShowing}
+          // What a press opens a session panel IN while none is on screen. Null
+          // with the surface off, on a box that serves no daemon, and for a
+          // member who has not started a session yet — the three cases where
+          // there is genuinely nothing to open.
+          landingSessionId={surfaceTabsEnabled ? mostRecentSessionId : null}
           pendingRequestCount={activePendingRequests.length}
           onQuickAction={runQuickAction}
         />

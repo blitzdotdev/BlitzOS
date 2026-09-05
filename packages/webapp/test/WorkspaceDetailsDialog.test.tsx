@@ -298,7 +298,7 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
-  it('adds and rotates through the org-level form, a new key granted to this workspace', async () => {
+  it('adds and rotates through the org-level form, a new key this workspace can read', async () => {
     const putOrgCredential = vi.fn().mockResolvedValue({ credential: null });
     const listOrgCredentials = vi.fn().mockResolvedValue({ credentials: [{
       id: 'cred-1', name: 'STRIPE_API_KEY', comment: null, createdByMembershipId: 'membership-1',
@@ -315,8 +315,10 @@ describe('WorkspaceDetailsDialog', () => {
     await act(async () => buttonNamed('Add a credential')?.click());
     const addForm = view.container.querySelector('form[aria-label="Add a credential"]');
     if (addForm === null) throw new Error('no add form');
-    // The default audience is this workspace, named, not an id.
-    expect(addForm.querySelector('.org-grant-row')?.textContent).toContain('Details test');
+    // The default audience is this workspace, named, not an id — on the
+    // second card, under its own heading.
+    expect(addForm.querySelector('.org-access-row')?.textContent).toContain('Details test');
+    expect(addForm.textContent).toContain('Members with access');
     const name = addForm.querySelector<HTMLInputElement>('[aria-label="Credential name"]');
     const value = addForm.querySelector<HTMLInputElement>('[aria-label="Credential value"]');
     if (name === null || value === null) throw new Error('no add fields');

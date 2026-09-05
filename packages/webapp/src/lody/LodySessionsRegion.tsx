@@ -83,6 +83,11 @@ export interface LodySessionsRegionProps {
   newTabControl?: ReactNode;
   /** Right-click Share on a session row (plans/LODY-SHARING.md §8). */
   onShareSession?: (sessionId: string) => void;
+  /** The member's most recently active session, from the rail's session
+   * mirror. The shell's right icon strip opens a panel in it when it is
+   * pressed on the landing, where there is no session on screen to open one
+   * in. */
+  onMostRecentSessionChange?: (sessionId: string | null) => void;
   /** The rail's "Shared with you" rows, and what a click on one does. */
   sharedSessions?: SharedSessionRow[];
   onSelectSharedSession?: (row: SharedSessionRow) => void;
@@ -173,6 +178,9 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     if (props.onOpenArchive !== undefined) binding.onOpenArchive = props.onOpenArchive;
     if (props.newTabControl !== undefined) binding.newTabControl = props.newTabControl;
     if (props.onShareSession !== undefined) binding.onShareSession = props.onShareSession;
+    if (props.onMostRecentSessionChange !== undefined) {
+      binding.onMostRecentSessionChange = props.onMostRecentSessionChange;
+    }
     if (props.sharedSessions !== undefined) binding.sharedSessions = props.sharedSessions;
     if (props.onSelectSharedSession !== undefined) {
       binding.onSelectSharedSession = props.onSelectSharedSession;
@@ -183,6 +191,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     props.onOpenArchive,
     props.onOpenLanding,
     props.onOpenSession,
+    props.onMostRecentSessionChange,
     props.onSelectSharedSession,
     props.onShareSession,
     props.sharedSessions,

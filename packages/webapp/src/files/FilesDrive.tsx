@@ -597,7 +597,7 @@ export function FilesDrive({
               ? target.attachedWorkspaceIds.length > 0
                 ? 'Deletes from the library now. Copies in attached workspaces return it on the next sync unless deleted there too.'
                 : 'Deletes the file from the library. There is no undo.'
-              : 'Deletes the folder, its grants, and every file in it. There is no undo.'}
+              : 'Deletes the folder, everyone\'s access to it, and every file in it. There is no undo.'}
             onCancel={() => setDialog(null)}
             onConfirm={() => {
               const action = objectDelete

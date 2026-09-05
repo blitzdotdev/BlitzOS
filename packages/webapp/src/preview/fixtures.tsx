@@ -420,7 +420,7 @@ export const orgCredentials: OrgCredentialView[] = [
 
 /** One pending proposal from Ada's machine: the Requests panel lists it and
  * Review opens the grant-approval dialog on it. */
-export const grantProposals: GrantProposalView[] = [
+export const accessProposals: GrantProposalView[] = [
   {
     id: 'prop-1',
     state: 'pending',

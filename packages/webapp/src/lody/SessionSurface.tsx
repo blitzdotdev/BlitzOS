@@ -132,6 +132,10 @@ export interface LodyRailBinding {
   /** Right-click Share on a session row. Absent leaves the row's menu exactly
    * as phase 4 shipped it (plans/LODY-SHARING.md §8). */
   onShareSession?: (sessionId: string) => void;
+  /** The member's most recently active session, reported from the rail's own
+   * session mirror. It is what the shell's right icon strip opens a panel in
+   * when it is pressed on the landing — see `SessionRailSidebarProps`. */
+  onMostRecentSessionChange?: (sessionId: string | null) => void;
   /** The "Shared with you" section: sessions on other members' boxes. */
   sharedSessions?: SharedSessionRow[];
   activeSharedSessionId?: string | null;

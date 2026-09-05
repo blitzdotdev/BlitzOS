@@ -49,6 +49,10 @@ describe("the v1 scope constant", () => {
       cloudSurfaces: false,
       languageService: false,
       connectionStatus: false,
+      // Seam patch 24's. Like `connectionStatus` an ownership boundary: one
+      // workspace, one member's machine, one box, so the picker offers the
+      // machine it already shows.
+      machineSelection: false,
     });
   });
 
@@ -69,6 +73,7 @@ describe("the v1 scope constant", () => {
       // flag that already covers the hint band's Go-to-settings button.
       hideSettingsEntry: true,
       hideConnectionStatus: true,
+      hideMachineSelector: true,
     });
   });
 });
@@ -109,6 +114,7 @@ describe("the two mounts hand the suppression to all four mounted components", (
     expect(landing).toContain("hideProductHints={V1.hideProductHints}");
     expect(landing).toContain("hideAgentRoles={V1.hideAgentRoles}");
     expect(landing).toContain("hideConnectionStatus={V1.hideConnectionStatus}");
+    expect(landing).toContain("hideMachineSelector={V1.hideMachineSelector}");
   });
 
   it("gives ArchiveView the team-scope suppression, and no prop for the PR badge", () => {
@@ -352,6 +358,40 @@ describe("seam patches 13 and 14 are declared where a merge agent reads them", (
     expect(read(join(vendorSrc, "components/archive/archive-view.tsx"))).toContain(
       "useAppCapability('githubIntegration')",
     );
+  });
+});
+
+describe("seam patch 24 is declared where a merge agent reads it", () => {
+  const patches = read(join(repoRoot, "vendor/lody/BLITZ-PATCHES.md"));
+
+  it("names the seam and both files it touches", () => {
+    expect(patches).toContain("### 24. A host bound to one machine may drop the composer's machine picker");
+    for (const file of [
+      "components/chat/chat-landing.tsx",
+      "components/mobile/mobile-new-chat-sheet.tsx",
+    ]) {
+      expect(patches, `seam patch 24 declares ${file}`).toContain(file);
+    }
+  });
+
+  it("declares the prop on the one component that draws both pickers", () => {
+    expect(read(join(vendorSrc, "components/chat/chat-landing.tsx"))).toContain(
+      "hideMachineSelector?: boolean;",
+    );
+  });
+
+  it("leaves the writer alone, so selection still flows from agent and project", () => {
+    // The picker is `handleMachineChange`'s only caller on the desktop. Hiding
+    // it must not touch the two effects that CHOOSE a machine — that is the
+    // difference between a hidden control and a broken send.
+    const landing = read(join(vendorSrc, "components/chat/chat-landing.tsx"));
+    expect(landing).toContain("setSelectedMachineId(selectedLocalProjectMachineId);");
+    expect(landing).toContain("setSelectedMachineId(selectedAgent.machineId);");
+  });
+
+  it("drops the mobile row with its label rather than leaving it empty", () => {
+    const sheet = read(join(vendorSrc, "components/mobile/mobile-new-chat-sheet.tsx"));
+    expect(sheet).toContain("{machineNode ? (");
   });
 });
 

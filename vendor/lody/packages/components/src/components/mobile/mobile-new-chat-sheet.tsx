@@ -32,7 +32,8 @@ export type MobileNewChatSheetProps = {
 
 export type MobileNewChatSheetContentProps = {
   labels?: MobileNewChatSheetLabels;
-  /** Row 1: machine pill / selector. */
+  /** Row 1: machine pill / selector. `null` drops the row with its label —
+     for a host bound to one machine, where the picker offers no choice. */
   machineNode: ReactNode;
   /** Row 2: project type (3-icon) pill switcher. */
   contextTypeNode: ReactNode;
@@ -226,9 +227,14 @@ export function MobileNewChatSheetContent({
              rows in / out so the surrounding stack ripples smoothly
              rather than snapping. */}
           <div className="flex flex-col pb-3 pt-1">
-            <AnimatedSheetRow alwaysOn>
-              <Row label={machineLabel}>{machineNode}</Row>
-            </AnimatedSheetRow>
+            {/* A host that supplies no machine picker gets no machine row:
+               the label alone describes nothing. Upstream always passes a
+               node, so this branch is theirs only when they stop. */}
+            {machineNode ? (
+              <AnimatedSheetRow alwaysOn>
+                <Row label={machineLabel}>{machineNode}</Row>
+              </AnimatedSheetRow>
+            ) : null}
             <AnimatedSheetRow alwaysOn>
               <Row label={contextTypeLabel}>{contextTypeNode}</Row>
             </AnimatedSheetRow>

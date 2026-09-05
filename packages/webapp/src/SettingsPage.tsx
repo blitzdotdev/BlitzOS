@@ -215,7 +215,7 @@ export function SettingsHeader({
 export function SettingsPage({
   client,
   viewer,
-  pendingGrantProposals,
+  pendingAccessProposals,
   section,
   onNavigate,
   onOpenWorkspace,
@@ -227,7 +227,7 @@ export function SettingsPage({
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
-  pendingGrantProposals: readonly GrantProposalView[];
+  pendingAccessProposals: readonly GrantProposalView[];
   section: SettingsSection;
   onNavigate: (section: SettingsSection) => void;
   /** A request row's Connect opens the workspace that wants the connection:
@@ -314,7 +314,7 @@ export function SettingsPage({
         {section === 'requests' && (
           <RequestsPanel
             client={client}
-            proposals={pendingGrantProposals}
+            proposals={pendingAccessProposals}
             onOpenWorkspace={onOpenWorkspace}
             onReviewProposal={onReviewProposal}
           />

@@ -4,9 +4,9 @@ import type { ControlPlaneClient } from './api';
 
 /** The approval feed's poll cadence: the idle cadence of the connect-inbox
  * poll it sits beside, because a proposal waits on a person either way. */
-export const GRANT_PROPOSAL_POLL_MS = 15_000;
+export const ACCESS_PROPOSAL_POLL_MS = 15_000;
 
-export type GrantProposalFeed = {
+export type AccessProposalFeed = {
   /** Every pending proposal addressed to the signed-in member. */
   pending: GrantProposalView[];
   /** The one the dialog shows: the oldest pending proposal not closed
@@ -20,17 +20,20 @@ export type GrantProposalFeed = {
   settled: (proposal: GrantProposalView) => void;
 };
 
-/** Polls the pending-only `GET /orgs/self/grant-proposals` feed on the connect-inbox
- * idiom (plans/ORG-CREDENTIALS.md §7a): one request in flight, only while
- * the tab is visible, aborted on unmount. */
-export function useGrantProposals(
+/** Polls the pending-only `GET /orgs/self/grant-proposals` feed on the
+ * connect-inbox idiom (plans/ORG-CREDENTIALS.md §7a): one request in flight,
+ * only while the tab is visible, aborted on unmount.
+ *
+ * The route and `GrantProposalView` keep the wire's word; everything a member
+ * reads says access. */
+export function useAccessProposals(
   client: Pick<ControlPlaneClient, 'listGrantProposals'>,
   enabled: boolean,
   /** The signed-in member. Only a proposal their own agent filed pops the
    * dialog; the rest of the feed (an admin sees the whole org's) waits in
    * Requests, where Review opens it on purpose. */
   viewerMembershipId: string | null,
-): GrantProposalFeed {
+): AccessProposalFeed {
   const [pending, setPending] = useState<GrantProposalView[]>([]);
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
 
@@ -57,7 +60,7 @@ export function useGrantProposals(
       }
     };
     void poll();
-    const timer = window.setInterval(() => { void poll(); }, GRANT_PROPOSAL_POLL_MS);
+    const timer = window.setInterval(() => { void poll(); }, ACCESS_PROPOSAL_POLL_MS);
     return () => {
       disposed = true;
       request?.abort();

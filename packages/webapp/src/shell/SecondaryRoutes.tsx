@@ -31,7 +31,7 @@ export type SecondaryRoutesProps = {
   loaded: boolean;
   /** The shell's own navigation columns, drawn on every page. */
   rail: ReactNode;
-  pendingGrantProposals: readonly GrantProposalView[];
+  pendingAccessProposals: readonly GrantProposalView[];
   dialogs: ReactNode;
   updateNotice: ReactNode;
   error: string | null;
@@ -77,7 +77,7 @@ export function SecondaryRoutes({
   viewer,
   loaded,
   rail,
-  pendingGrantProposals,
+  pendingAccessProposals,
   dialogs,
   updateNotice,
   error,
@@ -103,7 +103,7 @@ export function SecondaryRoutes({
         <SettingsHeader workspaceLabel={activeWorkspaceTitle} onBack={onLeaveSettings} />
         {loaded && viewer ? (
           <SettingsPage
-            pendingGrantProposals={pendingGrantProposals}
+            pendingAccessProposals={pendingAccessProposals}
             client={client}
             viewer={viewer}
             section={route.settingsSection}
