@@ -63,7 +63,7 @@ describe("thin-image payload lab dry runs", () => {
     }
   });
 
-  for (let experiment = 1; experiment <= 16; experiment += 1) {
+  for (let experiment = 1; experiment <= 18; experiment += 1) {
     it(`dry-runs E${experiment}`, () => {
       const result = spawnSync("bash", [`${labDirectory}/e${experiment}.sh`], {
         encoding: "utf8",

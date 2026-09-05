@@ -254,6 +254,12 @@ function parseManifest(value) {
   return result;
 }
 
+function rawManifestMinUpdater(value) {
+  if (value === null || Object(value) !== value || Array.isArray(value)) return null;
+  const minUpdater = value.minUpdater;
+  return Number.isSafeInteger(minUpdater) && minUpdater > 0 ? minUpdater : null;
+}
+
 function parseBoxConfig(value) {
   const envelope = record(value, 'box-config');
   let payload = null;
@@ -2139,15 +2145,6 @@ async function applyPayload(pin, manifest, config, initialState, trackFeatureRes
       pin.version,
     );
   }
-  if (manifest.minUpdater > UPDATER_VERSION) {
-    return recordOutcome(
-      config,
-      state,
-      'unsupported',
-      `manifest requires updater protocol ${manifest.minUpdater}`,
-      pin.version,
-    );
-  }
   if (manifest.minUpdater < 2) {
     return recordOutcome(
       config,
@@ -2551,13 +2548,22 @@ async function tickUnlocked(config) {
       'payload manifest',
       config.requestTimeoutMs,
     );
-    applied = await applyPayload(
-      pin,
-      parseManifest(manifestValue),
-      config,
-      state,
-      materializedFeatures.pending,
-    );
+    const minUpdater = rawManifestMinUpdater(manifestValue);
+    applied = minUpdater !== null && minUpdater > UPDATER_VERSION
+      ? await recordOutcome(
+          config,
+          state,
+          'unsupported',
+          `manifest requires updater protocol ${minUpdater}`,
+          pin.version,
+        )
+      : await applyPayload(
+          pin,
+          parseManifest(manifestValue),
+          config,
+          state,
+          materializedFeatures.pending,
+        );
   } catch (error) {
     const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
     applied = await recordOutcome(

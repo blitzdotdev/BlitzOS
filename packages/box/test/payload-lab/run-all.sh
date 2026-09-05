@@ -19,9 +19,9 @@ read -r -a workspaces <<<"$LAB_WORKSPACES"
 {
   printf '# Payload lab %s\n\n' "$timestamp"
   printf '| Run | Workspace |'
-  for experiment in $(seq 1 16); do printf ' E%s |' "$experiment"; done
+  for experiment in $(seq 1 18); do printf ' E%s |' "$experiment"; done
   printf '\n|---:|---|'
-  for _experiment in $(seq 1 16); do printf '%s' '---|'; done
+  for _experiment in $(seq 1 18); do printf '%s' '---|'; done
   printf '\n'
 } >"$result"
 
@@ -32,7 +32,7 @@ for run in 1 2 3; do
   for workspace in "${workspaces[@]}"; do
     workspace_index=$((workspace_index + 1))
     printf '| %s | `%s` |' "$run" "$workspace" >>"$result"
-    for experiment in $(seq 1 16); do
+    for experiment in $(seq 1 18); do
       output="$results_dir/.$timestamp-r$run-w$workspace_index-e$experiment.log"
       if LAB_RUN_ID="$timestamp-r$run-w$workspace_index-e$experiment" \
         "$script_dir/e$experiment.sh" "$workspace" >"$output" 2>&1; then

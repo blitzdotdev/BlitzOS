@@ -78,6 +78,33 @@ describe("workspace tunnels", () => {
     expect(clearsMarker).toBeLessThan(startsContainer);
     expect(userData.indexOf("/var/lib/blitz/tunnel-token")).toBeLessThan(writesMarker);
 
+    const stopped = await appRequest(app, `/machines/${machineId}/stop`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(stopped.status).toBe(200);
+    const started = await appRequest(app, `/machines/${machineId}/start`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(started.status).toBe(200);
+    const restartedUserData = providers.userData.get(machineId) ?? "";
+    expect(restartedUserData).toContain("TUNNEL-RUN-TOKEN");
+    expect(restartedUserData).toContain("/var/lib/blitz/webapp-token");
+    expect(restartedUserData).toContain("mv /var/lib/blitz/tokens-ready.tmp");
+
+    const recreated = await appRequest(app, `/machines/${machineId}/recreate`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(recreated.status).toBe(200);
+    const recreatedUserData = providers.userData.get(machineId) ?? "";
+    expect(recreatedUserData).toContain("TUNNEL-RUN-TOKEN");
+    expect(recreatedUserData).toContain("/var/lib/blitz/webapp-token");
+    expect(recreatedUserData).toContain("mv /var/lib/blitz/tokens-ready.tmp");
+    expect(cfCalls.filter((call) => call.endsWith("/tun-1/token"))).toHaveLength(3);
+    expect(cfCalls.filter((call) => call.endsWith("/cfd_tunnel"))).toHaveLength(1);
+
     // 7445 is the only proxied port, and its path passes through unchanged.
     const ports = await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports?x=1`, {
       headers: { Cookie: cookie },
@@ -105,6 +132,78 @@ describe("workspace tunnels", () => {
     }))[0];
     expect(row?.tunnel_id).toBeNull();
     expect(row?.dns_record_id).toBeNull();
+  });
+
+  it("leaves a retained-tunnel reprovision retryable when its token fetch fails", async () => {
+    let tokenRequests = 0;
+    const cfFetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      if (url.pathname.endsWith("/cfd_tunnel")) {
+        return Response.json({ success: true, result: { id: "tun-1" } });
+      }
+      if (url.pathname.includes("/configurations")) {
+        return Response.json({ success: true, result: {} });
+      }
+      if (url.pathname.includes("/dns_records")) {
+        return Response.json({ success: true, result: { id: "dns-1" } });
+      }
+      if (url.pathname.endsWith("/token")) {
+        tokenRequests += 1;
+        if (tokenRequests === 1) {
+          return Response.json({ success: true, result: "TUNNEL-RUN-TOKEN" });
+        }
+        return Response.json({
+          success: false,
+          errors: [{ code: 1033, message: "retained tunnel token is unavailable" }],
+        }, { status: 502 });
+      }
+      return Response.json({ success: false, errors: [] }, { status: 500 });
+    };
+    const workspaceTunnels = new WorkspaceTunnels(
+      new CloudflareTunnels({
+        accountId: "test-account",
+        zoneId: "test-zone-id",
+        apiToken: "test-api-token",
+        fetcher: cfFetcher,
+      }),
+      "webapp.test",
+      "test-webapp-root-secret",
+    );
+    const providers = new FakeProviders();
+    const app = appWithVmProviders([providers], providers, workspaceTunnels);
+    const cookie = await operatorSession(app);
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultMachineTypeId: "small" }),
+    });
+    expect(created.status).toBe(201);
+    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+    const machineId = await machineIdFor(workspace.id);
+
+    const recreated = await appRequest(app, `/machines/${machineId}/recreate`, {
+      method: "POST",
+      headers: { Cookie: cookie },
+    });
+    expect(recreated.status).toBe(200);
+    await expect(recreated.json<{
+      machine: { state: string; error: string | null };
+    }>()).resolves.toMatchObject({
+      machine: {
+        state: "error",
+        error: expect.stringContaining(
+          "Cloudflare API: 1033: retained tunnel token is unavailable",
+        ),
+      },
+    });
+    expect(tokenRequests).toBe(2);
+    expect(providers.createCalls).toBe(1);
+    const row = (await rows<MachineRow>(testRuntime(providers, workspaceTunnels).db, {
+      q: "SELECT * FROM machines WHERE id = ?1",
+      v: [machineId],
+    }))[0];
+    expect(row).toMatchObject({ state: "error", tunnel_id: "tun-1" });
   });
 
   it("stays inert without configuration", async () => {

@@ -57,14 +57,11 @@ export interface TunnelTokens {
  *
  * THE READY MARKER, AND WHY EXISTENCE IS NOT ENOUGH. `/var/lib/blitz` is the
  * member's persistent volume, so on a re-provision (a machine-type change, a
- * recreate, a stop/start) these three files are ALREADY THERE, left by the VM
- * that just went away — and their tunnel has since been deleted. This part is
- * a separate cloud-init script, so it runs AFTER the bootstrap script has
- * started the box container: measured on a canary re-provision, cloudflared
- * came up at 23:11:27 and this script rewrote the token at 23:11:34.8, seven
- * seconds too late. cloudflared reads `--token-file` once and never again, so
- * it held a credential for a deleted tunnel for the life of the box, the new
- * tunnel sat at zero origins, and every browser-facing surface answered 1033.
+ * recreate, a stop/start) these three files are already there. The tunnel can
+ * be new or kept. This part is a separate cloud-init script, so it can run
+ * after the bootstrap script has started the box container: measured on a
+ * canary re-provision, cloudflared came up seven seconds before this script
+ * rewrote the token, and cloudflared reads `--token-file` once.
  *
  * So the marker says "written by THIS instance", not "present". The bootstrap
  * script removes it after mounting the volume and before starting the
