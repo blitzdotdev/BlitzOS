@@ -22,7 +22,7 @@ import (
 // from both ends at once.
 //
 // Cross-account replacement is allowed and is NOT recorded. Deposit is verify,
-// store, ACK, and nothing else (packages/broker/TODO.md, founder 2026-08-11).
+// store, ACK, and nothing else (packages/broker/RECORD.md, founder 2026-08-11).
 // The log used to be the last write on the success path, which put an
 // unbounded append between a stored credential and the ACK the workspace waits
 // for: a full disk or a bad mode turned a deposit that had already succeeded

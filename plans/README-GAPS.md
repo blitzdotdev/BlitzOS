@@ -61,7 +61,7 @@ view/edit/resume access.
   presence, or cursor model (`packages/box/README.md:135`).
 
 Core's own boundary record confirms that orgs, members, roles, and invites are
-not in core (`packages/control-plane/TODO.md:80-85`).
+not in core (`packages/control-plane/RECORD.md:80-85`).
 
 **Done when:**
 
@@ -205,7 +205,7 @@ proxied through the control plane. For a normal cloud VM, however, the standalon
 resolver ignores the workspace SSH endpoint and points every workspace at the
 same localhost ports (`packages/webapp/src/resolver.ts:25-53`). The user must run and
 retarget an SSH tunnel or provide an external edge. The open packages explicitly
-exclude hosted ingress (`packages/box/TODO.md:136-146`).
+exclude hosted ingress (`packages/box/RECORD.md:136-146`).
 
 **Done when:**
 

@@ -61,7 +61,7 @@ Decisions: `plans/PORT-DESIGN.md` (the original session notes are not in this re
     keypair line contradicted box decision 2). Rule: HTTP plane = tokens.
     SSH plane = keypairs.
   - Broker fleet ops stay closed. The Go daemon is open. Record:
-    `packages/oss/broker/TODO.md`.
+    `packages/broker/RECORD.md`.
 - Box identity: device-flow enrollment endpoints + box OAuth tokens.
   Short-lived access + rotating refresh. Opaque hashed rows, constant-time
   compare. ONE token family serves every box→CP call: registry registration,

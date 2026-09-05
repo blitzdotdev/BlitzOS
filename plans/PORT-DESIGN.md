@@ -582,7 +582,7 @@ Files changed/removed:
 - Rewrite `packages/control-plane/src/worker.ts` and `src/index.ts`.
 - Remove the migrated duplicate domain files enumerated in section 4.4.
 - Update `packages/control-plane/package.json`, root lockfile, `tsconfig.json`, `wrangler.toml`, `worker-configuration.d.ts`, `README.md`, `test/env.d.ts`, `test/helpers.ts`, `test/apply-migrations.ts`, `test/bootstrap.test.ts`, and `test/control-plane.test.ts` only where imports/runtime construction require it.
-- Leave `packages/control-plane/TODO.md` and `vitest.config.ts` unchanged.
+- Leave `packages/control-plane/RECORD.md` and `vitest.config.ts` unchanged.
 - Leave `packages/control-plane/migrations/0001_initial.sql` byte-identical.
 
 Gates before deploy:
