@@ -395,6 +395,14 @@ async function destroyVm(
   machine: MachineRow,
   options: { keepVolume: boolean },
 ): Promise<void> {
+  // The retention clock is a fact about the MACHINE, not about its VM. A
+  // stopped machine has no VM and still owns its disk, so stamping the clock
+  // only on the VM path left a destroyed stopped machine's volume with no
+  // clock at all: `expiredVolumes` never returns an undated row, so nothing
+  // ever reclaimed it and it billed for good.
+  if (!options.keepVolume && machine.volume_id !== null) {
+    await rows(runtime.db, markVolumeDetachedQuery(machine.volume_id, Date.now()));
+  }
   const workspace = await workspaceById(runtime.db, machine.workspace_id);
   const orgId = workspace?.org_id ?? null;
   if (machine.vm_id === null || orgId === null) return;
@@ -413,9 +421,6 @@ async function destroyVm(
       machine.compute_credential_source,
     );
     await volume.provider.detachVolume(machine.volume_id, machine.vm_id);
-    if (!options.keepVolume) {
-      await rows(runtime.db, markVolumeDetachedQuery(machine.volume_id, Date.now()));
-    }
   }
   await resolved.provider.destroy(machine.vm_id);
 }

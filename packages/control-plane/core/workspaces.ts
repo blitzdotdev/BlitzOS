@@ -955,10 +955,25 @@ export function addWorkspaceRoutes(
       });
     }
     let pending = false;
+    // One member's provider failure must not spare every other member's VM.
+    // This loop used to throw on the first bad machine, so every later
+    // member's server stayed up and billing; the retry then hit the same
+    // machine first, and a permanent failure wedged the delete for good. Now
+    // every machine is asked to go, and the first failure is still the
+    // caller's answer — an unowned VM id keeps answering 409, exactly as
+    // `test/control-plane.test.ts` pins. A failing row is left in
+    // `destroying` holding its vm_id, which is what `runOrphanSweep` retries.
+    const failures: unknown[] = [];
     for (const machine of await liveMachines(runtime.db, id)) {
-      const destroyed = await destroyMachine(runtime, machine);
-      if (destroyed.state !== "destroyed") pending = true;
+      try {
+        const destroyed = await destroyMachine(runtime, machine);
+        if (destroyed.state !== "destroyed") pending = true;
+      } catch (error) {
+        pending = true;
+        failures.push(error);
+      }
     }
+    if (failures.length > 0) throw failures[0];
     if (!pending) {
       // Honest destroy: the tombstone is only written once the last machine is
       // actually gone. A workspace whose Cloudflare cleanup is still failing
