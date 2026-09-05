@@ -18,7 +18,7 @@ require_workspace
 publish_variant daemon-e4
 idle_cap=${LAB_DAEMON_IDLE_CAP:-600}
 expected_text=${LAB_E4_EXPECTED_TEXT:-E4-PAYLOAD-LAB-DONE}
-turn_prompt=${LAB_E4_PROMPT:-"Use the shell to run 'printf E4-payload-lab'. Do not answer before the command succeeds. Then reply exactly $expected_text."}
+turn_prompt=${LAB_E4_PROMPT:-"Use the shell to run exactly: touch /tmp/blitz-payload-lab-e4 && rm -f /tmp/blitz-payload-lab-e4. Do not answer before the command succeeds. Then reply exactly $expected_text."}
 turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt" ask) \
   || experiment_fail "could not start the E4 turn"
 arm_turn_cleanup "$WORKSPACE_ID" "$turn_id"

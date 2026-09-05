@@ -38,7 +38,9 @@ member machines in its workspace. E1-E4 start and track their own Claude turn
 through `session-driver/drive.mjs`. E1, E2, and E4 hold that exact turn at its
 own permission request until the payload assertion is complete, then allow it
 and require its completion marker; this is stable for a ten-minute idle wait
-where an agent-launched `sleep` may be backgrounded. E2 also creates one
+where an agent-launched `sleep` may be backgrounded. Their default prompts use
+a harmless, self-removing file under `/tmp`, because read-only shell commands
+can run in Manual mode without asking. E2 also creates one
 uniquely named tmux session, puts its pane in the same `user/tab-*` cgroup placement as
 `blitz-term`, and removes only that session on exit. If the box image cannot
 create the unprivileged cgroup leaf, E2 records and uses the permitted plain

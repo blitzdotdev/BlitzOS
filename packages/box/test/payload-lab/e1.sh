@@ -18,7 +18,7 @@ fi
 require_workspace
 publish_variant e1-script
 expected_text=${LAB_E1_EXPECTED_TEXT:-E1-PAYLOAD-LAB-DONE}
-turn_prompt=${LAB_E1_PROMPT:-"Use the shell to run 'printf E1-payload-lab'. Do not answer before the command succeeds. Then reply exactly $expected_text."}
+turn_prompt=${LAB_E1_PROMPT:-"Use the shell to run exactly: touch /tmp/blitz-payload-lab-e1 && rm -f /tmp/blitz-payload-lab-e1. Do not answer before the command succeeds. Then reply exactly $expected_text."}
 turn_id=$(start_turn "$WORKSPACE_ID" "$turn_prompt" ask) \
   || experiment_fail "could not start the E1 turn"
 arm_turn_cleanup "$WORKSPACE_ID" "$turn_id"
