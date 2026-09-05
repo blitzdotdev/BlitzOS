@@ -59,9 +59,10 @@ const DELETED_MODULES = [
 
 /**
  * The DOM markers the strip drew. `webapp-tab-cell`, `webapp-tab-select` and
- * `webapp-tab-label` are deliberately NOT here: the workspace drawer's segment
- * strip shares that chrome and kept it (`WorkspaceDrawer.tsx`), which is the one
- * piece of the deletion a class-name sweep would get wrong.
+ * `webapp-tab-label` are deliberately NOT here: they were shared chrome, and
+ * the rules survive in `webapp-workspace.css` after their last drawer host
+ * went with the connections redesign. A class-name sweep is what would get
+ * that wrong, so the markers below are the ones the strip alone ever drew.
  */
 const DELETED_MARKERS = [
   "webapp-tabstrip",
@@ -146,15 +147,18 @@ describe("the deleted native tab strip", () => {
     }
   });
 
-  it("keeps the pieces the session strip and the drawer still need", () => {
+  it("keeps the pieces the session strip still needs", () => {
     // The deletion must not have taken the shared chrome with it. `NewTabMenu`
-    // is the rail's `+`, `SessionTypeIcon` is every glyph, and the drawer's
-    // segment strip still uses the tab-cell classes.
+    // is the rail's `+` and `SessionTypeIcon` is every glyph.
     const kept = ["NewTabMenu.tsx", "SessionTypeIcon.tsx", "shell/NewTabControl.tsx"];
     for (const file of kept) {
       expect(() => read(join(src, file)), `${file} was deleted with the strip`).not.toThrow();
     }
-    expect(read(join(src, "WorkspaceDrawer.tsx"))).toContain("webapp-tab-cell");
     expect(read(join(src, "SessionTypeIcon.tsx"))).toContain("WebAppTabModel");
+    // The off-canvas sheet that drew the tab-cell chrome is gone with
+    // connections; the panel BODY it hosted stays, for a `panel` tab a
+    // persisted layout still holds.
+    expect(read(join(src, "WorkspaceDrawer.tsx"))).not.toContain("webapp-tab-cell");
+    expect(read(join(src, "WorkspaceDrawer.tsx"))).toContain("WorkspacePanelContent");
   });
 });

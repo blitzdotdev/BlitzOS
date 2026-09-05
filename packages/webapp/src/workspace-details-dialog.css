@@ -51,8 +51,28 @@
 /* Members, credentials and settings (plans/MEMBER-MACHINES.md §6). Their
    headings, fields and fact lists come from settings-surface.css. */
 .workspace-details-members,
+.workspace-details-connections,
 .workspace-details-credentials,
 .workspace-details-settings { min-width: 0; }
+
+/* Connections: toggle rows on the same raised card the member and credential
+   lists draw, so the tab is one list and not a stack of switch cards. The
+   switch vocabulary itself is settings.css's; `--flush` is the row minus its
+   own card — no border, no radius, no fill — plus the mark column the
+   provider rows need.
+
+   TWO CLASSES ON EVERY RULE, so the modifier beats `.settings-switch-row`
+   whatever the source order: settings.css is imported AFTER this sheet
+   (`main.tsx`), and at equal specificity the later card would win back its
+   border and its own grid. */
+.workspace-connection-rows { overflow: hidden; border: 1px solid var(--mod-12); border-radius: var(--r-card); background: var(--surface-0); }
+.settings-switch-row.settings-switch-row--flush { grid-template-columns: 22px minmax(0, 1fr) auto auto; gap: 12px; padding: 11px 16px; border: 0; border-radius: 0; background: transparent; }
+.settings-switch-row--flush + .settings-switch-row.settings-switch-row--flush { border-top: 1px solid var(--mod-8); }
+/* A row nobody can throw states that in its own ink, so a disabled switch is
+   not the only thing carrying it. */
+.settings-switch-row.settings-switch-row--flush:has(input:disabled) .settings-switch-copy strong { color: var(--muted); }
+/* Where `blitz connections open <provider>` landed. */
+.settings-switch-row.settings-switch-row--focus { background: var(--hover); }
 
 .workspace-members-search { position: relative; margin-bottom: 14px; }
 /* The add-people field joins the ladder's card language: the raised surface

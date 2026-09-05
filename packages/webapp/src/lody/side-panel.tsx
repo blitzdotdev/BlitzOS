@@ -4,13 +4,16 @@
  *
  * ONE PANEL, TWO DRIVERS. Lody's `SessionDetail` owns its side panel — Files,
  * All Changes, Browser, Side Chat, and the viewers a click opens — and draws its
- * own tab bar for it. BlitzOS adds two fixed panels of its own, Browser and
- * Connections, and a strip
- * of icons at the right edge of the shell that opens any of the five without
- * the member hunting for the `+` menu. The strip lives in the entry chunk and
- * the panel lives in the lazy Lody chunk, so what crosses is this binding: the
- * host tabs going in, one request at a time going in, and the panel's state
- * coming back out so the strip can draw a pressed icon.
+ * own tab bar for it. BlitzOS adds one fixed panel of its own, Browser, and a
+ * strip of icons at the right edge of the shell that opens any of the four
+ * without the member hunting for the `+` menu. The strip lives in the entry
+ * chunk and the panel lives in the lazy Lody chunk, so what crosses is this
+ * binding: the host tabs going in, one request at a time going in, and the
+ * panel's state coming back out so the strip can draw a pressed icon.
+ *
+ * THERE WAS A SECOND HOST TAB, `host:connections`. It is gone: a workspace's
+ * connections are a tab of the workspace-details dialog, not a panel of a
+ * session, so nothing about them belongs in a session's side panel.
  *
  * WHY THE TYPES ARE RE-STATED HERE. Every `@lody/components/*` specifier is
  * `any` at our seam (`vendor-modules.d.ts`), so the shapes seam patch 23
@@ -18,7 +21,7 @@
  * `surface-tabs.ts` re-states seam patch 5's.
  */
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
-import { FileDiff, Files, MessageSquare, MonitorPlay, Plug } from "lucide-react";
+import { FileDiff, Files, MessageSquare, MonitorPlay } from "lucide-react";
 
 /** Mirrors `SessionHostSidePanelTab` (seam patch 23). The `host:` prefix is
  * what keeps a host id out of Lody's persisted side-panel state. */
@@ -45,29 +48,25 @@ export interface SessionSidePanelHostState {
   availableOptions: readonly { id: string; disabled: boolean }[];
 }
 
-/** Our two host tabs' ids. */
-export const CONNECTIONS_SIDE_PANEL_ID = "host:connections" as const;
+/** Our one host tab's id. */
 export const BROWSER_SIDE_PANEL_ID = "host:browser" as const;
 
-/** The five things the strip can ask the side panel for, in strip order. Three
+/** The four things the strip can ask the side panel for, in strip order. Three
  * are Lody's own fixed-panel ids (`side-session` is the Side Chat launcher,
- * which creates a session rather than opening a tab); Browser and Connections
- * are ours. Lody's own Browser tab is not offered: its public engine is
- * Electron-only, and `browser/BrowserPanel.tsx` is what opens a port, a file
- * or an app here. */
+ * which creates a session rather than opening a tab); Browser is ours. Lody's
+ * own Browser tab is not offered: its public engine is Electron-only, and
+ * `browser/BrowserPanel.tsx` is what opens a port, a file or an app here. */
 export type SidePanelQuickAction =
   | "side-session"
   | "files"
   | "changes"
-  | typeof BROWSER_SIDE_PANEL_ID
-  | typeof CONNECTIONS_SIDE_PANEL_ID;
+  | typeof BROWSER_SIDE_PANEL_ID;
 
 export const SIDE_PANEL_QUICK_ACTIONS: readonly SidePanelQuickAction[] = [
   "side-session",
   "files",
   "changes",
   BROWSER_SIDE_PANEL_ID,
-  CONNECTIONS_SIDE_PANEL_ID,
 ];
 
 /** The label Lody draws for each panel, so the strip's tooltip and the side
@@ -77,15 +76,14 @@ export const SIDE_PANEL_QUICK_ACTION_LABELS = {
   files: "Files",
   changes: "All Changes",
   [BROWSER_SIDE_PANEL_ID]: "Browser",
-  [CONNECTIONS_SIDE_PANEL_ID]: "Connections",
 } as const satisfies Record<SidePanelQuickAction, string>;
 
 /**
  * ONE GLYPH PER PANEL, DRAWN IN TWO PLACES. These are the lucide icons Lody's
  * `SidePanelTabIcon` draws for the same kinds (`session-side-panel-tab-bar.tsx`),
  * so the strip icon a member presses is the icon on the tab that opens. The
- * Connections glyph is ours, and reaches Lody's tab bar through the host tab's
- * `icon` (seam patch 23), so it too is the same on both sides.
+ * Browser glyph reaches Lody's tab bar through the host tab's `icon` (seam
+ * patch 23), so it too is the same on both sides.
  */
 export function sidePanelQuickActionIcon(
   action: SidePanelQuickAction,
@@ -100,8 +98,6 @@ export function sidePanelQuickActionIcon(
       return <FileDiff className={className} aria-hidden="true" />;
     case BROWSER_SIDE_PANEL_ID:
       return <MonitorPlay className={className} aria-hidden="true" />;
-    case CONNECTIONS_SIDE_PANEL_ID:
-      return <Plug className={className} aria-hidden="true" />;
   }
 }
 

@@ -87,6 +87,10 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     grantSessionShare: vi.fn(),
     revokeSessionShare: vi.fn(),
     listAgentRules: vi.fn().mockResolvedValue({ rules: [] }),
+    listConnectionCatalog: vi.fn().mockResolvedValue({ providers: [] }),
+    listConnectionGrants: vi.fn().mockResolvedValue({ grants: [] }),
+    mintWorkspaceConnection: vi.fn(),
+    disconnectWorkspaceConnection: vi.fn(),
     listMembers: vi.fn().mockResolvedValue({
       members: [
         { id: 'membership-1', email: 'ada@example.com', name: 'Ada Owner', avatarUrl: null, role: 'admin', status: 'active' },
@@ -156,6 +160,53 @@ function tab(container: HTMLElement, label: string): HTMLButtonElement | undefin
 }
 
 describe('WorkspaceDetailsDialog', () => {
+  /** Four tabs since connections left the rail: what a workspace shares with
+   * its members is administered in one place. */
+  it('draws Members, Connections, Credentials and Settings, in that order', async () => {
+    const view = await render(dialog());
+    await settle();
+
+    expect([...view.container.querySelectorAll('[role="tab"]')].map((button) => button.textContent))
+      .toEqual(['Members', 'Connections', 'Credentials', 'Settings']);
+    await view.unmount();
+  });
+
+  it('opens the Connections tab on the tab the host asks for', async () => {
+    const catalog = {
+      providers: [{
+        id: 'github',
+        title: 'GitHub',
+        summary: 'Repos and issues',
+        custody: 'cp',
+        oauthAvailable: true,
+        oauthConfigured: true,
+        personalTokenLabel: null,
+        personalTokenFallbackOnly: false,
+        personalTokenHelp: null,
+        personalTokenBaseUrlLabel: null,
+        adminForm: null,
+      }],
+    };
+    const view = await render(dialog({
+      initialTab: 'connections',
+      client: client({
+        listConnectionCatalog: vi.fn().mockResolvedValue(catalog),
+        listConnectionGrants: vi.fn().mockResolvedValue({ grants: [] }),
+      }),
+    }));
+    await settle();
+
+    expect(tab(view.container, 'Connections')?.getAttribute('aria-selected')).toBe('true');
+    // A provider the member has not authorized: the switch is theirs to read,
+    // not to throw, and Connect goes to the page that makes a grant.
+    const row = view.container.querySelector('.settings-switch-row--flush');
+    expect(row?.textContent).toContain('GitHub');
+    expect(row?.textContent).toContain('Not connected on your account');
+    expect(row?.querySelector<HTMLInputElement>('input[role="switch"]')?.disabled).toBe(true);
+    expect(row?.querySelector('a')?.getAttribute('href')).toBe('/settings/connections');
+    await view.unmount();
+  });
+
   it('opens on Members and lists one row per member, viewers without a machine', async () => {
     const view = await render(dialog());
     await settle();

@@ -9,7 +9,12 @@ import type {
 import type { ControlPlaneClient, MemberView } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ModalOverlay } from './ModalOverlay';
-import { WorkspaceMembersEditor } from './WorkspaceMembersEditor';
+import { WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
+import {
+  WorkspaceMembersEditor,
+  type MachineAction,
+} from './WorkspaceMembersEditor';
+import { WorkspaceConnectionsTab } from './WorkspaceConnectionsTab';
 import { WorkspaceCredentialsTab } from './WorkspaceCredentialsTab';
 import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
 import type { CloudWorkspaceModel, WorkspaceAction } from './workspace-store';
@@ -17,12 +22,19 @@ import { caughtErrorMessage } from './error-message';
 import { useErrorReporter } from './error-dialog/ErrorReporter';
 import { useWorkspaceOptimisticMembers } from './use-workspace-optimistic-members';
 
-/** Members, the org credentials readable here (plans/ORG-CREDENTIALS.md §9
- * — a filtered view, not a store), and the settings. */
-export type WorkspaceDetailsTab = 'members' | 'credentials' | 'settings';
+/** Members, what this workspace's agents may connect to, the org credentials
+ * readable here (plans/ORG-CREDENTIALS.md §9 — a filtered view, not a store),
+ * and the settings. */
+export type WorkspaceDetailsTab = 'members' | 'connections' | 'credentials' | 'settings';
+
+/** Which provider row `blitz connections open <provider>` pointed at, and when
+ * the box raised it — `at` is the marker's own `requestedAt`, so the same
+ * provider asked for twice re-points the row. */
+export type ConnectionsFocus = { provider: string; at: number };
 
 const TAB_LABELS = {
   members: 'Members',
+  connections: 'Connections',
   credentials: 'Credentials',
   settings: 'Settings',
 } satisfies Record<WorkspaceDetailsTab, string>;
@@ -37,10 +49,15 @@ type PendingTypeChange = {
 /**
  * The workspace administration surface (plans/MEMBER-MACHINES.md §6).
  *
- * Two tabs: who is in the workspace and what machine each of them holds,
- * and the settings. The old Compute and Storage panels are gone — a
- * workspace has no single machine to describe, so those facts live on the
- * member rows instead.
+ * Four tabs: who is in the workspace and what machine each of them holds,
+ * what its agents may connect to, the org credentials readable here, and the
+ * settings. The old Compute and Storage panels are gone — a workspace has no
+ * single machine to describe, so those facts live on the member rows instead.
+ *
+ * CONNECTIONS IS A TAB HERE AND NOWHERE ELSE. It used to be a panel of the
+ * workspace — a rail button, a tab of Lody's side panel, a segment of the
+ * mobile sheet — which put a per-workspace switch three presses from the
+ * workspace it belonged to and none of them beside the members it shares.
  *
  * The chrome is the pre-#106 one: the header names the workspace, the tab row
  * sits under it, and the two workspace-wide verbs live in the footer rather
@@ -53,6 +70,7 @@ export function WorkspaceDetailsDialog({
   initialTab = 'members',
   commitWorkspaceMutation,
   focusAddMember = false,
+  focusProvider = null,
   viewerMembershipId = null,
   orgName = 'the organization',
   orgWorkspaces = [],
@@ -63,6 +81,9 @@ export function WorkspaceDetailsDialog({
   client: ControlPlaneClient;
   workspace: CloudWorkspaceModel;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  /** The provider the box pointed at, when the dialog was opened by a
+   * `connections-focus` marker rather than by a click. */
+  focusProvider?: ConnectionsFocus | null;
   /** The signed-in member, so the Credentials tab can tell their own
    * own membership from the rest. */
   viewerMembershipId?: string | null;
@@ -105,6 +126,10 @@ export function WorkspaceDetailsDialog({
   // Invite lands on the picker rather than on the close button: the one thing
   // it opened the dialog to do is type a teammate's name.
   useEffect(() => { if (!focusAddMember) closeButton.current?.focus(); }, [focusAddMember]);
+  // The host asks for a tab by prop, and it asks again on an already-open
+  // dialog: `blitz connections open` arrives while the member may be reading
+  // Members. Seeding state once left that ask on the floor.
+  useEffect(() => { setTab(initialTab); }, [initialTab]);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -211,7 +236,7 @@ export function WorkspaceDetailsDialog({
           <button ref={closeButton} type="button" aria-label="Close workspace details" onClick={onClose}>×</button>
         </header>
         <div className="workspace-details-tabs" role="tablist" aria-label="Workspace detail views">
-          {(['members', 'credentials', 'settings'] as const).map((candidate) => (
+          {(['members', 'connections', 'credentials', 'settings'] as const).map((candidate) => (
             <button
               key={candidate}
               type="button"
@@ -259,6 +284,15 @@ export function WorkspaceDetailsDialog({
                 />
               </div>
             </section>
+          )}
+          {tab === 'connections' && (
+            <WorkspaceConnectionsTab
+              client={client}
+              workspaceId={workspaceId}
+              connections={workspace.connections}
+              readOnly={workspace.accessRole === 'viewer'}
+              focusProvider={focusProvider}
+            />
           )}
           {tab === 'credentials' && (
             <WorkspaceCredentialsTab

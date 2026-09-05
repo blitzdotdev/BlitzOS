@@ -1012,11 +1012,11 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  /** The mobile sheet is the only way to reach Connections on a phone: there
-   * is no icon rail below the breakpoint. Connections is the one section left
-   * since the Files and teenyapps panels retired, so the sheet has no segment
-   * strip; the statusline button opens and closes it. */
-  it("opens the mobile sheet on Connections from the statusline button", async () => {
+  /** THE MOBILE SHEET IS GONE WITH CONNECTIONS. It hosted one section, and a
+   * workspace's connections are a tab of the workspace-details dialog now —
+   * reachable on a phone from the rail's workspace row, the same as on the
+   * desktop. So the statusline keeps the terminal controls and nothing else. */
+  it("draws no connections sheet and no statusline button for one on mobile", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -1037,28 +1037,11 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    // The statusline button is the way in.
-    const drawerButton = view.container.querySelector<HTMLButtonElement>(
-      ".webapp-statusline__files",
-    );
-    if (drawerButton === null) throw new Error("mobile has no drawer button");
-    expect(drawerButton.textContent).toContain("Connections");
-    expect(drawerButton.getAttribute("aria-expanded")).toBe("false");
-
-    const drawer = view.container.querySelector<HTMLElement>("#webapp-workspace-drawer");
-    if (drawer === null) throw new Error("mobile drawer did not render");
-    expect(drawer.className).not.toContain("workspace-drawer--open");
-
-    await act(async () => drawerButton.click());
-    expect(drawer.className).toContain("workspace-drawer--open");
-    expect(drawerButton.getAttribute("aria-expanded")).toBe("true");
-    // One section, so nothing to switch between: no segment strip at all.
-    expect(drawer.querySelector(".workspace-drawer-segments")).toBeNull();
-    expect(drawer.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    expect(drawer.querySelector(".workspace-connections")).not.toBeNull();
-
-    await act(async () => drawerButton.click());
-    expect(drawer.className).not.toContain("workspace-drawer--open");
+    expect(view.container.querySelector(".webapp-statusline__files")).toBeNull();
+    expect(view.container.querySelector("#webapp-workspace-drawer")).toBeNull();
+    expect(view.container.querySelector(".files-drawer-scrim")).toBeNull();
+    // The statusline itself stays: it is the touch terminal's chrome.
+    expect(view.container.querySelector(".webapp-statusline")).not.toBeNull();
 
     await view.unmount();
   });
@@ -1253,7 +1236,7 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("keeps the panels an off-canvas sheet and one tab strip on mobile", async () => {
+  it("keeps one tab strip and no panel pane on mobile", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -1282,17 +1265,16 @@ describe("webapp shell smoke", () => {
     await settle();
 
     // No rail, no split, and no strip at all: the native one is deleted
-    // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"). What this case is really
-    // about survives — the panels are an off-canvas sheet on mobile, not a
-    // pane — and the session lives in the rail inside the drawer.
+    // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"). The session lives in the
+    // rail inside the navigation drawer.
     expect(view.container.querySelector('[aria-label="Workspace panels"]')).toBeNull();
     expect(view.container.querySelector(".webapp-tabstrip")).toBeNull();
     expect(view.container.querySelector(".webapp-pane-strip")).toBeNull();
     expect(railSessionLabels(view.container)).toHaveLength(1);
-    const drawer = view.container.querySelector('[aria-label="Workspace drawer"]')!;
-    // Connections is the sheet's one section, so it draws no segment strip.
-    expect(drawer.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    expect(drawer.querySelector(".workspace-connections")).not.toBeNull();
+    // A `panel` tab a layout persisted before connections left the panes is
+    // filtered out below the breakpoint, exactly as it always was, and the
+    // sheet that used to host one is gone.
+    expect(view.container.querySelector('[aria-label="Workspace drawer"]')).toBeNull();
 
     await view.unmount();
   });
@@ -1368,9 +1350,22 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("splits the tab area from the right icon strip and collapses it again", async () => {
+  /** THE STRIP OPENS NO PANE. Connections was the one panel it ever put in the
+   * side column, and it is a tab of the workspace-details dialog now; the four
+   * buttons left are panels of a SESSION, which Lody's own side panel hosts.
+   * What survives is the split as a PLACEMENT: a `panel` tab a layout
+   * persisted before the change still lands in the second column. */
+  it("keeps a persisted panel tab in the side pane and offers no strip button for one", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
+    saveTabs(
+      "workspace-running",
+      [
+        { id: 1, type: "terminal" },
+        { id: 2, type: "panel", panel: "connections", region: "side" },
+      ],
+      1,
+      2,
+    );
     const view = await render(
       <CloudApp
         client={runningClient()}
@@ -1383,25 +1378,15 @@ describe("webapp shell smoke", () => {
     // The split is a PLACEMENT now: the per-pane strips are deleted
     // (plans/LODY-TERMINAL-TABS.md §4.6, "PR 2"), so what says the side pane
     // opened is the pane itself, not a second strip.
-    const sidePane = () => view.container.querySelector<HTMLElement>(
+    expect(view.container.querySelector<HTMLElement>(
       '.webapp-workspace-session[data-region="side"]',
-    );
-    expect(sidePane()).toBeNull();
-    const connectionsIcon = view.container.querySelector<HTMLButtonElement>(
-      '[aria-label="Workspace panels"] button[aria-label="Connections"]',
-    )!;
-    await act(async () => connectionsIcon.click());
-
-    expect(sidePane()).not.toBeNull();
+    )).not.toBeNull();
     expect(view.container.querySelector(".webapp-panes--split")).not.toBeNull();
-    expect(connectionsIcon.getAttribute("aria-pressed")).toBe("true");
-
-    // Clicking the same icon while its tab is in front closes the panel, and
-    // the side pane goes with it.
-    await act(async () => connectionsIcon.click());
-    expect(sidePane()).toBeNull();
-    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
-      .toEqual([{ id: 1, type: "terminal" }]);
+    // And nothing on the strip can make another one.
+    const strip = view.container.querySelector('[aria-label="Workspace panels"]');
+    expect(strip).not.toBeNull();
+    expect(strip?.querySelector('button[aria-label="Connections"]')).toBeNull();
+    await view.unmount();
   });
 
 

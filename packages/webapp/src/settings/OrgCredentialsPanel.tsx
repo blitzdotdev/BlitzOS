@@ -9,12 +9,12 @@ import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
 import {
-  accessSubjectLabel,
-  accessSubjectTag,
   hasOrgWideWrite,
+  isOwnOrgCredential,
   ORG_WIDE_WRITE_WARNING,
   type AccessSubjects,
 } from '../org-credential-access';
+import { AccessFaces } from './AccessFaces';
 import { AccessListEditor, OrgCredentialForm } from './OrgCredentialForm';
 import { OrgCredentialImport } from './OrgCredentialImport';
 import { PanelHeader } from './primitives';
@@ -23,23 +23,107 @@ function dateLabel(at: number): string {
   return new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-/** The access chips on a list row: one pill per subject, kind and level in
- * words. Empty for a plain reader, whose wire view carries no audience. */
-export function AccessChips({
-  grants,
+/** The access list being edited in place, under the row it belongs to. One
+ * at a time: the chevron that opens one closes whichever was open. */
+type AccessDraft = { name: string; grants: OrgCredentialGrantView[] };
+
+/**
+ * One credential: the row, and — while its chevron is open — the access list
+ * below it, in the same block.
+ *
+ * THE BLOCK IS WHY THE LIST'S OWN SEPARATOR MOVED. `.settings-credential-row`
+ * draws its hairline from `:first-child`, and every row is now the first child
+ * of its own block, so the line is drawn between blocks instead
+ * (org-credentials.css). Expanding must not cost a row its separator.
+ */
+function CredentialBlock({
+  credential,
   subjects,
+  owner,
+  canEdit,
+  draft,
+  saving,
+  revoking,
+  onToggleAccess,
+  onDraftChange,
+  onSaveAccess,
+  onRotate,
+  onRevoke,
 }: {
-  grants: ReadonlyArray<OrgCredentialGrantView>;
+  credential: OrgCredentialView;
   subjects: AccessSubjects;
+  /** The creator, on the admin list only — see the panel's section split. */
+  owner: string | null;
+  canEdit: boolean;
+  draft: AccessDraft | null;
+  saving: boolean;
+  revoking: string | null;
+  onToggleAccess: () => void;
+  onDraftChange: (grants: OrgCredentialGrantView[]) => void;
+  onSaveAccess: () => void;
+  onRotate: () => void;
+  onRevoke: () => void;
 }) {
-  if (grants.length === 0) return null;
+  const expanded = draft !== null;
   return (
-    <div className="org-access-chips" aria-label="Access">
-      {grants.map((grant) => (
-        <span className="machine-chip org-access-chip" key={`${grant.subjectKind}:${grant.subjectId ?? ''}`}>
-          {accessSubjectTag(grant.subjectKind)} {accessSubjectLabel(grant, subjects)} · {grant.access}
-        </span>
-      ))}
+    <div className="org-credential-block">
+      <article className="settings-credential-row org-credential-row">
+        <div>
+          <div className="settings-credential-row__title">
+            <h3><code>{credential.name}</code></h3>
+          </div>
+          {credential.comment !== null && <p>{credential.comment}</p>}
+          <small>
+            {owner === null ? dateLabel(credential.createdAt) : `added by ${owner} · ${dateLabel(credential.createdAt)}`}
+          </small>
+          {hasOrgWideWrite(credential.grants) && (
+            <p className="org-access-warning">{ORG_WIDE_WRITE_WARNING}</p>
+          )}
+        </div>
+        <AccessFaces
+          credentialName={credential.name}
+          grants={credential.grants}
+          subjects={subjects}
+          expanded={expanded}
+          onToggle={onToggleAccess}
+        />
+        {canEdit && (
+          <div className="settings-row-actions">
+            <button
+              className="webapp-action"
+              type="button"
+              aria-label={`Rotate ${credential.name}`}
+              onClick={onRotate}
+            >Rotate</button>
+            <button
+              className="webapp-action webapp-action--danger"
+              type="button"
+              aria-label={`Revoke ${credential.name}`}
+              disabled={revoking !== null}
+              onClick={onRevoke}
+            >{revoking === credential.name ? 'Revoking…' : 'Revoke'}</button>
+          </div>
+        )}
+      </article>
+      {draft !== null && (
+        <div className="org-credential-access" aria-label={`Access to ${credential.name}`}>
+          <AccessListEditor grants={draft.grants} subjects={subjects} onChange={onDraftChange} />
+          <div className="cfg-actions">
+            <button
+              className="webapp-action webapp-action--primary"
+              type="button"
+              disabled={saving}
+              onClick={onSaveAccess}
+            >{saving ? 'Saving…' : 'Save access'}</button>
+            <button
+              className="webapp-action"
+              type="button"
+              disabled={saving}
+              onClick={onToggleAccess}
+            >Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -47,7 +131,15 @@ export function AccessChips({
 /** Settings → Credentials (plans/ORG-CREDENTIALS.md §9): the org's static
  * secrets behind an explicit allowlist. Names and comments only — a value is
  * write-only and never comes back. Any active member may add one; the access
- * list is edited by its writers and by org admins. */
+ * list is edited by its writers and by org admins.
+ *
+ * THE PANEL SPLITS BY WHO IS LOOKING. An admin reads the whole store, so one
+ * list ("Stored") with the owner on every row is the true shape of what they
+ * see. A member reads a handful, and the useful cut is whether their own name
+ * is on it: "My credentials" are the ones they made or were named in,
+ * "Shared credentials" are the ones a workspace or the org handed them
+ * (`isOwnOrgCredential`). The add form stays under the first list, which is
+ * the only one it can add to. */
 export function OrgCredentialsPanel({
   client,
   viewer,
@@ -61,7 +153,7 @@ export function OrgCredentialsPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rotating, setRotating] = useState<string | null>(null);
-  const [accessEditor, setAccessEditor] = useState<{ name: string; grants: OrgCredentialGrantView[] } | null>(null);
+  const [accessDraft, setAccessDraft] = useState<AccessDraft | null>(null);
   const [savingAccess, setSavingAccess] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<OrgCredentialView | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
@@ -116,21 +208,36 @@ export function OrgCredentialsPanel({
    * plain readers, so a visible audience is the edit permission. */
   const canEdit = (credential: OrgCredentialView) => admin || credential.grants.length > 0;
 
+  const mine = useMemo(
+    () => credentials.filter((credential) => isOwnOrgCredential(credential, viewer.membership.id)),
+    [credentials, viewer.membership.id],
+  );
+  const shared = useMemo(
+    () => credentials.filter((credential) => !isOwnOrgCredential(credential, viewer.membership.id)),
+    [credentials, viewer.membership.id],
+  );
+
   const put = async (input: PutOrgCredentialRequest) => {
     await client.putOrgCredential(input);
     setRotating(null);
     await reload();
   };
 
+  const toggleAccess = (credential: OrgCredentialView) => {
+    setAccessDraft((open) => open?.name === credential.name
+      ? null
+      : { name: credential.name, grants: [...credential.grants] });
+  };
+
   const saveAccess = async () => {
-    if (accessEditor === null || savingAccess) return;
+    if (accessDraft === null || savingAccess) return;
     setSavingAccess(true);
     setError(null);
     try {
       // The client method keeps the wire's name: the route it calls is
       // `.../grants`, and only what a member reads changed.
-      await client.replaceOrgCredentialGrants(accessEditor.name, { grants: accessEditor.grants });
-      setAccessEditor(null);
+      await client.replaceOrgCredentialGrants(accessDraft.name, { grants: accessDraft.grants });
+      setAccessDraft(null);
       await reload();
     } catch (caught) {
       setError(caughtErrorMessage(caught, 'The access list was not saved.'));
@@ -146,7 +253,7 @@ export function OrgCredentialsPanel({
     setError(null);
     try {
       await client.revokeOrgCredential(credential.name);
-      if (accessEditor?.name === credential.name) setAccessEditor(null);
+      if (accessDraft?.name === credential.name) setAccessDraft(null);
       if (rotating === credential.name) setRotating(null);
       await reload();
     } catch (caught) {
@@ -156,6 +263,64 @@ export function OrgCredentialsPanel({
     }
   };
 
+  /* Called, not mounted: the returned elements are inlined into this
+     component's own tree, so a section keeps its identity across a render and
+     the picker inside an expanded row keeps its focus. A component declared
+     inside a render would be a new type on every keystroke. */
+  const section = ({ title, list, empty, owners }: {
+    title: string;
+    list: OrgCredentialView[];
+    empty: string;
+    /** The creator on every row. The admin list only — see the panel note. */
+    owners: boolean;
+  }) => (
+    <section className="cfg-section" aria-label={title}>
+      <div className="settings-section-heading">
+        <div className="cfg-section-head">
+          <h2 className="cfg-title">{title}{list.length > 0 && ` · ${String(list.length)}`}</h2>
+        </div>
+      </div>
+      {loading ? (
+        <p className="settings-credential-state">Loading credentials…</p>
+      ) : list.length === 0 ? (
+        <p className="settings-credential-state">{empty}</p>
+      ) : (
+        <div className="settings-credential-list">
+          {list.map((credential) => (
+            <CredentialBlock
+              key={credential.id}
+              credential={credential}
+              subjects={subjects}
+              owner={owners ? creatorLabel(credential) : null}
+              canEdit={canEdit(credential)}
+              draft={accessDraft?.name === credential.name ? accessDraft : null}
+              saving={savingAccess}
+              revoking={revoking}
+              onToggleAccess={() => toggleAccess(credential)}
+              onDraftChange={(grants) => setAccessDraft({ name: credential.name, grants })}
+              onSaveAccess={() => { void saveAccess(); }}
+              onRotate={() => setRotating(credential.name)}
+              onRevoke={() => setRevokeTarget(credential)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
+  /* The form draws its own two cards and their headings, so it is mounted
+     bare: a section around it would be a section around a section, and the
+     settings surface draws one divider between two of those. */
+  const form = (
+    <OrgCredentialForm
+      key={rotating ?? 'add'}
+      mode={rotating === null ? { kind: 'add' } : { kind: 'rotate', name: rotating }}
+      subjects={subjects}
+      onSubmit={put}
+      onCancel={rotating === null ? undefined : () => setRotating(null)}
+    />
+  );
+
   return (
     <section className="settings-panel settings-org-credentials" role="tabpanel" aria-label="Credentials">
       <PanelHeader
@@ -164,101 +329,22 @@ export function OrgCredentialsPanel({
       />
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
-      <section className="cfg-section" aria-label="Stored credentials">
-        <div className="settings-section-heading">
-          <div className="cfg-section-head">
-            <h2 className="cfg-title">
-              Stored{credentials.length > 0 && ` · ${String(credentials.length)}`}
-            </h2>
-          </div>
-        </div>
-        {loading ? (
-          <p className="settings-credential-state">Loading credentials…</p>
-        ) : credentials.length === 0 ? (
-          <p className="settings-credential-state">
-            No credentials yet. Add one below, or import a .env file.
-          </p>
-        ) : (
-          <div className="settings-credential-list">
-            {credentials.map((credential) => (
-              <article className="settings-credential-row org-credential-row" key={credential.id}>
-                <div>
-                  <div className="settings-credential-row__title">
-                    <h3><code>{credential.name}</code></h3>
-                  </div>
-                  {credential.comment !== null && <p>{credential.comment}</p>}
-                  <small>added by {creatorLabel(credential)} · {dateLabel(credential.createdAt)}</small>
-                  <AccessChips grants={credential.grants} subjects={subjects} />
-                  {hasOrgWideWrite(credential.grants) && (
-                    <p className="org-access-warning">{ORG_WIDE_WRITE_WARNING}</p>
-                  )}
-                </div>
-                {canEdit(credential) && (
-                  <div className="settings-row-actions">
-                    <button
-                      className="webapp-action"
-                      type="button"
-                      aria-label={`Edit access for ${credential.name}`}
-                      onClick={() => setAccessEditor({ name: credential.name, grants: [...credential.grants] })}
-                    >Access</button>
-                    <button
-                      className="webapp-action"
-                      type="button"
-                      aria-label={`Rotate ${credential.name}`}
-                      onClick={() => setRotating(credential.name)}
-                    >Rotate</button>
-                    <button
-                      className="webapp-action webapp-action--danger"
-                      type="button"
-                      aria-label={`Revoke ${credential.name}`}
-                      disabled={revoking !== null}
-                      onClick={() => setRevokeTarget(credential)}
-                    >{revoking === credential.name ? 'Revoking…' : 'Revoke'}</button>
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {accessEditor !== null && (
-        <section className="cfg-section" aria-label={`Access to ${accessEditor.name}`}>
-          <div className="cfg-section-head">
-            <h2 className="cfg-title">Access to <code>{accessEditor.name}</code></h2>
-          </div>
-          <AccessListEditor
-            grants={accessEditor.grants}
-            subjects={subjects}
-            onChange={(grants) => setAccessEditor({ name: accessEditor.name, grants })}
-          />
-          <div className="cfg-actions">
-            <button
-              className="webapp-action webapp-action--primary"
-              type="button"
-              disabled={savingAccess}
-              onClick={() => { void saveAccess(); }}
-            >{savingAccess ? 'Saving…' : 'Save access'}</button>
-            <button
-              className="webapp-action"
-              type="button"
-              disabled={savingAccess}
-              onClick={() => setAccessEditor(null)}
-            >Cancel</button>
-          </div>
-        </section>
+      {admin ? (
+        <>
+          {section({ title: 'Stored', list: credentials, empty: 'No credentials yet.', owners: true })}
+          {form}
+        </>
+      ) : (
+        <>
+          {section({ title: 'My credentials', list: mine, empty: 'No credentials yet.', owners: false })}
+          {form}
+          {/* The owner rides a SHARED row and not a mine row: "who gave me this"
+              is the one fact a shared credential carries that its name does
+              not, and on a key of the viewer's own it would only ever say
+              "you". */}
+          {section({ title: 'Shared credentials', list: shared, empty: 'Nothing shared with you.', owners: true })}
+        </>
       )}
-
-      {/* The form draws its own two cards and their headings, so it is mounted
-          bare: a section around it would be a section around a section, and
-          the settings surface draws one divider between two of those. */}
-      <OrgCredentialForm
-        key={rotating ?? 'add'}
-        mode={rotating === null ? { kind: 'add' } : { kind: 'rotate', name: rotating }}
-        subjects={subjects}
-        onSubmit={put}
-        onCancel={rotating === null ? undefined : () => setRotating(null)}
-      />
 
       <section className="cfg-section" aria-label="Import a .env file">
         <OrgCredentialImport

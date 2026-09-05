@@ -8,22 +8,21 @@ import {
 } from '../src/sessions-page-state.js';
 
 describe('settings routes', () => {
-  it('routes profile, connections, and requests with profile as the index', () => {
+  it('routes the five sections, with profile as the index', () => {
     expect(parseAppRoute('/settings')).toEqual({
       workspaceId: null,
       page: 'settings',
       settingsSection: 'profile',
     });
+    expect(parseAppRoute('/settings/members')).toEqual({
+      workspaceId: null,
+      page: 'settings',
+      settingsSection: 'members',
+    });
     expect(parseAppRoute('/settings/connections')).toEqual({
       workspaceId: null,
       page: 'settings',
       settingsSection: 'connections',
-    });
-    expect(parseAppRoute('/settings/integrations')).toEqual({ workspaceId: null, page: 'home' });
-    expect(parseAppRoute('/settings/requests/')).toEqual({
-      workspaceId: null,
-      page: 'settings',
-      settingsSection: 'requests',
     });
     expect(parseAppRoute('/settings/compute')).toEqual({
       workspaceId: null,
@@ -39,12 +38,40 @@ describe('settings routes', () => {
       workspaceId: null,
       page: 'home',
     });
-    expect(parseAppRoute('/settings/usage')).toEqual({ workspaceId: null, page: 'home' });
     expect(settingsPath('profile')).toBe('/settings');
+    expect(settingsPath('members')).toBe('/settings/members');
     expect(settingsPath('connections')).toBe('/settings/connections');
-    expect(settingsPath('requests')).toBe('/settings/requests');
     expect(settingsPath('compute')).toBe('/settings/compute');
     expect(settingsPath('credentials')).toBe('/settings/credentials');
+  });
+
+  // A settings link is pasted into chats and bookmarked, so an address for a
+  // section that no longer exists resolves rather than blanks.
+  it('resolves the three retired section addresses', () => {
+    // Invites was the second half of one question and is a section of the
+    // Members page now.
+    for (const address of ['/settings/invites']) {
+      expect(parseAppRoute(address), address).toEqual({
+        workspaceId: null,
+        page: 'settings',
+        settingsSection: 'members',
+      });
+    }
+    // Requests and Usage have no panel left, so they land on the index, which
+    // is where an unknown settings address already landed.
+    for (const address of ['/settings/requests/', '/settings/usage']) {
+      expect(parseAppRoute(address), address).toEqual({
+        workspaceId: null,
+        page: 'settings',
+        settingsSection: 'profile',
+      });
+    }
+    // The pre-rename address stays routable and canonicalizes.
+    expect(parseAppRoute('/settings/integrations')).toEqual({
+      workspaceId: null,
+      page: 'settings',
+      settingsSection: 'connections',
+    });
   });
 
   it('sends removed product addresses home', () => {

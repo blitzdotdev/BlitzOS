@@ -13,6 +13,7 @@ import {
   ORG_WIDE_WRITE_WARNING,
   type AccessSubjects,
 } from '../org-credential-access';
+import { AccessFace } from './AccessFaces';
 
 /**
  * The one access-list editor (plans/ORG-CREDENTIALS.md §9): who may use this
@@ -96,6 +97,13 @@ export function AccessListEditor({
           return (
             <div className="org-access-row" key={`${grant.subjectKind}:${grant.subjectId ?? ''}`}>
               <span className="org-access-subject">
+                {/* THE SAME MARK THE COLLAPSED STACK DRAWS. A face in the strip
+                    and a name in this list are the same subject, and a member
+                    who opens the row has to recognise it without re-reading.
+                    The face is decorative here: the name is the next element,
+                    and the chip still carries the kind, because a shape alone
+                    may not be the only thing that says workspace or member. */}
+                <AccessFace subject={grant} subjects={subjects} decorative />
                 <em>{label}</em>
                 <span className="machine-chip">{accessSubjectTag(grant.subjectKind)}</span>
               </span>
