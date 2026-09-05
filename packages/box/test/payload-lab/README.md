@@ -12,13 +12,15 @@ Required for a real run:
   credentials are accepted only in this cookie, never as bearer tokens;
   payload-hold writes need this form. When set, it takes precedence over
   `THINLAB_TOKEN` for control-plane calls.
-- `THINLAB_PROXY_TOKEN`: a read-only operator bearer for E2's
-  `/webapp/7445/healthz` probe when neither `THINLAB_COOKIE` nor the
-  box-plane-scoped `THINLAB_TOKEN` can proxy it.
+- `THINLAB_PROXY_TOKEN`: a read-only operator bearer for experiments such as
+  E6 that measure through the control-plane webapp proxy. E2 probes the
+  gateway and opens its terminal WebSocket locally over box SSH, so it needs
+  no browser ticket or proxy token.
 - `LAB_SSH_KEY`: the private key installed when the lab machines were
   provisioned. `box_ssh` uses the workspace view's host/port/user. It does not
-  grant VM-host SSH on port 2222. Experiments that explicitly need host access
-  require a separately provisioned `LAB_HOST_SSH_KEY`.
+  grant VM-host SSH on port 2222. E1-E4 deliberately have no host-access
+  dependency; experiments that explicitly replace the image or force a host
+  action still require a separately provisioned `LAB_HOST_SSH_KEY`.
 - A deployable `packages/control-plane/wrangler.toml` for
   `blitz-thinlab`, plus the Cloudflare credentials used by the existing
   publisher and deploy scripts.
@@ -32,9 +34,13 @@ Required for a real run:
 
 `LAB_WORKSPACES` is a whitespace-separated list consumed by `run-all.sh`.
 Each E script also accepts `<workspace-id> [machine-id]`. E14 requires two live
-member machines in its workspace. E1, E3, and E4 start their own Claude turn
-through `session-driver/drive.mjs`; E2 and E13 still require the orchestrator to
-start a suitably long turn before the experiment.
+member machines in its workspace. E1-E4 start and track their own Claude turn
+through `session-driver/drive.mjs`. E2 also creates one uniquely named tmux
+session, puts its pane in the same `user/tab-*` cgroup placement as
+`blitz-term`, and removes only that session on exit. If the box image cannot
+create the unprivileged cgroup leaf, E2 records and uses the permitted plain
+tmux fallback. Existing sessions and tabs are never treated as preconditions,
+compared as a whole, or cancelled.
 
 The production publisher has no test-only overlay flag. `publish_variant`
 therefore clones the current checkout into a temporary directory, copies one
@@ -43,11 +49,29 @@ mutated file from an overlay directory into that clone, and invokes
 versioned test object to make failures that a validating publisher correctly
 refuses to emit.
 
+Pinning changes only the payload. Before every deploy, `pin_payload` reads the
+deployment's public `/version` report and compares its `boxImageRef` and
+`boxImageTag` with the values in the lab's `wrangler.toml`; it refuses the
+deploy if they differ. A lab that intentionally keeps its image pins outside
+that file may instead set all of `LAB_IMAGE_REF`, `LAB_IMAGE_TAG`, and
+`LAB_IMAGE_SHA256`; the helper checks the reported ref/tag and passes all three
+through to the deploy. It never sends only the two payload vars when doing so.
+
+E1-E4 do not force an updater transaction. After a pin, they wait for the
+box's supervised payload service, whose default poll interval is five minutes.
+`LAB_OUTCOME_TIMEOUT` therefore defaults to 420 seconds. Session waits pass
+`--timeout "$LAB_TURN_TIMEOUT"` to the driver; that value defaults to 900
+seconds, long enough for E4's ten-minute idle cap plus restart and resync. E4
+uses separate 420-second windows to observe the scheduled poll and the final
+reported outcome around the idle wait.
+
 Useful tuning variables are `LAB_OUTCOME_TIMEOUT`, `LAB_DAEMON_IDLE_CAP`,
 `LAB_TURN_TIMEOUT`, `LAB_TURN_AGENT`, `LAB_TURN_PROJECT`, `LAB_E1_PROMPT`,
-`LAB_E3_PROMPT`, `LAB_E4_PROMPT`, `LAB_E13_COMMAND`, and `LAB_HEALTH_PATH`. The E2 contract
-defaults `LAB_HEALTH_PATH` to `/healthz`; changing it to `/diag` is useful only
-while bringing up a deployment that has not exposed the specified health path.
+`LAB_E2_PROMPT`, `LAB_E3_PROMPT`, `LAB_E4_PROMPT`, their matching
+`LAB_E*_EXPECTED_TEXT` values, `LAB_E13_COMMAND`, and `LAB_HEALTH_PATH`.
+Experiments that use the control-plane proxy default `LAB_HEALTH_PATH` to
+`/healthz`; changing it to `/diag` is useful only while bringing up a
+deployment that has not exposed the specified health path.
 `LAB_DAEMON_IDLE_CAP` must equal the box's
 `BLITZ_PAYLOAD_DAEMON_IDLE_WAIT`; it defaults to the design's 600 seconds.
 

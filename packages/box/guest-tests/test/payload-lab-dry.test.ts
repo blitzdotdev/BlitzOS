@@ -45,6 +45,14 @@ describe("thin-image payload lab dry runs", () => {
       expect(output).toContain(`E${experiment}`);
       expect(output).toContain("DRY");
       expect(result.stdout.trim()).toMatch(new RegExp(`^E${experiment} PASS .+$`, "u"));
+      if (experiment <= 4) {
+        expect(output).toContain("normal updater poll");
+        expect(output).toContain("deploy only the payload pin");
+      }
+      if (experiment === 2) {
+        expect(output).toContain("uniquely named tmux session");
+        expect(output).toContain("fresh local gateway/ttyd websocket");
+      }
     });
   }
 });

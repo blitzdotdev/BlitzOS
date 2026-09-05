@@ -5,9 +5,9 @@
 # THINLAB_COOKIE is a workspace-admin `blitz_session` cookie value; session
 # credentials are not bearer tokens and must use this separate path.
 #
-# E2's control-plane proxy probe needs session/operator scope. THINLAB_COOKIE
+# Control-plane proxy probes need session/operator scope. THINLAB_COOKIE
 # supplies the session form; THINLAB_PROXY_TOKEN may supply an operator bearer.
-# Neither token is ever printed by this harness.
+# E2 probes locally instead. Neither token is ever printed by this harness.
 
 PAYLOAD_LAB_DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
 PAYLOAD_LAB_REPO=$(realpath "$PAYLOAD_LAB_DIR/../../../..")
@@ -17,6 +17,7 @@ LAB_R2_BUCKET=${LAB_R2_BUCKET:-blitz-thinlab-images}
 LAB_HOST_SSH_PORT=${LAB_HOST_SSH_PORT:-2222}
 LAB_CP_TIMEOUT=${LAB_CP_TIMEOUT:-75}
 LAB_OUTCOME_TIMEOUT=${LAB_OUTCOME_TIMEOUT:-420}
+LAB_TURN_TIMEOUT=${LAB_TURN_TIMEOUT:-900}
 LAB_HEALTH_PATH=${LAB_HEALTH_PATH:-/healthz}
 
 EXPERIMENT_ID=
@@ -28,6 +29,11 @@ LAB_RESTORE_ORIGIN_WORKSPACE=
 LAB_RESTORE_ORIGIN_VALUE=
 LAB_REMOTE_CLEANUP_WORKSPACE=
 LAB_REMOTE_CLEANUP_COMMAND=
+LAB_SESSION_CLEANUP_WORKSPACE=
+LAB_SESSION_CLEANUP_ID=
+LAB_TEST_TERMINAL_KEY=
+LAB_TEST_TERMINAL_SESSION=
+LAB_TEST_TERMINAL_PLACEMENT=
 PUBLISHED_VERSION=
 PUBLISHED_REF=
 PUBLISHED_PREFIX=
@@ -58,6 +64,10 @@ _payload_lab_cleanup() {
   fi
   if [ -n "$LAB_REMOTE_CLEANUP_WORKSPACE" ] && [ -n "$LAB_REMOTE_CLEANUP_COMMAND" ]; then
     box_ssh "$LAB_REMOTE_CLEANUP_WORKSPACE" "$LAB_REMOTE_CLEANUP_COMMAND" \
+      >/dev/null 2>&1 || true
+  fi
+  if [ -n "$LAB_SESSION_CLEANUP_WORKSPACE" ] && [ -n "$LAB_SESSION_CLEANUP_ID" ]; then
+    cancel_turn "$LAB_SESSION_CLEANUP_WORKSPACE" "$LAB_SESSION_CLEANUP_ID" \
       >/dev/null 2>&1 || true
   fi
   if [ -n "$LAB_TEMP_ROOT" ] && [ -d "$LAB_TEMP_ROOT" ]; then
@@ -259,6 +269,54 @@ wait_turn() {
   node "$PAYLOAD_LAB_SESSION_DRIVER" session wait "$session_id" --timeout "$timeout"
 }
 
+session_status() {
+  local workspace_id=$1 session_id=$2
+  if payload_lab_dry; then
+    dry_command "session-driver status $session_id on <workspace:$workspace_id>"
+    printf '{"sessionId":"%s","state":"running","lastAssistantText":null}\n' "$session_id"
+    return 0
+  fi
+  node "$PAYLOAD_LAB_SESSION_DRIVER" session status "$session_id"
+}
+
+# Polls only the driver-created session named by the caller. Daemon-wide
+# presence is deliberately irrelevant: a real member box can have unrelated
+# running or permission-blocked sessions that this harness must never touch.
+wait_session_state() {
+  local workspace_id=$1 session_id=$2 expected=$3 timeout=$4
+  local deadline status observed
+  deadline=$(( $(date +%s) + timeout ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    status=$(session_status "$workspace_id" "$session_id" 2>/dev/null) || status=
+    observed=$(printf '%s' "$status" | jq -r '.state // "unavailable"' 2>/dev/null) \
+      || observed=unavailable
+    if [ "$observed" = "$expected" ]; then
+      printf '%s\n' "$status"
+      return 0
+    fi
+    sleep 1
+  done
+  payload_lab_trace "session $session_id last reported ${observed:-unavailable}, wanted $expected"
+  return 1
+}
+
+assert_completed_turn_text() {
+  local status_file=$1 expected=$2 reason=$3
+  jq -e --arg expected "$expected" \
+    '.state == "completed" and ((.lastAssistantText // "") | ascii_downcase | contains($expected | ascii_downcase))' \
+    "$status_file" >/dev/null || experiment_fail "$reason"
+}
+
+arm_turn_cleanup() {
+  LAB_SESSION_CLEANUP_WORKSPACE=$1
+  LAB_SESSION_CLEANUP_ID=$2
+}
+
+disarm_turn_cleanup() {
+  LAB_SESSION_CLEANUP_WORKSPACE=
+  LAB_SESSION_CLEANUP_ID=
+}
+
 # Stops the exact active assistant turn for a driver-created session.
 cancel_turn() {
   local workspace_id=$1 session_id=$2
@@ -267,6 +325,38 @@ cancel_turn() {
     return 0
   fi
   node "$PAYLOAD_LAB_SESSION_DRIVER" session cancel "$session_id"
+}
+
+# Creates the terminal E2 owns without inspecting or changing any other tmux
+# session. blitz-term wraps a new pane in this exact cgroup placement. A plain
+# tmux fallback keeps the gateway-restart assertion usable on an older image
+# whose unprivileged cgroup helper cannot create the leaf.
+create_test_terminal() {
+  local workspace_id=$1 run_id session
+  run_id=${LAB_RUN_ID:-$(date -u +%Y%m%dT%H%M%S)-$$}
+  run_id=${run_id//[^A-Za-z0-9_-]/-}
+  LAB_TEST_TERMINAL_KEY="lab-e2-$run_id"
+  session="term-$LAB_TEST_TERMINAL_KEY"
+  LAB_TEST_TERMINAL_SESSION=$session
+  LAB_REMOTE_CLEANUP_WORKSPACE=$workspace_id
+  LAB_REMOTE_CLEANUP_COMMAND="tmux kill-session -t '=$session' 2>/dev/null || true"
+
+  box_ssh "$workspace_id" "! tmux has-session -t '=$session' 2>/dev/null" \
+    || experiment_fail "refusing to replace existing tmux session $session"
+  if box_ssh "$workspace_id" \
+    "tmux new-session -d -s '$session' /usr/local/bin/blitz-cgroup enter 'user/tab-$session' -- sleep 3600; sleep 1; tmux has-session -t '=$session'"; then
+    LAB_TEST_TERMINAL_PLACEMENT=cgroup
+  else
+    box_ssh "$workspace_id" \
+      "tmux kill-session -t '=$session' 2>/dev/null || true; tmux new-session -d -s '$session' sleep 3600; sleep 1; tmux has-session -t '=$session'" \
+      || experiment_fail "could not create E2 tmux session $session"
+    LAB_TEST_TERMINAL_PLACEMENT=plain
+    payload_lab_trace "cgroup placement was unavailable; using the permitted plain tmux fallback"
+  fi
+}
+
+tmux_session_identity() {
+  box_ssh "$1" "tmux display-message -p -t '=$2' '#{session_id}:#{session_created}'"
 }
 
 # Host-only experiments require a separately provisioned root key. The
@@ -603,19 +693,67 @@ publish_variant() {
 }
 
 pin_payload() {
-  local version=$1
+  local version=$1 version_report deployed_ref deployed_tag configured_ref configured_tag
   local ref="$THINLAB_ORIGIN/box-payload/$version/manifest.json"
+  local image_overrides=()
   payload_lab_trace "pinning payload $version"
   if payload_lab_dry; then
-    dry_command "BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF=<ref> BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION=$version npm run deploy -w packages/control-plane"
+    dry_command "verify /version image ref/tag against wrangler.toml or pass LAB_IMAGE_REF/TAG/SHA256; deploy only the payload pin"
     return 0
+  fi
+
+  version_report=$(curl --silent --show-error --fail-with-body \
+    --max-time "$LAB_CP_TIMEOUT" "$THINLAB_ORIGIN/version") \
+    || experiment_fail "could not read the deployed image pin from /version"
+  deployed_ref=$(printf '%s' "$version_report" | jq -er '.boxImageRef | strings') \
+    || experiment_fail "/version did not report boxImageRef"
+  deployed_tag=$(printf '%s' "$version_report" | jq -er '.boxImageTag | strings') \
+    || experiment_fail "/version did not report boxImageTag"
+
+  if [ -n "${LAB_IMAGE_REF:-}" ] || [ -n "${LAB_IMAGE_TAG:-}" ] \
+      || [ -n "${LAB_IMAGE_SHA256:-}" ]; then
+    require_env LAB_IMAGE_REF
+    require_env LAB_IMAGE_TAG
+    require_env LAB_IMAGE_SHA256
+    assert_equal "$LAB_IMAGE_REF" "$deployed_ref" \
+      "LAB_IMAGE_REF would change the deployment's image pin"
+    assert_equal "$LAB_IMAGE_TAG" "$deployed_tag" \
+      "LAB_IMAGE_TAG would change the deployment's image pin"
+    image_overrides=(
+      "BLITZ_DEPLOY_VAR_BOX_IMAGE_REF=$LAB_IMAGE_REF"
+      "BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG=$LAB_IMAGE_TAG"
+      "BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256=$LAB_IMAGE_SHA256"
+    )
+  else
+    configured_ref=$(_wrangler_string_var BOX_IMAGE_REF) \
+      || experiment_fail "could not read BOX_IMAGE_REF from wrangler.toml"
+    configured_tag=$(_wrangler_string_var BOX_IMAGE_TAG) \
+      || experiment_fail "could not read BOX_IMAGE_TAG from wrangler.toml"
+    assert_equal "$configured_ref" "$deployed_ref" \
+      "wrangler.toml BOX_IMAGE_REF would change the deployment's image pin"
+    assert_equal "$configured_tag" "$deployed_tag" \
+      "wrangler.toml BOX_IMAGE_TAG would change the deployment's image pin"
   fi
   (
     cd "$PAYLOAD_LAB_REPO"
-    BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF="$ref" \
-    BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION="$version" \
-      npm run deploy -w packages/control-plane
+    env "${image_overrides[@]}" \
+      BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF="$ref" \
+      BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION="$version" \
+        npm run deploy -w packages/control-plane
   )
+}
+
+_wrangler_string_var() {
+  local name=$1 config="$PAYLOAD_LAB_REPO/packages/control-plane/wrangler.toml"
+  local line value count
+  [ -r "$config" ] || return 1
+  count=$(grep -Ec "^[[:space:]]*$name[[:space:]]*=" "$config")
+  [ "$count" -eq 1 ] || return 1
+  line=$(grep -E "^[[:space:]]*$name[[:space:]]*=" "$config")
+  value=${line#*=}
+  value=${value#"${value%%[![:space:]]*}"}
+  value=${value%"${value##*[![:space:]]}"}
+  printf '%s' "$value" | jq -er 'fromjson | strings'
 }
 
 gateway_health_code() {
@@ -665,6 +803,50 @@ stop_health_poll() {
   local pid=$1
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
+}
+
+# Samples the gateway over one persistent SSH connection. Any HTTP answer
+# below 500 proves the gateway is accepting requests; authentication can make
+# the deliberately bare /healthz request return 403 while it is healthy.
+start_local_gateway_health_poll() {
+  local workspace_id=$1 output=$2
+  box_ssh "$workspace_id" 'while :; do
+timestamp=$(date +%s%3N)
+code=$(curl --silent --output /dev/null --max-time 1 --write-out "%{http_code}" http://127.0.0.1:7445/healthz 2>/dev/null || true)
+case "$code" in
+  1?? | 2?? | 3?? | 4??) code=200 ;;
+  *) code=000 ;;
+esac
+printf "%s\t%s\n" "$timestamp" "$code"
+sleep 0.2
+done' >"$output" &
+  HEALTH_POLL_PID=$!
+}
+
+wait_local_gateway_health() {
+  local workspace_id=$1 timeout=$2 deadline code
+  deadline=$(( $(date +%s) + timeout ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    code=$(box_ssh "$workspace_id" \
+      'curl --silent --output /dev/null --max-time 2 --write-out "%{http_code}" http://127.0.0.1:7445/healthz 2>/dev/null || true') \
+      || code=000
+    case "$code" in
+      1?? | 2?? | 3?? | 4??) return 0 ;;
+    esac
+    sleep 1
+  done
+  return 1
+}
+
+# Opens a fresh browser-shaped WebSocket through the local gateway into ttyd.
+# The static box token is read and consumed on the box; neither it nor response
+# bytes are returned to the harness. curl times out after the 101 because the
+# attached terminal is intentionally long-lived.
+assert_local_terminal_attach() {
+  local workspace_id=$1 key=$2 url remote
+  url="http://127.0.0.1:7445/terminal/ws?arg=terminal&arg=$key"
+  printf -v remote 'token=$(cat /var/lib/blitz/webapp-token); code=$(curl --silent --output /dev/null --max-time 2 --write-out "%%{http_code}" --header "X-Blitz-WebApp-Token: $token" --header "Connection: Upgrade" --header "Upgrade: websocket" --header "Origin: http://localhost" --header "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" --header "Sec-WebSocket-Version: 13" --header "Sec-WebSocket-Protocol: tty" %q 2>/dev/null || true); test "$code" = 101' "$url"
+  box_ssh "$workspace_id" "$remote"
 }
 
 # Prints the longest observed non-2xx interval in milliseconds. Zero means
