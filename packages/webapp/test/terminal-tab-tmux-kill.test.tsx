@@ -21,7 +21,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ControlPlaneClient } from "../src/api.js";
 import type { WorkspaceTab } from "../src/storage.js";
 import { installLodyDomStubs } from "./lody-dom-stubs.js";
-import { render, settle } from "./dom.js";
+import { deferred, render, settle } from "./dom.js";
 import { workspaceViewFixture } from "./workspace-fixtures.js";
 
 installLodyDomStubs();
@@ -129,7 +129,11 @@ const TERMINAL_TABS: WorkspaceTab[] = [
   { id: 11, type: "preview", port: 3000 },
 ];
 
-async function mountShell(options: { path: string; state?: Map<string, unknown> }) {
+async function mountShell(options: {
+  path: string;
+  state?: Map<string, unknown>;
+  terminalKill?: Promise<Response>;
+}) {
   vi.resetModules();
   vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
   vi.stubGlobal("matchMedia", (query: string) => ({
@@ -148,7 +152,9 @@ async function mountShell(options: { path: string; state?: Map<string, unknown> 
         method: init?.method ?? "GET",
         body: typeof init?.body === "string" ? init.body : "",
       });
-      if (url.endsWith("/terminal/kill")) return new Response(null, { status: 204 });
+      if (url.endsWith("/terminal/kill")) {
+        return options.terminalKill ?? new Response(null, { status: 204 });
+      }
       if (url.includes("/connections-focus")) {
         return new Response(JSON.stringify({ focus: null }), { status: 200 });
       }
@@ -241,6 +247,30 @@ describe("TABS-1 — a closed terminal tab ends its tmux session", () => {
     await settle();
     expect(JSON.parse(killRequests(mounted.requests)[0]?.body ?? "{}"))
       .toEqual({ type: "claude", key: "9" });
+    await mounted.view.unmount();
+  });
+
+  it("restores a tab at its original index when the box cannot kill it", async () => {
+    const kill = deferred<Response>();
+    const mounted = await mountShell({
+      path: "/workspaces/ws-1/chat/terminal/7",
+      terminalKill: kill.promise,
+    });
+    await act(async () => {
+      mounted.surface.surfaceTabs?.onClose("blitz-tab:9");
+    });
+    await settle();
+
+    expect(mounted.surface.surfaceTabs?.tabs.map(({ id }) => id))
+      .toEqual(["blitz-tab:7", "blitz-tab:11"]);
+
+    await act(async () => kill.resolve(new Response(null, { status: 502 })));
+    await settle();
+
+    expect(mounted.surface.surfaceTabs?.tabs.map(({ id }) => id))
+      .toEqual(["blitz-tab:7", "blitz-tab:9", "blitz-tab:11"]);
+    expect(mounted.view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not close the terminal tab");
     await mounted.view.unmount();
   });
 

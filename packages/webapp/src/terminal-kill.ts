@@ -14,9 +14,9 @@ export function terminalKillEndpointUrl(filesBase: string): string {
  * session running, because re-attach is the normal path and the scrollback is
  * the member's work (plans/LODY-TERMINAL-TABS.md §4.4).
  *
- * The answer is not awaited by the caller and the tab list never waits for it:
- * the tab is gone from the document either way, and a box that is unreachable
- * has already lost the session with the machine.
+ * The caller removes the tab first, then uses this answer to keep the close or
+ * restore the tab. The box treats an absent tmux session as success, so false
+ * means the close could not be confirmed rather than "already gone."
  */
 export async function killTerminalSession(
   filesBase: string,

@@ -13,13 +13,11 @@ export function MembersPanel({
   client: ControlPlaneClient;
   admin: boolean;
   orgName: string;
-  /** Called after the server has removed the caller from the org. The session
-   * is now bound elsewhere, or to no org at all, so the caller reloads. */
+  /** Starts the shell-level leave after this panel confirms the request. */
   onLeft: () => void;
 }) {
   const [members, setMembers] = useState<MemberView[]>([]);
   const [confirmLeave, setConfirmLeave] = useState(false);
-  const [leaving, setLeaving] = useState(false);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [oneTimeLink, setOneTimeLink] = useState<string | null>(null);
@@ -159,9 +157,9 @@ export function MembersPanel({
           <button
             className="cfg-danger-action"
             type="button"
-            disabled={soleMember || leaving}
+            disabled={soleMember}
             onClick={() => setConfirmLeave(true)}
-          >{leaving ? 'Leaving\u2026' : 'Leave'}</button>
+          >Leave</button>
         </div>
       </div>
       {confirmLeave && (
@@ -173,11 +171,7 @@ export function MembersPanel({
           onCancel={() => setConfirmLeave(false)}
           onConfirm={() => {
             setConfirmLeave(false);
-            setLeaving(true);
-            void client.leaveOrg().then(onLeft).catch((caught: Error) => {
-              setLeaving(false);
-              setError(caught.message);
-            });
+            onLeft();
           }}
         />
       )}

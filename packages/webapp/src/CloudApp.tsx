@@ -139,6 +139,7 @@ import { useWorkspaceConnectionsFocus } from './use-workspace-connections-focus'
 import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
 import { ErrorReporterProvider } from './error-dialog/ErrorReporter';
 import { useWorkspaceOptimisticCreate } from './use-workspace-optimistic-create';
+import { useOrganizationOptimisticTransitions } from './use-organization-optimistic-transitions';
 
 /** Shared empty list for a workspace whose tabs have not loaded. A fresh `[]`
  * per render would give every callback derived from it a new identity, and the
@@ -195,6 +196,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   const [error, setError] = useState<string | null>(null);
   const [updateAvailableHash, setUpdateAvailableHash] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
+  const [signOutPending, setSignOutPending] = useState(false);
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
@@ -319,6 +321,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   }, [drawerOpen, mobileWebApp]);
 
   const handleUnauthorized = useCallback(() => {
+    setSignOutPending(false);
     setSignedOut(true);
     setLoaded(true);
   }, []);
@@ -330,11 +333,45 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     if (cause instanceof ApiError && cause.status === 401) return;
     setError(caughtErrorMessage(cause, 'Could not save webApp state.'));
   }, []);
+  const {
+    transitionStage: organizationTransitionStage,
+    createOrgName,
+    setCreateOrgName,
+    openCreateOrganization,
+    closeCreateOrganization,
+    createOrganizationFromIdentity,
+    createOrganizationFromDialog,
+    switchOrganization,
+    leaveOrganization,
+  } = useOrganizationOptimisticTransitions({
+    api,
+    client,
+    viewer: store.viewer,
+    setIdentityOnly,
+    setLoaded,
+    setBootstrapVersion,
+    setShowCreateOrg,
+    setError,
+  });
   const signOut = useCallback(async () => {
+    setError(null);
+    setSignOutPending(true);
     try {
       await api.logout();
-    } finally {
       setSignedOut(true);
+    } catch (cause) {
+      // An auth refusal says there is no usable logout session left.
+      if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
+        setSignedOut(true);
+        return;
+      }
+      setSignedOut(false);
+      setError(`Could not sign out: ${caughtErrorMessage(
+        cause,
+        'The control plane request failed.',
+      )}`);
+    } finally {
+      setSignOutPending(false);
     }
   }, [api]);
   const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
@@ -1325,15 +1362,39 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     // session outlives its websocket by design — that is what a reload, a
     // workspace switch and a lost tunnel all re-attach to — so this is also
     // the one place that ends one, and nothing on an unmount may do it.
-    const closing = ttydSessions.find((entry) => String(entry.id) === id);
-    if (closing !== undefined && isManagedWorkspaceTab(closing) && activeFilesBase !== null) {
-      void killTerminalSession(activeFilesBase, { type: closing.type, key: id });
-    }
+    const closingIndex = ttydSessions.findIndex((entry) => String(entry.id) === id);
+    const closing = ttydSessions[closingIndex];
+    const closingRegion = closing === undefined ? null : tabRegion(closing);
+    const closingWasActive = closing !== undefined
+      && activeWorkspaceTabs !== null
+      && closingRegion !== null
+      && regionActiveId(activeWorkspaceTabs, closingRegion) === closing.id;
+    const closingWasRetained = retainedSessionIdsRef.current.ids.has(id);
     updateWorkspaceTabs((tabs) => {
       const tab = tabs.tabs.find((entry) => String(entry.id) === id);
       return tab === undefined ? tabs : closePaneTab(tabs, tab.id);
     });
     retainedSessionIdsRef.current.ids.delete(id);
+    if (closing === undefined || !isManagedWorkspaceTab(closing) || activeFilesBase === null) return;
+    void killTerminalSession(activeFilesBase, { type: closing.type, key: id }).then((killed) => {
+      if (killed) return;
+      updateWorkspaceTabs((tabs) => {
+        if (tabs.tabs.some((entry) => entry.id === closing.id)) return tabs;
+        const restored = [...tabs.tabs];
+        restored.splice(Math.min(Math.max(closingIndex, 0), restored.length), 0, closing);
+        const next = { ...tabs, tabs: restored };
+        if (closingWasActive && closingRegion === 'main') next.activeId = closing.id;
+        if (closingWasActive && closingRegion === 'side') next.sideActiveId = closing.id;
+        return next;
+      });
+      if (
+        closingWasRetained
+        && retainedSessionIdsRef.current.workspaceId === activeWorkspaceId
+      ) {
+        retainedSessionIdsRef.current.ids.add(id);
+      }
+      setError('Could not close the terminal tab. Its session may still be running.');
+    });
   };
   const renameTtydSession = (id: string, title: string | undefined) => {
     const numericId = Number(id);
@@ -1487,6 +1548,12 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       >
         Reload
       </button>
+    </div>
+  );
+  const actionErrorNotice = error === null ? null : (
+    <div className="webapp-notice" role="alert">
+      <span>{error}</span>
+      <button type="button" onClick={() => setError(null)}>Dismiss</button>
     </div>
   );
 
@@ -1727,13 +1794,10 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       viewer={store.viewer}
       workspaces={store.workspaces}
       showCreateOrg={showCreateOrg}
-      onCreateOrg={async (name) => {
-        await api.createOrg(name);
-        // POST /orgs rebinds the session to the org it just made, so the
-        // reload lands inside it, exactly as switching does.
-        window.location.reload();
-      }}
-      onCloseCreateOrg={() => setShowCreateOrg(false)}
+      createOrgName={createOrgName}
+      onCreateOrgNameChange={setCreateOrgName}
+      onCreateOrg={createOrganizationFromDialog}
+      onCloseCreateOrg={closeCreateOrganization}
       showCreateWorkspace={showCreateWorkspace}
       listMachineTypes={listMachineTypes}
       refreshWorkspaces={refreshWorkspacesNow}
@@ -1759,20 +1823,45 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     />
     </>
   );
-  if (signedOut) {
-    return <LoginForm loginUrl={api.googleLoginUrl()} />;
+  if (signedOut || signOutPending) {
+    return (
+      <>
+        <LoginForm loginUrl={api.googleLoginUrl()} />
+        {actionErrorNotice}
+      </>
+    );
+  }
+
+  if (organizationTransitionStage !== null) {
+    return (
+      <main
+        ref={shellRef}
+        className="webapp-shell webapp-shell--booting"
+        aria-busy="true"
+      >
+        <WebAppLoadingShell
+          stage={organizationTransitionStage}
+          mobile={mobileWebApp}
+          drawerOpen={drawerOpen}
+          onOpenDrawer={() => setDrawerOpen(true)}
+          onCloseDrawer={() => setDrawerOpen(false)}
+        />
+        {actionErrorNotice}
+        {updateNotice}
+      </main>
+    );
   }
 
   if (identityOnly !== null) {
     return (
-      <CreateOrgPage
-        onCreate={async (name) => {
-          await api.createOrg(name);
-          setIdentityOnly(null);
-          setLoaded(false);
-          setBootstrapVersion((version) => version + 1);
-        }}
-      />
+      <>
+        <CreateOrgPage
+          name={createOrgName}
+          onNameChange={setCreateOrgName}
+          onCreate={createOrganizationFromIdentity}
+        />
+        {actionErrorNotice}
+      </>
     );
   }
 
@@ -1796,11 +1885,9 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
         onReviewProposal={grantProposals.reopen}
         onLeaveSettings={returnToWebApp}
         onSignOut={signOut}
-        onLeftOrg={() => window.location.reload()}
-        onSwitchOrg={(orgId) => {
-          void client.switchOrg(orgId).then(() => window.location.reload());
-        }}
-        onCreateOrg={() => setShowCreateOrg(true)}
+        onLeftOrg={leaveOrganization}
+        onSwitchOrg={switchOrganization}
+        onCreateOrg={openCreateOrganization}
         activeWorkspaceTitle={activeWorkspace?.title}
       />
     );
@@ -1820,7 +1907,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
           onOpenDrawer={() => setDrawerOpen(true)}
           onCloseDrawer={() => setDrawerOpen(false)}
         />
-        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+        {actionErrorNotice}
         {updateNotice}
       </main>
     );
@@ -2160,7 +2247,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
         />
       )}
 
-      {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+      {actionErrorNotice}
       {updateNotice}
       {sharingSessionId !== null && activeWorkspace !== undefined && activeWorkspace !== null && store.viewer !== null && (
         <SessionShareDialog

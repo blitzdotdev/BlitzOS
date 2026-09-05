@@ -515,6 +515,39 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("restores identity-only organization creation with its draft after rejection", async () => {
+    const creation = deferred<Awaited<ReturnType<ControlPlaneClient["createOrg"]>>>();
+    const wire = {
+      ...runningClient(),
+      me: vi.fn(async () => ({ ...tenantMe, membership: null, org: null })),
+      createOrg: vi.fn(() => creation.promise),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+
+    const input = view.container.querySelector<HTMLInputElement>('input[name="name"]')!;
+    await typeInto(input, "Personal lab");
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect.soft(view.container.querySelector('[aria-label="Loading webApp"]')).not.toBeNull();
+    expect.soft(view.container.querySelector('input[name="name"]')).toBeNull();
+
+    await act(async () => creation.reject(new Error("create refused")));
+    await settle();
+
+    expect(view.container.querySelector<HTMLInputElement>('input[name="name"]')?.value)
+      .toBe("Personal lab");
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not create “Personal lab”: create refused");
+    await view.unmount();
+  });
+
   it("reopens the create dialog on the GitHub workspace return route", async () => {
     window.history.replaceState({}, "", "/workspaces/new?connect=ok&provider=github");
     window.sessionStorage.setItem(
@@ -552,6 +585,59 @@ describe("webapp shell smoke", () => {
 
     expect(view.container.querySelector('button[aria-label="Organization: Example"]')).toBeNull();
     expect(view.container.querySelector('[role="menu"][aria-label="Organizations"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it("signs out immediately, then restores the signed-in shell after a 500", async () => {
+    const logout = deferred<void>();
+    window.history.replaceState({}, "", "/settings");
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), logout: vi.fn(() => logout.promise) }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const signOut = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Sign out");
+    await click(signOut);
+
+    expect.soft(view.container.querySelector('a[href="/auth/google/start"]')).not.toBeNull();
+    expect.soft(view.container.querySelector('section[aria-label="Profile"]')).toBeNull();
+
+    await act(async () => logout.reject(new ApiRequestError("logout refused", 500, null)));
+    await settle();
+
+    expect(view.container.querySelector('section[aria-label="Profile"]')).not.toBeNull();
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not sign out: logout refused");
+    await view.unmount();
+  });
+
+  it("keeps the optimistic signed-out shell when logout reports 401", async () => {
+    const logout = deferred<void>();
+    window.history.replaceState({}, "", "/settings");
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), logout: vi.fn(() => logout.promise) }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const signOut = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Sign out");
+    await click(signOut);
+    expect.soft(view.container.querySelector('a[href="/auth/google/start"]')).not.toBeNull();
+
+    await act(async () => logout.reject(new ApiRequestError("already signed out", 401, null)));
+    await settle();
+
+    expect(view.container.querySelector('a[href="/auth/google/start"]')).not.toBeNull();
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
     await view.unmount();
   });
 
@@ -593,6 +679,36 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("restores the previous organization when a switch is rejected", async () => {
+    const switching = deferred<void>();
+    window.history.replaceState({}, "", "/settings");
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), switchOrg: vi.fn(() => switching.promise) }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const sideRow = [...view.container.querySelectorAll<HTMLElement>(
+      'section[aria-label="Organizations"] article',
+    )].find((row) => row.querySelector("h3")?.textContent === "Side");
+    await click(sideRow?.querySelector<HTMLButtonElement>("button"));
+
+    expect.soft(view.container.querySelector('[aria-label="Loading webApp"]')).not.toBeNull();
+    expect.soft(view.container.querySelector('section[aria-label="Profile"]')).toBeNull();
+
+    await act(async () => switching.reject(new Error("switch refused")));
+    await settle();
+
+    const organizations = view.container.querySelector('section[aria-label="Organizations"]');
+    expect(organizations?.querySelector("article")?.textContent).toContain("Example");
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not switch to “Side”: switch refused");
+    await view.unmount();
+  });
+
   it("creates a second organization from the profile panel", async () => {
     const createOrg = vi.fn(async () => ({
       org: { id: "org-two", slug: "side", name: "Side", vmLimit: 10 },
@@ -629,6 +745,41 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("restores the create-organization dialog with its draft after rejection", async () => {
+    const creation = deferred<Awaited<ReturnType<ControlPlaneClient["createOrg"]>>>();
+    window.history.replaceState({}, "", "/settings");
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), createOrg: vi.fn(() => creation.promise) }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await click(createOrgButton(view.container));
+    const dialog = document.querySelector<HTMLElement>('[aria-label="Create organization"]')!;
+    await typeInto(dialog.querySelector<HTMLInputElement>('input[name="name"]')!, "Side project");
+    await act(async () => {
+      dialog.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect.soft(view.container.querySelector('[aria-label="Loading webApp"]')).not.toBeNull();
+    expect.soft(document.querySelector('[aria-label="Create organization"]')).toBeNull();
+
+    await act(async () => creation.reject(new Error("create refused")));
+    await settle();
+
+    const restored = document.querySelector<HTMLElement>('[aria-label="Create organization"]');
+    expect(restored?.querySelector<HTMLInputElement>('input[name="name"]')?.value)
+      .toBe("Side project");
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not create “Side project”: create refused");
+    await view.unmount();
+  });
+
   it("leaves the organization from settings, once another member exists", async () => {
     const leaveOrg = vi.fn(async () => undefined);
     const reload = stubReload();
@@ -662,6 +813,46 @@ describe("webapp shell smoke", () => {
 
     expect(leaveOrg).toHaveBeenCalledTimes(1);
     expect(reload).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
+  it("restores the previous organization when leaving is rejected", async () => {
+    const leaving = deferred<void>();
+    window.history.replaceState({}, "", "/settings/members");
+    const view = await render(
+      <CloudApp
+        client={{
+          ...runningClient(),
+          leaveOrg: vi.fn(() => leaving.promise),
+          listMembers: vi.fn(async () => ({
+            members: [
+              { id: "membership-one", email: "person@example.com", name: "Person", avatarUrl: null, role: "admin" as const, status: "active" as const },
+              { id: "membership-two", email: "other@example.com", name: "Other", avatarUrl: null, role: "admin" as const, status: "active" as const },
+            ],
+          })),
+        }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await click(leaveButton(view.container));
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>(
+      ".webapp-confirmation-actions button",
+    )].find((button) => button.textContent === "Yes, leave");
+    await click(confirm);
+
+    expect.soft(view.container.querySelector('[aria-label="Loading webApp"]')).not.toBeNull();
+    expect.soft(view.container.querySelector('section[aria-label="Members"]')).toBeNull();
+
+    await act(async () => leaving.reject(new Error("leave refused")));
+    await settle();
+
+    expect(view.container.querySelector('section[aria-label="Members"]')?.textContent)
+      .toContain("Leave Example");
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not leave “Example”: leave refused");
     await view.unmount();
   });
 

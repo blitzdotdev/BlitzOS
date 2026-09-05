@@ -26,6 +26,8 @@ export type ShellDialogsProps = {
   viewer: TenantMe | null;
   workspaces: CloudWorkspaceModel[];
   showCreateOrg: boolean;
+  createOrgName: string;
+  onCreateOrgNameChange: (name: string) => void;
   onCreateOrg: (name: string) => Promise<void>;
   onCloseCreateOrg: () => void;
   showCreateWorkspace: boolean;
@@ -67,6 +69,8 @@ export function ShellDialogs({
   viewer,
   workspaces,
   showCreateOrg,
+  createOrgName,
+  onCreateOrgNameChange,
   onCreateOrg,
   onCloseCreateOrg,
   showCreateWorkspace,
@@ -102,7 +106,12 @@ export function ShellDialogs({
   return (
     <>
       {showCreateOrg && (
-        <CreateOrgDialog onCreate={onCreateOrg} onCancel={onCloseCreateOrg} />
+        <CreateOrgDialog
+          name={createOrgName}
+          onNameChange={onCreateOrgNameChange}
+          onCreate={onCreateOrg}
+          onCancel={onCloseCreateOrg}
+        />
       )}
       {showCreateWorkspace && (
         <CreateWorkspaceDialog
