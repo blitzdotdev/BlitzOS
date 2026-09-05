@@ -148,7 +148,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(117);
+    expect(first.files).toHaveLength(100);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
@@ -230,10 +230,18 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(teenybase?.source).toContain('name: "users"');
   });
 
-  it("wires the managed worker file bucket and scheduled folder sweep", () => {
-    expect(WORKER_SOURCE).toContain("fileObjects: env.TEENY_PRIMARY_R2 as R2Bucket");
+  it("wires the managed worker R2 bucket and scheduled janitors", () => {
+    expect(WORKER_SOURCE).toContain(
+      "TEENY_PRIMARY_R2: ConstructorParameters<typeof $Database>[3]",
+    );
+    expect(WORKER_SOURCE).toContain(
+      "return new $Database(c, config, c.env.TEENY_PRIMARY_DB, c.env.TEENY_PRIMARY_R2)",
+    );
+    expect(WORKER_SOURCE).toContain(
+      'blobs: managedBlobStore(context.get("$db") as $Database, "box-image")',
+    );
     expect(WORKER_SOURCE).toContain("async scheduled(");
-    expect(WORKER_SOURCE).toContain("await runFileSyncSweep(runtime)");
+    expect(WORKER_SOURCE).toContain("await runSessionSweep(runtime)");
   });
 
   it("reads the cloud workspace credential policy in the managed runtime", () => {
