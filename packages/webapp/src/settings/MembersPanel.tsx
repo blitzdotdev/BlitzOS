@@ -137,14 +137,14 @@ export function MembersPanel({
     const index = invites.findIndex(({ id }) => id === invite.id);
     setInvites((current) => current.filter(({ id }) => id !== invite.id));
     setError(null);
-    void client.revokeInvite(invite.id).catch((caught: unknown) => {
+    void client.revokeInvite(invite.id).catch((cause: unknown) => {
       setInvites((current) => {
         if (current.some(({ id }) => id === invite.id)) return current;
         const restored = [...current];
         restored.splice(Math.max(index, 0), 0, invite);
         return restored;
       });
-      setError(caughtErrorMessage(caught, 'Could not revoke invite.'));
+      setError(caughtErrorMessage(cause, 'Could not revoke invite.'));
     });
   };
 
@@ -163,9 +163,9 @@ export function MembersPanel({
       .then(({ member: canonical }) => {
         setMembers((current) => current.map((row) => (row.id === member.id ? canonical : row)));
       })
-      .catch((caught: unknown) => {
+      .catch((cause: unknown) => {
         setMembers((current) => current.map((row) => (row.id === member.id ? member : row)));
-        setError(caughtErrorMessage(caught, 'Could not update member.'));
+        setError(caughtErrorMessage(cause, 'Could not update member.'));
       })
       .finally(() => {
         setPendingMemberIds((current) => {
