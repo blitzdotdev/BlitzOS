@@ -10,7 +10,7 @@ import {
   defaultWorkspaceWebAppState,
   type WorkspaceWebAppStateV1,
 } from "../src/storage.js";
-import { render, settle } from "./dom.js";
+import { deferred, render, settle } from "./dom.js";
 import { workspaceViewFixture } from "./workspace-fixtures.js";
 
 const createClientSpy = vi.hoisted(() => vi.fn());
@@ -228,37 +228,11 @@ function client(): ControlPlaneClient {
     recreateMachine: vi.fn(async () => { throw new Error("unused"); }),
     setMachineType: vi.fn(async () => { throw new Error("unused"); }),
     destroyMachine: vi.fn(async () => { throw new Error("unused"); }),
-    listFolders: vi.fn(async () => ({ folders: [] })),
-    createFolder: vi.fn(async () => { throw new Error("unused"); }),
-    deleteFolder: vi.fn(async () => undefined),
-    createFolderGrant: vi.fn(async () => { throw new Error("unused"); }),
-    revokeFolderGrant: vi.fn(async () => undefined),
-    listFolderObjects: vi.fn(async () => ({ objects: [], cursor: null, truncated: false })),
-    downloadFolderObject: vi.fn(async () => new Blob()),
-    uploadFolderObject: vi.fn(async () => undefined),
-    listWorkspaceFolders: vi.fn(async () => ({ folders: [] })),
-    attachFolder: vi.fn(async () => { throw new Error("unused"); }),
-    detachFolder: vi.fn(async () => undefined),
-    renameFolder: vi.fn(async () => undefined),
-  setFolderOrgRole: vi.fn(async () => undefined),
   listAgentRules: vi.fn(async () => ({ rules: [] })),
   putAgentRule: vi.fn(async () => { throw new Error("unused"); }),
   deleteAgentRule: vi.fn(async () => undefined),
-  listWorkspaceTemplates: vi.fn(async () => ({ templates: [] })),
-  createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-    updateWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-  deleteWorkspaceTemplate: vi.fn(async () => undefined),
-  listRecipes: vi.fn(async () => ({ recipes: [] })),
-  getRecipe: vi.fn(async () => { throw new Error("unused"); }),
-  createRecipe: vi.fn(async () => { throw new Error("unused"); }),
-  updateRecipe: vi.fn(async () => { throw new Error("unused"); }),
-  deleteRecipe: vi.fn(async () => undefined),
-  launchRecipe: vi.fn(async () => { throw new Error("unused"); }),
-  getUsageCapture: vi.fn(async () => ({ enabled: false, folderId: null })),
     orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     billing: vi.fn(async () => { throw new Error('unused'); }),
-  putUsageCapture: vi.fn(async (enabled: boolean) => ({ enabled, folderId: null })),
-    deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new ApiRequestError("unauthorized", 401, null); }),
     createOrg: vi.fn(async () => ({
@@ -515,6 +489,39 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("restores identity-only organization creation with its draft after rejection", async () => {
+    const creation = deferred<Awaited<ReturnType<ControlPlaneClient["createOrg"]>>>();
+    const wire = {
+      ...runningClient(),
+      me: vi.fn(async () => ({ ...tenantMe, membership: null, org: null })),
+      createOrg: vi.fn(() => creation.promise),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+
+    const input = view.container.querySelector<HTMLInputElement>('input[name="name"]')!;
+    await typeInto(input, "Personal lab");
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect.soft(view.container.querySelector('[aria-label="Loading webApp"]')).not.toBeNull();
+    expect.soft(view.container.querySelector('input[name="name"]')).toBeNull();
+
+    await act(async () => creation.reject(new Error("create refused")));
+    await settle();
+
+    expect(view.container.querySelector<HTMLInputElement>('input[name="name"]')?.value)
+      .toBe("Personal lab");
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not create “Personal lab”: create refused");
+    await view.unmount();
+  });
+
   it("reopens the create dialog on the GitHub workspace return route", async () => {
     window.history.replaceState({}, "", "/workspaces/new?connect=ok&provider=github");
     window.sessionStorage.setItem(
@@ -552,6 +559,59 @@ describe("webapp shell smoke", () => {
 
     expect(view.container.querySelector('button[aria-label="Organization: Example"]')).toBeNull();
     expect(view.container.querySelector('[role="menu"][aria-label="Organizations"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it("signs out immediately, then restores the signed-in shell after a 500", async () => {
+    const logout = deferred<void>();
+    window.history.replaceState({}, "", "/settings");
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), logout: vi.fn(() => logout.promise) }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const signOut = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Sign out");
+    await click(signOut);
+
+    expect.soft(view.container.querySelector('a[href="/auth/google/start"]')).not.toBeNull();
+    expect.soft(view.container.querySelector('section[aria-label="Profile"]')).toBeNull();
+
+    await act(async () => logout.reject(new ApiRequestError("logout refused", 500, null)));
+    await settle();
+
+    expect(view.container.querySelector('section[aria-label="Profile"]')).not.toBeNull();
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not sign out: logout refused");
+    await view.unmount();
+  });
+
+  it("keeps the optimistic signed-out shell when logout reports 401", async () => {
+    const logout = deferred<void>();
+    window.history.replaceState({}, "", "/settings");
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), logout: vi.fn(() => logout.promise) }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const signOut = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Sign out");
+    await click(signOut);
+    expect.soft(view.container.querySelector('a[href="/auth/google/start"]')).not.toBeNull();
+
+    await act(async () => logout.reject(new ApiRequestError("already signed out", 401, null)));
+    await settle();
+
+    expect(view.container.querySelector('a[href="/auth/google/start"]')).not.toBeNull();
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
     await view.unmount();
   });
 
@@ -593,6 +653,36 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("restores the previous organization when a switch is rejected", async () => {
+    const switching = deferred<void>();
+    window.history.replaceState({}, "", "/settings");
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), switchOrg: vi.fn(() => switching.promise) }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const sideRow = [...view.container.querySelectorAll<HTMLElement>(
+      'section[aria-label="Organizations"] article',
+    )].find((row) => row.querySelector("h3")?.textContent === "Side");
+    await click(sideRow?.querySelector<HTMLButtonElement>("button"));
+
+    expect.soft(view.container.querySelector('[aria-label="Loading webApp"]')).not.toBeNull();
+    expect.soft(view.container.querySelector('section[aria-label="Profile"]')).toBeNull();
+
+    await act(async () => switching.reject(new Error("switch refused")));
+    await settle();
+
+    const organizations = view.container.querySelector('section[aria-label="Organizations"]');
+    expect(organizations?.querySelector("article")?.textContent).toContain("Example");
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not switch to “Side”: switch refused");
+    await view.unmount();
+  });
+
   it("creates a second organization from the profile panel", async () => {
     const createOrg = vi.fn(async () => ({
       org: { id: "org-two", slug: "side", name: "Side", vmLimit: 10 },
@@ -629,6 +719,41 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("restores the create-organization dialog with its draft after rejection", async () => {
+    const creation = deferred<Awaited<ReturnType<ControlPlaneClient["createOrg"]>>>();
+    window.history.replaceState({}, "", "/settings");
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), createOrg: vi.fn(() => creation.promise) }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await click(createOrgButton(view.container));
+    const dialog = document.querySelector<HTMLElement>('[aria-label="Create organization"]')!;
+    await typeInto(dialog.querySelector<HTMLInputElement>('input[name="name"]')!, "Side project");
+    await act(async () => {
+      dialog.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect.soft(view.container.querySelector('[aria-label="Loading webApp"]')).not.toBeNull();
+    expect.soft(document.querySelector('[aria-label="Create organization"]')).toBeNull();
+
+    await act(async () => creation.reject(new Error("create refused")));
+    await settle();
+
+    const restored = document.querySelector<HTMLElement>('[aria-label="Create organization"]');
+    expect(restored?.querySelector<HTMLInputElement>('input[name="name"]')?.value)
+      .toBe("Side project");
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not create “Side project”: create refused");
+    await view.unmount();
+  });
+
   it("leaves the organization from settings, once another member exists", async () => {
     const leaveOrg = vi.fn(async () => undefined);
     const reload = stubReload();
@@ -662,6 +787,46 @@ describe("webapp shell smoke", () => {
 
     expect(leaveOrg).toHaveBeenCalledTimes(1);
     expect(reload).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
+  it("restores the previous organization when leaving is rejected", async () => {
+    const leaving = deferred<void>();
+    window.history.replaceState({}, "", "/settings/members");
+    const view = await render(
+      <CloudApp
+        client={{
+          ...runningClient(),
+          leaveOrg: vi.fn(() => leaving.promise),
+          listMembers: vi.fn(async () => ({
+            members: [
+              { id: "membership-one", email: "person@example.com", name: "Person", avatarUrl: null, role: "admin" as const, status: "active" as const },
+              { id: "membership-two", email: "other@example.com", name: "Other", avatarUrl: null, role: "admin" as const, status: "active" as const },
+            ],
+          })),
+        }}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await click(leaveButton(view.container));
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>(
+      ".webapp-confirmation-actions button",
+    )].find((button) => button.textContent === "Yes, leave");
+    await click(confirm);
+
+    expect.soft(view.container.querySelector('[aria-label="Loading webApp"]')).not.toBeNull();
+    expect.soft(view.container.querySelector('section[aria-label="Members"]')).toBeNull();
+
+    await act(async () => leaving.reject(new Error("leave refused")));
+    await settle();
+
+    expect(view.container.querySelector('section[aria-label="Members"]')?.textContent)
+      .toContain("Leave Example");
+    expect(view.container.querySelector(".webapp-notice[role=alert]")?.textContent)
+      .toContain("Could not leave “Example”: leave refused");
     await view.unmount();
   });
 
@@ -791,7 +956,7 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("routes non-microVM workspace files through the control plane", async () => {
+  it("routes workspace files through the control plane", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     const view = await render(
       <CloudApp
@@ -1340,6 +1505,208 @@ describe("a workspace whose own machine is stopped", () => {
     // The loading pane prints its stage; "Creating workspace" is only its label.
     expect(view.container.textContent).toContain("allocating · cx23@fsn1");
     expect(view.container.textContent).toContain("allocating ·");
+    await view.unmount();
+  });
+});
+
+const workspaceCreateMachine = {
+  id: "cx23@fsn1",
+  providerId: "hetzner",
+  supportsVolumes: true,
+  name: "CX23",
+  cpuCores: 2,
+  memGb: 4,
+  diskGb: 40,
+  arch: "x86" as const,
+  location: "fsn1",
+  monthlyPrice: { amount: 6.49, currency: "USD" },
+};
+
+async function submitWorkspaceCreate(view: Rendered, name: string): Promise<void> {
+  if (view.container.querySelector('form[aria-label="Create workspace"]') === null) {
+    await click(view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Create workspace"]',
+    ));
+  }
+  await settle();
+  await settle();
+  const form = view.container.querySelector<HTMLFormElement>(
+    'form[aria-label="Create workspace"]',
+  );
+  if (form === null) throw new Error("create workspace form did not open");
+  await typeInto(form.querySelector<HTMLInputElement>('input[name="name"]')!, name);
+  await act(async () => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await settle();
+}
+
+describe("optimistic workspace creation", () => {
+  it("closes the dialog and shows an active loading rail entry before create resolves", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const creation = deferred<{ workspace: WorkspaceView }>();
+    const wire = {
+      ...runningClient(),
+      create: vi.fn(() => creation.promise),
+      listMachineTypes: vi.fn(async () => ({
+        machineTypes: [workspaceCreateMachine],
+        failures: [],
+      })),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+
+    await submitWorkspaceCreate(view, "Draft workspace");
+
+    expect(wire.create).toHaveBeenCalledWith({
+      defaultMachineTypeId: "cx23@fsn1",
+      name: "Draft workspace",
+    });
+    expect(view.container.querySelector('form[aria-label="Create workspace"]') === null).toBe(true);
+    const tile = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Draft workspace"]',
+    );
+    expect(tile?.getAttribute("aria-current")).toBe("page");
+    expect(view.container.querySelector('[role="status"][aria-label="Creating workspace"]'))
+      .not.toBeNull();
+    expect(window.location.pathname).toMatch(
+      /^\/workspaces\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
+    await view.unmount();
+  });
+
+  it("replaces the placeholder and route without persisting or retaining its id", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const creation = deferred<{ workspace: WorkspaceView }>();
+    const putGlobalWebAppState = vi.fn(async (doc) => ({ doc, updatedAt: 1 }));
+    const getWorkspaceWebAppState = vi.fn(async (workspaceId: string) => (
+      decodeWorkspaceWebAppStateResponse(JSON.stringify({
+        doc: serverWorkspaceStates.get(workspaceId) ?? null,
+        updatedAt: null,
+      }))
+    ));
+    const baseResolver = standaloneResolver({ files: 7445 });
+    const resolve = vi.fn(baseResolver.resolve);
+    const wire = {
+      ...runningClient(),
+      create: vi.fn(() => creation.promise),
+      listMachineTypes: vi.fn(async () => ({
+        machineTypes: [workspaceCreateMachine],
+        failures: [],
+      })),
+      putGlobalWebAppState,
+      getWorkspaceWebAppState,
+    };
+    const view = await render(<CloudApp client={wire} resolver={{ ...baseResolver, resolve }} />);
+    await settle();
+    await settle();
+
+    await submitWorkspaceCreate(view, "Draft workspace");
+    const temporaryId = decodeURIComponent(window.location.pathname.split("/").at(-1)!);
+    const historyLength = window.history.length;
+    await act(async () => new Promise((resolveWait) => setTimeout(resolveWait, 200)));
+    const canonical = workspaceViewFixture({
+      id: "workspace-canonical",
+      name: "Canonical workspace",
+      phase: "creating",
+      retryAction: "poll",
+      ownerMembershipId: "membership-one",
+      members: [],
+    });
+    await act(async () => creation.resolve({ workspace: canonical }));
+    await settle();
+    await act(async () => new Promise((resolveWait) => setTimeout(resolveWait, 200)));
+
+    expect(view.container.querySelector('button[aria-label="Draft workspace"]')).toBeNull();
+    const canonicalTile = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Canonical workspace"]',
+    );
+    expect(canonicalTile?.getAttribute("aria-current")).toBe("page");
+    expect(window.location.pathname).toBe("/workspaces/workspace-canonical");
+    expect(window.history.length).toBe(historyLength);
+    expect(getWorkspaceWebAppState).toHaveBeenCalledWith("workspace-canonical");
+    expect(putGlobalWebAppState.mock.calls.at(-1)?.[0]).toEqual({
+      version: 1,
+      activeWorkspaceId: "workspace-canonical",
+      order: ["workspace-canonical", "workspace-running"],
+    });
+    const observableState = JSON.stringify({
+      html: view.container.innerHTML,
+      globalWrites: putGlobalWebAppState.mock.calls,
+      workspaceReads: getWorkspaceWebAppState.mock.calls,
+      workspaceWrites: vi.mocked(wire.putWorkspaceWebAppState).mock.calls,
+      localStorage: [...deviceStorageValues],
+      workspaceDocuments: [...serverWorkspaceStates],
+      resolvedRecords: resolve.mock.calls,
+    });
+    expect(observableState).not.toContain(temporaryId);
+    await view.unmount();
+  });
+
+  it("removes a rejected placeholder and raises the failure outside the closed dialog", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const creation = deferred<{ workspace: WorkspaceView }>();
+    const wire = {
+      ...runningClient(),
+      create: vi.fn(() => creation.promise),
+      listMachineTypes: vi.fn(async () => ({
+        machineTypes: [workspaceCreateMachine],
+        failures: [],
+      })),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    await submitWorkspaceCreate(view, "Rejected workspace");
+
+    await act(async () => creation.reject(new Error("capacity exhausted")));
+    await settle();
+
+    expect(view.container.querySelector('button[aria-label="Rejected workspace"]')).toBeNull();
+    expect(view.container.querySelector('form[aria-label="Create workspace"]') === null).toBe(true);
+    const alert = view.container.querySelector<HTMLElement>(".webapp-notice[role=alert]");
+    expect(alert?.textContent).toContain(
+      "Could not create “Rejected workspace”: capacity exhausted",
+    );
+    await view.unmount();
+  });
+
+  it("replaces a failed first-workspace route with a route that exists", async () => {
+    const creation = deferred<{ workspace: WorkspaceView }>();
+    const wire = {
+      ...client(),
+      me: vi.fn(async () => tenantMe),
+      poll: vi.fn(async () => ({ workspaces: [] })),
+      create: vi.fn(() => creation.promise),
+      listMachineTypes: vi.fn(async () => ({
+        machineTypes: [workspaceCreateMachine],
+        failures: [],
+      })),
+    };
+    const view = await render(
+      <CloudApp client={wire} resolver={standaloneResolver({ files: 7445 })} />,
+    );
+    await settle();
+    await settle();
+    await submitWorkspaceCreate(view, "Only workspace");
+    expect(view.container.querySelector('[role="status"][aria-label="Creating workspace"]'))
+      .not.toBeNull();
+    expect(window.location.pathname).toMatch(
+      /^\/workspaces\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
+
+    await act(async () => creation.reject(new Error("create failed")));
+    await settle();
+
+    expect(window.location.pathname).toBe("/");
+    expect(view.container.querySelector('button[aria-label="Only workspace"]')).toBeNull();
+    expect(view.container.querySelector('[aria-current="page"].shell-wtile')).toBeNull();
+    expect(view.container.querySelector(".webapp-notice[role=alert]")).not.toBeNull();
     await view.unmount();
   });
 });

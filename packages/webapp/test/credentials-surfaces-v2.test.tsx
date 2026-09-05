@@ -6,11 +6,11 @@ import type {
 } from '@blitzos/schema';
 import { act, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { ControlPlaneClient } from '../src/api.js';
+import type { ControlPlaneClient, MemberView } from '../src/api.js';
 import { WorkspaceConnectionsPanel } from '../src/WorkspaceDrawer.js';
 import { buildRows } from '../src/connections/WorkspaceProviderRows.js';
 import { MembersPanel } from '../src/settings/MembersPanel.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
@@ -44,37 +44,11 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     recreateMachine: vi.fn(async () => { throw new Error('unused'); }),
     setMachineType: vi.fn(async () => { throw new Error('unused'); }),
     destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
-    listFolders: vi.fn(async () => ({ folders: [] })),
-    createFolder: vi.fn(async () => { throw new Error('unused'); }),
-    deleteFolder: vi.fn(async () => undefined),
-    createFolderGrant: vi.fn(async () => { throw new Error('unused'); }),
-    revokeFolderGrant: vi.fn(async () => undefined),
-    listFolderObjects: vi.fn(async () => ({ objects: [], cursor: null, truncated: false })),
-    downloadFolderObject: vi.fn(async () => new Blob()),
-    uploadFolderObject: vi.fn(async () => undefined),
-    listWorkspaceFolders: vi.fn(async () => ({ folders: [] })),
-    attachFolder: vi.fn(async () => { throw new Error('unused'); }),
-    detachFolder: vi.fn(async () => undefined),
-    renameFolder: vi.fn(async () => undefined),
-    setFolderOrgRole: vi.fn(async () => undefined),
     listAgentRules: vi.fn(async () => ({ rules: [] })),
     putAgentRule: vi.fn(async () => { throw new Error('unused'); }),
     deleteAgentRule: vi.fn(async () => undefined),
-    listWorkspaceTemplates: vi.fn(async () => ({ templates: [] })),
-    createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-    updateWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
-    deleteWorkspaceTemplate: vi.fn(async () => undefined),
-    listRecipes: vi.fn(async () => ({ recipes: [] })),
-    getRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    createRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    updateRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    deleteRecipe: vi.fn(async () => undefined),
-    launchRecipe: vi.fn(async () => { throw new Error('unused'); }),
-    getUsageCapture: vi.fn(async () => ({ enabled: false, folderId: null })),
     orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     billing: vi.fn(async () => { throw new Error('unused'); }),
-    putUsageCapture: vi.fn(async (enabled: boolean) => ({ enabled, folderId: null })),
-    deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new Error('unused'); }),
     createOrg: vi.fn(async () => { throw new Error('unused'); }),
@@ -218,8 +192,9 @@ function connectionsPanel(
 }
 
 describe('v2 credential surfaces', () => {
-  it('mints an email-pinned invite from the people panel and shows its link once', async () => {
-    const createInvite = vi.fn(async () => ({
+  it('mints an email-pinned invite from the members panel and shows its link once', async () => {
+    const request = deferred<Awaited<ReturnType<ControlPlaneClient['createInvite']>>>();
+    const response = {
       invite: {
         id: 'invite-one',
         email: 'person@example.com',
@@ -231,7 +206,8 @@ describe('v2 credential surfaces', () => {
       },
       code: 'one-time-code',
       ttlDays: 7,
-    }));
+    };
+    const createInvite = vi.fn(() => request.promise);
     const view = await render(<MembersPanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
     // The fields are the last row of the members card, revealed by the `+`.
@@ -251,11 +227,92 @@ describe('v2 credential surfaces', () => {
         new Event('submit', { bubbles: true, cancelable: true }),
       );
     });
+    const add = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Adding…');
+    expect(add?.disabled).toBe(true);
+    expect(input.value).toBe('person@example.com');
+    request.resolve(response);
     await settle();
 
     expect(createInvite).toHaveBeenCalledWith({ email: 'person@example.com', role: 'member' });
     expect(view.container.querySelector<HTMLInputElement>('[aria-label="Invite link"]')?.value)
       .toBe(`${window.location.origin}/invite/one-time-code`);
+    await view.unmount();
+  });
+
+  it('shows a member role immediately and rolls it back on rejection', async () => {
+    const member: MemberView = {
+      id: 'membership-one',
+      email: 'ada@example.com',
+      name: 'Ada',
+      avatarUrl: null,
+      role: 'member',
+      status: 'active',
+    };
+    const request = deferred<{ member: MemberView }>();
+    const view = await render(<MembersPanel
+      client={client({
+        listMembers: vi.fn(async () => ({ members: [member] })),
+        updateMember: vi.fn(() => request.promise),
+      })}
+      admin
+      orgName="Example"
+      onLeft={() => undefined}
+    />);
+    await settle();
+
+    const role = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Role for ada@example.com"]',
+    );
+    if (role === null) throw new Error('member role select is missing');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')
+        ?.set?.call(role, 'admin');
+      role.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(role.value).toBe('admin');
+    expect(role.disabled).toBe(true);
+    expect(view.container.textContent).toContain('Updating…');
+
+    request.reject(new Error('last admin is protected'));
+    await settle();
+    expect(role.value).toBe('member');
+    expect(role.disabled).toBe(false);
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('last admin is protected');
+    await view.unmount();
+  });
+
+  it('reconciles a member status from the update response without re-listing', async () => {
+    const member: MemberView = {
+      id: 'membership-one',
+      email: 'ada@example.com',
+      name: 'Ada',
+      avatarUrl: null,
+      role: 'member',
+      status: 'active',
+    };
+    const request = deferred<{ member: MemberView }>();
+    const listMembers = vi.fn(async () => ({ members: [member] }));
+    const view = await render(<MembersPanel
+      client={client({ listMembers, updateMember: vi.fn(() => request.promise) })}
+      admin
+      orgName="Example"
+      onLeft={() => undefined}
+    />);
+    await settle();
+
+    const disable = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Disable');
+    await act(async () => disable?.click());
+    expect(view.container.textContent).toContain('disabled');
+    expect(view.container.textContent).toContain('Updating…');
+
+    request.resolve({ member: { ...member, name: 'Ada Canonical', status: 'disabled' } });
+    await settle();
+    expect(view.container.textContent).toContain('Ada Canonical');
+    expect(view.container.textContent).toContain('Enable');
+    expect(listMembers).toHaveBeenCalledOnce();
     await view.unmount();
   });
 

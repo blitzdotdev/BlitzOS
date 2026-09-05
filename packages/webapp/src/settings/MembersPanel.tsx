@@ -8,7 +8,7 @@ import {
 } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
-import { DriveAvatar } from '../files/DriveAvatar';
+import { MemberAvatar } from '../MemberAvatar';
 import { PanelHeader } from './primitives';
 
 /** A refusal that came with a way out. The seat gate is the only one, and it
@@ -75,6 +75,9 @@ export function MembersPanel({
   const [invites, setInvites] = useState<InviteView[]>([]);
   const [usage, setUsage] = useState<OrgUsageResponse | null>(null);
   const [inviting, setInviting] = useState(false);
+  const [creatingInvite, setCreatingInvite] = useState(false);
+  // Rows being written. A row that is answering cannot be asked again (#205).
+  const [pendingMemberIds, setPendingMemberIds] = useState<Set<string>>(() => new Set());
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [oneTimeLink, setOneTimeLink] = useState<string | null>(null);
@@ -128,8 +131,49 @@ export function MembersPanel({
       .catch((caught: Error) => setError(caught.message));
   };
 
-  const update = (id: string, input: { role?: 'admin' | 'member'; status?: 'active' | 'disabled' }) => {
-    void client.updateMember(id, input).then(load).catch((caught: Error) => setError(caught.message));
+  /** A revoked invite leaves the list at once and returns to its own place if
+   * the server refuses — a redeemed invite is the refusal that happens (#205). */
+  const revokeInvite = (invite: InviteView) => {
+    const index = invites.findIndex(({ id }) => id === invite.id);
+    setInvites((current) => current.filter(({ id }) => id !== invite.id));
+    setError(null);
+    void client.revokeInvite(invite.id).catch((caught: unknown) => {
+      setInvites((current) => {
+        if (current.some(({ id }) => id === invite.id)) return current;
+        const restored = [...current];
+        restored.splice(Math.max(index, 0), 0, invite);
+        return restored;
+      });
+      setError(caughtErrorMessage(caught, 'Could not revoke invite.'));
+    });
+  };
+
+  /** A row answers at once and rolls back if the server refuses (#205). The
+   * optimistic value is what the person just chose; the server's own answer
+   * replaces it, so a rename or a role the server normalised still wins. */
+  const mutateMember = (
+    member: MemberView,
+    input: { role?: 'admin' | 'member'; status?: 'disabled' | 'active' },
+  ) => {
+    const optimistic = { ...member, ...input };
+    setMembers((current) => current.map((row) => (row.id === member.id ? optimistic : row)));
+    setPendingMemberIds((current) => new Set(current).add(member.id));
+    setError(null);
+    void client.updateMember(member.id, input)
+      .then(({ member: canonical }) => {
+        setMembers((current) => current.map((row) => (row.id === member.id ? canonical : row)));
+      })
+      .catch((caught: unknown) => {
+        setMembers((current) => current.map((row) => (row.id === member.id ? member : row)));
+        setError(caughtErrorMessage(caught, 'Could not update member.'));
+      })
+      .finally(() => {
+        setPendingMemberIds((current) => {
+          const next = new Set(current);
+          next.delete(member.id);
+          return next;
+        });
+      });
   };
 
   return (
@@ -165,26 +209,42 @@ export function MembersPanel({
           </div>
         </div>
         <div className="settings-people">
-          {members.map((member) => (
-            <div className={`settings-person${member.status === 'disabled' ? ' settings-person--disabled' : ''}`} key={member.id}>
-              <DriveAvatar name={member.name || member.email} avatarUrl={member.avatarUrl} size="lg" />
-              <span className="settings-person-copy">
-                <strong>{member.name || member.email}</strong>
-                <span>{member.email}{member.status === 'disabled' ? ' · disabled' : ''}</span>
-              </span>
-              {admin ? (
-                <span className="settings-person-actions">
-                  <select aria-label={`Role for ${member.email}`} value={member.role} onChange={(event) => {
-                    update(member.id, { role: event.currentTarget.value === 'admin' ? 'admin' : 'member' });
-                  }}><option value="member">member</option><option value="admin">admin</option></select>
-                  {member.status === 'active' && <button className="webapp-action" type="button" onClick={() => update(member.id, { status: 'disabled' })}>Disable</button>}
-                  {member.status === 'disabled' && <button className="webapp-action" type="button" onClick={() => update(member.id, { status: 'active' })}>Enable</button>}
+          {members.map((member) => {
+            const pending = pendingMemberIds.has(member.id);
+            return (
+              <div className={`settings-person${member.status === 'disabled' ? ' settings-person--disabled' : ''}`} key={member.id}>
+                <MemberAvatar name={member.name || member.email} avatarUrl={member.avatarUrl} size="lg" />
+                <span className="settings-person-copy">
+                  <strong>{member.name || member.email}</strong>
+                  <span>{member.email}{member.status === 'disabled' ? ' · disabled' : ''}</span>
                 </span>
-              ) : (
-                <span className="settings-person-role">{member.role}</span>
-              )}
-            </div>
-          ))}
+                {admin ? (
+                  <span className="settings-person-actions">
+                    <select
+                      aria-label={`Role for ${member.email}`}
+                      value={member.role}
+                      disabled={pending}
+                      onChange={(event) => {
+                        mutateMember(member, {
+                          role: event.currentTarget.value === 'admin' ? 'admin' : 'member',
+                        });
+                      }}
+                    ><option value="member">member</option><option value="admin">admin</option></select>
+                    <button
+                      className="webapp-action"
+                      type="button"
+                      disabled={pending}
+                      onClick={() => mutateMember(member, {
+                        status: member.status === 'active' ? 'disabled' : 'active',
+                      })}
+                    >{pending ? 'Updating…' : member.status === 'active' ? 'Disable' : 'Enable'}</button>
+                  </span>
+                ) : (
+                  <span className="settings-person-role">{member.role}</span>
+                )}
+              </div>
+            );
+          })}
           {admin && (inviting ? (
             /* NO CANCEL, for `AccessListEditor`'s reason: nothing is recorded
                until Send invite is pressed, so leaving the row open costs
@@ -192,14 +252,20 @@ export function MembersPanel({
                that looks like it undoes something. */
             <form className="settings-person-add" onSubmit={(event) => {
               event.preventDefault();
+              setCreatingInvite(true);
               setRefusal(null);
               // An empty address is a link anybody may redeem, which is the
               // open-invite the Invites page used to mint.
               void client.createInvite({ email: email.trim() || undefined, role }).then((created) => {
                 setOneTimeLink(`${window.location.origin}/invite/${created.code}`);
+                // The row the server just handed back, not another list call
+                // (#205): the mint's own answer is the newest truth there is.
+                setInvites((current) => [
+                  created.invite,
+                  ...current.filter(({ id }) => id !== created.invite.id),
+                ]);
                 setEmail('');
                 setInviting(false);
-                return load();
               }).catch((caught: Error) => {
                 if (caught instanceof ApiRequestError && caught.paymentUrl !== null) {
                   setRefusal({
@@ -212,17 +278,17 @@ export function MembersPanel({
                   return;
                 }
                 setError(caught.message);
-              });
+              }).finally(() => setCreatingInvite(false));
             }}>
               <label className="cfg-field">
                 <span>Email</span>
-                <input type="email" placeholder="person@example.com" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
+                <input type="email" disabled={creatingInvite} placeholder="person@example.com" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
               </label>
               <label className="cfg-field cfg-field--compact">
                 <span>Role</span>
-                <select value={role} onChange={(event) => setRole(event.currentTarget.value === 'admin' ? 'admin' : 'member')}><option value="member">Member</option><option value="admin">Admin</option></select>
+                <select value={role} disabled={creatingInvite} onChange={(event) => setRole(event.currentTarget.value === 'admin' ? 'admin' : 'member')}><option value="member">Member</option><option value="admin">Admin</option></select>
               </label>
-              <button className="webapp-action webapp-action--primary" type="submit">Send invite</button>
+              <button className="webapp-action webapp-action--primary" type="submit" disabled={creatingInvite}>{creatingInvite ? 'Adding…' : 'Send invite'}</button>
             </form>
           ) : (
             <button
@@ -280,7 +346,7 @@ export function MembersPanel({
                     * plane hands one out on mint and never again — so a copy
                     * button here would have nothing to copy. The block above
                     * is the one chance, and it says so. */}
-                  <button className="webapp-action" type="button" onClick={() => void client.revokeInvite(invite.id).then(load).catch((caught: Error) => setError(caught.message))}>Revoke</button>
+                  <button className="webapp-action" type="button" onClick={() => revokeInvite(invite)}>Revoke</button>
                 </span>
               </div>
             ))}

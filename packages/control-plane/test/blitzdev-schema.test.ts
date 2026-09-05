@@ -27,10 +27,6 @@ const expectedTables = [
   "org_credential_grants",
   "invites",
   "volume_ownership",
-  "folders",
-  "folder_grants",
-  "folder_attachments",
-  "recipes",
   "webapp_state",
   "device_authorizations",
   "boxes",
@@ -45,7 +41,6 @@ const expectedTables = [
   "credential_leases",
   "credential_events",
   "credential_requests",
-  "microvm_hosts",
   "operator_tokens",
   "blitz_files",
 ] as const;
@@ -68,9 +63,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
   });
 
-  it("contains the thirty-five domain tables plus the deny-all file support table", () => {
+  it("contains the thirty domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(36);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(31);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -120,18 +115,8 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
           foreignKey: { table: "memberships", column: "id" },
         }),
         expect.objectContaining({
-          name: "files_ready",
-          type: "bool",
-          default: { l: 0 },
-          check: "files_ready IN (0, 1)",
-        }),
-        expect.objectContaining({
           name: "agent_rule_id",
           foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" },
-        }),
-        expect.objectContaining({
-          name: "recipe_id",
-          foreignKey: { table: "recipes", column: "id" },
         }),
       ]),
     });
@@ -230,56 +215,6 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       ]),
       indexes: [{ name: "identity", unique: true, fields: ["org_id", "provider"] }],
     });
-    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "orgs")).toMatchObject({
-      fields: expect.arrayContaining([
-        expect.objectContaining({
-          name: "usage_capture",
-          type: "bool",
-          default: { l: 0 },
-          check: "usage_capture IN (0, 1)",
-        }),
-        // No folders foreignKey on purpose: a dangling usage_folder_id is
-        // tolerated (the usage-push leg inner-joins folders).
-        expect.objectContaining({ name: "usage_folder_id", type: "text", sqlType: "text" }),
-      ]),
-    });
-    expect(
-      BLITZDEV_CONFIG.tables
-        .find(({ name }) => name === "orgs")
-        ?.fields.find(({ name }) => name === "usage_folder_id"),
-    ).not.toHaveProperty("foreignKey");
-    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "recipes")).toMatchObject({
-      fields: [
-        expect.objectContaining({ name: "id", primary: true }),
-        expect.objectContaining({
-          name: "org_id",
-          notNull: true,
-          foreignKey: { table: "orgs", column: "id" },
-        }),
-        expect.objectContaining({ name: "name", notNull: true }),
-        expect.objectContaining({
-          name: "source_workspace_id",
-          foreignKey: { table: "workspaces", column: "id" },
-        }),
-        expect.objectContaining({
-          name: "harness",
-          check: "harness IN ('claude', 'codex', 'chat')",
-        }),
-        expect.objectContaining({ name: "model", type: "text" }),
-        expect.objectContaining({ name: "effort", type: "text" }),
-        expect.objectContaining({ name: "prompt", notNull: true }),
-        expect.objectContaining({
-          name: "created_by_membership_id",
-          foreignKey: { table: "memberships", column: "id" },
-        }),
-        expect.objectContaining({ name: "created_at", type: "integer", notNull: true }),
-        expect.objectContaining({ name: "updated_at", type: "integer", notNull: true }),
-      ],
-      indexes: [
-        { name: "org", fields: ["org_id", "created_at"] },
-        { name: "source_workspace", fields: "source_workspace_id" },
-      ],
-    });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "agent_rules")).toMatchObject({
       fields: [
         expect.objectContaining({ name: "id", primary: true }),
@@ -323,45 +258,6 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
         }),
       ]),
     });
-    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "folders")).toMatchObject({
-      fields: [
-        expect.objectContaining({ name: "id" }),
-        expect.objectContaining({ name: "org_id" }),
-        expect.objectContaining({ name: "name" }),
-        expect.objectContaining({ name: "created_by_membership_id" }),
-        expect.objectContaining({ name: "created_at" }),
-        expect.objectContaining({ name: "updated_at" }),
-        expect.objectContaining({ name: "org_role", check: "org_role IN ('editor', 'viewer')" }),
-      ],
-      indexes: [{ name: "org", fields: ["org_id", "created_at"] }],
-    });
-    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "folder_grants")).toMatchObject({
-      fields: [
-        expect.objectContaining({ name: "id" }),
-        expect.objectContaining({ name: "folder_id" }),
-        expect.objectContaining({ name: "membership_id" }),
-        expect.objectContaining({ name: "role", check: "role IN ('editor', 'viewer')" }),
-        expect.objectContaining({ name: "granted_by_membership_id" }),
-        expect.objectContaining({ name: "created_at" }),
-      ],
-      indexes: [
-        { name: "identity", unique: true, fields: ["folder_id", "membership_id"] },
-        { name: "membership", fields: ["membership_id", "folder_id"] },
-      ],
-    });
-    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "folder_attachments")).toMatchObject({
-      fields: [
-        expect.objectContaining({ name: "workspace_id" }),
-        expect.objectContaining({ name: "folder_id" }),
-        expect.objectContaining({ name: "attached_by_membership_id" }),
-        expect.objectContaining({ name: "created_at" }),
-        expect.objectContaining({ name: "guest_path" }),
-      ],
-      indexes: [
-        { name: "identity", unique: true, fields: ["workspace_id", "folder_id"] },
-        { name: "folder", fields: ["folder_id", "workspace_id"] },
-      ],
-    });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "webapp_state")).toMatchObject({
       fields: [
         expect.objectContaining({ name: "principal_id" }),
@@ -374,17 +270,6 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
         unique: true,
         fields: ["principal_id", "workspace_id"],
       }],
-    });
-    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "microvm_hosts")).toMatchObject({
-      fields: [
-        expect.objectContaining({ name: "name", primary: true }),
-        expect.objectContaining({ name: "url", sqlType: "text" }),
-        expect.objectContaining({ name: "updated_at", sqlType: "integer" }),
-        expect.objectContaining({
-          name: "source",
-          check: "source IN ('static', 'registered')",
-        }),
-      ],
     });
     expect(
       BLITZDEV_CONFIG.tables.find(({ name }) => name === "credential_leases"),
@@ -422,13 +307,6 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       "idx_workspace_members_membership",
       "idx_org_credentials_org",
       "idx_org_credential_grants_credential",
-      "idx_folders_org",
-      "idx_folder_grants_identity",
-      "idx_folder_grants_membership",
-      "idx_folder_attachments_identity",
-      "idx_folder_attachments_folder",
-      "idx_recipes_org",
-      "idx_recipes_source_workspace",
       "idx_webapp_state_identity",
       "idx_boxes_broker",
       "idx_boxes_principal",

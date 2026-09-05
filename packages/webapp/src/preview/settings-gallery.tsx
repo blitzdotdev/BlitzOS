@@ -9,8 +9,8 @@ import '../webapp-shell.css';
 import '../webapp-workspace.css';
 import '../webapp-select.css';
 import '../chat-panel.css';
-import '../files-drive.css';
-import '../drive-shell.css';
+import '../app-shell.css';
+import '../member-avatar.css';
 import '../strip-rail.css';
 import '../files.css';
 import '../confirmation-dialog.css';
@@ -21,12 +21,11 @@ import '../settings.css';
 import '../org-credentials.css';
 import '../invite-redeem.css';
 import './preview.css';
-import type { CredentialRequestView, FolderView, GrantProposalView } from '@blitzos/schema';
+import type { CredentialRequestView, GrantProposalView } from '@blitzos/schema';
 import { AgentRulesPicker } from '../AgentRulesPicker';
 import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { CreateWorkspaceDialog } from '../CreateWorkspaceDialog';
-import { ShareFolderDialog } from '../files/ShareFolderDialog';
 import { AccessApprovalDialog } from '../AccessApprovalDialog';
 import { MyMachineDialog } from '../MyMachineDialog';
 import type { SettingsSection } from '../sessions-page-state';
@@ -39,7 +38,6 @@ import {
   accessProposals,
   listMachineTypesFixture,
   memberViewer,
-  previewFolder,
   previewWorkspace,
   wantedRequestsSeed,
 } from './fixtures';
@@ -164,7 +162,7 @@ function WorkspaceDetailsSection() {
           client={previewClient}
           workspace={previewWorkspace}
           listMachineTypes={listMachineTypesFixture}
-          refreshWorkspaces={() => undefined}
+          commitWorkspaceMutation={() => undefined}
           initialTab={tab}
           viewerMembershipId="m-june"
           orgName="Acme Robotics"
@@ -194,6 +192,7 @@ function MyMachineSection() {
           workspace={previewWorkspace}
           membershipId="m-june"
           listMachineTypes={listMachineTypesFixture}
+          commitWorkspaceMutation={() => undefined}
           onClose={() => setOpen(false)}
         />
       )}
@@ -213,8 +212,6 @@ function CreateWorkspaceSection() {
       </div>
       {open && (
         <CreateWorkspaceDialog
-          busy={false}
-          error={null}
           orgName="Acme Robotics"
           orgId="org-acme"
           admin
@@ -295,35 +292,6 @@ function DrawerConnectionsSection() {
   );
 }
 
-function ShareFolderSection() {
-  const [folder, setFolder] = useState<FolderView | null>(null);
-  const [snack, setSnack] = useState<ReactNode>(null);
-  return (
-    <Section
-      title="Share folder dialog"
-      caption="Drive sharing: owner view of a folder with org-wide access and two grants."
-    >
-      <div className="pv-row">
-        <button className="webapp-action" type="button" onClick={() => setFolder(previewFolder())}>
-          Share “Design reviews”…
-        </button>
-      </div>
-      {snack !== null && <p className="pv-note" role="status">{snack}</p>}
-      {folder !== null && (
-        <ShareFolderDialog
-          client={previewClient}
-          folder={folder}
-          viewerEmail="june@acme.dev"
-          orgName="Acme Robotics"
-          onClose={() => setFolder(null)}
-          onChanged={async () => setFolder(previewFolder())}
-          onSnack={setSnack}
-        />
-      )}
-    </Section>
-  );
-}
-
 function Gallery() {
   return (
     <div className="pv-page">
@@ -347,7 +315,6 @@ function Gallery() {
       <AccessApprovalSection />
       <AgentRulesSection />
       <DrawerConnectionsSection />
-      <ShareFolderSection />
     </div>
   );
 }

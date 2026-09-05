@@ -62,21 +62,21 @@ function accessToken() {
   return token;
 }
 
-// `df --output=pcent DIR` prints a header line and then one percentage, e.g.
-// " 62%". The control plane takes an integer 0-100 and refuses anything else
+// POSIX `df -P DIR` prints capacity in the fifth column, e.g. "62%".
+// The control plane takes an integer 0-100 and refuses anything else
 // (packages/schema/fixtures/machine-stats/), so a line that does not parse is
 // not sent at all.
 function diskUsedPercent() {
   let output;
   try {
-    output = execFileSync('df', ['--output=pcent', stateDir], {
+    output = execFileSync('df', ['-P', stateDir], {
       encoding: 'utf8',
       timeout: TIMEOUT_MS,
     });
   } catch (error) {
     giveUp(`df failed (${error && error.message ? error.message : 'unknown'})`);
   }
-  const figure = String(output).trim().split('\n').pop().trim();
+  const figure = String(output).trim().split('\n').pop().trim().split(/\s+/)[4] ?? '';
   // Anchored, so an empty line cannot become 0%: Number('') is 0, and 0% is
   // the one wrong answer that looks like a right one.
   const matched = /^(\d{1,3})%$/.exec(figure);

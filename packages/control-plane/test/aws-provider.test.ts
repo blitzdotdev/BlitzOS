@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { HetznerProvider } from "../core/compute/hetzner.js";
-import { MicrovmPoolProvider } from "../core/compute/microvm.js";
 import { VmProviderRegistry } from "../core/compute/registry.js";
 import {
   AWS_USER_DATA_MAX_BYTES,
@@ -173,8 +172,7 @@ describe("AWS provider ownership", () => {
   it("claims aws- machine types and i- VM ids without colliding with the other providers", () => {
     const aws = provider(fakeEc2(() => ok("<Response/>")));
     const hetzner = new HetznerProvider("test-token");
-    const microvm = new MicrovmPoolProvider("[]", () => undefined, {});
-    const registry = new VmProviderRegistry([hetzner, microvm, aws]);
+    const registry = new VmProviderRegistry([hetzner, aws]);
 
     expect(registry.forMachineType("aws-t3.medium@us-east-1")).toBe(aws);
     expect(registry.forMachineType("aws-m6i.xlarge@eu-west-1")).toBe(aws);
@@ -184,10 +182,8 @@ describe("AWS provider ownership", () => {
     expect(registry.forVmId("42")).toBe(hetzner);
 
     expect(aws.ownsMachineType("cpx21@hil")).toBe(false);
-    expect(aws.ownsMachineType("mv-2c2g@lab")).toBe(false);
     expect(aws.ownsMachineType("aws-t3.medium")).toBe(false);
     expect(aws.ownsVmId("42")).toBe(false);
-    expect(aws.ownsVmId("microvm:v1:lab:1")).toBe(false);
     expect(aws.ownsVmId("i-0123456789ABCDEF0")).toBe(false);
   });
 

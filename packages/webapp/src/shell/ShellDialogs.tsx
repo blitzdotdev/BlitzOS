@@ -13,7 +13,7 @@ import {
   type WorkspaceDetailsTab,
 } from '../WorkspaceDetailsDialog';
 import { MyMachineDialog } from '../MyMachineDialog';
-import type { CloudWorkspaceModel } from '../workspace-store';
+import type { CloudWorkspaceModel, WorkspaceAction } from '../workspace-store';
 
 /** The workspace this dialog stack is about to delete, and the name the
  * confirmation shows. */
@@ -24,18 +24,18 @@ export type WebAppConfirmation = {
 
 export type ShellDialogsProps = {
   client: ControlPlaneClient;
-  viewer: TenantMe | null;
+  viewer: TenantMe;
   workspaces: CloudWorkspaceModel[];
   showCreateOrg: boolean;
+  createOrgName: string;
+  onCreateOrgNameChange: (name: string) => void;
   onCreateOrg: (name: string) => Promise<void>;
   onCloseCreateOrg: () => void;
   showCreateWorkspace: boolean;
-  createWorkspaceBusy: boolean;
-  createWorkspaceError: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
-  /** Runs the workspace poll now, so a dialog write reaches the rows without
-   * waiting for the next tick. Keep it stable across renders. */
-  refreshWorkspaces: () => void;
+  /** Commits the authoritative response of a workspace mutation and invalidates
+   * any workspace poll that began before it. */
+  commitWorkspaceMutation: (action: WorkspaceAction) => void;
   /** The workspace a "new workspace from existing" copies, or null. */
   cloneFromWorkspaceId: string | null;
   onCancelCreateWorkspace: () => void;
@@ -70,13 +70,13 @@ export function ShellDialogs({
   viewer,
   workspaces,
   showCreateOrg,
+  createOrgName,
+  onCreateOrgNameChange,
   onCreateOrg,
   onCloseCreateOrg,
   showCreateWorkspace,
-  createWorkspaceBusy,
-  createWorkspaceError,
   listMachineTypes,
-  refreshWorkspaces,
+  commitWorkspaceMutation,
   cloneFromWorkspaceId,
   onCancelCreateWorkspace,
   onCreateWorkspace,
@@ -106,36 +106,40 @@ export function ShellDialogs({
   return (
     <>
       {showCreateOrg && (
-        <CreateOrgDialog onCreate={onCreateOrg} onCancel={onCloseCreateOrg} />
+        <CreateOrgDialog
+          name={createOrgName}
+          onNameChange={onCreateOrgNameChange}
+          onCreate={onCreateOrg}
+          onCancel={onCloseCreateOrg}
+        />
       )}
       {showCreateWorkspace && (
         <CreateWorkspaceDialog
-          busy={createWorkspaceBusy}
-          error={createWorkspaceError}
-          orgName={viewer?.org.name ?? 'your org'}
-          orgId={viewer?.org.id ?? ''}
-          admin={viewer?.membership.role === 'admin'}
+          orgName={viewer.org.name}
+          orgId={viewer.org.id}
+          admin={viewer.membership.role === 'admin'}
           saveComputeCredential={client.putComputeCredential}
           client={client}
           listMachineTypes={listMachineTypes}
           cloneFromWorkspaceId={cloneFromWorkspaceId}
           cloneFromWorkspaceName={cloneSource?.title ?? null}
-          viewerName={viewer?.identity.name || viewer?.identity.email || 'You'}
+          viewerName={viewer.identity.name || viewer.identity.email}
           onCancel={onCancelCreateWorkspace}
           onSubmit={onCreateWorkspace}
         />
       )}
       {detailsWorkspace?.canControl && details !== null && (
         <WorkspaceDetailsDialog
+          key={detailsWorkspace.id}
           client={client}
           workspace={detailsWorkspace}
           listMachineTypes={listMachineTypes}
-          refreshWorkspaces={refreshWorkspaces}
+          commitWorkspaceMutation={commitWorkspaceMutation}
           initialTab={details.tab}
           focusAddMember={details.focusAddMember ?? false}
           focusProvider={details.focusProvider ?? null}
-          viewerMembershipId={viewer?.membership.id ?? null}
-          orgName={viewer?.org.name || viewer?.org.slug || 'the organization'}
+          viewerMembershipId={viewer.membership.id}
+          orgName={viewer.org.name || viewer.org.slug}
           orgWorkspaces={workspaces.map(({ id, title }) => ({ id, name: title }))}
           onClose={onCloseDetails}
           onClone={() => onCloneWorkspace(detailsWorkspace.id)}
@@ -146,10 +150,12 @@ export function ShellDialogs({
       )}
       {machineWorkspace !== undefined && (
         <MyMachineDialog
+          key={`${machineWorkspace.id}:${viewer.membership.id}`}
           client={client}
           workspace={machineWorkspace}
-          membershipId={viewer?.membership.id ?? null}
+          membershipId={viewer.membership.id}
           listMachineTypes={listMachineTypes}
+          commitWorkspaceMutation={commitWorkspaceMutation}
           onClose={onCloseMachine}
         />
       )}

@@ -284,7 +284,7 @@ footer a:hover{color:#f2f2f2}
   <section>
     <div class="secno">01</div>
     <h2 class="h2acc" style="--sacc:#c2d9ff">Agent Workspaces</h2>
-    <p class="lead">Agent workspaces are the core primitive of BlitzOS. A workspace is a Linux VM with an attached drive, running any number of agents. Run it on our cloud machines, your machines, or a third-party provider.</p>
+    <p class="lead">Agent workspaces are the core primitive of BlitzOS. A workspace is a Linux VM with persistent storage, running any number of agents. Run it on our cloud machines or your cloud account.</p>
     <div class="wsd" id="wsd" aria-hidden="true">
       <div class="wsdv wsdv--on" id="wsdvA">
         <div class="wsdA" id="wsdAWrap">
@@ -301,7 +301,7 @@ footer a:hover{color:#f2f2f2}
               <g class="dg">
                 <rect x="64" y="128" width="72" height="8" rx="2" stroke-dasharray="4 3"/>
               </g>
-              <text class="slott" x="100" y="151" text-anchor="middle">drive slot</text>
+              <text class="slott" x="100" y="151" text-anchor="middle">volume slot</text>
               <g class="wg">
                 <line x1="100" y1="276" x2="100" y2="220"/>
                 <path d="M 94 228 L 100 220 L 106 228"/>
@@ -326,7 +326,7 @@ footer a:hover{color:#f2f2f2}
             </div>
             <div class="wsd__card wsdA__box" id="wsdABoxD" style="--acc:#b395df">
               <div class="wsd__in">
-                <div class="wsd__t">The drive <span class="wsd__cap">&middot; durable</span></div>
+                <div class="wsd__t">The volume <span class="wsd__cap">&middot; durable</span></div>
                 <div class="wsd__l">Repos, files, secrets, and sessions live here.</div>
                 <div class="wsd__l">Attach / re-attach to any machine.</div>
               </div>
@@ -340,19 +340,19 @@ footer a:hover{color:#f2f2f2}
     <ul>
       <li>Any provider's VM, or your own box. Claude Code, Codex, OpenCode, Pi, and Kimi Code preinstalled.</li>
     </ul>
-    <h3>The drive</h3>
+    <h3>The volume</h3>
     <ul>
-      <li>Your repos, files, secrets, agent sessions in a durable drive with encrypted backups. Attach to any workspace to give agents in it necessary context and secrets.</li>
-      <li>Workspace state backs up into the drive automatically. Port the drive across providers, or copy it into many workspaces so agents can run parallel experiments.</li>
+      <li>Your repositories, files, and agent sessions live on provider-backed persistent storage.</li>
+      <li>The volume survives machine replacement and workspace deletion.</li>
     </ul>
     <h3>Secrets</h3>
     <ul>
-      <li>Put secrets in any file in the drive and mark it secret. BlitzOS' secret broker enforces agent access controls. If any agent requests escalated access, you can approve it.</li>
+      <li>Connect services through the secret broker. BlitzOS enforces agent access controls and supports approval for escalated access.</li>
       <li>The secret broker logs every agent request and approval for you to audit.</li>
     </ul>
     <h3>Sessions</h3>
     <ul>
-      <li>Agent sessions are persisted on the drive like a regular file. Sessions survive tab closes and machine death, always-on in the Blitz app from any device.</li>
+      <li>Agent sessions persist on workspace storage. Sessions survive tab closes and machine replacement.</li>
     </ul>
     <div class="sesfig" aria-hidden="true">
       <svg viewBox="0 0 360 112">
@@ -452,7 +452,7 @@ footer a:hover{color:#f2f2f2}
       <li>Hosted workspaces: 3 vCPU &middot; 4 GB RAM &middot; 80 GB disk &middot; Ubuntu 24.04 LTS</li>
       <li>Claude Code, Codex, OpenCode, Pi &amp; Kimi Code preinstalled</li>
       <li>Create and manage agents from our web app or mobile app</li>
-      <li>50 GB drive portable across any provider</li>
+      <li>Provider-backed persistent workspace storage</li>
     </ul>
     <a class="btn" href="/auth/google/start">Start now</a>
     <p class="swarm">Running a swarm? <a href="https://discord.gg/VsywH6GNhB">Talk to us</a>.</p>

@@ -177,25 +177,25 @@ async function putHetznerForOrg(
   });
 }
 
-class OfferedMicrovmProvider implements VmProvider {
-  readonly id = "microvm";
+class OfferedExternalProvider implements VmProvider {
+  readonly id = "external";
 
   capabilities() {
     return { volumes: false, offersMachineTypes: true };
   }
 
   ownsMachineType(machineTypeId: string): boolean {
-    return machineTypeId === "mv-2c2g@lab";
+    return machineTypeId === "external-small@test";
   }
 
   ownsVmId(vmId: string): boolean {
-    return vmId.startsWith("mv-lab-");
+    return vmId.startsWith("external-");
   }
 
   async listMachineTypes(): Promise<ProviderMachineType[]> {
     return [{
-      id: "mv-2c2g@lab",
-      name: "MicroVM 2 vCPU / 2 GB",
+      id: "external-small@test",
+      name: "External 2 vCPU / 2 GB",
       cpuCores: 2,
       memGb: 2,
       diskGb: 20,
@@ -206,7 +206,7 @@ class OfferedMicrovmProvider implements VmProvider {
   }
 
   async createVm(_input: CreateVmInput): Promise<CreatedVm> {
-    return { id: "mv-lab-1", host: "127.0.0.1", port: 22, user: "blitz" };
+    return { id: "external-1", host: "127.0.0.1", port: 22, user: "blitz" };
   }
 
   async shutdown(_id: string): Promise<void> {}
@@ -283,7 +283,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
     expect(created.status).toBe(201);
     const createCall = fake.calls.find(
@@ -317,7 +317,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
 
     expect(created.status).toBe(201);
@@ -337,7 +337,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
 
     expect(created.status).toBe(201);
@@ -361,7 +361,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
 
     expect(created.status).toBe(402);
@@ -384,7 +384,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "aws-t3.medium@us-east-1" }),
+      body: JSON.stringify({ defaultMachineTypeId: "aws-t3.medium@us-east-1" }),
     });
 
     expect(created.status).toBe(402);
@@ -407,7 +407,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
 
     expect(created.status).toBe(201);
@@ -437,7 +437,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
 
     expect(created.status).toBe(201);
@@ -464,7 +464,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
 
     expect(created.status).toBe(402);
@@ -487,7 +487,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
 
     expect(created.status).toBe(201);
@@ -552,8 +552,8 @@ describe("organization compute credentials", () => {
     ]);
   });
 
-  it("does not gate host-registered microVM machine types", async () => {
-    const microvm = new OfferedMicrovmProvider();
+  it("does not gate machine types from an independent provider", async () => {
+    const external = new OfferedExternalProvider();
     const fake = providerHttp();
     const { app } = await appFor(
       {
@@ -561,18 +561,18 @@ describe("organization compute credentials", () => {
         CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
       },
       fake,
-      [microvm],
+      [external],
     );
-    const cookie = await userSession("tenant-microvm");
+    const cookie = await userSession("tenant-external");
 
     const response = await appRequest(app, "/machine-types", { headers: { Cookie: cookie } });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       machineTypes: [{
-        id: "mv-2c2g@lab",
-        providerId: "microvm",
+        id: "external-small@test",
+        providerId: "external",
         supportsVolumes: false,
-        name: "MicroVM 2 vCPU / 2 GB",
+        name: "External 2 vCPU / 2 GB",
         cpuCores: 2,
         memGb: 2,
         diskGb: 20,
@@ -605,7 +605,7 @@ describe("organization compute credentials", () => {
       const response = await appRequest(app, "/workspaces", {
         method: "POST",
         headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineTypeId: "cpx21@hil", name }),
+        body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil", name }),
       });
       expect(response.status).toBe(201);
       const body = await response.json<{ workspace: { id: string } }>();
@@ -709,7 +709,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
 
     expect(created.status).toBe(409);
@@ -767,7 +767,7 @@ describe("organization compute credentials", () => {
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+      body: JSON.stringify({ defaultMachineTypeId: "cpx21@hil" }),
     });
     expect(created.status).toBe(201);
     await env.DB.prepare("UPDATE machines SET state = 'destroying'").run();

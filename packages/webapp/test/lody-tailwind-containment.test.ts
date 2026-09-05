@@ -46,8 +46,8 @@ const BLITZ_STYLESHEETS = [
   "webapp-workspace.css",
   "browser/browser-panel.css",
   "webapp-select.css",
-  "files-drive.css",
-  "drive-shell.css",
+  "app-shell.css",
+  "member-avatar.css",
   "strip-rail.css",
   "files.css",
   "confirmation-dialog.css",
@@ -194,7 +194,7 @@ const PROBE_MARKUP = `
 
 /** The bare probes, under `#root` and NOT under a shell root — the shape phase
  * 0 measured. The compensation test below re-mounts the same markup inside
- * `.drive-shell`, which is where the product really renders it. */
+ * `.app-shell`, which is where the product really renders it. */
 function probeDocument(): Document {
   document.body.innerHTML = `<div id="root">${PROBE_MARKUP}</div>`;
   return document;
@@ -548,14 +548,14 @@ describe("Lody Tailwind containment", () => {
   /**
    * Phase 3's half of the verdict. Phase 0 measured the leak and left it; this
    * asserts the compensation sheet declares every property in it, on the
-   * elements the product actually renders — inside `.drive-shell`, which is
+   * elements the product actually renders — inside `.app-shell`, which is
    * where every bare `button`, `h1` and `li` of ours lives.
    *
    * The consequence is that an upstream preflight change which widens the leak
    * fails HERE, loudly, instead of quietly restyling the Finder.
    */
   it("compensates every property the vendored sheet reaches inside our shell", () => {
-    document.body.innerHTML = `<div id="root"><div class="drive-shell">${PROBE_MARKUP}</div></div>`;
+    document.body.innerHTML = `<div id="root"><div class="app-shell">${PROBE_MARKUP}</div></div>`;
     const probes: Record<string, Element> = {
       html: document.documentElement,
       body: document.body,

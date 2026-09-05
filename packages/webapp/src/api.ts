@@ -27,11 +27,8 @@ import type {
   ListProviderHealthResponse,
   ListUserGrantsResponse,
   PutUserGrantRequest,
-  CreateRecipeRequest,
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
-  CreateWorkspaceTemplateRequest,
-  CreateWorkspaceTemplateResponse,
   ImportOrgCredentialsRequest,
   ImportOrgCredentialsResponse,
   ListGrantProposalsResponse,
@@ -43,14 +40,10 @@ import type {
   ResolveGrantProposalRequest,
   ResolveGrantProposalResponse,
   ListMachineTypesResponse,
-  ListRecipesResponse,
-  ListWorkspaceTemplatesResponse,
   ListVolumesResponse,
   OrgBillingResponse,
-  OrgUsageCaptureResponse,
   OrgUsageResponse,
   PollResponse,
-  RecipeResponse,
   RetryAction,
 } from "@blitzos/schema";
 import {
@@ -68,10 +61,6 @@ import {
   isNumber,
   isString,
 } from "./type-guards.js";
-import {
-  createFileLibraryClient,
-  type FileLibraryClient,
-} from "./file-library-api.js";
 import {
   createComputeCredentialsClient,
   type ComputeCredentialsClient,
@@ -93,10 +82,7 @@ export class ApiRequestError extends Error {
 
 export type CredentialRequestState = "pending" | "approved" | "denied";
 
-export type ConnectReturnTo =
-  | "template-new"
-  | `template-edit:${string}`
-  | "workspace-new";
+export type ConnectReturnTo = "workspace-new";
 
 export interface MeResponse {
   user: {
@@ -154,7 +140,7 @@ export interface CreateOrgResponse {
   membership: NonNullable<MeResponse["membership"]>;
 }
 
-export interface ControlPlaneClient extends FileLibraryClient, ComputeCredentialsClient {
+export interface ControlPlaneClient extends ComputeCredentialsClient {
   googleLoginUrl(): string;
   inviteGoogleLoginUrl(code: string): string;
   inviteStatus(code: string): Promise<{ invite: InviteView; ttlDays: number }>;
@@ -267,27 +253,8 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   listAgentRules(): Promise<ListAgentRulesResponse>;
   putAgentRule(id: string, input: PutAgentRuleRequest): Promise<PutAgentRuleResponse>;
   deleteAgentRule(id: string): Promise<void>;
-  listWorkspaceTemplates(): Promise<ListWorkspaceTemplatesResponse>;
-  createWorkspaceTemplate(
-    input: CreateWorkspaceTemplateRequest,
-  ): Promise<CreateWorkspaceTemplateResponse>;
-  updateWorkspaceTemplate(
-    id: string,
-    input: CreateWorkspaceTemplateRequest,
-  ): Promise<CreateWorkspaceTemplateResponse>;
-  deleteWorkspaceTemplate(id: string): Promise<void>;
-  listRecipes(): Promise<ListRecipesResponse>;
-  getRecipe(id: string): Promise<RecipeResponse>;
-  createRecipe(input: CreateRecipeRequest): Promise<RecipeResponse>;
-  updateRecipe(id: string, input: CreateRecipeRequest): Promise<RecipeResponse>;
-  deleteRecipe(id: string): Promise<void>;
-  /** Launches a workspace from the recipe; answers with the same envelope as
-   * create, so callers reuse the create-workspace navigation flow. */
-  launchRecipe(id: string): Promise<CreateWorkspaceResponse>;
-  getUsageCapture(): Promise<OrgUsageCaptureResponse>;
   orgUsage(): Promise<OrgUsageResponse>;
   billing(): Promise<OrgBillingResponse>;
-  putUsageCapture(enabled: boolean): Promise<OrgUsageCaptureResponse>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
   listVolumes(): Promise<ListVolumesResponse>;
   listConnections(signal?: AbortSignal): Promise<ListConnectionsResponse>;
@@ -625,7 +592,6 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
   }
 
   return {
-    ...createFileLibraryClient(rawRequest),
     ...createComputeCredentialsClient(request),
     googleLoginUrl: () => `${base}/auth/google/start`,
     inviteGoogleLoginUrl: (code) => `${base}/auth/google/start?invite=${encodeURIComponent(code)}`,
@@ -799,53 +765,8 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       }),
     deleteAgentRule: (id) =>
       request<void>(`/agent-rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    listWorkspaceTemplates: () =>
-      request<ListWorkspaceTemplatesResponse>("/workspace-templates"),
-    createWorkspaceTemplate: (input) =>
-      request<CreateWorkspaceTemplateResponse>("/workspace-templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      }),
-    updateWorkspaceTemplate: (id, input) =>
-      request<CreateWorkspaceTemplateResponse>(`/workspace-templates/${encodeURIComponent(id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      }),
-    deleteWorkspaceTemplate: (id) =>
-      request<void>(`/workspace-templates/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      }),
-    listRecipes: () => request<ListRecipesResponse>("/workspace-recipes"),
-    getRecipe: (id) => request<RecipeResponse>(`/workspace-recipes/${encodeURIComponent(id)}`),
-    createRecipe: (input) =>
-      request<RecipeResponse>("/workspace-recipes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      }),
-    updateRecipe: (id, input) =>
-      request<RecipeResponse>(`/workspace-recipes/${encodeURIComponent(id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      }),
-    deleteRecipe: (id) =>
-      request<void>(`/workspace-recipes/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    launchRecipe: (id) =>
-      request<CreateWorkspaceResponse>(`/workspace-recipes/${encodeURIComponent(id)}/launch`, {
-        method: "POST",
-      }),
-    getUsageCapture: () => request<OrgUsageCaptureResponse>("/orgs/self/usage-capture"),
     orgUsage: () => request<OrgUsageResponse>("/orgs/self/usage"),
     billing: () => request<OrgBillingResponse>("/orgs/self/billing"),
-    putUsageCapture: (enabled) =>
-      request<OrgUsageCaptureResponse>("/orgs/self/usage-capture", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled }),
-      }),
     listMachineTypes: () => request<ListMachineTypesResponse>("/machine-types"),
     listVolumes: () => request<ListVolumesResponse>("/volumes"),
     listConnections: (signal) =>

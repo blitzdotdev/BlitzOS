@@ -18,9 +18,7 @@ but cannot run a usable workspace.
   access at all (see [TUNNEL.md](TUNNEL.md)). Any spare domain works; users
   never see these hostnames.
 - A Google Cloud project. Google OAuth is the only login method.
-- Compute for workspaces: a Hetzner Cloud project (it may hold unrelated
-  infrastructure — see step 10), or your own Firecracker host running the
-  [microvm-host agent](../packages/microvm-host/README.md).
+- Compute for workspaces: a Hetzner Cloud project or AWS account.
 - Node.js 22.13 or newer, npm, git.
 - Docker, for building the box image (on macOS, [Colima](https://github.com/abiosoft/colima) works — see
   [BOX-IMAGE.md](BOX-IMAGE.md)).
@@ -68,7 +66,6 @@ not "refuse to deploy". So you can run step 4 immediately and come back here.
 | `BOX_IMAGE_TAG` | mode-dependent | Empty for registry mode; the archive's image tag for R2 modes. |
 | `BOX_IMAGE_SHA256` | mode-dependent | Empty for registry mode; the archive's SHA-256 for R2 modes. |
 | `SESSION_TTL_DAYS` | no | Session cookie lifetime in days, 1–3650. Default 30. |
-| `MICROVM_HOSTS` | yes | JSON array of Firecracker hosts. **Set `'[]'` if you have none** — that cleanly disables the microVM provider and removes its token secret from the required set. Each configured host names a `tokenVar`; that Worker secret must then exist and be at least 32 characters with no whitespace, or **every request to the Worker fails with 500**. |
 | `HETZNER_MACHINE_TYPES` | no | Comma-separated `type@location` entries for the Hetzner machine catalog, e.g. `cpx21@hil,cx32@fsn1`. Unset or blank keeps the default catalog (`cx23@hel1`, `cx33@hel1`, `cpx21@hil`, `cpx31@hil`). Malformed entries are skipped with a logged warning. |
 | `SIGNUP_MODE` | no | `open` (default) or `invite`. In `invite` mode a Google sign-in that would create a new user is refused unless it carries a valid invite (step 7) or the verified bootstrap secret (step 6). Existing users always sign in. |
 | `ALLOWED_EMAIL_DOMAINS` | no | Comma-separated email domains, e.g. `example.com,example.org`. When set, **every** sign-in — new or existing user, invited or bootstrap — is refused unless the account's domain is listed. Empty (default) allows any domain. |
@@ -102,12 +99,8 @@ npx wrangler secret put <NAME> --config packages/control-plane/wrangler.toml
 | `WEBAPP_TOKEN_SECRET` | `openssl rand -base64 32`. Signs per-request workspace tickets and derives per-workspace guest credentials. Every browser workspace surface returns 503 without it. |
 | `GOOGLE_CLIENT_ID` | Google Cloud console (step 5). Use a placeholder like `pending` for the first deploy. |
 | `GOOGLE_CLIENT_SECRET` | Google Cloud console (step 5). Placeholder is fine for the first deploy. |
-| `HETZNER_API_TOKEN` | Hetzner Cloud console → your project → Security → API tokens → Read & Write. If you run microVM-only, set a random string — the Hetzner catalog then just comes back empty. |
+| `HETZNER_API_TOKEN` | Hetzner Cloud console → your project → Security → API tokens → Read & Write. |
 | `OPERATOR_API_KEY` | Optional. `openssl rand -hex 32`. Only consulted by the `?bootstrap=` flow in step 6; the deploy script does not require it, and a fresh deployment never needs it. |
-
-If `MICROVM_HOSTS` lists hosts, each host's `tokenVar` (for example
-`MICROVM_LAB_TOKEN`) is also required: `openssl rand -hex 32`, and the same
-value goes into the host's token file (`/etc/blitz/microvm-agent-token`).
 
 `JWT_SECRET_MAIN` is **not** needed, and no code references it any more.
 teenybase only mints or verifies its own JWTs for tables that declare an auth
@@ -207,8 +200,7 @@ three `CLOUDFLARE_*`/`WORKSPACE_TUNNEL_ZONE` vars, and redeploy.
 Do not skip this for cloud VMs. Every active browser surface — terminal, files,
 and previews — routes through the control plane's tunnel to the workspace. Without
 it, a Hetzner workspace boots, reports `ready`, and then every surface returns
-`503 workspace has no webapp tunnel`. MicroVM workspaces are the exception:
-their host agent carries this traffic itself.
+`503 workspace has no webapp tunnel`.
 
 ## 9. Box image
 
@@ -242,12 +234,6 @@ The machine-type catalog offered in the create dialog defaults to `cx23@hel1`,
 (comma-separated `type@location`) to offer the types and locations your project
 can actually get. Types with no availability in their location produce an empty
 catalog.
-
-**Firecracker (microVM).** Run the
-[microvm-host agent](../packages/microvm-host/README.md) on your own hardware,
-list it in `MICROVM_HOSTS`, and set its token secret. The guest kernel, base
-rootfs, and Firecracker binary are operator-supplied; the microvm-host README
-describes the layout. MicroVM workspaces need no tunnel but have no volumes.
 
 ## 11. Create a workspace
 
@@ -328,7 +314,7 @@ no longer exists. Check the migration list before you answer.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Every API request returns 500 | `CRED_MASTER_KEY` is not base64 of exactly 32 bytes, or a `MICROVM_*_TOKEN` is shorter than 32 characters or contains whitespace | Regenerate with `openssl rand -base64 32` (or `-hex 32` for the host token). No microVM hosts? Set `MICROVM_HOSTS = '[]'`. |
+| Every API request returns 500 | `CRED_MASTER_KEY` is not base64 of exactly 32 bytes | Regenerate with `openssl rand -base64 32`. |
 | Every API request **and every cron** returns 500 right after a var edit | `SIGNUP_MODE` is not exactly `open` or `invite` (`invite-only` is the common typo), or an `ALLOWED_EMAIL_DOMAINS` entry is not a bare domain (`alice@example.com` and `gmail` are both rejected) | Fix the value in `wrangler.toml` and redeploy. The deploy command refuses both before it deploys, so a Worker in this state was deployed by hand. |
 | Machine-type list is empty in the create dialog | Bad `HETZNER_API_TOKEN`, or the catalog's types have no availability in their location | Verify the token is Read & Write on the right project; set `HETZNER_MACHINE_TYPES` to types and locations your project can get. |
 | `503 workspace has no webapp tunnel` on terminal/files/previews | Tunnel vars were unset when the workspace was created | Do step 8, then recreate the workspace. |

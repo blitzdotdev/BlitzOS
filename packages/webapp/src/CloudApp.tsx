@@ -9,16 +9,12 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { createClient, type WebDAVClient } from 'webdav';
-import {
-  ApiAdapter,
-  ApiError,
-  type V2WorkspaceRecord,
-} from './api-adapter';
+import { ApiAdapter, ApiError, type TenantMe } from './api-adapter';
 import type { ControlPlaneClient } from './api';
 import type { CredentialRequestView } from '@blitzos/schema';
 import { SPAWN_SESSION_LABELS, type SpawnSessionType } from './NewTabMenu';
 import type { WebAppTabModel } from './SessionTypeIcon';
-import type { DriveRailSession } from './shell/rail-sessions';
+import type { RailSession } from './shell/rail-sessions';
 import { workspaceStatusLine } from './shell/workspace-status-line';
 import { useBoxGatewayHealth } from './box-gateway-health';
 import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
@@ -72,7 +68,6 @@ import { LODY_SESSIONS_ENABLED } from './lody/flag';
 import { useSharedSessions } from './lody/use-shared-sessions';
 import type { LodySessionSurfaceApi } from './lody/SessionSurface';
 import {
-  drivePath,
   parseAppRoute,
   settingsPath,
   workspacePath,
@@ -109,6 +104,7 @@ import {
   initialWorkspaceStore,
   selectControllableWorkspaceId,
   workspaceReducer,
+  type WorkspaceAction,
 } from './workspace-store';
 import {
   isPreviewPath,
@@ -135,6 +131,9 @@ import {
 import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
 import { useWorkspaceConnectionsFocus } from './use-workspace-connections-focus';
 import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
+import { ErrorReporterProvider } from './error-dialog/ErrorReporter';
+import { useWorkspaceOptimisticCreate } from './use-workspace-optimistic-create';
+import { useOrganizationOptimisticTransitions } from './use-organization-optimistic-transitions';
 
 /** Shared empty list for a workspace whose tabs have not loaded. A fresh `[]`
  * per render would give every callback derived from it a new identity, and the
@@ -180,7 +179,7 @@ export type CloudAppProps = {
   resolver: EndpointResolver;
 };
 
-export default function CloudApp({ client, resolver }: CloudAppProps) {
+function CloudAppContent({ client, resolver }: CloudAppProps) {
   const mobileWebApp = useMobileWebApp();
   const [store, dispatch] = useReducer(workspaceReducer, initialWorkspaceStore);
   const [route, setRoute] = useState(() => parseAppRoute(window.location.pathname));
@@ -191,6 +190,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [error, setError] = useState<string | null>(null);
   const [updateAvailableHash, setUpdateAvailableHash] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
+  const [signOutPending, setSignOutPending] = useState(false);
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
@@ -206,8 +206,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     } | null
   >(null);
   const [machineWorkspaceId, setMachineWorkspaceId] = useState<string | null>(null);
-  const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
-  const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [terminalSignInUrl, setTerminalSignInUrl] = useState<string | null>(null);
@@ -261,6 +259,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const activeWorkspaceIdRef = useRef(activeWorkspaceId);
   const storeRef = useRef(store);
   const workspaceEndpoints = useRef(new Map<string, WorkspaceEndpoints>());
+  // A workspace list request that began before a successful local mutation can
+  // finish afterward with the older snapshot. Mutation responses are the
+  // authority for their own rows, so such a request is discarded rather than
+  // briefly (or permanently) rolling the UI backward.
+  const workspaceMutationEpoch = useRef(0);
   const firstWorkspacePrompted = useRef(false);
   // Visit once, then retain: tab switches preserve live state without eagerly
   // opening every saved terminal and WebGL surface.
@@ -315,6 +318,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [drawerOpen, mobileWebApp]);
 
   const handleUnauthorized = useCallback(() => {
+    setSignOutPending(false);
     setSignedOut(true);
     setLoaded(true);
   }, []);
@@ -326,17 +330,53 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (cause instanceof ApiError && cause.status === 401) return;
     setError(caughtErrorMessage(cause, 'Could not save webApp state.'));
   }, []);
+  const {
+    transitionStage: organizationTransitionStage,
+    createOrgName,
+    setCreateOrgName,
+    openCreateOrganization,
+    closeCreateOrganization,
+    createOrganizationFromIdentity,
+    createOrganizationFromDialog,
+    switchOrganization,
+    leaveOrganization,
+  } = useOrganizationOptimisticTransitions({
+    api,
+    client,
+    viewer: store.viewer,
+    setIdentityOnly,
+    setLoaded,
+    setBootstrapVersion,
+    setShowCreateOrg,
+    setError,
+  });
   const signOut = useCallback(async () => {
+    setError(null);
+    setSignOutPending(true);
     try {
       await api.logout();
-    } finally {
       setSignedOut(true);
+    } catch (cause) {
+      // An auth refusal says there is no usable logout session left.
+      if (cause instanceof ApiError && (cause.status === 401 || cause.status === 403)) {
+        setSignedOut(true);
+        return;
+      }
+      setSignedOut(false);
+      setError(`Could not sign out: ${caughtErrorMessage(
+        cause,
+        'The control plane request failed.',
+      )}`);
+    } finally {
+      setSignOutPending(false);
     }
   }, [api]);
   const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
   const refreshWorkspaceRecords = useCallback(async () => {
+    const mutationEpoch = workspaceMutationEpoch.current;
     try {
       const records = await api.listWorkspaces();
+      if (mutationEpoch !== workspaceMutationEpoch.current) return;
       rememberWorkspaceEndpoints(workspaceEndpoints.current, records, resolver, true);
       dispatch({ type: 'workspace_records_refreshed', records });
     } catch (refreshError) {
@@ -345,11 +385,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }
     }
   }, [api, resolver]);
-  /** The poll as a dialog asks for it: a settled write wants its rows now,
-   * and has no answer of its own to report. */
-  const refreshWorkspacesNow = useCallback(() => {
-    void refreshWorkspaceRecords();
-  }, [refreshWorkspaceRecords]);
+  const commitWorkspaceMutation = useCallback((action: WorkspaceAction) => {
+    workspaceMutationEpoch.current += 1;
+    dispatch(action);
+  }, []);
 
   const activeWorkspace = useMemo(
     () => store.workspaces.find(({ id, canControl }) => id === activeWorkspaceId && canControl),
@@ -370,7 +409,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setWorkspaceFiles,
   } = useWorkspacePersistence(
     api,
-    storageNamespace !== null,
+    storageNamespace !== null && activeWorkspace?.pendingCreate !== true,
     activeWorkspaceId,
     persistenceMetadata,
     handlePersistenceError,
@@ -606,6 +645,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [loaded, store.workspaces]);
 
   useEffect(() => {
+    if (!loaded || signedOut || route.page !== 'home') return;
+    const workspaceId = selectControllableWorkspaceId(store.workspaces, '');
+    if (workspaceId === '') return;
+    activeWorkspaceIdRef.current = workspaceId;
+    setActiveWorkspaceId(workspaceId);
+    window.history.replaceState({}, '', workspacePath(workspaceId));
+    setRoute({ workspaceId, page: 'webApp', chat: null });
+  }, [loaded, route.page, signedOut, store.workspaces]);
+
+  useEffect(() => {
     const createWorkspaceRoute = window.location.pathname === '/workspaces/new';
     if (
       !loaded
@@ -651,7 +700,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   });
 
   useEffect(() => {
-    if (!loaded || !storageNamespace) return;
+    if (
+      !loaded
+      || !storageNamespace
+      || store.workspaces.some(({ pendingCreate }) => pendingCreate)
+    ) return;
     const timer = window.setTimeout(() => {
       void api.putGlobalWebAppState({
         version: 1,
@@ -699,7 +752,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       return;
     }
     window.history.pushState({}, '', '/');
-    setRoute({ workspaceId: null, page: 'drive' });
+    setRoute({ workspaceId: null, page: 'home' });
   }, [navigateToWorkspacePage]);
 
   const deleteWorkspace = useCallback((workspaceId: string) => {
@@ -720,7 +773,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       if (nextId) navigateToWorkspacePage(nextId);
       else {
         window.history.pushState({}, '', '/');
-        setRoute({ workspaceId: null, page: 'drive' });
+        setRoute({ workspaceId: null, page: 'home' });
       }
     }
     void api.deleteWorkspace(workspaceId)
@@ -748,36 +801,32 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     navigateToWorkspacePage(workspaceId);
   }, [navigateToWorkspacePage, store.workspaces]);
 
-  // One tail for everything that mints a workspace: the create dialog and
-  // recipe launches both adopt the record and navigate to it the same way.
-  const adoptCreatedWorkspace = useCallback(async (
-    create: () => Promise<V2WorkspaceRecord>,
-  ) => {
-    setCreateWorkspaceBusy(true);
-    setCreateWorkspaceError(null);
-    try {
-      const record = await create();
-      rememberWorkspaceEndpoints(workspaceEndpoints.current, [record], resolver);
-      dispatch({ type: 'workspace_created', record, agentDefault: 'claude' });
-      if (record.canControl) {
-        activeWorkspaceIdRef.current = record.id;
-        setActiveWorkspaceId(record.id);
-        navigateToWorkspacePage(record.id);
-      }
-      setShowCreateWorkspace(false);
-    } catch (createFailure) {
-      setCreateWorkspaceError(caughtErrorMessage(createFailure, 'The control plane request failed.'));
-    } finally {
-      setCreateWorkspaceBusy(false);
-    }
-  }, [navigateToWorkspacePage, resolver]);
+  const closeCreateWorkspace = useCallback(() => {
+    setShowCreateWorkspace(false);
+    setCloneFromWorkspaceId(null);
+  }, []);
+  // Clone submissions carry `cloneFromWorkspaceId` in the same input and use
+  // this tail. Recipes have been removed.
+  const adoptCreatedWorkspace = useWorkspaceOptimisticCreate({
+    resolver,
+    workspaceEndpoints,
+    storeRef,
+    activeWorkspaceIdRef,
+    commitWorkspaceMutation,
+    setActiveWorkspaceId,
+    setRoute,
+    setError,
+    closeCreateDialog: closeCreateWorkspace,
+    navigateToWorkspacePage,
+  });
   const createWorkspace = useCallback(
-    (input: CreateWorkspaceDialogInput) => adoptCreatedWorkspace(() => api.createWorkspace(input)),
+    (input: CreateWorkspaceDialogInput, viewer: TenantMe) => adoptCreatedWorkspace(
+      input,
+      viewer,
+      () => api.createWorkspace(input),
+    ),
     [adoptCreatedWorkspace, api],
   );
-  // A recipe launch has no caller while the recipes surface is disabled; the
-  // adapter keeps `launchRecipe`, so restoring the surface restores the flow.
-
   const setSidePaneWidth = useCallback((width: number) => {
     setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
       ? { ...current, value: { ...current.value, width } }
@@ -1032,7 +1081,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
     return tab;
   }), [ttydSessions]);
-  const railSessions = useMemo<DriveRailSession[]>(() => ttydTabs
+  const railSessions = useMemo<RailSession[]>(() => ttydTabs
     .filter((tab) => tab.agent !== 'panel' && tab.agent !== 'preview')
     .map((tab) => ({ id: tab.id, label: tab.label, agent: tab.agent })), [ttydTabs]);
   const railActiveSessionId = (() => {
@@ -1243,15 +1292,39 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     // session outlives its websocket by design — that is what a reload, a
     // workspace switch and a lost tunnel all re-attach to — so this is also
     // the one place that ends one, and nothing on an unmount may do it.
-    const closing = ttydSessions.find((entry) => String(entry.id) === id);
-    if (closing !== undefined && isManagedWorkspaceTab(closing) && activeFilesBase !== null) {
-      void killTerminalSession(activeFilesBase, { type: closing.type, key: id });
-    }
+    const closingIndex = ttydSessions.findIndex((entry) => String(entry.id) === id);
+    const closing = ttydSessions[closingIndex];
+    const closingRegion = closing === undefined ? null : tabRegion(closing);
+    const closingWasActive = closing !== undefined
+      && activeWorkspaceTabs !== null
+      && closingRegion !== null
+      && regionActiveId(activeWorkspaceTabs, closingRegion) === closing.id;
+    const closingWasRetained = retainedSessionIdsRef.current.ids.has(id);
     updateWorkspaceTabs((tabs) => {
       const tab = tabs.tabs.find((entry) => String(entry.id) === id);
       return tab === undefined ? tabs : closePaneTab(tabs, tab.id);
     });
     retainedSessionIdsRef.current.ids.delete(id);
+    if (closing === undefined || !isManagedWorkspaceTab(closing) || activeFilesBase === null) return;
+    void killTerminalSession(activeFilesBase, { type: closing.type, key: id }).then((killed) => {
+      if (killed) return;
+      updateWorkspaceTabs((tabs) => {
+        if (tabs.tabs.some((entry) => entry.id === closing.id)) return tabs;
+        const restored = [...tabs.tabs];
+        restored.splice(Math.min(Math.max(closingIndex, 0), restored.length), 0, closing);
+        const next = { ...tabs, tabs: restored };
+        if (closingWasActive && closingRegion === 'main') next.activeId = closing.id;
+        if (closingWasActive && closingRegion === 'side') next.sideActiveId = closing.id;
+        return next;
+      });
+      if (
+        closingWasRetained
+        && retainedSessionIdsRef.current.workspaceId === activeWorkspaceId
+      ) {
+        retainedSessionIdsRef.current.ids.add(id);
+      }
+      setError('Could not close the terminal tab. Its session may still be running.');
+    });
   };
   const renameTtydSession = (id: string, title: string | undefined) => {
     const numericId = Number(id);
@@ -1286,7 +1359,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const workspaceWakingStage = workspaceWaking
     ? activeWorkspace?.lifecycleStatus === 'parked'
       ? 'waking · requesting compute'
-      : 'waking · reattaching drive'
+      : 'waking · reattaching volume'
     : undefined;
   const workspaceErrored = activeWorkspace !== undefined && (
     activeWorkspace.lifecycleStatus === 'error'
@@ -1405,6 +1478,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       >
         Reload
       </button>
+    </div>
+  );
+  const actionErrorNotice = error === null ? null : (
+    <div className="webapp-notice" role="alert">
+      <span>{error}</span>
+      <button type="button" onClick={() => setError(null)}>Dismiss</button>
     </div>
   );
 
@@ -1606,7 +1685,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         setDetails({ workspaceId, tab: 'members', focusAddMember: true });
       }}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
-      onOpenDrive={() => navigateTo(drivePath())}
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
       onCloseSession={closeTtydSession}
@@ -1628,6 +1706,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCloseDrawer={() => setDrawerOpen(false)}
     />
   );
+  const dialogViewer = store.viewer;
   const railOverlays = (
     <>
     {accessProposals.active !== null && store.viewer !== null && (
@@ -1672,37 +1751,27 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         }}
       />
     )}
-    <ShellDialogs
+    {dialogViewer !== null && <ShellDialogs
       client={client}
-      viewer={store.viewer}
+      viewer={dialogViewer}
       workspaces={store.workspaces}
       showCreateOrg={showCreateOrg}
-      onCreateOrg={async (name) => {
-        await api.createOrg(name);
-        // POST /orgs rebinds the session to the org it just made, so the
-        // reload lands inside it, exactly as switching does.
-        window.location.reload();
-      }}
-      onCloseCreateOrg={() => setShowCreateOrg(false)}
+      createOrgName={createOrgName}
+      onCreateOrgNameChange={setCreateOrgName}
+      onCreateOrg={createOrganizationFromDialog}
+      onCloseCreateOrg={closeCreateOrganization}
       showCreateWorkspace={showCreateWorkspace}
-      createWorkspaceBusy={createWorkspaceBusy}
-      createWorkspaceError={createWorkspaceError}
       listMachineTypes={listMachineTypes}
-      refreshWorkspaces={refreshWorkspacesNow}
+      commitWorkspaceMutation={commitWorkspaceMutation}
       cloneFromWorkspaceId={cloneFromWorkspaceId}
-      onCancelCreateWorkspace={() => {
-        if (createWorkspaceBusy) return;
-        setShowCreateWorkspace(false);
-        setCloneFromWorkspaceId(null);
-      }}
-      onCreateWorkspace={(input) => { void createWorkspace(input); }}
+      onCancelCreateWorkspace={closeCreateWorkspace}
+      onCreateWorkspace={(input) => { void createWorkspace(input, dialogViewer); }}
       details={details}
       onCloseDetails={() => setDetails(null)}
       machineWorkspaceId={machineWorkspaceId}
       onCloseMachine={() => setMachineWorkspaceId(null)}
       onCloneWorkspace={(workspaceId) => {
-        // "New workspace from existing" IS the template now (§0): the create
-        // dialog opens carrying the source, and the server copies its config.
+        // The create dialog carries the source, and the server copies its config.
         setDetails(null);
         setCloneFromWorkspaceId(workspaceId);
         setShowCreateWorkspace(true);
@@ -1711,23 +1780,48 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       confirmation={confirmation}
       onCancelConfirmation={cancelConfirmation}
       onConfirmDelete={confirmWebAppAction}
-    />
+    />}
     </>
   );
-  if (signedOut) {
-    return <LoginForm loginUrl={api.googleLoginUrl()} />;
+  if (signedOut || signOutPending) {
+    return (
+      <>
+        <LoginForm loginUrl={api.googleLoginUrl()} />
+        {actionErrorNotice}
+      </>
+    );
+  }
+
+  if (organizationTransitionStage !== null) {
+    return (
+      <main
+        ref={shellRef}
+        className="webapp-shell webapp-shell--booting"
+        aria-busy="true"
+      >
+        <WebAppLoadingShell
+          stage={organizationTransitionStage}
+          mobile={mobileWebApp}
+          drawerOpen={drawerOpen}
+          onOpenDrawer={() => setDrawerOpen(true)}
+          onCloseDrawer={() => setDrawerOpen(false)}
+        />
+        {actionErrorNotice}
+        {updateNotice}
+      </main>
+    );
   }
 
   if (identityOnly !== null) {
     return (
-      <CreateOrgPage
-        onCreate={async (name) => {
-          await api.createOrg(name);
-          setIdentityOnly(null);
-          setLoaded(false);
-          setBootstrapVersion((version) => version + 1);
-        }}
-      />
+      <>
+        <CreateOrgPage
+          name={createOrgName}
+          onNameChange={setCreateOrgName}
+          onCreate={createOrganizationFromIdentity}
+        />
+        {actionErrorNotice}
+      </>
     );
   }
 
@@ -1743,16 +1837,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         updateNotice={updateNotice}
         error={error}
         onDismissError={() => setError(null)}
-        onNavigate={navigateTo}
-        onOpenRail={() => setDrawerOpen(true)}
         onNavigateToSettings={navigateToSettings}
         onLeaveSettings={returnToWebApp}
         onSignOut={signOut}
-        onLeftOrg={() => window.location.reload()}
-        onSwitchOrg={(orgId) => {
-          void client.switchOrg(orgId).then(() => window.location.reload());
-        }}
-        onCreateOrg={() => setShowCreateOrg(true)}
+        onLeftOrg={leaveOrganization}
+        onSwitchOrg={switchOrganization}
+        onCreateOrg={openCreateOrganization}
         activeWorkspaceTitle={activeWorkspace?.title}
       />
     );
@@ -1772,7 +1862,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           onOpenDrawer={() => setDrawerOpen(true)}
           onCloseDrawer={() => setDrawerOpen(false)}
         />
-        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+        {actionErrorNotice}
         {updateNotice}
       </main>
     );
@@ -1781,7 +1871,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   return (
     <main
       ref={shellRef}
-      className="drive-shell drive-shell--workspace"
+      className="app-shell app-shell--workspace"
       onDragOver={(event) => {
         if (filesClient === null) return;
         if (!event.dataTransfer?.types.includes('Files')) return;
@@ -1811,7 +1901,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       {shellNav(activeWorkspaceId)}
       {railOverlays}
 
-      <div className="drive-ws-frame">
+      <div className="app-workspace-frame">
           <section className="webapp-workspace-view">
             {activeWorkspace?.accessRole === 'viewer' && (
               <div className="ws-viewer-hold" role="status">
@@ -2063,7 +2153,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         />
       )}
 
-      {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+      {actionErrorNotice}
       {updateNotice}
       {sharingSessionId !== null && activeWorkspace !== undefined && activeWorkspace !== null && store.viewer !== null && (
         <SessionShareDialog
@@ -2084,5 +2174,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         />
       )}
     </main>
+  );
+}
+
+/** One action-error host for every first-party screen. Lody keeps its own
+ * provider tree and error surfaces inside the lazy-loaded session region. */
+export default function CloudApp(props: CloudAppProps) {
+  return (
+    <ErrorReporterProvider>
+      <CloudAppContent {...props} />
+    </ErrorReporterProvider>
   );
 }

@@ -56,7 +56,7 @@ function OrganizationsSection({
                     </span>
                   )}
                 </div>
-                {current && <p>Workspaces, Drive and connections act in this organization.</p>}
+                {current && <p>Workspaces and connections act in this organization.</p>}
               </div>
               {!current && (
                 <div className="settings-row-actions">

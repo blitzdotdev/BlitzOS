@@ -42,7 +42,6 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
       onOpenWorkspaceSettings={() => undefined}
       onInviteToWorkspace={() => undefined}
       onCreateWorkspace={() => undefined}
-      onOpenDrive={() => undefined}
       onOpenSettings={() => undefined}
       onCloseDrawer={() => undefined}
       {...overrides}
@@ -88,18 +87,6 @@ describe("workspace strip", () => {
     );
     expect(tile?.disabled).toBe(true);
     expect(tile?.title).toBe("design-team — shared by Ada Owner");
-    await view.unmount();
-  });
-
-  it("offers Drive alone where the panel toggles used to be", async () => {
-    const onOpenDrive = vi.fn();
-    const view = await render(strip({ onOpenDrive }));
-    const surfaces = [...view.container.querySelectorAll<HTMLButtonElement>(
-      'nav[aria-label="Drive"] button',
-    )];
-    expect(surfaces.map((button) => button.getAttribute("aria-label"))).toEqual(["Drive"]);
-    await act(async () => surfaces[0]?.click());
-    expect(onOpenDrive).toHaveBeenCalledOnce();
     await view.unmount();
   });
 
@@ -205,8 +192,7 @@ describe("workspace strip", () => {
     const aside = view.container.querySelector(".shell-strip");
     expect(aside?.querySelector(".shell-strip__tiles")?.previousElementSibling)
       .toBe(aside?.querySelector(".shell-strip__close"));
-    // One separator remains (above the account edge), not the org divider.
-    expect(view.container.querySelectorAll(".shell-strip__sep").length).toBe(1);
+    expect(view.container.querySelectorAll(".shell-strip__sep").length).toBe(0);
     await view.unmount();
   });
 

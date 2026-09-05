@@ -44,19 +44,6 @@ async function connectGithubApp(
   expect(callback.status).toBe(302);
 }
 
-async function createFolder(
-  app: ReturnType<typeof harness>["app"],
-  cookie: string,
-  name: string,
-): Promise<string> {
-  const response = await appRequest(app, "/folders", {
-    ...json({ name }),
-    headers: { Cookie: cookie, "Content-Type": "application/json" },
-  });
-  expect(response.status).toBe(201);
-  return (await response.json<{ folder: { id: string } }>()).folder.id;
-}
-
 describe("workspace clones and repos", () => {
   beforeEach(resetDatabase);
   afterEach(() => vi.restoreAllMocks());
@@ -78,14 +65,14 @@ describe("workspace clones and repos", () => {
       expect((await appRequest(app, path, init)).status, path).toBe(404);
     }
 
-    // A create that names a template is refused rather than quietly ignored.
+    // A removed template field is rejected as unknown.
     const templated = await appRequest(app, "/workspaces", {
       ...json({ templateId: "missing-template" }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
     });
     expect(templated.status).toBe(400);
     await expect(templated.json()).resolves.toMatchObject({
-      error: expect.stringContaining("cloneFromWorkspaceId"),
+      error: expect.stringContaining("unexpected field templateId"),
     });
 
     expect((await appRequest(app, "/workspaces", {
@@ -107,14 +94,14 @@ describe("workspace clones and repos", () => {
     });
 
     for (const bad of ["no-slash", "owner/name/extra", "owner/", "/name", "owner/na me"]) {
-      expect((await post({ machineTypeId: "small", repos: [bad] })).status, bad).toBe(400);
+      expect((await post({ defaultMachineTypeId: "small", repos: [bad] })).status, bad).toBe(400);
     }
     expect((await post({
-      machineTypeId: "small",
+      defaultMachineTypeId: "small",
       repos: Array.from({ length: 17 }, (_entry, index) => `owner/repo-${String(index)}`),
     })).status).toBe(400);
     const collision = await post({
-      machineTypeId: "small",
+      defaultMachineTypeId: "small",
       repos: ["acme/app", "blitz/app"],
     });
     expect(collision.status).toBe(400);
@@ -128,7 +115,7 @@ describe("workspace clones and repos", () => {
     // the baked git credential helper.
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
     const created = await post({
-      machineTypeId: "small",
+      defaultMachineTypeId: "small",
       repos: ["blitzdotdev/blitz-core", "acme/tools", "blitzdotdev/blitz-core"],
       connections: ["linear"],
     });
@@ -153,7 +140,7 @@ describe("workspace clones and repos", () => {
     const source = (await (await appRequest(app, "/workspaces", {
       ...json({
         name: "repo starter",
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         repos: ["blitzdotdev/blitz-core", "acme/tools"],
       }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
@@ -183,7 +170,7 @@ describe("workspace clones and repos", () => {
 
     // An ordinary create on the same instance carries none of it.
     const plain = await appRequest(app, "/workspaces", {
-      ...json({ machineTypeId: "small" }),
+      ...json({ defaultMachineTypeId: "small" }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
     });
     expect(plain.status).toBe(201);
@@ -202,7 +189,7 @@ describe("workspace clones and repos", () => {
 
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         repos: ["blitzdotdev/blitz-core", "acme/tools"],
       }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
@@ -222,7 +209,7 @@ describe("workspace clones and repos", () => {
       "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || git -c http.version=HTTP/1.1 clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
     );
     // Cloning mints through the box git credential helper, so naming repos
-    // stipulates github exactly as naming them on a template does.
+    // stipulates GitHub.
     await expect(env.DB.prepare("SELECT manifest FROM workspaces WHERE id = ?1")
       .bind(workspace.id).first<string>("manifest")).resolves.toContain("github");
   });
@@ -233,7 +220,7 @@ describe("workspace clones and repos", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
 
     const source = (await (await appRequest(app, "/workspaces", {
-      ...json({ machineTypeId: "small", repos: ["blitzdotdev/blitz-core"] }),
+      ...json({ defaultMachineTypeId: "small", repos: ["blitzdotdev/blitz-core"] }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
     })).json<{ workspace: WorkspaceView }>()).workspace;
 
@@ -267,7 +254,7 @@ describe("workspace clones and repos", () => {
     ];
     for (const [repos, message] of cases) {
       const refused = await appRequest(app, "/workspaces", {
-        ...json({ machineTypeId: "small", repos }),
+        ...json({ defaultMachineTypeId: "small", repos }),
         headers: { Cookie: owner, "Content-Type": "application/json" },
       });
       expect(refused.status, message).toBe(400);
@@ -297,7 +284,7 @@ describe("workspace clones and repos", () => {
     ));
 
     const refused = await appRequest(app, "/workspaces", {
-      ...json({ machineTypeId: "small", repos: ["acme/private-tools"] }),
+      ...json({ defaultMachineTypeId: "small", repos: ["acme/private-tools"] }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
     });
 
@@ -341,7 +328,7 @@ describe("workspace clones and repos", () => {
     // The owner holds an App grant, so the source create probes private.
     await connectGithubApp(app, owner);
     const source = (await (await appRequest(app, "/workspaces", {
-      ...json({ name: "private starter", machineTypeId: "small", repos: ["acme/private-tools"] }),
+      ...json({ name: "private starter", defaultMachineTypeId: "small", repos: ["acme/private-tools"] }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
     })).json<{ workspace: WorkspaceView }>()).workspace;
 
@@ -396,7 +383,7 @@ describe("workspace clones and repos", () => {
 
     const created = await appRequest(app, "/workspaces", {
       ...json({
-        machineTypeId: "small",
+        defaultMachineTypeId: "small",
         members: [{ membershipId: member.membershipId, role: "member" }],
       }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
@@ -428,30 +415,5 @@ describe("workspace clones and repos", () => {
       headers: { Cookie: member.cookie },
     })).status).toBe(403);
 
-    const folder = await createFolder(app, owner, "handbook");
-    const path = `/folders/${folder}/objects/${encodeURIComponent("guide.md")}`;
-    expect((await appRequest(app, `/folders/${folder}`, {
-      method: "PATCH",
-      headers: { Cookie: owner, "Content-Type": "application/json" },
-      body: JSON.stringify({ orgRole: "editor" }),
-    })).status).toBe(204);
-    expect((await appRequest(app, path, {
-      method: "PUT",
-      headers: { Cookie: member.cookie, "x-blitz-mtime": "10" },
-      body: "hello",
-    })).status).toBe(204);
-    expect((await appRequest(app, `/folders/${folder}`, {
-      method: "PATCH",
-      headers: { Cookie: owner, "Content-Type": "application/json" },
-      body: JSON.stringify({ orgRole: "viewer" }),
-    })).status).toBe(204);
-    expect((await appRequest(app, path, {
-      method: "PUT",
-      headers: { Cookie: member.cookie, "x-blitz-mtime": "11" },
-      body: "denied",
-    })).status).toBe(403);
-    expect((await appRequest(app, `/folders/${folder}/objects`, {
-      headers: { Cookie: member.cookie },
-    })).status).toBe(200);
   });
 });

@@ -33,7 +33,6 @@ function settingsSection(segment: string | undefined): SettingsSection {
   }
 }
 
-export type DriveScope = 'mine' | 'shared';
 
 /**
  * Where the Lody session surface stands, as an address
@@ -45,7 +44,7 @@ export type DriveScope = 'mine' | 'shared';
  * WHICH sessions exist, and a stale id in a shared D1 document would point half
  * the workspace's members at a session that was archived on somebody else's box.
  * What may persist is the ACTIVE SELECTION, and the address bar already persists
- * every other selection this app has — the Drive folder, the settings section —
+ * every other selection this app has, such as the settings section,
  * across a reload, a deep link and the back button, with no server round trip
  * and no cross-member leakage.
  *
@@ -128,56 +127,19 @@ export function chatSharedFrom(chat: ChatAddress): string | undefined {
 
 export type AppRoute =
   | { workspaceId: string; page: 'webApp'; chat: ChatAddress }
-  | { workspaceId: null; page: 'drive' }
-  | { workspaceId: null; page: 'folder'; folderId: string; folderPath: string[] }
+  | { workspaceId: null; page: 'home' }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
-const HOME: AppRoute = { workspaceId: null, page: 'drive' };
+const HOME: AppRoute = { workspaceId: null, page: 'home' };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|credentials|compute|requests|usage))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|credentials|compute|requests))?\/?$/u);
   if (settings) {
     return {
       workspaceId: null,
       page: 'settings',
       settingsSection: settingsSection(settings[1]),
     };
-  }
-  // Templates and recipes are disabled product-wide (2026-08-29): their
-  // control-plane routes are unmounted, so these addresses fall through to
-  // Drive rather than open a page whose every request 404s. The page code
-  // stays in the tree; restore these branches to bring the surfaces back.
-  // if (/^\/templates\/new\/?$/u.test(pathname)) {
-  //   return { workspaceId: null, page: 'template-new' };
-  // }
-  // if (/^\/templates\/?$/u.test(pathname)) {
-  //   return { workspaceId: null, page: 'templates' };
-  // }
-  // const templateEdit = pathname.match(/^\/templates\/([^/]+)\/edit\/?$/u);
-  // if (templateEdit) { ... page: 'template-edit' ... }
-  // if (/^\/recipes\/new\/?$/u.test(pathname)) {
-  //   return { workspaceId: null, page: 'recipe-new' };
-  // }
-  // if (/^\/recipes\/?$/u.test(pathname)) {
-  //   return { workspaceId: null, page: 'recipes' };
-  // }
-  // const recipeEdit = pathname.match(/^\/recipes\/([^/]+)\/edit\/?$/u);
-  // if (recipeEdit) { ... page: 'recipe-edit' ... }
-  const folder = pathname.match(/^\/folder\/([^/]+)((?:\/[^/]+)*)\/?$/u);
-  if (folder) {
-    try {
-      return {
-        workspaceId: null,
-        page: 'folder',
-        folderId: decodeURIComponent(folder[1]!),
-        folderPath: (folder[2] ?? '')
-          .split('/')
-          .filter((segment) => segment.length > 0)
-          .map(decodeURIComponent),
-      };
-    } catch {
-      return HOME;
-    }
   }
   const shared = pathname.match(/^\/workspaces\/([^/]+)\/chat\/shared\/([^/]+)\/([^/]+)\/?$/u);
   if (shared) {
@@ -302,15 +264,4 @@ export function workspaceSharedChatPath(
 
 export function settingsPath(section: SettingsSection): string {
   return section === 'profile' ? '/settings' : `/settings/${section}`;
-}
-
-/** Drive is one destination: the root lists owned folders and the folders
- * shared with the viewer. The old /shared address resolves here. */
-export function drivePath(): string {
-  return '/';
-}
-
-export function folderPagePath(folderId: string, folderPath: string[] = []): string {
-  const suffix = folderPath.map(encodeURIComponent).join('/');
-  return `/folder/${encodeURIComponent(folderId)}${suffix === '' ? '' : `/${suffix}`}`;
 }

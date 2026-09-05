@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createControlPlaneClient } from "../src/api.js";
-import { FILES_MULTIPART_CHUNK_BYTES } from "@blitzos/schema";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -91,10 +90,10 @@ describe("wire API client", () => {
     const client = createControlPlaneClient("https://control.example");
 
     expect(client.googleLoginUrl()).toBe("https://control.example/auth/google/start");
-    await client.create({ machineTypeId: "cx23@fsn1" });
+    await client.create({ defaultMachineTypeId: "cx23@fsn1" });
 
     expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("x-operator-key")).toBeNull();
-    expect(fetcher.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ machineTypeId: "cx23@fsn1" }));
+    expect(fetcher.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ defaultMachineTypeId: "cx23@fsn1" }));
   });
 
   it("disconnects one workspace connection by name and never touches the lease", async () => {
@@ -130,12 +129,12 @@ describe("wire API client", () => {
     ]);
   });
 
-  it("builds base-aware connect URLs for closed return surfaces", () => {
+  it("builds base-aware connect URLs for workspaces", () => {
     const client = createControlPlaneClient("https://control.example");
 
-    expect(client.connectStartUrl("github", undefined, "template-edit:template/one"))
+    expect(client.connectStartUrl("github", undefined, "workspace-new"))
       .toBe(
-        "https://control.example/connect/github/start?returnTo=template-edit%3Atemplate%2Fone",
+        "https://control.example/connect/github/start?returnTo=workspace-new",
       );
     expect(client.connectStartUrl("github", "workspace/one"))
       .toBe(
@@ -143,43 +142,4 @@ describe("wire API client", () => {
       );
   });
 
-  it("chunks large folder uploads with the shared cutoff and completes ordered parts", async () => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith("/multipart") && init?.method === "POST") {
-        return Response.json({ uploadId: "upload-one" }, { status: 201 });
-      }
-      if (url.includes("/multipart/upload-one/") && init?.method === "PUT") {
-        const partNumber = Number(url.split("/").at(-1));
-        return Response.json({ partNumber, etag: `etag-${partNumber}` });
-      }
-      if (url.endsWith("/multipart/upload-one/complete")) {
-        return new Response(null, { status: 204 });
-      }
-      return new Response(null, { status: 404 });
-    });
-    vi.stubGlobal("fetch", fetcher);
-    const client = createControlPlaneClient("https://control.example");
-    const file = new File(
-      [new Uint8Array(FILES_MULTIPART_CHUNK_BYTES), new Uint8Array([7])],
-      "large.bin",
-      { lastModified: 1234 },
-    );
-
-    await client.uploadFolderObject("folder", "nested/large.bin", file);
-
-    const partCalls = fetcher.mock.calls.filter(([input, init]) => (
-      String(input).includes("/multipart/upload-one/") && init?.method === "PUT"
-    ));
-    expect(partCalls).toHaveLength(2);
-    expect((partCalls[0]?.[1]?.body as Blob).size).toBe(FILES_MULTIPART_CHUNK_BYTES);
-    expect((partCalls[1]?.[1]?.body as Blob).size).toBe(1);
-    const complete = fetcher.mock.calls.find(([input]) => String(input).endsWith("/complete"));
-    expect(complete?.[1]?.body).toBe(JSON.stringify({
-      parts: [
-        { partNumber: 1, etag: "etag-1" },
-        { partNumber: 2, etag: "etag-2" },
-      ],
-    }));
-  });
 });

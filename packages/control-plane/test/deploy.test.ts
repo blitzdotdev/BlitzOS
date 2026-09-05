@@ -38,54 +38,9 @@ describe("control-plane deploy command", () => {
   // order, before the deploy call.
   const DERIVED_ROUTES = ["/", "/version", "/workspaces", "/workspaces/*"];
   const runWorkerFirst = () => DERIVED_ROUTES;
-  it("adds MICROVM_HOSTS tokenVar names to required secret metadata without reading values", () => {
-    expect(requiredSecretsForConfig({
-      vars: {
-        MICROVM_HOSTS: JSON.stringify([
-          { name: "lab", url: "https://microvm-lab.example", tokenVar: "MICROVM_LAB_TOKEN" },
-          { name: "edge", tokenVar: "MICROVM_EDGE_TOKEN", dynamic: true },
-        ]),
-      },
-    })).toEqual([
-      "HETZNER_API_TOKEN",
-      "GOOGLE_CLIENT_ID",
-      "GOOGLE_CLIENT_SECRET",
-      "WEBAPP_TOKEN_SECRET",
-      "CRED_MASTER_KEY",
-      "MICROVM_LAB_TOKEN",
-      "MICROVM_EDGE_TOKEN",
-    ]);
-  });
-
   it("treats OPERATOR_API_KEY as optional legacy, never a required secret", () => {
-    expect(requiredSecretsForConfig({ vars: { MICROVM_HOSTS: "[]" } }))
+    expect(requiredSecretsForConfig({ vars: {} }))
       .not.toContain("OPERATOR_API_KEY");
-  });
-
-  it("validates pinned and dynamic MICROVM_HOSTS shapes before checking secrets", () => {
-    const valid = {
-      name: "lab",
-      url: "https://microvm-lab.example",
-      tokenVar: "MICROVM_LAB_TOKEN",
-    };
-    const dynamic = {
-      name: "home",
-      tokenVar: "MICROVM_HOME_TOKEN",
-      dynamic: true,
-    };
-    const invalid = [
-      [{ ...valid, dynamic: false }],
-      [{ ...dynamic, url: "https://home.example" }],
-      [{ name: "home", tokenVar: "MICROVM_HOME_TOKEN" }],
-      [{ ...valid, url: "file:///tmp/agent" }],
-      [valid, { ...valid, url: "https://other.example" }],
-      [valid, { ...valid, name: "other" }],
-    ];
-    for (const hosts of invalid) {
-      expect(() => requiredSecretsForConfig({
-        vars: { MICROVM_HOSTS: JSON.stringify(hosts) },
-      })).toThrow();
-    }
   });
 
   it("cleans stale package output before rebuilding dist", async () => {
@@ -172,7 +127,7 @@ describe("control-plane deploy command", () => {
     };
     const rawConfig = {
       name: "blitz-control-plane",
-      vars: { MICROVM_HOSTS: "[]" },
+      vars: {},
       r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
       d1_databases: [{
         binding: "DB",
@@ -255,7 +210,7 @@ describe("control-plane deploy command", () => {
     };
     const rawConfig = {
       name: "blitz-control-plane",
-      vars: { MICROVM_HOSTS: "[]" },
+      vars: {},
       r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
       d1_databases: [
         {
@@ -346,7 +301,7 @@ describe("control-plane deploy command", () => {
       configPath: "packages/control-plane/wrangler.toml",
       rawConfig: {
         name: "blitz-control-plane",
-        vars: { MICROVM_HOSTS: "[]" },
+        vars: {},
         r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
         d1_databases: [
           {
@@ -429,7 +384,7 @@ describe("control-plane deploy command", () => {
       configPath: "packages/control-plane/wrangler.toml",
       rawConfig: {
         name: "blitz-control-plane",
-        vars: { MICROVM_HOSTS: "[]" },
+        vars: {},
         assets: { run_worker_first: ["/stale-one*", "/stale-two*", "/stale-three*"] },
         r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
         d1_databases: [
@@ -485,7 +440,7 @@ describe("control-plane deploy command", () => {
     const rawConfig = {
       name: "blitz-control-plane",
       account_id: "53a144fad4e15ca51c32da9b9fe25d4a",
-      vars: { MICROVM_HOSTS: "[]" },
+      vars: {},
       r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
       d1_databases: [
         {
@@ -597,7 +552,7 @@ describe("control-plane deploy command", () => {
         configPath: "packages/control-plane/wrangler.toml",
         rawConfig: {
           name: "blitz-control-plane",
-          vars: { MICROVM_HOSTS: "[]" },
+          vars: {},
           r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
           d1_databases: [
             {
@@ -688,7 +643,7 @@ describe("control-plane deploy command", () => {
         configPath: "packages/control-plane/wrangler.toml",
         rawConfig: {
           name: "blitz-control-plane",
-          vars: { MICROVM_HOSTS: "[]", SIGNUP_MODE: "invite-only" },
+          vars: { SIGNUP_MODE: "invite-only" },
           r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
           d1_databases: [{ binding: "DB", database_name: "blitz-control-plane" }],
         },
@@ -711,7 +666,6 @@ describe("control-plane deploy command", () => {
           name: "blitz-control-plane",
           vars: {
             APP_URL: "<https origin of this worker>",
-            MICROVM_HOSTS: "[]",
           },
           r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
           d1_databases: [
@@ -758,25 +712,11 @@ describe("control-plane deploy command", () => {
   });
 
   it("validates locally readable secret values and skips unreadable ones silently", () => {
-    const rawConfig = {
-      vars: {
-        MICROVM_HOSTS: JSON.stringify([
-          { name: "lab", tokenVar: "MICROVM_LAB_TOKEN", dynamic: true },
-        ]),
-      },
-    };
+    const rawConfig = { vars: {} };
     expect(localSecretValueProblems(rawConfig, {})).toEqual([]);
     expect(localSecretValueProblems(rawConfig, {
-      MICROVM_LAB_TOKEN: "a".repeat(32),
       CRED_MASTER_KEY: "A".repeat(43) + "=",
     })).toEqual([]);
-    expect(localSecretValueProblems(rawConfig, { MICROVM_LAB_TOKEN: "a".repeat(31) }))
-      .toEqual([
-        "MICROVM_LAB_TOKEN must be at least 32 characters with no whitespace — the Worker rejects weaker microVM host tokens and then fails every request",
-      ]);
-    expect(localSecretValueProblems(rawConfig, {
-      MICROVM_LAB_TOKEN: `${"a".repeat(16)} ${"a".repeat(16)}`,
-    })).toHaveLength(1);
     for (const malformed of ["not base64!!", "AAAA", `${"A".repeat(43)}=A`]) {
       expect(localSecretValueProblems(rawConfig, { CRED_MASTER_KEY: malformed })).toEqual([
         "CRED_MASTER_KEY must be base64 of exactly 32 bytes (generate one with: openssl rand -base64 32)",

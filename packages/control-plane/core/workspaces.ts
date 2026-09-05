@@ -63,11 +63,10 @@ import {
 import { shareClaimForTarget } from "./session-shares.js";
 import {
   insertWorkspaceRepos,
-  parseTemplateRepos,
+  parseWorkspaceRepos,
   workspaceRepos,
-  type TemplateRepo,
-} from "./template-repos.js";
-import { runReadyWorkspaceFileSync, scheduleSync } from "./files/sync.js";
+  type WorkspaceRepo,
+} from "./workspace-repos.js";
 import {
   enforceRateLimit,
   type CoreContext,
@@ -85,6 +84,19 @@ import type {
 export type { WorkspaceRow } from "./workspace-records.js";
 
 const WORKSPACE_ERROR_MAX_LENGTH = 1_024;
+const CREATE_WORKSPACE_FIELDS: ReadonlySet<string> = new Set([
+  "defaultMachineTypeId",
+  "autoProvision",
+  "members",
+  "cloneFromWorkspaceId",
+  "name",
+  "volumeId",
+  "userData",
+  "manifest",
+  "connections",
+  "agentRuleId",
+  "repos",
+]);
 
 const BOOTSTRAP_ERROR_PREFIX = "bootstrap failed: ";
 const PHONE_HOME_REQUEST_FIELDS = Object.freeze([
@@ -117,8 +129,6 @@ export interface PhoneHomeResponse {
   box_id: string;
   access_token: string;
   refresh_token: string;
-  workspace_id?: string;
-  webapp_token?: string;
 }
 
 function parseCreateMembers(value: JsonValue): AddWorkspaceMemberRequest[] {
@@ -128,17 +138,11 @@ function parseCreateMembers(value: JsonValue): AddWorkspaceMemberRequest[] {
 
 function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
-  const result: CreateWorkspaceRequest = {};
-  if (value.templateId !== undefined && value.templateId !== null) {
-    // The template object is gone: a workspace is its own template, and "new
-    // workspace from existing" is `cloneFromWorkspaceId`. Refused rather than
-    // ignored, so a caller learns what happened instead of quietly getting a
-    // workspace with none of the config they asked for.
-    throw new HttpError(
-      400,
-      "workspace templates were replaced by workspace clones; send cloneFromWorkspaceId",
-    );
+  const unknownField = Object.keys(value).find((field) => !CREATE_WORKSPACE_FIELDS.has(field));
+  if (unknownField !== undefined) {
+    throw new HttpError(400, `request body has unexpected field ${unknownField}`);
   }
+  const result: CreateWorkspaceRequest = {};
   if (value.cloneFromWorkspaceId !== undefined && value.cloneFromWorkspaceId !== null) {
     result.cloneFromWorkspaceId = requiredString(
       value.cloneFromWorkspaceId,
@@ -146,9 +150,12 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
       256,
     );
   }
-  const machineTypeId = value.defaultMachineTypeId ?? value.machineTypeId;
-  if (machineTypeId !== undefined || result.cloneFromWorkspaceId === undefined) {
-    result.defaultMachineTypeId = requiredString(machineTypeId, "defaultMachineTypeId", 256);
+  if (value.defaultMachineTypeId !== undefined || result.cloneFromWorkspaceId === undefined) {
+    result.defaultMachineTypeId = requiredString(
+      value.defaultMachineTypeId,
+      "defaultMachineTypeId",
+      256,
+    );
   }
   if (value.autoProvision !== undefined) {
     if (!isBoolean(value.autoProvision)) {
@@ -188,7 +195,7 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
     result.agentRuleId = value.agentRuleId;
   }
   if (value.repos !== undefined) {
-    const repos = parseTemplateRepos(value.repos);
+    const repos = parseWorkspaceRepos(value.repos);
     if (repos.length > 0) {
       if (result.cloneFromWorkspaceId !== undefined) {
         // Refused rather than resolved, exactly as a template create was: a
@@ -218,61 +225,6 @@ async function readOptionalJson(request: Request): Promise<void> {
     throw new HttpError(400, "request body must be JSON");
   }
   if (!isRecord(parsed)) throw new HttpError(400, "request body must be an object");
-}
-
-function canonicalFieldForLegacyHostKey(
-  hostKey: string,
-): "pub_key_ecdsa" | "pub_key_ed25519" | "pub_key_rsa" {
-  const algorithm = hostKey.trim().split(/\s+/u, 1)[0] ?? "";
-  if (algorithm.startsWith("ecdsa-")) return "pub_key_ecdsa";
-  if (algorithm === "ssh-rsa") return "pub_key_rsa";
-  return "pub_key_ed25519";
-}
-
-function addLegacyHostKeys(
-  adapted: Record<string, unknown>,
-  candidate: unknown,
-): void {
-  if (!Array.isArray(candidate)) return;
-  for (const hostKey of candidate.filter(isSshPublicKey)) {
-    const field = canonicalFieldForLegacyHostKey(hostKey);
-    if (adapted[field] === undefined || adapted[field] === "") {
-      adapted[field] = hostKey;
-    }
-  }
-}
-
-function adaptLegacyPhoneHomeRequestForInFlightImages(value: unknown) {
-  if (!isRecord(value)) return value;
-  const adapted = { ...value };
-  let hasLegacyPayload = false;
-
-  // Old in-flight microVM images sent array aliases, pub_key_dsa, and workspace_id.
-  // Keep all legacy handling isolated here so canonical parsing stays v1-only.
-  for (const field of [
-    "hostPublicKeys",
-    "host_public_keys",
-    "ssh_host_public_keys",
-  ] as const) {
-    if (!(field in adapted)) continue;
-    hasLegacyPayload = true;
-    addLegacyHostKeys(adapted, adapted[field]);
-    delete adapted[field];
-  }
-  if ("pub_key_dsa" in adapted) {
-    hasLegacyPayload = true;
-    const dsaKey = adapted.pub_key_dsa;
-    if (
-      isSshPublicKey(dsaKey) &&
-      (adapted.pub_key_ed25519 === undefined || adapted.pub_key_ed25519 === "")
-    ) {
-      adapted.pub_key_ed25519 = dsaKey;
-    }
-    delete adapted.pub_key_dsa;
-  }
-  const isLegacyFailure = "workspace_id" in adapted && "bootstrap_error" in adapted;
-  if (hasLegacyPayload || isLegacyFailure) delete adapted.workspace_id;
-  return adapted;
 }
 
 function bootstrapFailureMessage(value: unknown): string {
@@ -341,28 +293,19 @@ export function parsePhoneHomeRequest(
   } else {
     throw new HttpError(400, "phone-home content type must be application/json or application/x-www-form-urlencoded");
   }
-  return parseCanonicalPhoneHomeRequest(
-    adaptLegacyPhoneHomeRequestForInFlightImages(value),
-  );
+  return parseCanonicalPhoneHomeRequest(value);
 }
 
 export function createPhoneHomeResponse(
   boxId: string,
   accessToken: string,
   refreshToken: string,
-  workspaceId?: string,
-  webAppToken?: string,
 ): PhoneHomeResponse {
-  const response: PhoneHomeResponse = {
+  return {
     box_id: boxId,
     access_token: accessToken,
     refresh_token: refreshToken,
   };
-  if (workspaceId !== undefined && webAppToken !== undefined) {
-    response.workspace_id = workspaceId;
-    response.webapp_token = webAppToken;
-  }
-  return response;
 }
 
 /**
@@ -406,10 +349,6 @@ async function readPhoneHome(context: CoreContext): Promise<PhoneHomeRequest> {
   );
 }
 
-export interface RecipeLaunch {
-  recipeId: string;
-}
-
 /** The workspace whose config a create clones, or null. Members and
  * credential VALUES never come across (§ wire types): a clone is a template,
  * not a copy of somebody else's team or secrets. */
@@ -442,7 +381,6 @@ export async function performWorkspaceCreate(
   principal: Principal,
   requestOrigin: string,
   input: CreateWorkspaceRequest,
-  recipe?: RecipeLaunch,
 ): Promise<WorkspaceRow> {
   const orgId = principal.orgId;
   const membershipId = principal.membershipId;
@@ -465,7 +403,7 @@ export async function performWorkspaceCreate(
   const requestCredential = requestedRepos.length === 0
     ? null
     : await githubCallerCredential(runtime, principal.id);
-  const repos: TemplateRepo[] = source !== null
+  const repos: WorkspaceRepo[] = source !== null
     ? await workspaceRepos(runtime.db, source.id)
     : await probedRepos(requestedRepos, requestCredential?.token ?? null);
   const privateRepos = repos.filter((repo) => repo.private);
@@ -504,7 +442,7 @@ export async function performWorkspaceCreate(
     }
   }
   // A clone inherits the source's stipulated providers: the ceiling is part of
-  // the config a workspace carries, exactly as a template's provider list was.
+  // the configuration a workspace carries.
   // Creation never mints — the names land in the allow-list and an agent pulls
   // a credential when it needs one.
   const requested = [...new Set([
@@ -520,9 +458,9 @@ export async function performWorkspaceCreate(
   await rows(runtime.db, {
     q: `INSERT INTO workspaces
         (id, name, owner_id, org_id, owner_membership_id, default_machine_type_id,
-         auto_provision, revision, manifest, agent_rule_id, recipe_id,
+         auto_provision, revision, manifest, agent_rule_id,
          created_at, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9, ?10, ?11, ?11)`,
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9, ?10, ?10)`,
     v: [
       id,
       name,
@@ -533,7 +471,6 @@ export async function performWorkspaceCreate(
       input.autoProvision === false ? 0 : 1,
       enablementManifestJson(input.manifest, requested),
       agentRuleId,
-      recipe?.recipeId ?? null,
       now,
     ],
   });
@@ -1151,18 +1088,10 @@ export function addWorkspaceRoutes(
       q: `UPDATE workspaces SET revision = revision + 1, updated_at = ?1 WHERE id = ?2`,
       v: [now, workspace.id],
     });
-    // The guest just came up: materialize its attached Drive folders now
-    // instead of waiting for the next scheduled sweep.
-    scheduleSync(runtime, (syncRuntime) => runReadyWorkspaceFileSync(syncRuntime, id));
-    const webAppToken = runtime.providers.webAppAuth === undefined
-      ? undefined
-      : await runtime.providers.webAppAuth.tokenFor(id);
     return context.json<PhoneHomeResponse>(createPhoneHomeResponse(
       machineId,
       credentials.accessToken,
       credentials.refreshToken,
-      webAppToken === undefined ? undefined : id,
-      webAppToken,
     ));
   });
 }
