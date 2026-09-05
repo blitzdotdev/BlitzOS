@@ -2,7 +2,6 @@ import type { GrantProposalView } from '@blitzos/schema';
 import type { ReactNode } from 'react';
 import type { ControlPlaneClient } from '../api';
 import type { TenantMe } from '../api-adapter';
-import { DriveHome } from '../files/DriveHome';
 import { SettingsHeader, SettingsPage } from '../SettingsPage';
 import {
   type AppRoute,
@@ -14,9 +13,9 @@ import {
 /* The template and recipe pages are gone from this switch: their routes no
  * longer parse and their control-plane routes are unmounted. The screens
  * themselves stay in the tree, unreachable — see `sessions-page-state.ts`. */
-export type SecondaryRoutePage = 'drive' | 'folder' | 'settings';
+export type SecondaryRoutePage = 'home' | 'settings';
 
-const SECONDARY_ROUTE_PAGES = new Set<string>(['drive', 'folder', 'settings']);
+const SECONDARY_ROUTE_PAGES = new Set<string>(['home', 'settings']);
 
 export function isSecondaryRoute(
   route: AppRoute,
@@ -36,8 +35,6 @@ export type SecondaryRoutesProps = {
   updateNotice: ReactNode;
   error: string | null;
   onDismissError: () => void;
-  onNavigate: (path: string) => void;
-  onOpenRail: () => void;
   onNavigateToSettings: (section: SettingsSection) => void;
   onOpenWorkspace: (workspaceId: string) => void;
   /** Reopens a pending grant proposal the person closed without deciding. */
@@ -61,14 +58,6 @@ function Notice({ message, onDismiss }: { message: string; onDismiss: () => void
   );
 }
 
-function Loading() {
-  return (
-    <div className="drive-content">
-      <div className="drive-empty" role="status">Loading…</div>
-    </div>
-  );
-}
-
 /** The route switch for every page that is not a workspace. Each branch is the
  * same shell: rail, content, notices, dialogs. */
 export function SecondaryRoutes({
@@ -82,8 +71,6 @@ export function SecondaryRoutes({
   updateNotice,
   error,
   onDismissError,
-  onNavigate,
-  onOpenRail,
   onNavigateToSettings,
   onOpenWorkspace,
   onReviewProposal,
@@ -129,19 +116,14 @@ export function SecondaryRoutes({
     );
   }
 
-  // Drive and folder are all that is left, so this is the last branch.
   return (
-    <main className="drive-shell" aria-busy={!loaded}>
+    <main className="app-shell" aria-busy={!loaded}>
       {rail}
-      {loaded && viewer ? (
-        <DriveHome
-          client={client}
-          viewer={viewer}
-          route={route}
-          onNavigate={onNavigate}
-          onOpenRail={onOpenRail}
-        />
-      ) : <Loading />}
+      <div className="app-content">
+        <div className="app-empty" role="status">
+          {loaded && viewer ? 'Create a workspace to get started.' : 'Loading…'}
+        </div>
+      </div>
       {notice}
       {updateNotice}
       {dialogs}

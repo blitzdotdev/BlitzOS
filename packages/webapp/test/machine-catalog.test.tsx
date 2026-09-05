@@ -30,15 +30,14 @@ const EUROS = machine({
   monthlyPrice: { amount: 9.99, currency: 'EUR' },
 });
 
-// The microVM pool declares no price, so its card carries none.
-const LAB = machine({
-  id: 'mv-2c2g@lab',
-  providerId: 'microvm',
-  supportsVolumes: false,
-  name: 'Lab 2C/2G',
-  memGb: 2,
-  diskGb: 20,
-  location: 'lab',
+// A provider may omit a price, so its card carries none.
+const UNPRICED = machine({
+  id: 'aws-t3.medium@us-east-1',
+  providerId: 'aws',
+  name: 't3.medium',
+  memGb: 4,
+  diskGb: 40,
+  location: 'us-east-1',
 });
 
 function card(container: HTMLElement, machineTypeId: string): HTMLElement {
@@ -74,7 +73,7 @@ describe('machine catalog grid', () => {
   });
 
   it('prints the monthly price last in the priced card, so it sits bottom right', async () => {
-    const view = await catalog([DOLLARS, LAB]);
+    const view = await catalog([DOLLARS, UNPRICED]);
     const facts = card(view.container, 'cx23@hel1').querySelector('.blueprint-machine-facts');
 
     expect(facts?.lastElementChild?.className).toBe('blueprint-machine-price');
@@ -83,14 +82,14 @@ describe('machine catalog grid', () => {
   });
 
   it('prints no price for a machine the provider declares no price for', async () => {
-    const view = await catalog([DOLLARS, LAB]);
-    const lab = card(view.container, 'mv-2c2g@lab');
+    const view = await catalog([DOLLARS, UNPRICED]);
+    const unpriced = card(view.container, 'aws-t3.medium@us-east-1');
 
-    expect(lab.querySelector('.blueprint-machine-price')).toBeNull();
+    expect(unpriced.querySelector('.blueprint-machine-price')).toBeNull();
     // The rest of the card must still read the same.
-    expect(lab.textContent).toContain('Lab 2C/2G');
-    expect(lab.textContent).toContain('2 vCPU · 2 GB RAM · 20 GB disk');
-    expect(lab.querySelector('.blueprint-machine-facts')?.textContent).toBe('x86lab');
+    expect(unpriced.textContent).toContain('t3.medium');
+    expect(unpriced.textContent).toContain('2 vCPU · 4 GB RAM · 40 GB disk');
+    expect(unpriced.querySelector('.blueprint-machine-facts')?.textContent).toBe('x86us-east-1');
     await view.unmount();
   });
 
@@ -124,13 +123,13 @@ describe('machine catalog grid', () => {
       monthlyPrice: { amount: 37.49, currency: 'EURO' },
     });
 
-    const view = await catalog([DOLLARS, broken, LAB]);
+    const view = await catalog([DOLLARS, broken, UNPRICED]);
 
     expect(priceOf(view.container, 'cpx21@hil')).toBeNull();
     expect(card(view.container, 'cpx21@hil').textContent).toContain('CPX21');
     // The other cards keep their prices, so one bad code costs one label.
     expect(priceOf(view.container, 'cx23@hel1')).toBe('$6.49/mo');
-    expect(priceOf(view.container, 'mv-2c2g@lab')).toBeNull();
+    expect(priceOf(view.container, 'aws-t3.medium@us-east-1')).toBeNull();
     await view.unmount();
   });
 });

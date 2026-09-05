@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient, MemberView } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
-import { DriveAvatar } from '../files/DriveAvatar';
+import { MemberAvatar } from '../MemberAvatar';
 import { PanelHeader } from './primitives';
 
 export function MembersPanel({
@@ -73,7 +73,7 @@ export function MembersPanel({
       <div className="settings-people">
         {members.map((member) => (
           <div className={`settings-person${member.status === 'disabled' ? ' settings-person--disabled' : ''}`} key={member.id}>
-            <DriveAvatar name={member.name || member.email} avatarUrl={member.avatarUrl} size="lg" />
+            <MemberAvatar name={member.name || member.email} avatarUrl={member.avatarUrl} size="lg" />
             <span className="settings-person-copy">
               <strong>{member.name || member.email}</strong>
               <span>{member.email}{member.status === 'disabled' ? ' · disabled' : ''}</span>

@@ -3,7 +3,7 @@ import type {
   AddWorkspaceMemberRequest,
   ListMachineTypesResponse,
   MachineType,
-  TemplateRepoView,
+  WorkspaceRepoView,
   WorkspaceMemberRole,
   WorkspaceMemberView,
 } from '@blitzos/schema';
@@ -108,7 +108,7 @@ export function WorkspaceDetailsDialog({
   // The repo list is not on `WorkspaceView`: it is settings a poll has no
   // reason to carry, so the dialog reads it once and keeps what each write
   // answers with.
-  const [repos, setRepos] = useState<TemplateRepoView[]>([]);
+  const [repos, setRepos] = useState<WorkspaceRepoView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<WorkspaceDetailsTab>(initialTab);

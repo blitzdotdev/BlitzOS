@@ -1,7 +1,10 @@
-import { squareAvatarUrl } from '../avatar-url';
-import { personInitial } from './drive-model';
+import { squareAvatarUrl } from './avatar-url';
 
-export function DriveAvatar({
+function personInitial(name: string): string {
+  return name.trim().charAt(0).toUpperCase() || '?';
+}
+
+export function MemberAvatar({
   name,
   avatarUrl,
   me = false,
@@ -14,7 +17,7 @@ export function DriveAvatar({
 }) {
   return (
     <span
-      className={`drive-avatar drive-avatar--${size}${me ? ' drive-avatar--me' : ''}`}
+      className={`member-avatar member-avatar--${size}${me ? ' member-avatar--me' : ''}`}
       title={name}
       aria-hidden="true"
     >

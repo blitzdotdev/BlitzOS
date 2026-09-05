@@ -26,7 +26,7 @@ interface Draft {
   content: string;
 }
 
-/** Picks the agent-rules document a workspace or template hands its agents.
+/** Picks the agent-rules document a workspace hands its agents.
  * The list the server returns leads with the built-in doc (`id: null`), so
  * "edit the default" is just an edit whose save has no id yet. */
 export function AgentRulesPicker({

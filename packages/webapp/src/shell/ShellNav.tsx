@@ -2,7 +2,7 @@ import type { TenantMe } from '../api-adapter';
 import type { SpawnSessionType } from '../NewTabMenu';
 import type { LivePort, PreviewLink } from '../preview';
 import type { CloudWorkspaceModel } from '../workspace-store';
-import type { DriveRailSession } from './rail-sessions';
+import type { RailSession } from './rail-sessions';
 import { SessionRail } from './SessionRail';
 import { WorkspaceStrip } from './WorkspaceStrip';
 
@@ -11,11 +11,10 @@ export type ShellNavProps = {
   viewer: TenantMe | null;
   activeWorkspaceId: string | null;
   activeWorkspace: CloudWorkspaceModel | undefined;
-  /** The rail is column two on a workspace page, and rides in the mobile
-   * drawer wherever a workspace is open. Drive and settings show the strip
-   * alone and let the page have the width. */
+  /** The rail is column two on a workspace page and rides in the mobile
+   * drawer wherever a workspace is open. Settings shows no workspace rail. */
   showRail: boolean;
-  sessions: DriveRailSession[];
+  sessions: RailSession[];
   activeSessionId: string;
   livePorts: LivePort[];
   previewLinks: PreviewLink[];
@@ -34,7 +33,6 @@ export type ShellNavProps = {
   onOpenWorkspaceSettings: (workspaceId: string) => void;
   onInviteToWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onOpenDrive: () => void;
   onOpenSettings: () => void;
   onSelectSession: (sessionId: string) => void;
   /** See `SessionRailProps.onCloseSession`. */
@@ -71,7 +69,6 @@ export function ShellNav({
   onOpenWorkspaceSettings,
   onInviteToWorkspace,
   onCreateWorkspace,
-  onOpenDrive,
   onOpenSettings,
   onSelectSession,
   onCloseSession,
@@ -95,7 +92,6 @@ export function ShellNav({
           onOpenWorkspaceSettings={onOpenWorkspaceSettings}
           onInviteToWorkspace={onInviteToWorkspace}
           onCreateWorkspace={onCreateWorkspace}
-          onOpenDrive={onOpenDrive}
           onOpenSettings={onOpenSettings}
           onCloseDrawer={onCloseDrawer}
         />

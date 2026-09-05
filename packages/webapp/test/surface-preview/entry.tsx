@@ -15,9 +15,9 @@
  *    and no other. `packages/webapp/test/lody-preview-fidelity.test.ts` reads
  *    `main.tsx` and fails if the two lists drift apart.
  * 2. Every class name is one the product renders. The shell grid is
- *    `.drive-shell.drive-shell--workspace` (`drive-shell.css:116`), the rail
+ *    `.app-shell.app-shell--workspace` (`app-shell.css`), the rail
  *    column is `.session-rail` inside `.shell-nav` (`ShellNav.tsx:80`), the
- *    surface's host is `.drive-ws-frame > .webapp-workspace-view`
+ *    surface's host is `.app-workspace-frame > .webapp-workspace-view`
  *    (`CloudApp.tsx:1612`), and the vendored zone is
  *    `.session-list.session-list--vendor` (`SessionRail.tsx:125`). Nothing here
  *    invents a box.
@@ -40,8 +40,8 @@ import "../../src/webapp-shell.css";
 import "../../src/webapp-workspace.css";
 import "../../src/browser/browser-panel.css";
 import "../../src/webapp-select.css";
-import "../../src/files-drive.css";
-import "../../src/drive-shell.css";
+import "../../src/app-shell.css";
+import "../../src/member-avatar.css";
 import "../../src/strip-rail.css";
 import "../../src/files.css";
 import "../../src/confirmation-dialog.css";
@@ -53,7 +53,7 @@ import "../../src/settings.css";
 import "../../src/org-credentials.css";
 import "../../src/invite-redeem.css";
 
-import { BoxGlyph, ShareGlyph } from "../../src/files/DriveIcons";
+import { BoxGlyph, ShareGlyph } from "../../src/shell/SessionRailIcons";
 import { chooseTheme, resolvedTheme } from "../../src/theme";
 import { SurfacePreviewRegion } from "./region";
 import { WorkspaceSigilIcon } from "../../src/shell/WorkspaceStrip";
@@ -115,7 +115,7 @@ function Strip() {
 function PreviewShell() {
   const [mode, setMode] = useState(() => resolvedTheme());
   return (
-    <main className="drive-shell drive-shell--workspace">
+    <main className="app-shell app-shell--workspace">
       <div className="shell-nav">
         <Strip />
         <aside className="session-rail" aria-label="Workspace sessions rail">
@@ -123,7 +123,7 @@ function PreviewShell() {
           <SurfacePreviewRegion />
         </aside>
       </div>
-      <div className="drive-ws-frame">
+      <div className="app-workspace-frame">
         <section className="webapp-workspace-view" />
       </div>
       {/* The preview's OWN chrome, not the surface's. It carries inline

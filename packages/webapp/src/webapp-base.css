@@ -273,7 +273,7 @@ a:where(:not(.lody-surface, .lody-surface *, .session-list--vendor, .session-lis
   }
 }
 
-/* ================= blitz additions: identity + drive surfaces ============ */
+/* ================= blitz additions: identity + workspace surfaces ======== */
 
 /* blitz-core operator-key entry uses the webapp primitives. */
 .login-screen {
