@@ -9,7 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { createClient, type WebDAVClient } from 'webdav';
-import { ApiAdapter, ApiError, type TenantMe } from './api-adapter';
+import { ApiAdapter, ApiError, workspaceFromWire, type TenantMe } from './api-adapter';
 import type { ControlPlaneClient } from './api';
 import type { CredentialRequestView } from '@blitzos/schema';
 import { SPAWN_SESSION_LABELS, type SpawnSessionType } from './NewTabMenu';
@@ -78,11 +78,13 @@ import {
 } from './sessions-page-state';
 import {
   clampDrawerWidth,
+  defaultGlobalWebAppState,
   defaultWorkspaceFiles,
   isManagedWorkspaceTab,
   tabRegion,
   withPreviewTabPath,
   type StorageNamespace,
+  type GlobalWebAppStateV1,
   type WorkspaceDrawerSegment,
   type WorkspaceRegion,
   type WorkspaceTab,
@@ -215,6 +217,8 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   const [terminalSignInUrl, setTerminalSignInUrl] = useState<string | null>(null);
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
+  const pendingRequestsRef = useRef(pendingRequests);
+  pendingRequestsRef.current = pendingRequests;
   const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
   // The grant-approval feed (plans/ORG-CREDENTIALS.md §7a): a pending
   // proposal addressed to this member pops the dialog on whichever page they
@@ -224,6 +228,10 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     !signedOut && store.viewer !== null,
     store.viewer?.membership.id ?? null,
   );
+  const [grantProposalError, setGrantProposalError] = useState<{
+    proposalId: string;
+    message: string;
+  } | null>(null);
   // The latest `blitz connections open` focus for the active workspace; a
   // fresh object per event so the panel re-selects on a repeat ask.
   const [connectionsFocus, setConnectionsFocus] = useState<ConnectionsPanelFocus | null>(null);
@@ -260,6 +268,17 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   // authority for their own rows, so such a request is discarded rather than
   // briefly (or permanently) rolling the UI backward.
   const workspaceMutationEpoch = useRef(0);
+  const pendingMachineStarts = useRef(new Set<string>());
+  const pendingWorkspaceRenames = useRef(new Map<string, symbol>());
+  const acknowledgedGlobalDoc = useRef<{
+    namespace: string;
+    value: GlobalWebAppStateV1;
+    json: string;
+  } | null>(null);
+  const attemptedGlobalDoc = useRef<{ namespace: string; json: string } | null>(null);
+  const currentGlobalDoc = useRef<{ namespace: string; json: string } | null>(null);
+  const globalSaveRequest = useRef<symbol | null>(null);
+  const [globalSaveVersion, setGlobalSaveVersion] = useState(0);
   const firstWorkspacePrompted = useRef(false);
   // Visit once, then retain: tab switches preserve live state without eagerly
   // opening every saved terminal and WebGL surface.
@@ -333,6 +352,18 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     if (cause instanceof ApiError && cause.status === 401) return;
     setError(caughtErrorMessage(cause, 'Could not save webApp state.'));
   }, []);
+  const rememberGlobalState = useCallback((
+    doc: GlobalWebAppStateV1,
+    namespaceValue: StorageNamespace,
+  ) => {
+    const json = JSON.stringify(doc);
+    const namespace = `${namespaceValue.orgId}:${namespaceValue.membershipId}`;
+    // A save from the organization we just left may still settle. It cannot
+    // acknowledge or reconcile this namespace.
+    globalSaveRequest.current = null;
+    acknowledgedGlobalDoc.current = { namespace, value: doc, json };
+    attemptedGlobalDoc.current = { namespace, json };
+  }, []);
   const {
     transitionStage: organizationTransitionStage,
     createOrgName,
@@ -381,7 +412,11 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
       const records = await api.listWorkspaces();
       if (mutationEpoch !== workspaceMutationEpoch.current) return;
       rememberWorkspaceEndpoints(workspaceEndpoints.current, records, resolver, true);
-      dispatch({ type: 'workspace_records_refreshed', records });
+      dispatch({
+        type: 'workspace_records_refreshed',
+        records,
+        heldWorkspaceIds: [...pendingMachineStarts.current],
+      });
     } catch (refreshError) {
       if (!(refreshError instanceof ApiError && refreshError.status === 401)) {
         console.warn('Unable to refresh workspace status', refreshError);
@@ -600,6 +635,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     dispatch,
     setLoaded,
     setError,
+    onGlobalStateLoaded: rememberGlobalState,
   });
 
   useEffect(() => {
@@ -719,22 +755,6 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     refreshWorkspaceRecords,
   });
 
-  useEffect(() => {
-    if (
-      !loaded
-      || !storageNamespace
-      || store.workspaces.some(({ pendingCreate }) => pendingCreate)
-    ) return;
-    const timer = window.setTimeout(() => {
-      void api.putGlobalWebAppState({
-        version: 1,
-        activeWorkspaceId,
-        order: store.workspaces.map(({ id }) => id),
-      }).catch(handlePersistenceError);
-    }, 150);
-    return () => window.clearTimeout(timer);
-  }, [activeWorkspaceId, api, handlePersistenceError, loaded, storageNamespace, store.workspaces]);
-
   const navigateToWorkspacePage = useCallback((workspaceId: string) => {
     // COME BACK WHERE THE MEMBER LEFT. Without this the switch pushes a path
     // with no chat segment and sets `chat: null`, so returning to a workspace
@@ -746,6 +766,101 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     window.history.pushState({}, '', path);
     setRoute(remembered === null ? { workspaceId, page: 'webApp', chat: null } : parseAppRoute(path));
   }, []);
+
+  const applyGlobalState = useCallback((doc: GlobalWebAppStateV1) => {
+    const workspaces = storeRef.current.workspaces;
+    const liveIds = new Set(workspaces.map(({ id }) => id));
+    const order = [
+      ...doc.order.filter((id, index) => liveIds.has(id) && doc.order.indexOf(id) === index),
+      ...workspaces.map(({ id }) => id).filter((id) => !doc.order.includes(id)),
+    ];
+    commitWorkspaceMutation({ type: 'workspace_order_reconciled', order });
+    const active = selectControllableWorkspaceId(workspaces, doc.activeWorkspaceId);
+    const activeChanged = activeWorkspaceIdRef.current !== active;
+    activeWorkspaceIdRef.current = active;
+    setActiveWorkspaceId(active);
+    if (!activeChanged || parseAppRoute(window.location.pathname).page !== 'webApp') return;
+    const path = active ? workspacePath(active) : '/';
+    window.history.replaceState({}, '', path);
+    setRoute(active
+      ? { workspaceId: active, page: 'webApp', chat: null }
+      : { workspaceId: null, page: 'drive' });
+  }, [commitWorkspaceMutation]);
+
+  if (loaded && storageNamespace !== null) {
+    currentGlobalDoc.current = {
+      namespace: `${storageNamespace.orgId}:${storageNamespace.membershipId}`,
+      json: JSON.stringify({
+        version: 1,
+        activeWorkspaceId,
+        order: store.workspaces.map(({ id }) => id),
+      } satisfies GlobalWebAppStateV1),
+    };
+  }
+
+  useEffect(() => {
+    if (
+      !loaded
+      || !storageNamespace
+      || store.workspaces.some(({ pendingCreate }) => pendingCreate)
+      || globalSaveRequest.current !== null
+    ) return;
+    const namespace = `${storageNamespace.orgId}:${storageNamespace.membershipId}`;
+    const doc: GlobalWebAppStateV1 = {
+      version: 1,
+      activeWorkspaceId,
+      order: store.workspaces.map(({ id }) => id),
+    };
+    const json = JSON.stringify(doc);
+    if (attemptedGlobalDoc.current?.namespace === namespace
+      && attemptedGlobalDoc.current.json === json) return;
+    const timer = window.setTimeout(() => {
+      const request = Symbol(namespace);
+      globalSaveRequest.current = request;
+      attemptedGlobalDoc.current = { namespace, json };
+      void api.putGlobalWebAppState(doc)
+        .then((response) => {
+          if (globalSaveRequest.current !== request) return;
+          const canonical = response.doc ?? defaultGlobalWebAppState();
+          const canonicalJson = JSON.stringify(canonical);
+          acknowledgedGlobalDoc.current = {
+            namespace,
+            value: canonical,
+            json: canonicalJson,
+          };
+          attemptedGlobalDoc.current = { namespace, json: canonicalJson };
+          // A later selection or reorder waits behind this write. Do not let
+          // the older response erase it before its own save begins.
+          if (currentGlobalDoc.current?.namespace !== namespace
+            || currentGlobalDoc.current.json !== json) return;
+          applyGlobalState(canonical);
+        })
+        .catch((cause: Error) => {
+          if (globalSaveRequest.current !== request) return;
+          const acknowledged = acknowledgedGlobalDoc.current;
+          if (acknowledged?.namespace === namespace) {
+            attemptedGlobalDoc.current = { namespace, json: acknowledged.json };
+            applyGlobalState(acknowledged.value);
+          }
+          handlePersistenceError(cause);
+        })
+        .finally(() => {
+          if (globalSaveRequest.current !== request) return;
+          globalSaveRequest.current = null;
+          setGlobalSaveVersion((version) => version + 1);
+        });
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeWorkspaceId,
+    api,
+    applyGlobalState,
+    globalSaveVersion,
+    handlePersistenceError,
+    loaded,
+    storageNamespace,
+    store.workspaces,
+  ]);
 
   // WHERE EACH WORKSPACE IS BEING LEFT. Recorded only for a path that carries a
   // real chat address: the bare `/workspaces/:id` is what the restore above
@@ -877,10 +992,38 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
    * so it goes through the same PATCH the settings tab writes; the tile shows
    * the new name at once and the next poll agrees. */
   const renameWorkspace = useCallback((workspaceId: string, name: string) => {
-    dispatch({ type: 'workspace_renamed', workspaceId, title: name });
+    const preceding = storeRef.current.workspaces.find(({ id }) => id === workspaceId);
+    if (preceding === undefined) return;
+    const attempt = Symbol(workspaceId);
+    pendingWorkspaceRenames.current.set(workspaceId, attempt);
+    setError(null);
+    commitWorkspaceMutation({ type: 'workspace_renamed', workspaceId, title: name });
     void client.updateWorkspace(workspaceId, { name })
-      .catch((caught: Error) => setError(caught.message));
-  }, [client]);
+      .then(({ workspace }) => {
+        if (pendingWorkspaceRenames.current.get(workspaceId) !== attempt) return;
+        pendingWorkspaceRenames.current.delete(workspaceId);
+        const canonical = workspaceFromWire(workspace);
+        commitWorkspaceMutation({ type: 'workspace_record_updated', record: canonical });
+        commitWorkspaceMutation({
+          type: 'workspace_renamed',
+          workspaceId,
+          title: canonical.name,
+        });
+      })
+      .catch((cause: unknown) => {
+        if (pendingWorkspaceRenames.current.get(workspaceId) !== attempt) return;
+        pendingWorkspaceRenames.current.delete(workspaceId);
+        commitWorkspaceMutation({
+          type: 'workspace_renamed',
+          workspaceId,
+          title: preceding.title,
+        });
+        setError(`Could not rename “${preceding.title}”: ${caughtErrorMessage(
+          cause,
+          'The control plane request failed.',
+        )}`);
+      });
+  }, [client, commitWorkspaceMutation]);
 
   const retryWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = storeRef.current.workspaces.find(({ id }) => id === workspaceId);
@@ -898,18 +1041,56 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
   /**
    * Start the viewer's own machine in the active workspace, from the pane that
    * replaces the loading spinner while it is stopped (`WorkspaceStoppedState`).
-   * The refresh is what moves the pane on: the record comes back `creating`,
-   * the poll hurries for a transitioning workspace, and `running` follows.
+   * The local row moves the pane on while the start response is pending. Its
+   * answer commits the machine, then the poll follows later transitions.
    */
   const startMyMachine = useCallback(async () => {
     const workspace = storeRef.current.workspaces.find(({ id }) => id === activeWorkspaceId);
+    if (workspace === undefined) throw new Error('The active workspace is unavailable.');
     const membershipId = storeRef.current.viewer?.membership.id ?? null;
-    const machine = workspace?.members
+    const machine = workspace.members
       .find((member) => member.membershipId === membershipId)?.machine ?? null;
     if (machine === null) throw new Error('You have no machine in this workspace to start.');
-    await client.startMachine(machine.id);
-    await refreshWorkspaceRecords();
-  }, [activeWorkspaceId, client, refreshWorkspaceRecords]);
+    pendingMachineStarts.current.add(workspace.id);
+    commitWorkspaceMutation({
+      type: 'workspace_member_machine_updated',
+      workspaceId: workspace.id,
+      membershipId: machine.membershipId,
+      machine: { ...machine, state: 'provisioning', error: null },
+      lifecycleStatus: 'creating',
+    });
+    try {
+      const { machine: canonical } = await client.startMachine(machine.id);
+      commitWorkspaceMutation({
+        type: 'workspace_member_machine_updated',
+        workspaceId: workspace.id,
+        membershipId: machine.membershipId,
+        machine: canonical,
+        lifecycleStatus: canonical.state === 'running' ? 'running'
+          : canonical.state === 'stopped' ? 'stopped'
+          : canonical.state === 'error' ? 'error'
+          : canonical.state === 'destroying' || canonical.state === 'destroyed'
+            ? 'destroying'
+            : 'creating',
+      });
+      pendingMachineStarts.current.delete(workspace.id);
+      void refreshWorkspaceRecords();
+    } catch (caught) {
+      commitWorkspaceMutation({
+        type: 'workspace_member_machine_updated',
+        workspaceId: workspace.id,
+        membershipId: machine.membershipId,
+        machine,
+        lifecycleStatus: 'stopped',
+      });
+      pendingMachineStarts.current.delete(workspace.id);
+      setError(`Could not start your machine in “${workspace.title}”: ${caughtErrorMessage(
+        caught,
+        'The control plane request failed.',
+      )}`);
+      throw caught;
+    }
+  }, [activeWorkspaceId, client, commitWorkspaceMutation, refreshWorkspaceRecords]);
 
   const cancelConfirmation = useCallback(() => {
     setConfirmation(null);
@@ -1348,9 +1529,20 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     request: CredentialRequestView,
     action: 'approve' | 'deny',
   ) => {
-    if (action === 'approve') await client.approveCredentialRequest(request.id);
-    else await client.denyCredentialRequest(request.id);
+    const index = pendingRequestsRef.current.findIndex(({ id }) => id === request.id);
     setPendingRequests((current) => current.filter(({ id }) => id !== request.id));
+    try {
+      if (action === 'approve') await client.approveCredentialRequest(request.id);
+      else await client.denyCredentialRequest(request.id);
+    } catch (caught) {
+      setPendingRequests((current) => {
+        if (current.some(({ id }) => id === request.id)) return current;
+        const restored = [...current];
+        restored.splice(Math.max(index, 0), 0, request);
+        return restored;
+      });
+      throw caught;
+    }
   }, [client]);
   const activePendingRequests = useMemo(
     () => pendingRequests.filter(({ workspace_id }) => workspace_id === activeWorkspaceId),
@@ -1783,10 +1975,24 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
           orgName: store.viewer.org.name || store.viewer.org.slug,
         }}
         workspaces={store.workspaces.map(({ id, title, members }) => ({ id, name: title, members }))}
+        initialError={grantProposalError?.proposalId === grantProposals.active.id
+          ? grantProposalError.message
+          : null}
         onClose={() => {
           if (grantProposals.active !== null) grantProposals.dismiss(grantProposals.active.id);
         }}
-        onResolved={grantProposals.settled}
+        onResolveStarted={(proposalId) => {
+          setGrantProposalError(null);
+          grantProposals.dismiss(proposalId);
+        }}
+        onResolveFailed={(proposalId, message) => {
+          setGrantProposalError({ proposalId, message });
+          grantProposals.reopen(proposalId);
+        }}
+        onResolved={(proposal) => {
+          setGrantProposalError(null);
+          grantProposals.settled(proposal);
+        }}
       />
     )}
     {dialogViewer !== null && <ShellDialogs

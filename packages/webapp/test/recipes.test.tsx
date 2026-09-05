@@ -13,7 +13,7 @@ import { RecipesHome } from '../src/files/RecipesHome.js';
 import { TemplatesHome } from '../src/files/TemplatesHome.js';
 import { SettingsPage } from '../src/SettingsPage.js';
 import { standaloneResolver } from '../src/resolver.js';
-import { render, settle } from './dom.js';
+import { deferred, render, settle } from './dom.js';
 import { workspaceViewFixture } from './workspace-fixtures.js';
 
 afterEach(() => vi.unstubAllGlobals());

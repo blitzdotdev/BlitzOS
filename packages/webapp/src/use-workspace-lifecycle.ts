@@ -7,6 +7,7 @@ import {
   defaultGlobalWebAppState,
   reconcileUiPreferences,
   type StorageNamespace,
+  type GlobalWebAppStateV1,
   type WorkspaceWebAppStateV1,
 } from './storage.js';
 import type { IdentityRecord } from './protocol.js';
@@ -32,6 +33,7 @@ type WorkspaceBootstrapOptions = {
   dispatch: Dispatch<WorkspaceAction>;
   setLoaded: StateSetter<boolean>;
   setError: StateSetter<string | null>;
+  onGlobalStateLoaded: (doc: GlobalWebAppStateV1, namespace: StorageNamespace) => void;
 };
 
 export function useWorkspaceBootstrap({
@@ -47,6 +49,7 @@ export function useWorkspaceBootstrap({
   dispatch,
   setLoaded,
   setError,
+  onGlobalStateLoaded,
 }: WorkspaceBootstrapOptions): void {
   useEffect(() => {
     if (signedOut) return;
@@ -86,6 +89,7 @@ export function useWorkspaceBootstrap({
           records.map(({ id }) => id),
         );
         if (!mounted) return;
+        onGlobalStateLoaded(globalState.doc ?? defaultGlobalWebAppState(), namespace);
         rememberWorkspaceEndpoints(workspaceEndpoints.current, records, resolver, true);
         const routeWorkspaceId = parseAppRoute(window.location.pathname).workspaceId;
         const requestedWorkspaceId = routeWorkspaceId ?? preferences.activeWorkspaceId;
@@ -114,6 +118,7 @@ export function useWorkspaceBootstrap({
     setLoaded,
     setIdentityOnly,
     setStorageNamespace,
+    onGlobalStateLoaded,
     signedOut,
     workspaceEndpoints,
   ]);
