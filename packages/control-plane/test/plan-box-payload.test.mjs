@@ -149,6 +149,31 @@ test("404 plans a publish while other responses fail closed", async () => {
   }), /answered 500; refusing to treat it as unpublished/u);
 });
 
+test("an HTML answer from a deployment without the route counts as unpublished", async () => {
+  const binariesDirectory = binaries();
+  const release = await expected(binariesDirectory);
+  const page = "<!doctype html><html><body>web app</body></html>";
+  assert.deepEqual(await planBoxPayload({
+    url: "https://cp.example",
+    repo: repoRoot,
+    binariesDirectory,
+    fetchImpl: async () => new Response(page, {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }),
+  }), { published: false, ...release });
+  // The same bytes with a JSON content type are still a corrupt manifest.
+  await assert.rejects(() => planBoxPayload({
+    url: "https://cp.example",
+    repo: repoRoot,
+    binariesDirectory,
+    fetchImpl: async () => new Response(page, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  }), /invalid box-payload manifest/u);
+});
+
 test("a malformed or mismatched manifest is never reused", async () => {
   const binariesDirectory = binaries();
   await assert.rejects(() => planBoxPayload({
