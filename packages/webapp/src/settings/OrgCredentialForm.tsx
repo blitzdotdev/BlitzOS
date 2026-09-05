@@ -266,11 +266,14 @@ export type OrgCredentialFormMode =
 export function OrgCredentialForm({
   mode,
   subjects,
+  takenNames = [],
   onSubmit,
   onCancel,
 }: {
   mode: OrgCredentialFormMode;
   subjects: AccessSubjects;
+  /** Live names keep add mode from becoming a rotation. */
+  takenNames?: readonly string[];
   onSubmit: (input: PutOrgCredentialRequest) => Promise<void>;
   onCancel?: () => void;
 }) {
@@ -284,8 +287,13 @@ export function OrgCredentialForm({
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
-    if (name.trim() === '' || value === '' || busy) return;
-    const input: PutOrgCredentialRequest = { name: name.trim(), value };
+    const submittedName = name.trim();
+    if (submittedName === '' || value === '' || busy) return;
+    if (mode.kind === 'add' && takenNames.includes(submittedName)) {
+      setError(`A credential named ${submittedName} already exists; use Rotate on its row to change its value.`);
+      return;
+    }
+    const input: PutOrgCredentialRequest = { name: submittedName, value };
     if (mode.kind === 'add') {
       // Absent keeps a comment; the field left empty is absence, not a clear.
       if (comment.trim() !== '') input.comment = comment.trim();
@@ -328,7 +336,10 @@ export function OrgCredentialForm({
             placeholder="STRIPE_API_KEY"
             value={name}
             readOnly={mode.kind === 'rotate'}
-            onChange={(event) => setName(event.currentTarget.value)}
+            onChange={(event) => {
+              setName(event.currentTarget.value);
+              setError(null);
+            }}
           />
         </label>
         <label className="cfg-field">

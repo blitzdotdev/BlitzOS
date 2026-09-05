@@ -210,6 +210,85 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
+  it('refuses an existing name inside the add form without writing', async () => {
+    const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
+    const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
+    await settle();
+    const form = field<HTMLFormElement>(view.container, 'form[aria-label="Add a credential"]');
+
+    await act(async () => {
+      typeInto(field(form, '[aria-label="Credential name"]'), ' STRIPE_API_KEY ');
+      typeInto(field(form, '[aria-label="Credential value"]'), 'replacement');
+    });
+    await act(async () => buttonNamed(form, 'Save credential').click());
+
+    expect(putOrgCredential).not.toHaveBeenCalled();
+    expect(field<HTMLElement>(form, '[role="alert"]').textContent).toBe(
+      'A credential named STRIPE_API_KEY already exists; use Rotate on its row to change its value.',
+    );
+    await view.unmount();
+  });
+
+  it('clears an add collision and saves a case-distinct name', async () => {
+    const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
+    const view = await render(
+      <OrgCredentialsPanel client={client({ putOrgCredential })} viewer={adminViewer} />,
+    );
+    await settle();
+    const form = field<HTMLFormElement>(view.container, 'form[aria-label="Add a credential"]');
+
+    await act(async () => {
+      typeInto(field(form, '[aria-label="Credential name"]'), 'SENTRY_DSN');
+      typeInto(field(form, '[aria-label="Credential value"]'), 'replacement');
+    });
+    await act(async () => buttonNamed(form, 'Save credential').click());
+    expect(field<HTMLElement>(form, '[role="alert"]').textContent).toContain('SENTRY_DSN');
+
+    await act(async () => typeInto(field(form, '[aria-label="Credential name"]'), 'sentry_dsn'));
+    expect(form.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => buttonNamed(form, 'Save credential').click());
+
+    expect(putOrgCredential).toHaveBeenCalledOnce();
+    expect(putOrgCredential).toHaveBeenCalledWith({
+      name: 'sentry_dsn',
+      value: 'replacement',
+      grants: [],
+    });
+    await view.unmount();
+  });
+
+  it('keeps rotation available after refusing an add collision', async () => {
+    const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
+    const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
+    await settle();
+    const addForm = field<HTMLFormElement>(view.container, 'form[aria-label="Add a credential"]');
+
+    await act(async () => {
+      typeInto(field(addForm, '[aria-label="Credential name"]'), 'STRIPE_API_KEY');
+      typeInto(field(addForm, '[aria-label="Credential value"]'), 'wrong-path');
+    });
+    await act(async () => buttonNamed(addForm, 'Save credential').click());
+    await settle();
+
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Rotate STRIPE_API_KEY"]',
+    ).click());
+    const rotateForm = field<HTMLFormElement>(
+      view.container, 'form[aria-label="Rotate STRIPE_API_KEY"]',
+    );
+    await act(async () => typeInto(
+      field(rotateForm, '[aria-label="Credential value"]'), 'sk_live_new',
+    ));
+    await act(async () => buttonNamed(rotateForm, 'Rotate').click());
+
+    expect(putOrgCredential).toHaveBeenCalledOnce();
+    expect(putOrgCredential).toHaveBeenCalledWith({
+      name: 'STRIPE_API_KEY',
+      value: 'sk_live_new',
+    });
+    await view.unmount();
+  });
+
   it('rotates with a write-only value field and touches neither comment nor access', async () => {
     const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
     const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
