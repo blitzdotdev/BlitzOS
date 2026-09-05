@@ -121,13 +121,26 @@ authenticates the browser when it returns; nothing in the token grants anything.
 | `seat-limit-denial.json` | The 402 body, with and without a configured `PAYMENT_URL` |
 | `handoff-claims.json` | The decoded claims inside that `paymentUrl` |
 | `usage.json` | `GET /orgs/:id/usage`, with seat gating on and off, and for a subscribed organization |
-| `corpus.sha256` | SHA-256 of every other `.json` fixture's filename and exact bytes, in filename order |
+| `corpus.sha256` | SHA-256 of every other file in this directory, including this README, by name and exact bytes in filename order |
 
-`corpus.sha256` is `sha256(name₁ ‖ bytes₁ ‖ name₂ ‖ bytes₂ ‖ …)` over the
-`.json` files above, sorted by filename, with no separator between the parts:
+`corpus.sha256` has exactly one reader: the private billing service keeps a copy
+of this directory, and its `test/billing.test.ts` recomputes this digest to prove
+the copy is still byte-identical. Nothing in this repository verifies it. The
+recipe below is therefore a transcription of that test rather than an
+independent definition of the digest — where the two disagree, the test is
+right and this section is wrong.
+
+It is `sha256(name₁ ‖ NUL ‖ bytes₁ ‖ NUL ‖ name₂ ‖ NUL ‖ bytes₂ ‖ …)` over every
+file here except `corpus.sha256` itself, sorted by filename, with a NUL between
+every part and none at the end. This README is in the digest like any other
+file, which is what lets the two copies hold the same value when they match:
 
 ```sh
-( cd packages/schema/fixtures/entitlements
-  for f in $(ls *.json | LC_ALL=C sort); do printf '%s' "$f"; cat "$f"; done \
-    | sha256sum | cut -d' ' -f1 )
+# Run in the directory that holds these fixtures, in either repository.
+python3 -c '
+import hashlib, os
+names = sorted(n for n in os.listdir(".") if n != "corpus.sha256")
+parts = [n.encode() + b"\0" + open(n, "rb").read() for n in names]
+print(hashlib.sha256(b"\0".join(parts)).hexdigest())
+'
 ```
