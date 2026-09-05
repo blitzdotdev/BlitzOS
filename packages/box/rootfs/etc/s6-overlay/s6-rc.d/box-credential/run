@@ -1,0 +1,17 @@
+#!/command/with-contenv bash
+# Refresh the shared box credential every five minutes, forever.
+#
+# The loop lives here rather than in the script so the script stays one shot
+# and one thing: `blitz-cred api-token` probes once, refreshes on 401, and exits.
+# A credential refresh is worth nothing next to the box it serves, so nothing
+# in this service may take the box down with it — hence the `|| true` and the
+# sleep that follows every outcome alike.
+#
+# It runs as blitz because `blitz-cred` atomically replaces the credential file.
+# Running as root would leave that shared file with the wrong owner.
+set -uo pipefail
+
+while true; do
+	/command/s6-setuidgid blitz /usr/local/libexec/blitz-credential-refresh || true
+	sleep 300
+done
