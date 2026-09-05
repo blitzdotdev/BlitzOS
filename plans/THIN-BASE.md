@@ -1,6 +1,8 @@
 # THIN-BASE: fewer parts in the layers that need a restart
 
-Status: draft for the owner's review, 2026-09-05. Not merged. Companion to
+Status: Phase 1 implemented on branch feat/thin-base (PR stacked on #217); phase 2 (host) not started
+
+Companion to
 `plans/THIN-IMAGE.md`, which put the fast-moving parts of a box into a payload
 that applies in place. This plan shrinks what is left: the parts that still
 need a container replacement or a new VM to change.
@@ -18,6 +20,19 @@ Recorded from the discussion on 2026-09-05.
 - The rebase choices of PR #217 stand: the daemon version is
   `<upstream12>+dist.<dist12>`, the publisher refuses a daemon archive from a
   different upstream pin, and the lab suffixes `+lab.<serial>`.
+
+## Deviations from the draft
+
+- Features travel through box-config only. Deployed phone-home guests reject
+  an added response field.
+- Updater state and releases live in the container image layer. The `blitz`
+  user cannot rename a directory that root executes from.
+- Protocol 2 boxes refuse protocol 1 releases.
+- The frozen floor keeps the `cgroups`, `init-state`, `register`, and `payload`
+  service definitions fixed during a live update.
+- One kernel `flock` serializes supervised and operator ticks.
+- The first supervised tick starts five seconds after boot.
+- The updater sends machine stats after every successful authenticated tick.
 
 ## 1. Why
 
@@ -280,8 +295,7 @@ into the dependency-free updater is a later change.
 
 ## 3. Phases
 
-Two pull requests. The first ships one base image; the second ships new host
-scripts and a golden rebake.
+Phase 1 is implemented on this branch. Phase 2 has not started.
 
 ### Phase 1: the box
 

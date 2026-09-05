@@ -210,23 +210,29 @@ when both instances are connected at once.
 ## Build and smoke test
 
 The build context is the repository root because the image compiles
-`packages/broker` into `blitz-cred`. The planner intentionally performs the
-same deterministic payload build as the publisher; its version hashes only
-the installable file digests and modes, optional daemon archive digest, and
+`packages/broker` into `blitz-cred`. Build the daemon archive first, then give
+that same archive to the planner and publisher. The payload version hashes the
+installable file digests and modes, directory list, daemon archive digest, and
 restart map:
 
 ```sh
-payload_version=$(node packages/control-plane/scripts/plan-box-payload.mjs --print-version)
+release_dir=$(mktemp -d)
+daemon_archive="$release_dir/daemon.tar.gz"
+
+node packages/control-plane/scripts/build-box-daemon.mjs \
+  --out "$daemon_archive"
+payload_version=$(node packages/control-plane/scripts/plan-box-payload.mjs \
+  --print-version --daemon "$daemon_archive")
 docker build --platform linux/amd64 \
   --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
   -f packages/box/Dockerfile -t blitz-box:local .
-packages/box/test/smoke.sh
+IMAGE=blitz-box:local packages/box/test/smoke.sh
 ```
 
 With `IMAGE` unset, `smoke.sh` builds its own image tagged `blitz-box:smoke`
 from this tree — it is the only gate that runs the s6 service graph, so it
 never adopts a tag that might predate your edits. `IMAGE=<tag>` smoke-tests
-that image instead and skips the build.
+that image instead and skips the build. Either path builds at most one image.
 
 To run the local image, use the [Install](#install) `docker run` command with
 `blitz-box:local` in place of the registry reference.
