@@ -43,6 +43,7 @@ import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
 import { useChatLandingFileDraft } from "@lody/components/hooks/use-chat-landing-file-draft";
 import { useChatLandingImageDraft } from "@lody/components/hooks/use-chat-landing-image-draft";
 import { initLodyI18n } from "../src/lody/i18n.js";
+import type { LodyIpcReply } from "../src/lody/wire-types.js";
 import { render, settle } from "./dom.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -58,6 +59,7 @@ const MACHINE_ID = "m-guard";
 const SESSION_ID = "s-guard";
 
 type Handoff = { workspaceId: unknown; sessionId: unknown; machineId: unknown };
+type BridgeOutcome = "ok" | "session_not_found";
 
 /** What this suite reads back off the vendored hook, and nothing more. The
  * hook itself arrives untyped for the reason above. */
@@ -81,10 +83,15 @@ type ImageDraft = {
  * (`lib/electron-ipc-client.ts:22`), so a bridge is exactly an `invoke`. Any
  * other channel throws rather than answering `undefined`: a silent answer would
  * let a future caller pass this suite while doing something it never declared.
+ * A success-only stub cannot catch a daemon that refuses a draft. The option
+ * reproduces that response without changing the hooks.
  */
-function installBridge(calls: Handoff[]): () => void {
+function installBridge(
+  calls: Handoff[],
+  options: { outcome: BridgeOutcome } = { outcome: "ok" },
+): () => void {
   window.ipc = {
-    invoke: async (channel: string, ...args: unknown[]) => {
+    invoke: async (channel: string, ...args: unknown[]): Promise<LodyIpcReply> => {
       if (channel !== "localProjects.sendSessionFileLocal") {
         throw new Error(`unexpected ipc channel: ${channel}`);
       }
@@ -96,6 +103,9 @@ function installBridge(calls: Handoff[]): () => void {
         sessionId: payload.sessionId,
         machineId: payload.machineId,
       });
+      if (options.outcome === "session_not_found") {
+        return { ok: false, error: "session_not_found" };
+      }
       return {
         ok: true,
         files: payload.files.map((file) => ({
@@ -127,13 +137,16 @@ function installBridge(calls: Handoff[]): () => void {
 async function stageOneFile(options: {
   authToken: string | null;
   bridge: boolean;
+  bridgeOutcome?: BridgeOutcome;
 }): Promise<{
   items: Draft["fileItems"];
   blocks: readonly unknown[];
   calls: Handoff[];
 }> {
   const calls: Handoff[] = [];
-  const uninstall = options.bridge ? installBridge(calls) : () => {};
+  const uninstall = options.bridge
+    ? installBridge(calls, { outcome: options.bridgeOutcome ?? "ok" })
+    : () => {};
   const store = createStore();
   // `localMachineIdAtom` is derived from the probe, and the fast path needs it
   // to equal the selected machine — otherwise nothing under test is reached.
@@ -185,14 +198,20 @@ async function stageOneFile(options: {
  * is the move ACROSS them, so a harness that mounted the image hook over a
  * hand-written callback would prove nothing about where the bytes go.
  */
-async function stageOneImage(options: { authToken: string | null; bridge: boolean }): Promise<{
+async function stageOneImage(options: {
+  authToken: string | null;
+  bridge: boolean;
+  bridgeOutcome?: BridgeOutcome;
+}): Promise<{
   images: ImageDraft["imageItems"];
   files: Draft["fileItems"];
   blocks: readonly unknown[];
   calls: Handoff[];
 }> {
   const calls: Handoff[] = [];
-  const uninstall = options.bridge ? installBridge(calls) : () => {};
+  const uninstall = options.bridge
+    ? installBridge(calls, { outcome: options.bridgeOutcome ?? "ok" })
+    : () => {};
   const store = createStore();
   store.set(localProbeResultAtom, { ok: true, machineId: MACHINE_ID });
   const seen: { file: Draft | null; image: ImageDraft | null } = { file: null, image: null };
@@ -288,6 +307,29 @@ describe("the landing composer stages a file without a cloud token", () => {
     });
   });
 
+  /**
+   * WHAT THE COMPOSER SAYS WHEN THE DAEMON REFUSES, AND IT IS NOT TRUE.
+   *
+   * `use-chat-landing-file-draft.ts` drops the local-send error and falls into
+   * the cloud-credential branch, so every refusal reads as a missing token. That
+   * wrong message is what made seam patches 8 and 12 look finished while a
+   * landing attachment still failed on a box. Seam patch 25 removes the refusal
+   * this case feeds; the message stays pinned so a later fix to it is deliberate.
+   */
+  it("reports the current error when the daemon refuses a landing file draft", async () => {
+    const { items, blocks, calls } = await stageOneFile({
+      authToken: null,
+      bridge: true,
+      bridgeOutcome: "session_not_found",
+    });
+    expect(calls).toEqual([
+      { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, machineId: MACHINE_ID },
+    ]);
+    expect(items.map((item) => item.status)).toEqual(["failed"]);
+    expect(items[0]?.error).toBe("Missing workspace or auth token");
+    expect(blocks).toHaveLength(0);
+  });
+
   it("still refuses, with the same message, when no local transport is there", async () => {
     // The guard is moved, not deleted. A browser with neither a token nor a
     // bridge has nowhere to put the bytes, and must say so.
@@ -333,6 +375,23 @@ describe("the landing composer stages an image without a cloud token", () => {
       transport: "local",
       machineId: MACHINE_ID,
     });
+  });
+
+  /** The image twin of the case above: the degrade lands in the file draft, so
+   * the same wrong message is what a refused IMAGE reports too. */
+  it("reports the current error when the daemon refuses a landing image draft", async () => {
+    const { images, files, blocks, calls } = await stageOneImage({
+      authToken: null,
+      bridge: true,
+      bridgeOutcome: "session_not_found",
+    });
+    expect(calls).toEqual([
+      { workspaceId: WORKSPACE_ID, sessionId: SESSION_ID, machineId: MACHINE_ID },
+    ]);
+    expect(images).toHaveLength(0);
+    expect(files.map((item) => item.status)).toEqual(["failed"]);
+    expect(files[0]?.error).toBe("Missing workspace or auth token");
+    expect(blocks).toHaveLength(0);
   });
 
   it("still refuses, with the same message, when no local transport is there", async () => {

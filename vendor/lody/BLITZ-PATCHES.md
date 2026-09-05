@@ -2002,6 +2002,166 @@ pins this section by name.
 - If the mobile sheet stops rendering rows from nodes, hunks 4 and 5 go with
   that rewrite: what they encode is "no node, no row".
 
+### 25. Local file handoff accepts a landing draft (declared 2026-09-05)
+
+**One defect, one hunk, one file.** The landing creates its session document
+when `startSession` sends the first message. Before that send, the composer
+stages bytes and calls `session/file-send-local` with its draft session id.
+`handleSessionFileSendLocal` rejected the draft because `getDocMeta` returned no
+document. The browser then marked the chip as failed with "Missing workspace or
+auth token". The cloud path already accepts the same draft id. It sends the id
+to the relay without this daemon guard. The local path was therefore stricter
+than the cloud path.
+
+The rest of `handleSessionFileSendLocal` already supports the pre-send case.
+About sixty lines below the guard, upstream says:
+
+> Opportunistic early backfill: the block only enters history when the user
+> sends the message, so the first attempts may retry on "not yet persisted"
+> and succeed once the send lands within the backoff window.
+
+Nothing after the guard reads the session document. Blob copy uses only
+`workspaceId`, `sessionId`, and a new `fileId`. The method appends no history,
+as its doc comment states. The response retains the draft `sessionId`.
+`startSession` later creates the document under that id. The blobs already use
+the correct namespace.
+
+`apps/cli/src/lib/message-handler.ts`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 7636 | `if (!sessionMetaRecord?.meta || isLoroRepoDocDeleted(sessionMetaRecord)) {` | refuses only a deleted document; an absent document proceeds as a landing draft |
+
+#### What this patch does NOT do
+
+- **It does not create a session document.** `startSession` remains its owner.
+- **It does not append history.** The first message still appends the block.
+- **It does not accept a deleted document.** The existing
+  `session_not_found` response stays unchanged.
+- **It does not change browser hooks or cloud upload.** Those paths keep their
+  current behavior.
+
+`packages/webapp/test/lody-seam-pin.test.ts` pins the removed upstream line and
+the new guard. `packages/webapp/test/lody-attachments.test.ts` sends one file
+with an unstarted id to a real daemon. That case answers `session_not_found`
+without this hunk. `packages/webapp/test/lody-attachment-guard.test.tsx` pins
+the current composer message for the same daemon refusal.
+
+Verify this divergence using the diff from seam patch 1. **Expect THIRTY-TWO
+files after seam patch 25.** That is one more than seam patch 24. The new file
+is `apps/cli/src/lib/message-handler.ts`, the thirty-second.
+
+**Candidate upstream PR:** “accept local file handoff for a draft session id.”
+Treat missing session metadata as a pre-send draft. Keep rejecting deleted
+documents. Add cases for draft, existing, and deleted session ids.
+
+**Merge conflict drill.** If upstream accepts missing documents, classify this
+as A and drop the seam. If the guard moves, classify this as B and keep the
+deleted-only refusal. If local blob storage starts requiring session metadata,
+classify this as C and stop for a human.
+
+### 26. The chat landing accepts page-wide file drops (declared 2026-09-05)
+
+**One idea, three hunks in one file.** The landing composer accepted file drops.
+The rest of the landing passed each drop to the host page.
+
+The open-session page already solves the same case. It combines independent
+file and session-mention zones on one page container. Each zone ignores the
+other transfer type. This patch uses that upstream shape on the landing.
+
+`packages/components/src/components/chat/chat-landing-view.tsx`
+
+| # | Line | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 9, 20 | the session-mention drop import and `WebChatLandingScreen` import | imports `hasFileTransfer`, `getFilesFromDataTransfer`, `mergeDropZoneHandlers`, and `useDropZone` |
+| 2 | 245 | the `useSessionMentionDrop` call | adds a file zone and combines both zones |
+| 3 | 481-483 | the three drop props on `<WebChatLandingScreen>` | reports either active zone and passes the combined handlers |
+
+The file zone needs the same desktop condition as the mention zone. It also
+needs `onImageDrop`, because a missing callback means no file consumer exists.
+It ignores empty transfers. Mobile still returns before the web screen and
+gets no drop target.
+
+This file has no pristine baseline in
+`packages/webapp/test/upstream-baseline/`. The source test pins each added
+helper and the page handler. The mounted test drops on the heading, outside the
+composer.
+
+Verify this divergence using the diff from seam patch 1. **Expect THIRTY-THREE
+files after seam patch 26.** The new file is
+`components/chat/chat-landing-view.tsx`, the thirty-third.
+
+**Candidate upstream PR:** “accept file drops across the chat landing.” Reuse
+the session page's two-zone design. Add desktop, mobile, and empty-transfer
+cases.
+
+**Merge conflict drill.** If upstream adds an equivalent file zone, drop all
+three hunks. If the web screen changes, keep both zones on its outer container.
+If drop-zone helpers change, follow the session page's current composition.
+
+### 27. A host without cloud image upload routes images as files (declared 2026-09-05)
+
+**One idea, thirteen hunks in three files, all inert by default.** A box has no
+Lody cloud account. Its `authTokenAtom` is therefore null, so
+`uploadSessionImage` cannot succeed.
+
+The session composer already has `disableImageUpload`. It sends images through
+the file transport when this prop is true. That route is the existing degrade
+path after a failed cloud upload. This patch carries the prop from both mounted
+pages and gives the landing the same choice.
+
+`packages/components/src/components/sessions/session-detail.tsx` (pinned)
+
+| # | Line | Existing anchor | What it does |
+|---|---|---|---|
+| 1 | 788 | `hideAgentRoles = false,` | defaults `disableImageUpload` to `false` |
+| 2 | 819 | `hideAgentRoles?: boolean;` | declares the prop with the same forwarding comment |
+| 3 | 5503 | `hideAgentRoles={hideAgentRoles}` | forwards the prop to the direct mobile chat surface |
+| 4 | 6169 | `hideAgentRoles,` | forwards the prop through every desktop chat surface |
+
+Every change only adds lines. The pristine baseline remains a subsequence, so
+`lody-seam-pin.test.ts` needs no new removed-line anchor.
+
+`packages/components/src/components/sessions/session-chat-interface.tsx`
+
+| # | Line | Existing anchor | What it does |
+|---|---|---|---|
+| 5 | 1790 | `hideAgentRoles?: boolean;` | declares `disableImageUpload?: boolean` |
+| 6 | 1976 | `hideAgentRoles = false,` | defaults it to `false` |
+| 7 | 6076 | `hideAgentRoles={hideAgentRoles}` | passes it to `SessionChatInputArea` |
+
+`packages/components/src/components/chat/chat-landing.tsx`
+
+| # | Line | Existing anchor | What it does |
+|---|---|---|---|
+| 8 | 437 | `hideMachineSelector?: boolean;` | declares `disableImageUpload?: boolean` |
+| 9 | 619 | `hideMachineSelector = false,` | defaults it to `false` |
+| 10 | 2863 | the paste branch's `splitImageAndFileAttachments` call | routes every pasted image to `addFileAttachments` when cloud upload is disabled |
+| 11 | 2879 | `handleImageDrop`'s `splitImageAndFileAttachments` call | routes every dropped image to the same file path |
+| 12 | 6172 | the mobile sheet's `attachmentAddDisabled` | keeps file attachment access after the image limit |
+| 13 | 6623 | the desktop landing's `attachmentAddDisabled` | applies the same rule on the web composer |
+
+`handleAttachmentInputChange` needs no hunk. It already calls
+`handleImageDrop`, so the same routing applies to selected files.
+
+`chat-landing.tsx` and `session-chat-interface.tsx` have no pristine baselines.
+The source test pins their prop paths and both landing split sites.
+
+The BlitzOS half is `packages/webapp/src/lody/v1-scope.ts`. Its
+`cloudImageUpload` field maps to `disableImageUpload`. Both router mounts and
+both mobile-stack mounts pass that prop.
+
+This patch adds no new divergent vendor file. **Expect THIRTY-THREE files after
+seam patch 27.** All three files already belong to earlier seams.
+
+**Candidate upstream PR:** “let an embedding host disable cloud image upload.”
+Thread the existing session-composer prop through both pages. Give the landing
+the same file fallback and limit rule.
+
+**Merge conflict drill.** If upstream threads this prop, drop the matching
+hunks. If the landing gains the prop itself, keep only the host wiring. If
+image and file limits merge, preserve file access when cloud upload is absent.
+
 ## Retired compiled-bundle patches
 
 | Retired script | Disposition | Evidence |

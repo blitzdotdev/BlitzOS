@@ -100,6 +100,7 @@ import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
 import { WorkspaceStoppedState } from './WorkspaceStoppedState';
 import { dropPasteText, uploadDroppedFiles } from './file-drop';
+import { useWorkspaceDropMaskState } from './workspace-drop-mask';
 import {
   initialWorkspaceStore,
   selectControllableWorkspaceId,
@@ -528,7 +529,7 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     if (!activeFilesBase) return null;
     return createClient(activeFilesBase, { withCredentials: true, remoteBasePath: FILES_DAV_ROOT });
   }, [activeFilesBase]);
-  const [dropActive, setDropActive] = useState(false);
+  const { dropActive, setDropActive } = useWorkspaceDropMaskState();
   const [dropBusy, setDropBusy] = useState(false);
   // Drop a screenshot on a tab and its path lands in the TUI. Upload reuses the
   // workspace's dufs WebDAV server; the paste reuses TERMINAL_SUBMIT_EVENT with

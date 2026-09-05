@@ -202,6 +202,7 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
       // Seam patch 24. The mobile twin: the new-chat sheet's machine row drops
       // with its label rather than standing empty.
       hideMachineSelector={V1.hideMachineSelector}
+      disableImageUpload={V1.disableImageUpload}
     />
   );
 
@@ -271,6 +272,7 @@ export function MobileSessionStack({ workspaceName, readOnly }: MobileSessionSta
                       // that shared builder, so the composer status chip is the
                       // one connection surface the mobile fork still dropped.
                       hideConnectionStatus={V1.hideConnectionStatus}
+                      disableImageUpload={V1.disableImageUpload}
                       {...hostTabs}
                     />
                   </AppThemeShell>

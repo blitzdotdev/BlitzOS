@@ -5,7 +5,8 @@
  * DECIDE areas. The approved v1 answer keeps most of the product and takes four
  * groups off the screen. Two of those groups are DELETED — the code paths that
  * reach them are gone — and two are HIDDEN, because the decision is "not in v1"
- * rather than "never":
+ * rather than "never". The table has grown past those four; each row still
+ * names one group and why it is off:
  *
  * | Flag | Rows | Why it is off |
  * |---|---|---|
@@ -16,10 +17,14 @@
  * | `languageService` | SP26 | A box runs no language service, so Go to Definition and Find References answer "Host language service does not support this file" for every identifier in every file. |
  * | `connectionStatus` | IC64, IC65 | BlitzOS reports connectivity itself, in the footer. Lody's own status chip, catch-up spinners and mobile banner describe the same outage in different words. |
  * | `machineSelection` | the composer's machine chip | A BlitzOS workspace is one member, one machine, one box. The picker moves a session between the machines an account has paired, and here every option it can list is the machine already selected. Seam patch 24. |
+ * | `cloudImageUpload` | image attachments | A box has no Lody cloud account. Cloud image upload cannot succeed, and its degrade path already sends each image as a file attachment. Seam patch 27. |
  *
- * `connectionStatus` IS NOT A "NOT IN V1" DECISION, and it is the one row here
- * that is not. The other five name a surface BlitzOS does not serve yet. This
- * one names a surface BlitzOS serves ITSELF: `shell/workspace-status-line.ts`
+ * Three flags define host boundaries instead of future scope:
+ * `connectionStatus`, `machineSelection`, and `cloudImageUpload`.
+ * The remaining flags name surfaces BlitzOS does not serve yet.
+ *
+ * `connectionStatus` names a surface BlitzOS serves ITSELF:
+ * `shell/workspace-status-line.ts`
  * builds one sentence for the whole workspace — `workspace running · box
  * unreachable` when the machine runs and the browser cannot reach its gateway —
  * out of the probe in `box-gateway-health.ts`, and the same gateway carries the
@@ -47,8 +52,9 @@
  *    makes the surfaces that forgot to ask, ask. The flag below decides what
  *    `createBlitzPlatformProvider` grants, so flipping it is one line — see
  *    `lodyExtraCapabilities` for what a flip does NOT do.
- * 2. The other three are props on the two components we mount, declared by seam
- *    patch 7 and passed from `router.tsx`. Upstream has no gate for them.
+ * 2. The others are props on the components we mount, declared by seam patches
+ *    7, 15, 16, 24 and 27, and passed from `router.tsx` and
+ *    `MobileSessionStack.tsx`. Upstream has no gate for them.
  *
  * The tests that keep these areas dark are
  * `packages/webapp/test/lody-v1-scope.test.tsx` (the DOM) and
@@ -111,6 +117,13 @@ export interface LodyV1Scope {
    * would do. That is the member-machines direction, not a v1 gap.
    */
   readonly machineSelection: boolean;
+  /**
+   * Lody cloud image upload. HIDDEN because the box lacks this capability.
+   *
+   * A box has no Lody cloud account, so `uploadSessionImage` can never succeed.
+   * The degrade path already sends every image through the file attachment transport.
+   */
+  readonly cloudImageUpload: boolean;
 }
 
 /**
@@ -128,6 +141,7 @@ export const LODY_V1_SCOPE = {
   languageService: false,
   connectionStatus: false,
   machineSelection: false,
+  cloudImageUpload: false,
 } as const satisfies LodyV1Scope;
 
 /**
@@ -193,6 +207,13 @@ export interface LodyV1SuppressionProps {
    * already bound to the machine it was started on.
    */
   readonly hideMachineSelector: boolean;
+  /**
+   * The cloud image upload path (seam patch 27).
+   *
+   * A box has no Lody cloud account, so `uploadSessionImage` can never succeed.
+   * Every image already becomes a file attachment through the degrade path.
+   */
+  readonly disableImageUpload: boolean;
 }
 
 export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
@@ -206,4 +227,5 @@ export const lodyV1SuppressionProps = (): LodyV1SuppressionProps => ({
   hideSettingsEntry: !LODY_V1_SCOPE.cloudSurfaces,
   hideConnectionStatus: !LODY_V1_SCOPE.connectionStatus,
   hideMachineSelector: !LODY_V1_SCOPE.machineSelection,
+  disableImageUpload: !LODY_V1_SCOPE.cloudImageUpload,
 });

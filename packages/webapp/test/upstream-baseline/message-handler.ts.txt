@@ -7633,9 +7633,7 @@ export class MessageHandler {
     const sessionMetaRecord = await this.workspaceDocument.repo.getDocMeta(
       getSessionRoomId(sessionId)
     );
-    // An absent document is a landing draft. `startSession` will claim its id.
-    // Refuse deleted documents. See the early-backfill comment below.
-    if (sessionMetaRecord && isLoroRepoDocDeleted(sessionMetaRecord)) {
+    if (!sessionMetaRecord?.meta || isLoroRepoDocDeleted(sessionMetaRecord)) {
       respond({
         success: false,
         error: 'session_not_found',
