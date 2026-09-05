@@ -63,7 +63,7 @@ func SaveCredential(dir string, credential Credential) error {
 		return err
 	}
 	data = append(data, '\n')
-	return atomicfile.Write(CredentialPath(dir), data, 0o600)
+	return atomicfile.WritePreservingOwnership(CredentialPath(dir), data, 0o600)
 }
 
 func LoadOrigin(dir string) (string, error) {
@@ -85,7 +85,7 @@ func SaveOrigin(dir, origin string) error {
 	if err := EnsureDir(dir); err != nil {
 		return err
 	}
-	return atomicfile.Write(OriginPath(dir), []byte(origin+"\n"), 0o644)
+	return atomicfile.WritePreservingOwnership(OriginPath(dir), []byte(origin+"\n"), 0o644)
 }
 
 func decodeCredential(data []byte, target any) error {

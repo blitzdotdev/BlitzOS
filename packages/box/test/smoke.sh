@@ -406,10 +406,31 @@ wait_for_lody_feature_restarts() {
 }
 
 docker exec "$container" sh -c "printf '%s\\n' '$e17_version' >/tmp/payload-live/config"
+docker exec "$container" sh -c \
+  'install -m 0600 -o root -g root /dev/null /var/lib/blitz/box-credential.json &&
+   install -m 0600 -o root -g root /dev/null /var/lib/blitz/box-credential.lock &&
+   install -m 0666 -o root -g root /dev/null /tmp/payload-live/credential-uid'
 docker exec --env "BLITZ_PAYLOAD_TEST_CONFIG=$payload_test_config" \
+  --env "BLITZ_PAYLOAD_CREDENTIAL_UID_LOG=/tmp/payload-live/credential-uid" \
   "$container" /usr/local/libexec/blitz-payload tick
 [ "$(latest_payload_outcome)" = applied ] || fail "E17 did not report applied"
 echo "PASS E17 reports applied"
+blitz_credential_identity=$(docker exec "$container" sh -c \
+  'printf "%s:%s" "$(id -u blitz)" "$(id -g blitz)"')
+credential_identity=$(docker exec "$container" stat -c '%u:%g' \
+  /var/lib/blitz/box-credential.json)
+[ "$credential_identity" = "$blitz_credential_identity" ] \
+  || fail "payload left box-credential.json owned by $credential_identity"
+if docker exec "$container" test -e /var/lib/blitz/box-credential.lock; then
+  lock_identity=$(docker exec "$container" stat -c '%u:%g' \
+    /var/lib/blitz/box-credential.lock)
+  [ "$lock_identity" = "$blitz_credential_identity" ] \
+    || fail "payload left box-credential.lock owned by $lock_identity"
+fi
+credential_uid=$(docker exec "$container" tail -n 1 /tmp/payload-live/credential-uid)
+[ "$credential_uid" = "${blitz_credential_identity%%:*}" ] \
+  || fail "payload fetched its bearer as uid $credential_uid, not $blitz_credential_identity"
+echo "PASS payload repairs box credential ownership and fetches its bearer as the box user"
 machine_stats_body=$(docker exec "$container" tail -n 1 /tmp/payload-live/machine-stats.ndjson)
 docker exec "$container" node -e '
   const body = JSON.parse(process.argv[1]);

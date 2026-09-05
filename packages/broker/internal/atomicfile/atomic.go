@@ -4,12 +4,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // Write replaces path atomically, leaving ownership to whatever the calling
 // process would create.
 func Write(path string, data []byte, mode os.FileMode) error {
 	return WriteOwned(path, data, mode, -1, -1)
+}
+
+// WritePreservingOwnership replaces path atomically while retaining the owner
+// of an existing target. A new target keeps the caller's default ownership.
+func WritePreservingOwnership(path string, data []byte, mode os.FileMode) error {
+	uid, gid := -1, -1
+	info, err := os.Stat(path)
+	if err == nil {
+		// SAFETY: os.Stat returns the platform's syscall.Stat_t on supported Unix
+		// systems. Refuse the write if that invariant does not hold.
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return fmt.Errorf("read existing ownership: unexpected stat type %T", info.Sys())
+		}
+		uid, gid = int(stat.Uid), int(stat.Gid)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat existing file: %w", err)
+	}
+	return WriteOwned(path, data, mode, uid, gid)
 }
 
 // WriteOwned is Write with the ownership set BEFORE the rename, so the file is

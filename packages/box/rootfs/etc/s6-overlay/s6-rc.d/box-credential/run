@@ -7,11 +7,29 @@
 # in this service may take the box down with it — hence the `|| true` and the
 # sleep that follows every outcome alike.
 #
-# It runs as blitz because `blitz-cred` atomically replaces the credential file.
-# Running as root would leave that shared file with the wrong owner.
+# Root never writes the credential. Before each attempt it repairs the shared
+# credential and lock, then runs the refresher as blitz.
 set -uo pipefail
 
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+credential_uid=${BLITZ_UID:-1000}
+credential_gid=${BLITZ_GID:-1000}
+
+repair_ownership() {
+	name=$1
+	file=$state_dir/$name
+	[ -e "$file" ] || return 0
+	owner=$(stat -c '%u:%g' "$file") || return 0
+	[ "$owner" = "$credential_uid:$credential_gid" ] && return 0
+	if chown "$credential_uid:$credential_gid" "$file"; then
+		echo "box-credential: repaired $name ownership (was $owner)"
+	fi
+}
+
 while true; do
-	/command/s6-setuidgid blitz /usr/local/libexec/blitz-credential-refresh || true
+	repair_ownership box-credential.json
+	repair_ownership box-credential.lock
+	s6-setuidgid blitz /usr/local/libexec/blitz-credential-refresh || true
+	[ "${BLITZ_CREDENTIAL_REFRESH_ONCE:-0}" = 1 ] && break
 	sleep 300
 done
