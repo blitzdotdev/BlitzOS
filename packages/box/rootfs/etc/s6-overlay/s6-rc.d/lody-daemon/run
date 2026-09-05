@@ -57,4 +57,4 @@ exec /usr/local/bin/blitz-cgroup enter user/lody.scope -- /command/s6-setuidgid 
 	LODY_MCP_BUILTIN_DISABLED=1 \
 	LODY_SESSION_CGROUP_PARENT=/blitz-user.slice/lody-sessions \
 	LODY_SESSION_CAPACITY_LIMITS=0 \
-	/opt/blitz/npm/bin/lody start
+	/opt/blitz/lody/current/bin/lody start

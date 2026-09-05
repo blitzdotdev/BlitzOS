@@ -112,5 +112,7 @@ describe.skipIf(!managedToolchainEnabled)("managed box-image file attempt [vendo
     expect(WORKER_SOURCE).toContain("boxImageRef: env.BOX_IMAGE_REF");
     expect(WORKER_SOURCE).toContain("boxImageSha256: env.BOX_IMAGE_SHA256");
     expect(WORKER_SOURCE).toContain("boxImageTag: env.BOX_IMAGE_TAG");
+    expect(WORKER_SOURCE).toContain("boxPayloadRef: env.BOX_PAYLOAD_REF");
+    expect(WORKER_SOURCE).toContain("boxPayloadVersion: env.BOX_PAYLOAD_VERSION");
   });
 });

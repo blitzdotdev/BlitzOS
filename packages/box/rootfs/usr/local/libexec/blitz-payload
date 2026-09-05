@@ -1,0 +1,1636 @@
+#!/usr/bin/env node
+'use strict';
+
+// The payload updater is deliberately part of the base image. It is the one
+// box-side component that must still work when a downloaded payload is bad,
+// so it has no package dependencies and never resolves code through `current`.
+//
+// BASE-OWNED TICK DEPENDENCIES. Node runs this file, /usr/local/bin/blitz-cred
+// obtains the bearer, /var/lib/blitz/origin supplies the endpoint, and Node's
+// built-in HTTP/TLS stack fetches config and reports results. Applying an
+// archive additionally uses the image's tar and s6-svc/s6-svstat tools. None
+// of these paths is payload-owned; the gateway deliberately remains payload.
+//
+// DAEMON IDLE DOOR. The updater reads `activeSessionCount` from the daemon's
+// bounded local `/state` probe. Lody holds that count above zero for running,
+// requestPermission, and initializing turns. An absent control socket is idle;
+// a failed probe remains busy until the idle cap rather than guessing from CPU
+// use. Busy releases stay fully staged and are reconsidered on the next updater
+// tick; this process never sleeps waiting for a turn to end.
+
+const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const http = require('node:http');
+const path = require('node:path');
+
+const UPDATER_VERSION = 1;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const MODE_PATTERN = /^[0-7]{4}$/u;
+const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
+const HTTP_URL_PATTERN = /^https?:\/\/[^/\s?#]+(?:[/?][^\s#]*)?$/u;
+const JSON_MAX_BYTES = 1024 * 1024;
+const LOG_MAX_BYTES = 1024 * 1024;
+const FAILED_RETRY_MS = 6 * 60 * 60 * 1000;
+const QUIET_LOG_INTERVAL_MS = 60 * 60 * 1000;
+const RESTART_SERVICES = new Set([
+  'box-credential',
+  'cloudflared',
+  'dockerd',
+  'dufs',
+  'gateway',
+  'lody-bridge',
+  'lody-daemon',
+  'lody-projects',
+  'lody-watchdog',
+  'machine-stats',
+  'remote-control',
+  'sshd',
+  'ttyd',
+  'watch',
+]);
+const FAILED_OUTCOMES = new Set([
+  'verify-failed',
+  'rolled-back',
+  'start-failed',
+  'unsupported',
+]);
+class FetchFailure extends Error {}
+class VerifyFailure extends Error {}
+
+let payloadLogPath = null;
+
+function configureLog(stateRoot) {
+  try {
+    fs.mkdirSync(stateRoot, { recursive: true, mode: 0o755 });
+    fs.chmodSync(stateRoot, 0o755);
+    payloadLogPath = path.join(stateRoot, 'log');
+    fs.appendFileSync(payloadLogPath, '', { mode: 0o644 });
+    fs.chmodSync(payloadLogPath, 0o644);
+  } catch {
+    payloadLogPath = null;
+  }
+}
+
+function log(message) {
+  const line = `blitz-payload: ${message}\n`;
+  process.stderr.write(line);
+  if (payloadLogPath === null) return;
+  try {
+    const currentBytes = fs.statSync(payloadLogPath).size;
+    if (currentBytes + Buffer.byteLength(line) > LOG_MAX_BYTES) {
+      const previous = `${payloadLogPath}.1`;
+      fs.rmSync(previous, { force: true });
+      fs.renameSync(payloadLogPath, previous);
+      fs.chmodSync(previous, 0o644);
+    }
+    fs.appendFileSync(payloadLogPath, line, { mode: 0o644 });
+    fs.chmodSync(payloadLogPath, 0o644);
+  } catch {
+    // Logging must never take the supervised updater down.
+  }
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function record(value, field) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new VerifyFailure(`box-payload ${field} must be an object`);
+  }
+  return value;
+}
+
+function requiredArray(value, field) {
+  if (!Array.isArray(value)) throw new VerifyFailure(`box-payload ${field} must be an array`);
+  return value;
+}
+
+function requiredString(value, field) {
+  if (typeof value !== 'string') throw new VerifyFailure(`box-payload ${field} must be a string`);
+  return value;
+}
+
+function positiveInteger(value, field) {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new VerifyFailure(`box-payload ${field} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function version(value, field) {
+  const parsed = requiredString(value, field);
+  if (!VERSION_PATTERN.test(parsed)) {
+    throw new VerifyFailure(`box-payload ${field} must be a version token`);
+  }
+  return parsed;
+}
+
+function digest(value, field) {
+  const parsed = requiredString(value, field);
+  if (!SHA256_PATTERN.test(parsed)) {
+    throw new VerifyFailure(
+      `box-payload ${field} must be 64 lowercase hexadecimal characters`,
+    );
+  }
+  return parsed;
+}
+
+function httpUrl(value, field) {
+  const parsed = requiredString(value, field);
+  if (!HTTP_URL_PATTERN.test(parsed)) {
+    throw new VerifyFailure(`box-payload ${field} must be an absolute http(s) URL`);
+  }
+  return parsed;
+}
+
+function payloadPath(value, field) {
+  const parsed = requiredString(value, field);
+  const segments = parsed.split('/');
+  if (
+    !parsed.startsWith('rootfs/')
+    || segments.length < 2
+    || segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    throw new VerifyFailure(
+      `box-payload ${field} must be a relative path under rootfs/ without dot segments`,
+    );
+  }
+  return parsed;
+}
+
+function archive(value, field) {
+  const parsed = record(value, field);
+  return {
+    url: httpUrl(parsed.url, `${field}.url`),
+    sha256: digest(parsed.sha256, `${field}.sha256`),
+    bytes: positiveInteger(parsed.bytes, `${field}.bytes`),
+  };
+}
+
+function parseManifest(value) {
+  const parsed = record(value, 'manifest');
+  const filesValue = requiredArray(parsed.files, 'manifest.files');
+  if (filesValue.length === 0) {
+    throw new VerifyFailure('box-payload manifest.files must not be empty');
+  }
+  const files = filesValue.map((entryValue, index) => {
+    const field = `manifest.files[${index}]`;
+    const entry = record(entryValue, field);
+    const mode = requiredString(entry.mode, `${field}.mode`);
+    if (!MODE_PATTERN.test(mode)) {
+      throw new VerifyFailure(
+        `box-payload ${field}.mode must be a four-character octal string`,
+      );
+    }
+    return {
+      path: payloadPath(entry.path, `${field}.path`),
+      sha256: digest(entry.sha256, `${field}.sha256`),
+      mode,
+    };
+  });
+  const restartObject = record(parsed.restart, 'manifest.restart');
+  const restart = {};
+  for (const [service, dependenciesValue] of Object.entries(restartObject)) {
+    if (!RESTART_SERVICES.has(service)) {
+      throw new VerifyFailure(`box-payload manifest.restart service is unknown: ${service}`);
+    }
+    restart[service] = requiredArray(
+      dependenciesValue,
+      `manifest.restart.${service}`,
+    ).map((dependency, index) => payloadPath(
+      dependency,
+      `manifest.restart.${service}[${index}]`,
+    ));
+  }
+  const result = {
+    version: version(parsed.version, 'manifest.version'),
+    createdAt: positiveInteger(parsed.createdAt, 'manifest.createdAt'),
+    minUpdater: positiveInteger(parsed.minUpdater, 'manifest.minUpdater'),
+    files,
+    archive: archive(parsed.archive, 'manifest.archive'),
+    restart,
+  };
+  if (parsed.daemon !== undefined) {
+    const daemonObject = record(parsed.daemon, 'manifest.daemon');
+    result.daemon = {
+      ...archive(daemonObject, 'manifest.daemon'),
+      version: version(daemonObject.version, 'manifest.daemon.version'),
+      protocolVersion: positiveInteger(
+        daemonObject.protocolVersion,
+        'manifest.daemon.protocolVersion',
+      ),
+    };
+  }
+  return result;
+}
+
+function parsePayloadConfig(value) {
+  const envelope = record(value, 'box-config');
+  if (envelope.payload === undefined || envelope.payload === null) return null;
+  const payload = record(envelope.payload, 'box-config.payload');
+  return {
+    version: version(payload.version, 'box-config.payload.version'),
+    manifestUrl: httpUrl(payload.manifestUrl, 'box-config.payload.manifestUrl'),
+  };
+}
+
+function positiveSeconds(name, fallback) {
+  const source = process.env[name];
+  if (source === undefined) return fallback * 1000;
+  const parsed = Number(source);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    log(`ignoring invalid ${name}`);
+    return fallback * 1000;
+  }
+  return Math.max(1, Math.round(parsed * 1000));
+}
+
+function safeAbsolutePath(name, fallback) {
+  const candidate = path.resolve(process.env[name] || fallback);
+  if (candidate === path.parse(candidate).root) {
+    log(`ignoring unsafe ${name}`);
+    return fallback;
+  }
+  return candidate;
+}
+
+function settings() {
+  const stateRoot = safeAbsolutePath('BLITZ_STATE_DIR', '/var/lib/blitz');
+  const test = process.env.BLITZ_PAYLOAD_TEST_CONFIG === undefined
+    ? {}
+    : JSON.parse(process.env.BLITZ_PAYLOAD_TEST_CONFIG);
+  const configured = (key, fallback) => test[key] ?? fallback;
+  return {
+    payloadRoot: configured('payloadRoot', '/opt/blitz/payload'),
+    payloadState: path.join(stateRoot, 'payload'),
+    lodyRoot: configured('lodyRoot', '/opt/blitz/lody'),
+    originFile: path.join(stateRoot, 'origin'),
+    serviceRoot: configured('serviceRoot', '/run/service'),
+    s6Svc: configured('s6Svc', '/command/s6-svc'),
+    s6Svstat: configured('s6Svstat', '/command/s6-svstat'),
+    gatewayHealthUrl: configured('gatewayHealthUrl', 'http://127.0.0.1:7445/healthz'),
+    daemonSocket: configured(
+      'daemonSocket',
+      path.join(stateRoot, 'lody/run/lody-oss-probe.sock'),
+    ),
+    daemonControlSocket: configured(
+      'daemonControlSocket',
+      path.join(stateRoot, 'lody/run/lody-oss-control.sock'),
+    ),
+    daemonIdleWaitMs: configured('daemonIdleWaitMs',
+      positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_WAIT', 4 * 60 * 60)),
+    daemonIdleProbeTimeoutMs: configured('daemonIdleProbeTimeoutMs', 2000),
+    daemonKillGraceMs: configured('daemonKillGraceMs', 30_000),
+    daemonKillPollMs: configured('daemonKillPollMs', 5000),
+    intervalMs: positiveSeconds('BLITZ_PAYLOAD_INTERVAL', 300),
+    firstDelayMs: configured('firstDelayMs', 60_000),
+    healthTimeoutMs: configured('healthTimeoutMs', 60_000),
+    healthIntervalMs: configured('healthIntervalMs', 1000),
+    requestTimeoutMs: configured('requestTimeoutMs', 30_000),
+    testKillAt: configured('killAt', null),
+  };
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function testKillAt(config, stage) {
+  if (config.testKillAt === stage) {
+    process.kill(process.pid, 'SIGKILL');
+  }
+}
+
+function runCommand(command, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(
+      command,
+      args,
+      { encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: timeoutMs },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve(stdout);
+          return;
+        }
+        const lastLine = String(stderr).trim().split('\n').at(-1) || error.message;
+        reject(new Error(`${path.basename(command)} failed: ${lastLine}`));
+      },
+    );
+  });
+}
+
+async function accessToken(config) {
+  const output = await runCommand('blitz-cred', ['api-token'], config.requestTimeoutMs);
+  const token = output.trim();
+  if (token === '') throw new FetchFailure('blitz-cred returned an empty bearer');
+  return token;
+}
+
+async function readOrigin(config) {
+  let source;
+  try {
+    source = await fsp.readFile(config.originFile, 'utf8');
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && error.code === 'ENOENT') return null;
+    throw new FetchFailure(`origin is unreadable: ${errorMessage(error)}`);
+  }
+  const firstLine = source.split('\n', 1)[0].trim().replace(/\/+$/u, '');
+  if (firstLine === '') return null;
+  let parsed;
+  try {
+    parsed = new URL(firstLine);
+  } catch {
+    throw new FetchFailure('origin is not an HTTP(S) origin');
+  }
+  if (
+    (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+    || parsed.origin !== firstLine
+  ) {
+    throw new FetchFailure('origin is not an HTTP(S) origin');
+  }
+  return firstLine;
+}
+
+async function fetchJson(url, options, label, timeoutMs) {
+  let response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new FetchFailure(`${label} fetch failed: ${errorMessage(error)}`);
+  }
+  if (!response.ok) throw new FetchFailure(`${label} returned HTTP ${response.status}`);
+  if (response.body === null) throw new FetchFailure(`${label} returned no body`);
+  const chunks = [];
+  let bytes = 0;
+  try {
+    for await (const piece of response.body) {
+      const chunk = Buffer.from(piece);
+      bytes += chunk.length;
+      if (bytes > JSON_MAX_BYTES) throw new VerifyFailure(`${label} body is too large`);
+      chunks.push(chunk);
+    }
+  } catch (error) {
+    if (error instanceof VerifyFailure) throw error;
+    throw new FetchFailure(`${label} body failed: ${errorMessage(error)}`);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks, bytes).toString('utf8'));
+  } catch {
+    throw new VerifyFailure(`${label} is not JSON`);
+  }
+}
+
+async function postResult(origin, token, result, config) {
+  try {
+    const response = await fetch(`${origin}/workspaces/self/payload-result`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(result),
+      signal: AbortSignal.timeout(config.requestTimeoutMs),
+    });
+    if (!response.ok) {
+      log(`result report returned HTTP ${response.status}`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    log(`result report failed (${errorMessage(error)})`);
+    return false;
+  }
+}
+
+async function deliverResult(origin, token, state, result, config) {
+  const queued = { ...state, unsentResult: result };
+  await writeState(config, queued);
+  if (!await postResult(origin, token, result, config)) {
+    return { state: queued, delivered: false };
+  }
+  const delivered = { ...queued };
+  delete delivered.unsentResult;
+  await writeState(config, delivered);
+  return { state: delivered, delivered: true };
+}
+
+async function resendQueuedResult(origin, token, state, config) {
+  if (state.unsentResult === null || typeof state.unsentResult !== 'object') {
+    return { state, delivered: true };
+  }
+  if (!await postResult(origin, token, state.unsentResult, config)) {
+    return { state, delivered: false };
+  }
+  const delivered = { ...state };
+  delete delivered.unsentResult;
+  await writeState(config, delivered);
+  return { state: delivered, delivered: true };
+}
+
+async function linkInfo(linkPath) {
+  try {
+    const target = await fsp.readlink(linkPath);
+    const resolved = path.resolve(path.dirname(linkPath), target);
+    const targetStat = await fsp.stat(resolved).catch(() => null);
+    return { target: resolved, exists: targetStat !== null && targetStat.isDirectory() };
+  } catch {
+    return { target: null, exists: false };
+  }
+}
+
+async function readVersionStamp(root, name, label) {
+  let source;
+  try {
+    source = await fsp.readFile(path.join(root, name), 'utf8');
+  } catch (error) {
+    throw new Error(`${label} version stamp is unreadable: ${errorMessage(error)}`);
+  }
+  if (!source.endsWith('\n') || source.indexOf('\n') !== source.length - 1) {
+    throw new Error(`${label} version stamp must contain exactly one line`);
+  }
+  const stamped = source.slice(0, -1);
+  if (!VERSION_PATTERN.test(stamped)) {
+    throw new Error(`${label} version stamp is not a version token`);
+  }
+  return stamped;
+}
+
+async function readDaemonIdentity(root) {
+  const [daemonVersion, protocolSource] = await Promise.all([
+    readVersionStamp(root, 'daemon-version', 'daemon'),
+    fsp.readFile(path.join(root, 'daemon-protocol-version'), 'utf8').catch((error) => {
+      throw new Error(`daemon protocol stamp is unreadable: ${errorMessage(error)}`);
+    }),
+  ]);
+  if (!/^[1-9][0-9]*\n$/u.test(protocolSource)) {
+    throw new Error('daemon protocol stamp must contain one positive integer line');
+  }
+  const protocolVersion = Number(protocolSource.slice(0, -1));
+  if (!Number.isSafeInteger(protocolVersion)) {
+    throw new Error('daemon protocol stamp is out of range');
+  }
+  return { version: daemonVersion, protocolVersion };
+}
+
+async function atomicLink(linkPath, target) {
+  await fsp.mkdir(path.dirname(linkPath), { recursive: true });
+  const temporary = `${linkPath}.new-${process.pid}`;
+  await fsp.rm(temporary, { force: true });
+  await fsp.symlink(target, temporary);
+  await fsp.rename(temporary, linkPath);
+}
+
+function statePath(config) {
+  return path.join(config.payloadState, 'state.json');
+}
+
+async function readState(config) {
+  try {
+    const parsed = JSON.parse(await fsp.readFile(statePath(config), 'utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+async function writeState(config, state) {
+  await fsp.mkdir(config.payloadState, { recursive: true });
+  const target = statePath(config);
+  const temporary = `${target}.new-${process.pid}`;
+  await fsp.writeFile(temporary, `${JSON.stringify(state)}\n`, { mode: 0o644 });
+  await fsp.rename(temporary, target);
+}
+
+async function removeStaging(config) {
+  const roots = [path.join(config.payloadState, 'versions'), config.lodyRoot];
+  for (const root of roots) {
+    await fsp.mkdir(root, { recursive: true });
+    const entries = await fsp.readdir(root, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.endsWith('.staging')) {
+        await fsp.rm(path.join(root, entry.name), { recursive: true, force: true });
+      }
+    }
+  }
+}
+
+async function recoverPending(config, state) {
+  if (state.pending === null || typeof state.pending !== 'object') return state;
+  return restorePendingRelease(config, state);
+}
+
+async function ensureCurrentLink(linkPath, fallbackTarget, label) {
+  const current = await linkInfo(linkPath);
+  if (current.exists) return { link: current, restored: false };
+  const fallback = await fsp.stat(fallbackTarget).catch(() => null);
+  if (fallback === null || !fallback.isDirectory()) {
+    throw new Error(`neither current nor baked ${label} exists`);
+  }
+  await atomicLink(linkPath, fallbackTarget);
+  return { link: await linkInfo(linkPath), restored: true };
+}
+
+async function initialiseState(config) {
+  await fsp.mkdir(path.join(config.payloadState, 'versions'), { recursive: true });
+  await fsp.mkdir(config.payloadRoot, { recursive: true });
+  await fsp.mkdir(config.lodyRoot, { recursive: true });
+  await removeStaging(config);
+
+  let state = await recoverPending(config, await readState(config));
+  const payloadLink = path.join(config.payloadRoot, 'current');
+  const daemonLink = path.join(config.lodyRoot, 'current');
+  const payloadFallback = typeof state.previousTarget === 'string'
+    ? state.previousTarget
+    : path.join(config.payloadRoot, 'baked');
+  const daemonFallback = typeof state.previousDaemonTarget === 'string'
+    ? state.previousDaemonTarget
+    : path.join(config.lodyRoot, 'baked');
+  const payloadLinkState = await ensureCurrentLink(payloadLink, payloadFallback, 'payload');
+  const daemonLinkState = await ensureCurrentLink(daemonLink, daemonFallback, 'daemon');
+  const { link: payload, restored: restoredPayload } = payloadLinkState;
+  const { link: daemon, restored: restoredDaemon } = daemonLinkState;
+  const payloadVersion = await readVersionStamp(payload.target, 'payload-version', 'payload');
+  const daemonIdentity = await readDaemonIdentity(daemon.target);
+  if (restoredPayload) {
+    state = {
+      ...state,
+      current: payloadVersion,
+      currentTarget: payload.target,
+      previous: null,
+      previousTarget: null,
+    };
+  } else if (state.currentTarget !== payload.target) {
+    state = {
+      ...state,
+      previous: typeof state.current === 'string' ? state.current : null,
+      previousTarget: typeof state.currentTarget === 'string' ? state.currentTarget : null,
+      current: payloadVersion,
+      currentTarget: payload.target,
+    };
+  } else if (state.current !== payloadVersion) {
+    state = { ...state, current: payloadVersion };
+  }
+  if (restoredDaemon) {
+    state = {
+      ...state,
+      daemonVersion: daemonIdentity.version,
+      daemonTarget: daemon.target,
+      daemonProtocolVersion: daemonIdentity.protocolVersion,
+      previousDaemonVersion: null,
+      previousDaemonTarget: null,
+      previousDaemonProtocolVersion: null,
+    };
+  } else if (state.daemonTarget !== daemon.target) {
+    state = {
+      ...state,
+      previousDaemonVersion:
+        typeof state.daemonVersion === 'string' ? state.daemonVersion : null,
+      previousDaemonTarget: typeof state.daemonTarget === 'string' ? state.daemonTarget : null,
+      previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
+        ? state.daemonProtocolVersion
+        : null,
+      daemonVersion: daemonIdentity.version,
+      daemonTarget: daemon.target,
+      daemonProtocolVersion: daemonIdentity.protocolVersion,
+    };
+  } else if (
+    state.daemonVersion !== daemonIdentity.version
+    || state.daemonProtocolVersion !== daemonIdentity.protocolVersion
+  ) {
+    state = {
+      ...state,
+      daemonVersion: daemonIdentity.version,
+      daemonProtocolVersion: daemonIdentity.protocolVersion,
+    };
+  }
+  await writeState(config, state);
+  return state;
+}
+
+async function downloadArchive(archiveSpec, destination, label, config) {
+  let response;
+  try {
+    response = await fetch(archiveSpec.url, {
+      signal: AbortSignal.timeout(config.requestTimeoutMs),
+    });
+  } catch (error) {
+    throw new FetchFailure(`${label} fetch failed: ${errorMessage(error)}`);
+  }
+  if (!response.ok) throw new FetchFailure(`${label} returned HTTP ${response.status}`);
+  if (response.body === null) throw new FetchFailure(`${label} returned no body`);
+  const hash = crypto.createHash('sha256');
+  const file = await fsp.open(destination, 'wx', 0o600);
+  let bytes = 0;
+  try {
+    for await (const piece of response.body) {
+      const chunk = Buffer.from(piece);
+      bytes += chunk.length;
+      if (bytes > archiveSpec.bytes) {
+        throw new VerifyFailure(`${label} byte length mismatch`);
+      }
+      hash.update(chunk);
+      await file.write(chunk);
+    }
+  } catch (error) {
+    if (error instanceof VerifyFailure) throw error;
+    throw new FetchFailure(`${label} body failed: ${errorMessage(error)}`);
+  } finally {
+    await file.close();
+  }
+  if (bytes !== archiveSpec.bytes) throw new VerifyFailure(`${label} byte length mismatch`);
+  if (hash.digest('hex') !== archiveSpec.sha256) {
+    throw new VerifyFailure(`${label} sha256 mismatch`);
+  }
+}
+
+function archiveAncestors(files) {
+  const allowed = new Set();
+  for (const file of files) {
+    const segments = file.path.split('/');
+    for (let index = 1; index < segments.length; index += 1) {
+      allowed.add(segments.slice(0, index).join('/'));
+    }
+  }
+  return allowed;
+}
+
+async function inspectPayloadArchive(archivePath, manifest, config) {
+  const listing = await runCommand(
+    'tar',
+    ['-tzf', archivePath],
+    config.requestTimeoutMs,
+  ).catch((error) => {
+    throw new VerifyFailure(`payload archive cannot be listed: ${errorMessage(error)}`);
+  });
+  const files = new Set(manifest.files.map((entry) => entry.path));
+  const directories = archiveAncestors(manifest.files);
+  for (const rawEntry of listing.split('\n').filter((entry) => entry !== '')) {
+    const isDirectory = rawEntry.endsWith('/');
+    const entry = isDirectory ? rawEntry.slice(0, -1) : rawEntry;
+    if (!isDirectory && entry === 'payload-version') continue;
+    if ((isDirectory && directories.has(entry)) || (!isDirectory && files.has(entry))) continue;
+    throw new VerifyFailure(`payload archive contains unexpected path ${rawEntry}`);
+  }
+}
+
+async function walkTree(root, relative = '') {
+  const result = [];
+  const entries = await fsp.readdir(path.join(root, relative), { withFileTypes: true });
+  for (const entry of entries) {
+    const child = relative === '' ? entry.name : `${relative}/${entry.name}`;
+    const childPath = path.join(root, child);
+    const metadata = await fsp.lstat(childPath);
+    result.push({ relative: child, metadata });
+    if (metadata.isDirectory()) result.push(...await walkTree(root, child));
+  }
+  return result;
+}
+
+async function hashFile(filePath) {
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+async function verifyPayloadTree(root, manifest) {
+  let stampedVersion;
+  try {
+    stampedVersion = await readVersionStamp(root, 'payload-version', 'payload');
+  } catch (error) {
+    throw new VerifyFailure(errorMessage(error));
+  }
+  if (stampedVersion !== manifest.version) {
+    throw new VerifyFailure('payload version stamp does not match manifest.version');
+  }
+  const rootfs = path.join(root, 'rootfs');
+  const entries = await walkTree(rootfs).catch((error) => {
+    throw new VerifyFailure(`payload rootfs is unreadable: ${errorMessage(error)}`);
+  });
+  const expected = new Map(manifest.files.map((entry) => [entry.path, entry]));
+  const actualFiles = [];
+  for (const entry of entries) {
+    const archivePath = `rootfs/${entry.relative}`;
+    if (entry.metadata.isDirectory()) continue;
+    if (!entry.metadata.isFile()) {
+      throw new VerifyFailure(`payload path is not a regular file: ${archivePath}`);
+    }
+    actualFiles.push(archivePath);
+  }
+  if (
+    actualFiles.length !== expected.size
+    || actualFiles.some((archivePath) => !expected.has(archivePath))
+  ) {
+    throw new VerifyFailure('payload extracted file list does not match manifest.files');
+  }
+  for (const [archivePath, specification] of expected) {
+    const filePath = path.join(root, archivePath);
+    const metadata = await fsp.stat(filePath);
+    if (await hashFile(filePath) !== specification.sha256) {
+      throw new VerifyFailure(`${archivePath} sha256 mismatch`);
+    }
+    const actualMode = (metadata.mode & 0o7777).toString(8).padStart(4, '0');
+    if (actualMode !== specification.mode) {
+      throw new VerifyFailure(`${archivePath} mode mismatch`);
+    }
+  }
+}
+
+async function extractPayload(manifest, config) {
+  const versionsRoot = path.join(config.payloadState, 'versions');
+  const final = path.join(versionsRoot, manifest.version);
+  const existing = await fsp.stat(final).catch(() => null);
+  if (existing !== null) {
+    try {
+      await verifyPayloadTree(final, manifest);
+      return final;
+    } catch {
+      await fsp.rm(final, { recursive: true, force: true });
+    }
+  }
+  const staging = `${final}.staging`;
+  await fsp.rm(staging, { recursive: true, force: true });
+  await fsp.mkdir(staging, { recursive: true });
+  const archivePath = path.join(staging, '.payload.tar.gz');
+  try {
+    await downloadArchive(manifest.archive, archivePath, 'payload archive', config);
+    await inspectPayloadArchive(archivePath, manifest, config);
+    await runCommand(
+      'tar',
+      ['-xzf', archivePath, '-C', staging, '--no-same-owner', '--same-permissions'],
+      config.requestTimeoutMs,
+    ).catch((error) => {
+      throw new VerifyFailure(`payload archive extraction failed: ${errorMessage(error)}`);
+    });
+    await fsp.rm(archivePath, { force: true });
+    await verifyPayloadTree(staging, manifest);
+    await fsp.writeFile(
+      path.join(staging, '.manifest.json'),
+      `${JSON.stringify(manifest)}\n`,
+      { mode: 0o644 },
+    );
+    await fsp.rename(staging, final);
+    return final;
+  } catch (error) {
+    await fsp.rm(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function safeArchiveEntry(entry) {
+  const normalized = entry.endsWith('/') ? entry.slice(0, -1) : entry;
+  const segments = normalized.split('/');
+  return normalized !== ''
+    && !path.isAbsolute(normalized)
+    && !segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+    && (
+      segments[0] === 'bin'
+      || segments[0] === 'lib'
+      || normalized === 'daemon-version'
+      || normalized === 'daemon-protocol-version'
+    );
+}
+
+async function verifyDaemonTree(root, daemon) {
+  let identity;
+  try {
+    identity = await readDaemonIdentity(root);
+  } catch (error) {
+    throw new VerifyFailure(errorMessage(error));
+  }
+  if (identity.version !== daemon.version) {
+    throw new VerifyFailure('daemon version stamp does not match manifest.daemon.version');
+  }
+  if (identity.protocolVersion !== daemon.protocolVersion) {
+    throw new VerifyFailure('daemon protocol stamp does not match manifest.daemon.protocolVersion');
+  }
+  const entries = await walkTree(root);
+  let hasBinary = false;
+  let hasPackage = false;
+  for (const entry of entries) {
+    if (entry.relative === 'bin/lody') hasBinary = true;
+    if (entry.relative.startsWith('lib/node_modules/lody/')) hasPackage = true;
+    if (entry.metadata.isSymbolicLink()) {
+      const target = await fsp.readlink(path.join(root, entry.relative));
+      const resolved = path.resolve(root, path.dirname(entry.relative), target);
+      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+        throw new VerifyFailure(`daemon symlink escapes its prefix: ${entry.relative}`);
+      }
+      continue;
+    }
+    if (!entry.metadata.isDirectory() && !entry.metadata.isFile()) {
+      throw new VerifyFailure(`daemon archive has a special file: ${entry.relative}`);
+    }
+  }
+  if (!hasBinary || !hasPackage) {
+    throw new VerifyFailure('daemon archive is missing the lody package or binary');
+  }
+}
+
+async function extractDaemon(daemon, config) {
+  const final = path.join(config.lodyRoot, daemon.version);
+  const existing = await fsp.stat(final).catch(() => null);
+  if (existing !== null) {
+    try {
+      await verifyDaemonTree(final, daemon);
+      return final;
+    } catch {
+      await fsp.rm(final, { recursive: true, force: true });
+    }
+  }
+  const staging = `${final}.staging`;
+  await fsp.rm(staging, { recursive: true, force: true });
+  await fsp.mkdir(staging, { recursive: true });
+  const archivePath = path.join(staging, '.daemon.tar.gz');
+  try {
+    await downloadArchive(daemon, archivePath, 'daemon archive', config);
+    const listing = await runCommand('tar', ['-tzf', archivePath], config.requestTimeoutMs)
+      .catch((error) => {
+        throw new VerifyFailure(`daemon archive cannot be listed: ${errorMessage(error)}`);
+      });
+    for (const entry of listing.split('\n').filter((item) => item !== '')) {
+      if (!safeArchiveEntry(entry)) {
+        throw new VerifyFailure(`daemon archive contains unexpected path ${entry}`);
+      }
+    }
+    await runCommand(
+      'tar',
+      ['-xzf', archivePath, '-C', staging, '--no-same-owner', '--same-permissions'],
+      config.requestTimeoutMs,
+    ).catch((error) => {
+      throw new VerifyFailure(`daemon archive extraction failed: ${errorMessage(error)}`);
+    });
+    await fsp.rm(archivePath, { force: true });
+    await verifyDaemonTree(staging, daemon);
+    await fsp.rename(staging, final);
+    return final;
+  } catch (error) {
+    await fsp.rm(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function changedPayloadPaths(state, manifest) {
+  const changed = new Set();
+  for (const entry of manifest.files) {
+    const currentPath = path.join(state.currentTarget, entry.path);
+    let metadata;
+    try {
+      metadata = await fsp.stat(currentPath);
+    } catch {
+      changed.add(entry.path);
+      continue;
+    }
+    const actualMode = (metadata.mode & 0o7777).toString(8).padStart(4, '0');
+    if (
+      !metadata.isFile()
+      || actualMode !== entry.mode
+      || await hashFile(currentPath) !== entry.sha256
+    ) {
+      changed.add(entry.path);
+    }
+  }
+  return changed;
+}
+
+function servicesToRestart(manifest, changed, daemonChanged) {
+  const services = new Set();
+  for (const [service, dependencies] of Object.entries(manifest.restart)) {
+    if (dependencies.some((dependency) => changed.has(dependency))) services.add(service);
+  }
+  if (daemonChanged) services.add('lody-daemon');
+  return [...services].sort();
+}
+
+async function switchRelease(config, state, nextPayload, nextDaemon) {
+  const pending = {
+    payload: nextPayload,
+    daemon: nextDaemon,
+  };
+  const switching = { ...state, pending };
+  await writeState(config, switching);
+  if (nextDaemon.target !== state.daemonTarget) {
+    await atomicLink(path.join(config.lodyRoot, 'current'), nextDaemon.target);
+  }
+  await atomicLink(path.join(config.payloadRoot, 'current'), nextPayload.target);
+  return switching;
+}
+
+async function commitRelease(config, state) {
+  const nextPayload = state.pending.payload;
+  const nextDaemon = state.pending.daemon;
+  const committed = {
+    ...state,
+    current: nextPayload.version,
+    currentTarget: nextPayload.target,
+    previous: state.current,
+    previousTarget: state.currentTarget,
+    daemonVersion: nextDaemon.version,
+    daemonTarget: nextDaemon.target,
+    daemonProtocolVersion: Number.isSafeInteger(nextDaemon.protocolVersion)
+      ? nextDaemon.protocolVersion
+      : null,
+    previousDaemonVersion: state.daemonVersion,
+    previousDaemonTarget: state.daemonTarget,
+    previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
+      ? state.daemonProtocolVersion
+      : null,
+  };
+  delete committed.pending;
+  await writeState(config, committed);
+  return committed;
+}
+
+async function restorePendingRelease(config, state) {
+  if (typeof state.currentTarget === 'string') {
+    await atomicLink(path.join(config.payloadRoot, 'current'), state.currentTarget);
+  }
+  if (typeof state.daemonTarget === 'string') {
+    await atomicLink(path.join(config.lodyRoot, 'current'), state.daemonTarget);
+  }
+  const restored = { ...state };
+  delete restored.pending;
+  await writeState(config, restored);
+  return restored;
+}
+
+async function restartOrdinaryService(service, config) {
+  await runCommand(
+    config.s6Svc,
+    ['-r', path.join(config.serviceRoot, service)],
+    config.requestTimeoutMs,
+  );
+}
+
+function daemonRuntimeActiveCount(socketPath, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const request = http.request({
+      socketPath,
+      path: '/state',
+      method: 'GET',
+      headers: { 'x-lody-local-control': '1' },
+      timeout: timeoutMs,
+    }, (response) => {
+      if (
+        response.statusCode === undefined
+        || response.statusCode < 200
+        || response.statusCode >= 300
+      ) {
+        response.resume();
+        finish(null);
+        return;
+      }
+      const chunks = [];
+      let bytes = 0;
+      response.on('data', (chunk) => {
+        if (settled) return;
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        bytes += buffer.length;
+        if (bytes > 64 * 1024) {
+          request.destroy();
+          finish(null);
+          return;
+        }
+        chunks.push(buffer);
+      });
+      response.once('error', () => finish(null));
+      response.once('end', () => {
+        try {
+          const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          const count = parsed !== null && typeof parsed === 'object'
+            ? parsed.activeSessionCount
+            : null;
+          finish(Number.isSafeInteger(count) && count >= 0 ? count : null);
+        } catch {
+          finish(null);
+        }
+      });
+    });
+    request.once('timeout', () => request.destroy());
+    request.once('error', () => finish(null));
+    request.end();
+  });
+}
+
+async function daemonActiveSessionCount(config) {
+  try {
+    const control = await fsp.stat(config.daemonControlSocket).catch(() => null);
+    if (control === null) return 0;
+    const stateCount = await daemonRuntimeActiveCount(
+      config.daemonSocket,
+      config.daemonIdleProbeTimeoutMs,
+    );
+    if (stateCount !== null) return stateCount;
+    return 1;
+  } catch {
+    return 0;
+  }
+}
+
+async function daemonPid(config) {
+  try {
+    const output = await runCommand(
+      config.s6Svstat,
+      ['-o', 'pid', path.join(config.serviceRoot, 'lody-daemon')],
+      config.requestTimeoutMs,
+    );
+    const pid = output.trim();
+    return /^[0-9]+$/u.test(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function restartLodyDaemon(config, activationDetail) {
+  const before = await daemonPid(config);
+  await restartOrdinaryService('lody-daemon', config);
+  if (before === null) return activationDetail;
+  let waitedMs = 0;
+  while (waitedMs < config.daemonKillGraceMs) {
+    const after = await daemonPid(config);
+    if (after === null || after !== before) return activationDetail;
+    const pause = Math.min(config.daemonKillPollMs, config.daemonKillGraceMs - waitedMs);
+    await sleep(pause);
+    waitedMs += pause;
+  }
+  log(`lody-daemon ignored SIGTERM for ${config.daemonKillGraceMs / 1000}s; sending SIGKILL`);
+  await runCommand(
+    config.s6Svc,
+    ['-k', path.join(config.serviceRoot, 'lody-daemon')],
+    config.requestTimeoutMs,
+  );
+  return activationDetail;
+}
+
+async function restartServices(services, config, daemonActivationDetail = null) {
+  let daemonDetail = null;
+  for (const service of services) {
+    if (service === 'lody-daemon') {
+      daemonDetail = await restartLodyDaemon(
+        config,
+        daemonActivationDetail ?? 'restarted without an idle check during rollback',
+      );
+    } else await restartOrdinaryService(service, config);
+  }
+  return daemonDetail;
+}
+
+function probeDaemon(socketPath, timeoutMs) {
+  return new Promise((resolve) => {
+    const request = http.request({
+      socketPath,
+      path: '/healthz',
+      method: 'GET',
+      timeout: timeoutMs,
+    }, (response) => {
+      response.resume();
+      resolve(response.statusCode !== undefined
+        && response.statusCode >= 200
+        && response.statusCode < 300);
+    });
+    request.once('timeout', () => request.destroy());
+    request.once('error', () => resolve(false));
+    request.end();
+  });
+}
+
+// Gateway health requires a webApp ticket, so its local probe returns 403.
+// Like blitz-healthcheck, treat any non-5xx response as proof it is serving.
+async function probeGateway(config, timeoutMs) {
+  try {
+    const response = await fetch(config.gatewayHealthUrl, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    await response.body?.cancel();
+    return response.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForHealth(checkDaemon, config) {
+  const deadline = Date.now() + config.healthTimeoutMs;
+  let last = { gatewayHealthy: false, daemonHealthy: !checkDaemon };
+  do {
+    const remaining = Math.max(1, deadline - Date.now());
+    const probeTimeout = Math.min(2000, remaining);
+    const [gatewayHealthy, daemonHealthy] = await Promise.all([
+      probeGateway(config, probeTimeout),
+      checkDaemon ? probeDaemon(config.daemonSocket, probeTimeout) : Promise.resolve(true),
+    ]);
+    last = { gatewayHealthy, daemonHealthy };
+    if (gatewayHealthy && daemonHealthy) return last;
+    if (Date.now() >= deadline) break;
+    await sleep(Math.min(config.healthIntervalMs, Math.max(1, deadline - Date.now())));
+  } while (Date.now() < deadline);
+  return last;
+}
+
+async function recordOutcome(config, state, outcome, detail, attemptedVersion = null) {
+  const recordedAt = Date.now();
+  const next = { ...state };
+  const reportedDetail = attemptedVersion === null || attemptedVersion === state.current
+    ? detail
+    : `attempted ${attemptedVersion}; ${detail}`;
+  if (FAILED_OUTCOMES.has(outcome) && attemptedVersion !== null) {
+    next.failed = {
+      version: attemptedVersion,
+      outcome,
+      at: recordedAt,
+    };
+  } else if (outcome === 'applied') {
+    delete next.failed;
+  }
+  if (outcome === 'booted') {
+    log(`booted ${next.current} daemon ${next.daemonVersion}`);
+  } else if (outcome === 'up-to-date') {
+    const quiet = quietLogRecord(next.quietLog);
+    if (
+      quiet === null
+      || quiet.version !== next.current
+      || recordedAt - quiet.at >= QUIET_LOG_INTERVAL_MS
+    ) {
+      log(`tick: up-to-date ${next.current}`);
+      next.quietLog = { version: next.current, at: recordedAt };
+    }
+  } else {
+    log(`${outcome} ${next.current}: ${reportedDetail}`);
+  }
+  await writeState(config, next);
+  return { state: next, result: {
+    version: next.current,
+    daemonVersion: next.daemonVersion,
+    outcome,
+    detail: reportedDetail,
+  } };
+}
+
+function failedRelease(state) {
+  const failed = state.failed;
+  if (
+    failed === null
+    || typeof failed !== 'object'
+    || typeof failed.version !== 'string'
+    || !FAILED_OUTCOMES.has(failed.outcome)
+    || !Number.isSafeInteger(failed.at)
+    || failed.at < 0
+  ) return null;
+  return failed;
+}
+
+function quietLogRecord(value) {
+  if (
+    value === null
+    || typeof value !== 'object'
+    || typeof value.version !== 'string'
+    || !Number.isSafeInteger(value.at)
+    || value.at < 0
+  ) return null;
+  return value;
+}
+
+function deferredRelease(value) {
+  if (
+    value === null
+    || typeof value !== 'object'
+    || typeof value.version !== 'string'
+    || typeof value.daemonVersion !== 'string'
+    || !Number.isSafeInteger(value.readyAt)
+    || value.readyAt < 0
+  ) return null;
+  return value;
+}
+
+function durationSeconds(milliseconds) {
+  return Number((milliseconds / 1000).toFixed(3)).toString();
+}
+
+async function prepareDaemonActivation(config, state, payloadVersion, daemonVersion) {
+  const existing = deferredRelease(state.deferred);
+  let next = state;
+  if (
+    existing === null
+    || existing.version !== payloadVersion
+    || existing.daemonVersion !== daemonVersion
+  ) {
+    next = {
+      ...state,
+      deferred: { version: payloadVersion, daemonVersion, readyAt: Date.now() },
+    };
+    await writeState(config, next);
+  }
+  const ready = deferredRelease(next.deferred);
+  if (ready === null) throw new Error('deferred release state was not persisted');
+  const activeTurns = await daemonActiveSessionCount(config);
+  const elapsedMs = Math.max(0, Date.now() - ready.readyAt);
+  const elapsed = durationSeconds(elapsedMs);
+  if (activeTurns > 0 && elapsedMs < config.daemonIdleWaitMs) {
+    const noun = activeTurns === 1 ? 'turn' : 'turns';
+    return {
+      state: next,
+      deferred: true,
+      detail: `whole-release activation deferred with ${activeTurns} active ${noun}; `
+        + `ready for ${elapsed}s; idle-wait cap ${durationSeconds(config.daemonIdleWaitMs)}s`,
+    };
+  }
+  if (activeTurns > 0) {
+    const noun = activeTurns === 1 ? 'turn' : 'turns';
+    return {
+      state: next,
+      deferred: false,
+      detail: `forced daemon restart with ${activeTurns} active ${noun} after ${elapsed}s `
+        + 'deferral; idle-wait cap reached; in-flight turns may end agent_disconnected '
+        + 'and must be re-sent',
+    };
+  }
+  return {
+    state: next,
+    deferred: false,
+    detail: `daemon restarted at idle after ${elapsed}s deferral`,
+  };
+}
+
+async function reconcileDeferredPin(config, state, pin) {
+  const deferred = deferredRelease(state.deferred);
+  if (deferred === null || (pin !== null && pin.version === deferred.version)) return state;
+  const next = { ...state };
+  delete next.deferred;
+  await writeState(config, next);
+  log(`dropped deferred ${deferred.version}: pin is ${pin === null ? 'none' : pin.version}`);
+  return next;
+}
+
+async function reconcileFailedPin(config, state, pin) {
+  const failed = failedRelease(state);
+  if (
+    failed === null
+    || pin === null
+    || (pin.version === failed.version && pin.version !== state.current)
+  ) return state;
+  const next = { ...state };
+  delete next.failed;
+  await writeState(config, next);
+  log(`cleared failed ${failed.version}: pin is ${pin.version}`);
+  return next;
+}
+
+async function applyPayload(pin, manifest, config, initialState) {
+  let state = { ...initialState };
+  if (manifest.version !== pin.version) {
+    return recordOutcome(
+      config,
+      state,
+      'verify-failed',
+      'manifest version does not match pin',
+      pin.version,
+    );
+  }
+  if (manifest.minUpdater > UPDATER_VERSION) {
+    return recordOutcome(
+      config,
+      state,
+      'unsupported',
+      `manifest requires updater protocol ${manifest.minUpdater}`,
+      pin.version,
+    );
+  }
+  let payloadTarget;
+  let daemonTarget = state.daemonTarget;
+  const daemonChanged = manifest.daemon !== undefined
+    && manifest.daemon.version !== state.daemonVersion;
+  try {
+    payloadTarget = await extractPayload(manifest, config);
+    if (daemonChanged) daemonTarget = await extractDaemon(manifest.daemon, config);
+  } catch (error) {
+    const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
+    return recordOutcome(config, state, outcome, errorMessage(error), pin.version);
+  }
+
+  const changed = await changedPayloadPaths(state, manifest);
+  const services = servicesToRestart(manifest, changed, daemonChanged);
+  let daemonActivationDetail = null;
+  if (services.includes('lody-daemon')) {
+    const decision = await prepareDaemonActivation(
+      config,
+      state,
+      manifest.version,
+      daemonChanged ? manifest.daemon.version : state.daemonVersion,
+    );
+    state = decision.state;
+    if (decision.deferred) {
+      return recordOutcome(
+        config,
+        state,
+        'deferred',
+        decision.detail,
+        pin.version,
+      );
+    }
+    daemonActivationDetail = decision.detail;
+    state = { ...state };
+    delete state.deferred;
+  }
+  try {
+    state = await switchRelease(
+      config,
+      state,
+      { version: manifest.version, target: payloadTarget },
+      {
+        version: daemonChanged ? manifest.daemon.version : state.daemonVersion,
+        target: daemonTarget,
+        protocolVersion: daemonChanged
+          ? manifest.daemon.protocolVersion
+          : state.daemonProtocolVersion,
+      },
+    );
+    testKillAt(config, 'after-switch');
+  } catch (error) {
+    state = await initialiseState(config);
+    return recordOutcome(
+      config,
+      state,
+      'start-failed',
+      `atomic switch failed: ${errorMessage(error)}`,
+      pin.version,
+    );
+  }
+
+  let activationFailure = null;
+  let daemonRestartDetail = null;
+  const daemonRestarted = services.includes('lody-daemon');
+  try {
+    daemonRestartDetail = await restartServices(services, config, daemonActivationDetail);
+    testKillAt(config, 'before-health');
+  } catch (error) {
+    activationFailure = `service restart failed: ${errorMessage(error)}`;
+  }
+  if (activationFailure === null) {
+    const health = await waitForHealth(daemonRestarted, config);
+    if (!health.gatewayHealthy) activationFailure = 'gateway health check failed';
+    else if (!health.daemonHealthy) activationFailure = 'daemon health check failed';
+  }
+  if (activationFailure === null) {
+    try {
+      state = await commitRelease(config, state);
+    } catch (error) {
+      activationFailure = `state commit failed: ${errorMessage(error)}`;
+    }
+  }
+  if (activationFailure === null) {
+    const detail = [
+      services.length === 0
+        ? 'healthy; no service restart required'
+        : `healthy; restarted ${services.join(', ')}`,
+      daemonRestartDetail,
+      daemonChanged ? `daemon protocol ${manifest.daemon.protocolVersion}` : null,
+    ].filter((part) => part !== null).join('; ');
+    return recordOutcome(
+      config,
+      state,
+      'applied',
+      detail,
+    );
+  }
+
+  try {
+    state = await restorePendingRelease(config, state);
+    await restartServices(services, config);
+    const rollbackHealth = await waitForHealth(daemonRestarted, config);
+    if (!rollbackHealth.gatewayHealthy || !rollbackHealth.daemonHealthy) {
+      throw new Error('previous release health check failed');
+    }
+  } catch (error) {
+    state = await initialiseState(config);
+    return recordOutcome(
+      config,
+      state,
+      'start-failed',
+      `${activationFailure}; rollback failed: ${errorMessage(error)}`,
+      pin.version,
+    );
+  }
+  return recordOutcome(
+    config,
+    state,
+    'rolled-back',
+    `${activationFailure}; previous payload restored`,
+    pin.version,
+  );
+}
+
+async function garbageCollect(config, state) {
+  const deferred = deferredRelease(state.deferred);
+  const payloadKeep = new Set([state.current, state.previous, deferred?.version].filter((item) =>
+    typeof item === 'string'));
+  const versionsRoot = path.join(config.payloadState, 'versions');
+  for (const entry of await fsp.readdir(versionsRoot, { withFileTypes: true })) {
+    if (!payloadKeep.has(entry.name)) {
+      await fsp.rm(path.join(versionsRoot, entry.name), { recursive: true, force: true });
+    }
+  }
+  const daemonKeep = new Set([
+    'baked',
+    'current',
+    state.daemonVersion,
+    state.previousDaemonVersion,
+    deferred?.daemonVersion,
+  ].filter((item) => typeof item === 'string'));
+  for (const entry of await fsp.readdir(config.lodyRoot, { withFileTypes: true })) {
+    if (!daemonKeep.has(entry.name)) {
+      await fsp.rm(path.join(config.lodyRoot, entry.name), { recursive: true, force: true });
+    }
+  }
+}
+
+let bootReportPending = true;
+
+async function tick(config) {
+  let state = await initialiseState(config);
+  let reportedBoot = false;
+  let origin;
+  try {
+    origin = await readOrigin(config);
+  } catch (error) {
+    log(errorMessage(error));
+    return;
+  }
+  if (origin === null) {
+    log('idle (no control-plane origin)');
+    return;
+  }
+  let token;
+  try {
+    token = await accessToken(config);
+  } catch (error) {
+    log(`idle (bearer unavailable: ${errorMessage(error)})`);
+    return;
+  }
+  const resent = await resendQueuedResult(origin, token, state, config);
+  state = resent.state;
+  if (!resent.delivered) {
+    await garbageCollect(config, state);
+    return;
+  }
+
+  let pin;
+  try {
+    const response = await fetchJson(
+      `${origin}/workspaces/self/box-config`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      'box-config',
+      config.requestTimeoutMs,
+    );
+    pin = parsePayloadConfig(response);
+  } catch (error) {
+    const failure = await recordOutcome(
+      config,
+      state,
+      'fetch-failed',
+      errorMessage(error),
+    );
+    state = failure.state;
+    state = (await deliverResult(origin, token, state, failure.result, config)).state;
+    await garbageCollect(config, state);
+    return;
+  }
+
+  if (bootReportPending) {
+    const bootDetail = pin === null
+      ? 'boot report; no payload pin'
+      : pin.version === state.current
+        ? 'boot report; payload is current'
+        : 'boot report; payload update pending';
+    const boot = await recordOutcome(
+      config,
+      state,
+      'booted',
+      bootDetail,
+    );
+    state = boot.state;
+    const delivered = await deliverResult(origin, token, state, boot.result, config);
+    state = delivered.state;
+    bootReportPending = false;
+    reportedBoot = true;
+    if (!delivered.delivered) {
+      await garbageCollect(config, state);
+      return;
+    }
+  }
+  state = await reconcileDeferredPin(config, state, pin);
+  state = await reconcileFailedPin(config, state, pin);
+  if (pin === null) {
+    await garbageCollect(config, state);
+    return;
+  }
+  if (pin.version === state.current) {
+    if (!reportedBoot) {
+      const current = await recordOutcome(
+        config,
+        state,
+        'up-to-date',
+        'payload pin is already current',
+      );
+      state = current.state;
+      state = (await deliverResult(origin, token, state, current.result, config)).state;
+    }
+    await garbageCollect(config, state);
+    return;
+  }
+  const failed = failedRelease(state);
+  if (
+    failed !== null
+    && failed.version === pin.version
+    && Date.now() - failed.at < FAILED_RETRY_MS
+  ) {
+    await garbageCollect(config, state);
+    return;
+  }
+
+  let applied;
+  try {
+    const manifestValue = await fetchJson(
+      pin.manifestUrl,
+      {},
+      'payload manifest',
+      config.requestTimeoutMs,
+    );
+    applied = await applyPayload(pin, parseManifest(manifestValue), config, state);
+  } catch (error) {
+    const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
+    applied = await recordOutcome(
+      config,
+      state,
+      outcome,
+      errorMessage(error),
+      pin.version,
+    );
+  }
+  state = applied.state;
+  state = (await deliverResult(origin, token, state, applied.result, config)).state;
+  await garbageCollect(config, state);
+}
+
+async function runLoop() {
+  const config = settings();
+  configureLog(config.payloadState);
+  if (process.env.BLITZ_PAYLOAD_ONCE === '1') {
+    try {
+      await tick(config);
+    } catch (error) {
+      // A one-shot test has the same fail-open semantics as the supervised
+      // loop: errors are observations, never a reason for s6 to spin.
+      log(`tick failed (${errorMessage(error)})`);
+    }
+    return;
+  }
+  await sleep(config.firstDelayMs);
+  while (true) {
+    try {
+      await tick(config);
+    } catch (error) {
+      log(`tick failed (${errorMessage(error)})`);
+    }
+    await sleep(config.intervalMs);
+  }
+}
+
+async function validatorMain(kind, fixturePath) {
+  const parsed = JSON.parse(await fsp.readFile(fixturePath, 'utf8'));
+  if (kind === 'validate-manifest') parseManifest(parsed);
+  else parsePayloadConfig(parsed);
+}
+
+if (require.main === module) {
+  const [command, fixturePath] = process.argv.slice(2);
+  if (
+    (command === 'validate-manifest' || command === 'validate-config')
+    && fixturePath !== undefined
+    && process.argv.length === 4
+  ) {
+    validatorMain(command, fixturePath).catch((error) => {
+      process.stderr.write(`${errorMessage(error)}\n`);
+      process.exitCode = 1;
+    });
+  } else if (command === undefined) {
+    void runLoop();
+  } else {
+    process.stderr.write(
+      'usage: blitz-payload [validate-manifest|validate-config <file>]\n',
+    );
+    process.exitCode = 2;
+  }
+}
+
+module.exports = { parseManifest, parsePayloadConfig, probeGateway };

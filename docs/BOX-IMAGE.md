@@ -1,11 +1,12 @@
 # The box image: build, publish, and ship it to workspaces
 
-Every workspace VM runs one OCI image — the box — containing SSH, the
-terminal, the files/preview gateway, and Docker-in-Docker
-([packages/box](../packages/box/README.md)). At boot, the VM's bootstrap
-fetches the image named by the three `BOX_IMAGE_*` vars in
-`packages/control-plane/wrangler.toml`. This page covers building the image,
-the two ways to serve it, and how upgrades behave.
+Every workspace VM starts from one OCI image — the box — containing SSH,
+Docker-in-Docker, the service graph, and the in-place payload updater
+([packages/box](../packages/box/README.md)). The image carries a baked payload
+for first boot; the control plane then pins the current scripts, Blitz binaries,
+service implementations, and Lody daemon as a separately published payload.
+This page covers both artifacts, the ways to serve the image, and how upgrades
+behave.
 
 Part of the [self-host guide](SELF-HOST.md) (step 9).
 
@@ -28,7 +29,25 @@ pullable**. Treat the box image as public in every mode.
 | Deployment | Mode | Why |
 |---|---|---|
 | **client prod** | A — GHCR | `release.yml` builds and pushes the image on a `v*` tag, then pins the digest it just built. |
-| **canary** | B — R2 archive | The `image` job in `canary.yml` automatically publishes changed image inputs under a versioned R2 prefix, then the deploy pins that release. |
+| **canary** | B — R2 archive | The `image` job in `canary.yml` automatically publishes changed base-image inputs under a versioned R2 prefix, then the deploy pins that release. |
+
+The image pin has three deployment vars. `BOX_IMAGE_REF` is either the
+immutable registry digest or the public R2 manifest URL. `BOX_IMAGE_TAG` and
+`BOX_IMAGE_SHA256` are required only for an R2 archive: they name the Docker
+tag loaded from the archive and authenticate the reassembled bytes.
+
+The in-place payload has two inseparable vars:
+
+- `BOX_PAYLOAD_REF` is the public, versioned
+  `box-payload/<version>/manifest.json` URL.
+- `BOX_PAYLOAD_VERSION` is the manifest's content hash and the desired version
+  each non-held machine should run.
+
+Set both from one validated release or set `BOX_PAYLOAD_REF = ""` to disable
+payload delivery. Never mix the ref from one release with another version.
+Canary publishes this payload today. Client prod remains image-only until the
+owner chooses an architecture contract for its amd64/arm64 fleet; see the
+[production plan](DEPLOY-RUNBOOK.md#how-client-prod-is-deployed).
 
 This split is deliberate. **Pushing to `ghcr.io/blitzdotdev/blitz-box` requires
 `write:packages`, and the only credential that holds it is the
@@ -46,45 +65,77 @@ client prod.
 
 ### Automatic canary image publish
 
-On every push to `main`, the `image` job in `canary.yml` runs after the
-configuration gate and under the `canary` environment:
+On every push to `main`, `canary.yml` publishes or reuses both releases under
+the `canary` environment:
 
 1. It checks out the merged tree, sets up Node, runs `npm ci`, writes the
    canary `wrangler.toml` from
    `CANARY_WRANGLER_TOML`, and reads `APP_URL` from that config.
-2. It computes a release id from every repository input copied by the
-   Dockerfile. `BOX_IMAGE_INPUTS` is the shared source list. The full
+2. The `image` job builds `daemon.tar.gz` from the Dockerfile's `daemon` stage
+   and builds the amd64 gateway binary with the same Go version as the
+   Dockerfile. `blitz-cred` is base-owned so a bad payload cannot disable the
+   updater's bearer acquisition. It runs
+   `plan-box-payload.mjs --print-version --daemon <archive> --binaries <dir>`;
+   the resulting hash includes that exact daemon archive digest.
+3. It computes a base release id from the Git object ids named by
+   `scripts/lib/box-image-inputs.mjs`. The full
    64-character SHA-256 becomes `<releaseId>`, the image tag is
    `blitz-box:<releaseId>`, and the R2 prefix is `box-image/<releaseId>`.
-3. It requests
+4. It requests
    `<APP_URL>/box-image/<releaseId>/manifest.json`. A valid manifest with the
    expected image tag means that exact release is already published, so the
    job reuses its `totalSha256`. A 404 means it must publish. An invalid
    manifest, a mismatched tag, any other HTTP status, or a network error fails
    the job instead of pretending the release is absent.
-4. For an absent release, it runs
-   `docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 -f packages/box/Dockerfile -t <imageTag> .`.
-   The build argument turns Lody on for canary while the committed
+5. For an absent base release, it runs
+   `docker build --platform linux/amd64 --build-arg BLITZ_LODY_SESSIONS=1 --build-arg BLITZ_PAYLOAD_VERSION=<planned-payload-version> -f packages/box/Dockerfile -t <imageTag> .`.
+   The daemon archive was built before the version was planned, so this baked
+   stamp is the same daemon-inclusive version the payload publisher will use.
+   The other build argument turns Lody on for canary while the committed
    `env.defaults` stays off for self-hosters; the Dockerfile rejects any
    non-empty value other than `0` or `1`.
-5. It boots that enabled image through its real `/init` entrypoint with
+6. It boots that enabled image through its real `/init` entrypoint with
    `IMAGE=<imageTag> LODY_BOOT_ONLY=1 packages/box/test/smoke.sh`. The smoke has
    a 180-second wall-clock readiness deadline and must pass before any archive
    object is published.
-6. It runs
+7. It runs
    `node packages/control-plane/scripts/publish-box-image.mjs --image <imageTag> --prefix <prefix> --app-url <APP_URL> --json publish.json`.
    The publisher uploads every part before `manifest.json`, so a release is
    not visible until all its parts exist.
-7. It exposes the release ref, tag, SHA-256, release id, and whether it built
-   anything to the deploy job. The deploy pins those values and verifies that
-   `/version` reports both the merged commit and the expected box-image tag.
+8. Only after the image job succeeds, the `payload` job downloads the daemon
+   archive and the gateway binary the image job built and uploaded as a
+   workflow artifact, plans with `--daemon`, and refuses to continue unless its
+   version equals the one used by the image job. It probes
+   `<APP_URL>/box-payload/<version>/manifest.json`; a valid manifest for that
+   version is reused, 404 is published with the same `--daemon <archive>`, and
+   malformed content or any other response fails the deploy. The publisher
+   uploads `payload.tar.gz` and `daemon.tar.gz` before `manifest.json`.
+9. The payload job exposes `ref` and `version`. The deploy pins those alongside
+   the image outputs and verifies that `/version` reports the merged commit and
+   expected box-image tag.
 
-**Lody release identity.** The release key covers every repository source in a
-Dockerfile `COPY`. That includes `vendor/lody`, reviewed adapter snapshots, and
-all shared Lody build scripts. A pure Lody-input change therefore selects a new
-release ID. The key uses Git object IDs instead of walking the large trees.
-`box-image-key.test.mjs` parses the Dockerfile and rejects any uncovered source.
-Follow `docs/LODY-MERGE.md` for the upstream procedure.
+The base release id deliberately excludes payload-owned files, the gateway
+binary, and the daemon; it includes the base-owned credential broker sources.
+It also includes `env.defaults`: environment is fixed when the container is
+created, so changing that file requires an image rather than an in-place
+payload. A payload-only merge therefore reuses the current image rather than
+rebuilding it. Its baked stamp names only the bytes in the baked payload and
+is unaffected by the later canary-only `env.defaults` mutation; it may name the payload current
+when that base was built; that is informational boot state, not the rollout
+pin. A fresh machine starts there and the updater converges it to
+`BOX_PAYLOAD_VERSION`. When a base input changes, the new image is stamped with
+the daemon-inclusive payload version published by the same run. The Dockerfile,
+the updater, and the s6 service set/topology remain image inputs.
+
+**Lody release identity.** The daemon is a payload input, not a base input.
+`vendor/lody`, the reviewed adapter snapshots and the shared Lody build scripts
+feed the Dockerfile's `lody-build` and `daemon` stages, and the payload version
+hashes the resulting `daemon.tar.gz`. A pure Lody-input change therefore
+publishes a new payload and reuses the base image. `box-image-key.test.mjs`
+parses the Dockerfile and rejects any `COPY` source that is neither a base
+input (`BOX_IMAGE_INPUTS`) nor a payload input (`BOX_PAYLOAD_SOURCE_INPUTS`
+plus the payload-owned rootfs files). Follow `docs/LODY-MERGE.md` for the
+upstream procedure.
 
 ### Lody daemon package and provenance
 
@@ -102,22 +153,29 @@ Adapter snapshots exclude generated `dist/` and `node_modules/` trees. The
 `lody-adapters-drift.test.mjs` gate checks that every tracked Lody builder input
 survives the ordered Dockerfile ignore rules.
 
-The target-platform vendors stage extracts that tarball at the established
-global prefix. It runs `npm ci` at the package root, where npm enforces the
-shrinkwrap and checks every integrity. Lifecycle scripts stay enabled for
-native dependencies. The package remains
-`/opt/blitz/npm/lib/node_modules/lody`, and s6 still executes
-`/opt/blitz/npm/bin/lody start`. Its only stamp is `dist/BUILD.json` inside that
-package. Plan PR D will serve that file over `/lody/build`.
+The target-platform `daemon` stage extracts that tarball into the switchable
+prefix `/opt/blitz/lody/baked`. It runs `npm ci` at the package root, where npm
+enforces the shrinkwrap and checks every integrity. Lifecycle scripts stay
+enabled for native dependencies. The package is
+`/opt/blitz/lody/current/lib/node_modules/lody`, and s6 executes
+`/opt/blitz/lody/current/bin/lody start`. The package's own stamp is
+`dist/BUILD.json`. The stage also writes `daemon-version` (the upstream commit
+and the dist digest from that stamp) and `daemon-protocol-version` beside the
+prefix; the payload updater reads and reports both. The publisher exports the
+whole prefix as `daemon.tar.gz`. Plan PR D will serve `dist/BUILD.json` over
+`/lody/build`.
 
 The `canary` environment's `CLOUDFLARE_API_TOKEN` must be able to write the
 `blitz-box-images` bucket. A token that can deploy the Worker but cannot write
-that R2 bucket makes the image job fail.
+that R2 bucket makes either publishing job fail.
 
 A canary release occupies these keys:
 
 - `box-image/<releaseId>/manifest.json`
 - `box-image/<releaseId>/part-NNN` for every archive part
+- `box-payload/<version>/manifest.json`
+- `box-payload/<version>/payload.tar.gz`
+- `box-payload/<version>/daemon.tar.gz`
 
 Old and new releases must coexist. Existing boxes and older deployed Worker
 versions retain the full `BOX_IMAGE_REF` they received, so publishing a new
@@ -227,14 +285,42 @@ An amd64 archive boots amd64 machines only. Keep the archive's architecture
 matched to the machine types you offer; if you need both architectures, use
 mode A, whose release build is multi-arch.
 
+**Open arm64 payload item.** The payload identity and publisher currently
+derive from amd64 gateway bytes. Defining an architecture-qualified arm64
+payload identity is intentionally out of scope for thin-image v1; do not point
+arm64 boxes at the amd64 payload pin until that contract is designed.
+
 ## Build locally
 
-The build context is the repository root (the image compiles
-`packages/broker` into `blitz-cred`):
+Use Node 22 and Go 1.26.5. The daemon archive must exist before the payload
+version is derived, and the exact same archive must go to the publisher. The
+build context is the repository root:
 
 ```sh
-docker build --platform linux/amd64 -f packages/box/Dockerfile -t blitz-box:local .
+release_dir=$(mktemp -d)
+daemon_archive="$release_dir/daemon.tar.gz"
+
+node packages/control-plane/scripts/build-box-daemon.mjs \
+  --out "$daemon_archive"
+payload_version=$(node packages/control-plane/scripts/plan-box-payload.mjs \
+  --print-version --daemon "$daemon_archive")
+docker build --platform linux/amd64 \
+  --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
+  -f packages/box/Dockerfile -t blitz-box:local .
+node packages/control-plane/scripts/publish-box-payload.mjs \
+  --daemon "$daemon_archive"
 ```
+
+That order is load-bearing: build daemon, derive with `--daemon`, stamp the
+image, then publish with the same `--daemon`. Planning without it derives a
+different version. `publish-box-payload.mjs` stages and verifies
+`payload.tar.gz`, uploads it and `daemon.tar.gz` under
+`box-payload/<version>/`, then uploads `manifest.json` last. It uses the
+`BOX_IMAGES` R2 binding and `APP_URL` in
+`packages/control-plane/wrangler.toml`; `--dry-run --out <dir>` keeps the
+verified artifacts locally instead. Run
+`publish-box-image.mjs --image blitz-box:local` as described in mode B when the
+image also needs publishing.
 
 On macOS, install and start Colima first — and size it up. The defaults
 (2 CPUs, 2 GiB memory) are too small for this build plus the inner Docker
@@ -293,9 +379,43 @@ owner or admin requests an update through the box-config v1 routes in
 `packages/control-plane/core/bootstrap.ts` polls, replaces the container, and
 reports the installed ref.
 
-Rollback starts by restoring the previous immutable pin and redeploying. New
-VMs then use it; request another box update for each existing cloud VM that must
-move back.
+`BOX_PAYLOAD_REF` and `BOX_PAYLOAD_VERSION` affect existing machines. Their
+updaters poll box config, verify and apply the content-addressed release, and
+report the running payload and daemon versions. An unacknowledged report is
+kept in updater state and retried before the next poll does new work. To roll
+back, restore **both** vars from the previous immutable payload release and
+redeploy. A lower version is an ordinary target, so machines apply it on their
+next poll. Do not replace objects under the current version; publish another
+content hash.
+
+Hold one machine on its current payload with the session-authenticated,
+workspace-admin route:
+
+```http
+PATCH /machines/<machine-id>
+Content-Type: application/json
+
+{"payloadHold":true}
+```
+
+A hold makes that machine's box config answer `payload: null`; it does not
+change the deployment-wide pin or undo the version already running. Send
+`{"payloadHold":false}` to resume, at which point the machine converges to the
+current deployment pin.
+
+Read fleet state from the authenticated `GET /workspaces/<workspace-id>`
+response. Each `workspace.members[].machine` reports `id`, `payloadVersion`,
+`daemonVersion`, `payloadOutcome`, and `payloadReportedAt`; the versions name
+what is running after the attempt, while a failure's detail names its target.
+A null version means
+that machine has not reported since the payload channel shipped. Compare each
+`payloadVersion` with `BOX_PAYLOAD_VERSION`, and inspect the outcome/time before
+declaring a rollout complete.
+
+Image rollback starts by restoring the previous immutable `BOX_IMAGE_*` pins
+and redeploying. New VMs then use them; request another box update for each
+existing cloud VM that must move back. The in-place payload can be rolled back
+independently.
 
 This boot-time pinning is why the control plane gates some per-workspace
 behavior on the VM's creation time (the `BOX_IMAGE_*_SINCE_MS` constants in

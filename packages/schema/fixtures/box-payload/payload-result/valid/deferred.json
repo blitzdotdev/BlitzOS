@@ -1,0 +1,6 @@
+{
+  "version": "baked-payload-v1",
+  "daemonVersion": "0.88.1+blitz.3",
+  "outcome": "deferred",
+  "detail": "attempted v2; whole-release activation deferred with 1 active turn; ready for 0s; idle-wait cap 14400s"
+}

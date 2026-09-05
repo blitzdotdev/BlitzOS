@@ -1,0 +1,7 @@
+{
+  "request": {
+    "ref": "https://cp.example/box-image/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/manifest.json",
+    "outcome": "fetch-failed"
+  },
+  "accepts": true
+}

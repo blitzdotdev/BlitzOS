@@ -42,6 +42,10 @@ jobs:
           echo "IMAGE_OWNER=$owner" >> "$GITHUB_ENV"
           echo "owner=$owner" >> "$GITHUB_OUTPUT"
 
+      - name: Plan the baked payload version
+        id: payload
+        run: echo "version=$(node packages/control-plane/scripts/plan-box-payload.mjs --print-version)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push box
         id: box
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -51,6 +55,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           provenance: true
+          build-args: |
+            BLITZ_PAYLOAD_VERSION=${{ steps.payload.outputs.version }}
           tags: |
             ghcr.io/${{ env.IMAGE_OWNER }}/blitz-box:${{ github.ref_name }}
             ghcr.io/${{ env.IMAGE_OWNER }}/blitz-box:latest

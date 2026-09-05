@@ -1,0 +1,13 @@
+{
+  "response": {
+    "boxImageRef": "ghcr.io/blitzdotdev/blitz-box:v2",
+    "controlPlaneOrigin": "https://cp.example",
+    "updateRequested": false,
+    "payload": {
+      "version": "release one",
+      "manifestUrl": "https://cp.example/box-payload/release-1/manifest.json"
+    }
+  },
+  "accepts": true,
+  "payloadAccepts": false
+}

@@ -2,6 +2,7 @@ export * from "./agent-catalog.js";
 export * from "./agent-rules.js";
 export * from "./api.js";
 export * from "./box-config.js";
+export * from "./box-payload.js";
 export * from "./broker.js";
 export * from "./credential.js";
 export * from "./json.js";

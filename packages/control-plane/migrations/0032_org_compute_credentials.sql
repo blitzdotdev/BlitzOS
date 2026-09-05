@@ -13,7 +13,7 @@ CREATE TABLE org_compute_credentials (
 
 -- Provenance is required for destructive calls. NULL is the legacy state:
 -- every pre-BYOK cloud resource was created with the deployment credential.
--- New cloud resources record their source explicitly; microVM rows stay NULL.
+-- New cloud resources record their source explicitly; older rows stay NULL.
 ALTER TABLE workspaces ADD COLUMN compute_credential_source TEXT
   CHECK (compute_credential_source IN ('org', 'deployment'));
 ALTER TABLE volume_ownership ADD COLUMN compute_credential_source TEXT

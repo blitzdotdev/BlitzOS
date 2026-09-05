@@ -1,0 +1,6 @@
+{
+  "version": "../payload",
+  "daemonVersion": "0.88.1+blitz.3",
+  "outcome": "applied",
+  "detail": "healthy"
+}

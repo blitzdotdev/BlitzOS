@@ -12,6 +12,7 @@ import {
   boxImageTag,
   readBoxImageInputIds,
 } from "../scripts/box-image-key.mjs";
+import { BOX_IMAGE_INPUTS } from "../scripts/lib/box-image-inputs.mjs";
 import { planBoxImage } from "../scripts/plan-box-image.mjs";
 
 const scriptPath = fileURLToPath(new URL("../scripts/plan-box-image.mjs", import.meta.url));
@@ -39,21 +40,10 @@ function createInputRepository() {
   git(repository, ["init", "-q"]);
   git(repository, ["config", "user.email", "box-image-test@example.com"]);
   git(repository, ["config", "user.name", "Box Image Test"]);
-  for (const [relativePath, contents] of [
-    ["packages/box/Dockerfile", "FROM scratch\n"],
-    ["packages/broker/main.go", "package main\n"],
-    ["packages/schema/fixtures/example.json", "{}\n"],
-    ["vendor/lody/package.json", "{}\n"],
-    ["vendor/lody-adapters/core/package.json", "{}\n"],
-    ["scripts/lody-build-package.mjs", "export {};\n"],
-    ["scripts/lody-npm-shrinkwrap.mjs", "export {};\n"],
-    ["scripts/lody-sync-adapters.mjs", "export {};\n"],
-    ["scripts/lody-package-manifest.json", "[]\n"],
-    ["env.defaults", "BLITZ_LODY_SESSIONS=0\n"],
-  ]) {
+  for (const [index, relativePath] of BOX_IMAGE_INPUTS.entries()) {
     const filePath = path.join(repository, relativePath);
     mkdirSync(path.dirname(filePath), { recursive: true });
-    writeFileSync(filePath, contents);
+    writeFileSync(filePath, `base input ${index}\n`);
   }
   git(repository, ["add", "."]);
   git(repository, ["commit", "-qm", "fixture"]);

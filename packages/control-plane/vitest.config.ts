@@ -19,6 +19,8 @@ export default defineConfig(async () => {
             BOX_IMAGE_REF: "https://control-plane.test/box-image/manifest.json",
             BOX_IMAGE_TAG: "blitz-box:test-amd64",
             BOX_IMAGE_SHA256: "ad".repeat(32),
+            BOX_PAYLOAD_REF: "",
+            BOX_PAYLOAD_VERSION: "",
             SESSION_TTL_DAYS: "30",
             // Vendor-only blitz.dev managed-toolchain suites run only when the
             // host environment opts in with BLITZDEV_MANAGED=1.
@@ -33,6 +35,11 @@ export default defineConfig(async () => {
         "test/bootstrap-bash.test.mjs",
         "test/bootstrap-python.test.mjs",
         "test/box-image-key.test.mjs",
+        "test/box-payload-files.test.mjs",
+        "test/box-payload-key.test.mjs",
+        "test/build-box-daemon.test.mjs",
+        "test/plan-box-payload.test.mjs",
+        "test/publish-box-payload.test.mjs",
         "test/box-update-conformance.test.mjs",
         "test/box-update-host.test.mjs",
         "test/plan-box-image.test.mjs",

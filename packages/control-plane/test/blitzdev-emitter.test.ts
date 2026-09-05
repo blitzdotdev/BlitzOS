@@ -47,6 +47,7 @@ const expected = [
   "core/db.ts",
   "core/blobs.ts",
   "core/wire.ts",
+  "core/wire-box-payload.ts",
   "core/wire-machines.ts",
   "core/wire-org-credentials.ts",
   "core/wire-sharing.ts",
@@ -56,6 +57,7 @@ const expected = [
   "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-config.ts",
+  "core/box-image-manifest-loader.ts",
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",
@@ -148,7 +150,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(100);
+    expect(first.files).toHaveLength(102);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

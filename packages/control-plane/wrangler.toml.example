@@ -45,6 +45,11 @@ BOX_IMAGE_REF = ""
 BOX_IMAGE_TAG = ""
 # SHA-256 of the R2-hosted archive. Empty for registry mode; see docs/BOX-IMAGE.md.
 BOX_IMAGE_SHA256 = ""
+# In-place payload manifest URL, produced by plan-box-payload.mjs. Empty keeps
+# every box on its baked payload. The paired version is derived from the same
+# payload inputs and lets box-config stay a pure projection of deploy vars.
+BOX_PAYLOAD_REF = ""
+BOX_PAYLOAD_VERSION = ""
 # Session cookie lifetime in days (1-3650). Optional, default 30.
 SESSION_TTL_DAYS = "30"
 # Cloudflare account that owns the workspace-tunnel zone (dash.cloudflare.com -> your zone -> Overview). Empty until step 8; required only for browser access to cloud-VM workspaces.
@@ -120,6 +125,7 @@ run_worker_first = [
   "/auth/*",
   "/box-image",
   "/box-image/*",
+  "/box-payload/*",
   "/boxes/*",
   "/connect/*",
   "/connections",

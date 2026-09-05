@@ -1,6 +1,9 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { controlPlaneOriginFromEnv } from "../core/box-config.js";
+import {
+  boxPayloadConfigFromEnv,
+  controlPlaneOriginFromEnv,
+} from "../core/box-config.js";
 import type { BoxConfigResponse } from "../core/wire.js";
 import {
   appRequest,
@@ -99,8 +102,12 @@ describe("box-config control-plane conformance", () => {
       "config-missing-image-ref.json",
       "config-non-boolean-update-requested.json",
       "config-origin-with-path.json",
+      "config-payload-manifest-relative.json",
+      "config-payload-not-object.json",
+      "config-payload-version-unsafe.json",
       "config-valid-extra-key.json",
       "config-valid-minimal.json",
+      "config-valid-payload.json",
       "config-valid-tarball-ref.json",
       "config-valid-update-requested.json",
       "config-valid-versioned-ref.json",
@@ -111,6 +118,7 @@ describe("box-config control-plane conformance", () => {
       "result-ref-with-space.json",
       "result-unknown-outcome.json",
       "result-valid-extra-key.json",
+      "result-valid-fetch-failed.json",
       "result-valid-rolled-back.json",
       "result-valid-updated.json",
     ]);
@@ -133,13 +141,58 @@ describe("box-config control-plane conformance", () => {
       // origin the poll arrived on.
       controlPlaneOrigin: "https://cp.example",
       updateRequested: false,
+      payload: null,
     });
-    // The emitted keys are exactly the ones the minimal accepted fixture (and
-    // therefore the host parser) expects.
-    const minimal = fixtures<ConfigFixture>("config-")
-      .find(([name]) => name === "config-valid-minimal.json")?.[1];
-    if (minimal === undefined) throw new Error("missing minimal box-config fixture");
-    expect(Object.keys(body).sort()).toEqual(Object.keys(minimal.response).sort());
+    // The server always emits the additive payload key. The old host parser's
+    // tolerance is pinned by the payload fixture on the Python side.
+    const payloadFixture = fixtures<ConfigFixture>("config-")
+      .find(([name]) => name === "config-valid-payload.json")?.[1];
+    if (payloadFixture === undefined) throw new Error("missing payload box-config fixture");
+    expect(Object.keys(body).sort()).toEqual(Object.keys(payloadFixture.response).sort());
+  });
+
+  it("projects the deployment payload pin without fetching its manifest", async () => {
+    const h = harness();
+    const cookie = await operatorSession();
+    const { box } = await readyWorkspaceBox(h, cookie);
+    const payloadFixture = fixtures<ConfigFixture>("config-")
+      .find(([name]) => name === "config-valid-payload.json")?.[1];
+    if (payloadFixture === undefined) throw new Error("missing payload box-config fixture");
+    const payload = payloadFixture.response.payload;
+    const boxImageRef = payloadFixture.response.boxImageRef;
+    if (
+      typeof boxImageRef !== "string"
+      || payload === null
+      || typeof payload !== "object"
+      || !("version" in payload)
+      || !("manifestUrl" in payload)
+    ) {
+      throw new Error("payload box-config fixture has no pin");
+    }
+
+    const response = await appRequest(
+      h.app,
+      "/workspaces/self/box-config",
+      { headers: boxHeaders(box) },
+      {
+        BOX_IMAGE_REF: boxImageRef,
+        BOX_PAYLOAD_REF: payload.manifestUrl,
+        BOX_PAYLOAD_VERSION: payload.version,
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json<BoxConfigResponse>()).toEqual(payloadFixture.response);
+  });
+
+  it("treats an empty payload ref as off and rejects a malformed active pin", () => {
+    expect(boxPayloadConfigFromEnv("", "")).toBeNull();
+    expect(() => boxPayloadConfigFromEnv("   ", "stale-version"))
+      .toThrow("BOX_PAYLOAD_REF");
+    expect(() => boxPayloadConfigFromEnv("not-a-url", "release-1"))
+      .toThrow("BOX_PAYLOAD_REF");
+    expect(() => boxPayloadConfigFromEnv("https://cp.example/manifest.json", ""))
+      .toThrow("BOX_PAYLOAD_VERSION");
   });
 
   it("serves the configured public origin when APP_URL is set", async () => {
@@ -198,6 +251,58 @@ describe("box-config control-plane conformance", () => {
       headers: boxHeaders(box),
     });
     expect((await poll.json<BoxConfigResponse>()).updateRequested).toBe(true);
+  });
+
+  it("lets a workspace admin hold one machine's payload and resume it", async () => {
+    const h = harness();
+    const cookie = await operatorSession();
+    const { box } = await readyWorkspaceBox(h, cookie);
+    const payloadBindings = {
+      BOX_PAYLOAD_REF: "https://cp.example/box-payload/release-1/manifest.json",
+      BOX_PAYLOAD_VERSION: "release-1",
+    };
+
+    const before = await appRequest(h.app, "/workspaces/self/box-config", {
+      headers: boxHeaders(box),
+    }, payloadBindings);
+    expect((await before.json<BoxConfigResponse>()).payload).toEqual({
+      version: payloadBindings.BOX_PAYLOAD_VERSION,
+      manifestUrl: payloadBindings.BOX_PAYLOAD_REF,
+    });
+
+    const held = await appRequest(h.app, `/machines/${box.box_id}`, {
+      method: "PATCH",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ payloadHold: true }),
+    });
+    expect(held.status).toBe(200);
+    const heldConfig = await appRequest(h.app, "/workspaces/self/box-config", {
+      headers: boxHeaders(box),
+    }, payloadBindings);
+    expect((await heldConfig.json<BoxConfigResponse>()).payload).toBeNull();
+
+    const stranger = await sameOrgSession("payload-hold-stranger");
+    expect((await appRequest(h.app, `/machines/${box.box_id}`, {
+      method: "PATCH",
+      headers: { Cookie: stranger.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ payloadHold: false }),
+    })).status).toBe(403);
+    expect((await appRequest(h.app, `/machines/${box.box_id}`, {
+      method: "PATCH",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ payloadHold: "no" }),
+    })).status).toBe(400);
+
+    const resumed = await appRequest(h.app, `/machines/${box.box_id}`, {
+      method: "PATCH",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ payloadHold: false }),
+    });
+    expect(resumed.status).toBe(200);
+    const resumedConfig = await appRequest(h.app, "/workspaces/self/box-config", {
+      headers: boxHeaders(box),
+    }, payloadBindings);
+    expect((await resumedConfig.json<BoxConfigResponse>()).payload).not.toBeNull();
   });
 
   it("judges every update-result fixture exactly as the corpus says", async () => {

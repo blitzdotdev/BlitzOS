@@ -1,0 +1,20 @@
+{
+  "version": "20260904T2300Z-1234abcd",
+  "createdAt": 1788555600000,
+  "minUpdater": 2,
+  "files": [
+    {
+      "path": "rootfs/usr/local/bin/blitz-machine-stats",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": "0755"
+    }
+  ],
+  "archive": {
+    "url": "https://cp.example/box-payload/20260904T2300Z-1234abcd/payload.tar.gz",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "bytes": 4096
+  },
+  "restart": {
+    "machine-stats": ["rootfs/usr/local/bin/blitz-machine-stats"]
+  }
+}

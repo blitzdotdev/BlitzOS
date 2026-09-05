@@ -46,9 +46,9 @@ Treat a workspace as a single trust boundary. Inside it:
 - anyone with an interactive terminal or agent session can act with every
   credential the workspace holds.
 
-Isolation is per-VM, not per-process: the boundary is the single-tenant VM
-(or your Firecracker guest), never the container. Scope what you put into a
-workspace accordingly — a shared workspace is full-trust for all its members.
+Isolation is per-VM, not per-process: the boundary is the single-tenant VM,
+never the container. Scope what you put into a workspace accordingly — a
+shared workspace is full-trust for all its members.
 
 ## Provisioning invariants
 

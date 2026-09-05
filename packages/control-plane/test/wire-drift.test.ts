@@ -63,6 +63,62 @@ const agentRulesResponse: SharedShape<
   schema.AgentRulesResponse
 > = { version: "292a5824fd833548", content: "# Blitz box — agent rules\n" };
 
+const payloadFile: SharedShape<wire.BoxPayloadFile, schema.BoxPayloadFile> = {
+  path: "rootfs/usr/local/bin/blitz-box-gateway",
+  sha256: "a".repeat(64),
+  mode: "0755",
+};
+
+const payloadArchive: SharedShape<wire.BoxPayloadArchive, schema.BoxPayloadArchive> = {
+  url: "https://cp.example/box-payload/v1/payload.tar.gz",
+  sha256: "b".repeat(64),
+  bytes: 1_234,
+};
+
+const payloadDaemon: SharedShape<
+  wire.BoxPayloadDaemonArchive,
+  schema.BoxPayloadDaemonArchive
+> = {
+  version: "0.88.1+blitz.3",
+  protocolVersion: 7,
+  url: "https://cp.example/box-payload/v1/daemon.tar.gz",
+  sha256: "c".repeat(64),
+  bytes: 4_321,
+};
+
+const payloadRestart: SharedShape<
+  wire.BoxPayloadRestart,
+  schema.BoxPayloadRestart
+> = { gateway: [payloadFile.path], "lody-daemon": [] };
+
+const payloadManifest: SharedShape<
+  wire.BoxPayloadManifest,
+  schema.BoxPayloadManifest
+> = {
+  version: "20260904T2130Z-9f3c1a2b",
+  createdAt: 1_788_550_000_000,
+  minUpdater: 1,
+  files: [payloadFile],
+  archive: payloadArchive,
+  daemon: payloadDaemon,
+  restart: payloadRestart,
+};
+
+const payloadConfig: SharedShape<wire.BoxPayloadConfig, schema.BoxPayloadConfig> = {
+  version: payloadManifest.version,
+  manifestUrl: "https://cp.example/box-payload/v1/manifest.json",
+};
+
+const payloadResult: SharedShape<
+  wire.BoxPayloadResultRequest,
+  schema.BoxPayloadResultRequest
+> = {
+  version: payloadManifest.version,
+  daemonVersion: payloadDaemon.version,
+  outcome: "rolled-back",
+  detail: "gateway health check failed; previous payload restored",
+};
+
 const boxConfigResponse: SharedShape<
   wire.BoxConfigResponse,
   schema.BoxConfigResponse
@@ -70,6 +126,7 @@ const boxConfigResponse: SharedShape<
   boxImageRef: "ghcr.io/blitzdotdev/blitz-box:v2",
   controlPlaneOrigin: "https://cp.example",
   updateRequested: true,
+  payload: payloadConfig,
 };
 
 const boxUpdateResult: SharedShape<
@@ -106,6 +163,10 @@ const machine: SharedShape<wire.MachineView, schema.MachineView> = {
   machineTypeId: machineType.id,
   volumeId: volume.id,
   volumeUsedPercent: 62,
+  payloadVersion: payloadManifest.version,
+  daemonVersion: payloadDaemon.version,
+  payloadOutcome: "rolled-back",
+  payloadReportedAt: 1_700_000_004_000,
   membershipId: "membership",
   error: null,
   createdAt: 1_700_000_000_000,
@@ -118,6 +179,10 @@ const unreportedMachine: SharedShape<wire.MachineView, schema.MachineView> = {
   ...machine,
   id: "machine-unreported",
   volumeUsedPercent: null,
+  payloadVersion: null,
+  daemonVersion: null,
+  payloadOutcome: null,
+  payloadReportedAt: null,
 };
 
 const machineStats: SharedShape<
@@ -158,6 +223,11 @@ const setMachineTypeRequest: SharedShape<
   wire.SetMachineTypeRequest,
   schema.SetMachineTypeRequest
 > = { machineTypeId: pricedMachineType.id };
+
+const setMachinePayloadHoldRequest: SharedShape<
+  wire.SetMachinePayloadHoldRequest,
+  schema.SetMachinePayloadHoldRequest
+> = { payloadHold: true };
 
 const addWorkspaceMemberRequest: SharedShape<
   wire.AddWorkspaceMemberRequest,
@@ -740,6 +810,7 @@ const fullFieldValues = [
   workspaceMember,
   viewerMember,
   machineResponse,
+  setMachinePayloadHoldRequest,
   setMachineTypeRequest,
   addWorkspaceMemberRequest,
   updateWorkspaceMemberRequest,
@@ -779,6 +850,13 @@ const fullFieldValues = [
   environment,
   environmentResponse,
   agentRulesResponse,
+  payloadFile,
+  payloadArchive,
+  payloadDaemon,
+  payloadRestart,
+  payloadManifest,
+  payloadConfig,
+  payloadResult,
   boxConfigResponse,
   boxUpdateResult,
   agentRule,
@@ -841,6 +919,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.MachineView>().toEqualTypeOf<schema.MachineView>();
     expectTypeOf<wire.MachineStatsRequest>().toEqualTypeOf<schema.MachineStatsRequest>();
     expectTypeOf<wire.MachineResponse>().toEqualTypeOf<schema.MachineResponse>();
+    expectTypeOf<wire.SetMachinePayloadHoldRequest>()
+      .toEqualTypeOf<schema.SetMachinePayloadHoldRequest>();
     expectTypeOf<wire.SetMachineTypeRequest>().toEqualTypeOf<schema.SetMachineTypeRequest>();
     expectTypeOf<wire.WorkspaceMemberView>().toEqualTypeOf<schema.WorkspaceMemberView>();
     expectTypeOf<wire.AddWorkspaceMemberRequest>().toEqualTypeOf<schema.AddWorkspaceMemberRequest>();
@@ -881,6 +961,18 @@ describe("local wire copies", () => {
     expectTypeOf<wire.WorkspaceEnvironment>().toEqualTypeOf<schema.WorkspaceEnvironment>();
     expectTypeOf<wire.WorkspaceEnvironmentResponse>().toEqualTypeOf<schema.WorkspaceEnvironmentResponse>();
     expectTypeOf<wire.AgentRulesResponse>().toEqualTypeOf<schema.AgentRulesResponse>();
+    expectTypeOf<wire.BoxPayloadRestartService>()
+      .toEqualTypeOf<schema.BoxPayloadRestartService>();
+    expectTypeOf<wire.BoxPayloadFile>().toEqualTypeOf<schema.BoxPayloadFile>();
+    expectTypeOf<wire.BoxPayloadArchive>().toEqualTypeOf<schema.BoxPayloadArchive>();
+    expectTypeOf<wire.BoxPayloadDaemonArchive>()
+      .toEqualTypeOf<schema.BoxPayloadDaemonArchive>();
+    expectTypeOf<wire.BoxPayloadRestart>().toEqualTypeOf<schema.BoxPayloadRestart>();
+    expectTypeOf<wire.BoxPayloadManifest>().toEqualTypeOf<schema.BoxPayloadManifest>();
+    expectTypeOf<wire.BoxPayloadConfig>().toEqualTypeOf<schema.BoxPayloadConfig>();
+    expectTypeOf<wire.BoxPayloadOutcome>().toEqualTypeOf<schema.BoxPayloadOutcome>();
+    expectTypeOf<wire.BoxPayloadResultRequest>()
+      .toEqualTypeOf<schema.BoxPayloadResultRequest>();
     expectTypeOf<wire.BoxConfigResponse>().toEqualTypeOf<schema.BoxConfigResponse>();
     expectTypeOf<wire.BoxUpdateOutcome>().toEqualTypeOf<schema.BoxUpdateOutcome>();
     expectTypeOf<wire.BoxUpdateResultRequest>().toEqualTypeOf<schema.BoxUpdateResultRequest>();
@@ -957,6 +1049,8 @@ describe("local wire copies", () => {
       }
     }
     expect(wire.BOX_UPDATE_OUTCOMES).toEqual(schema.BOX_UPDATE_OUTCOMES);
+    expect(wire.BOX_PAYLOAD_RESTART_SERVICES).toEqual(schema.BOX_PAYLOAD_RESTART_SERVICES);
+    expect(wire.BOX_PAYLOAD_OUTCOMES).toEqual(schema.BOX_PAYLOAD_OUTCOMES);
     expect(wire.PHASES).toEqual(schema.PHASES);
     expect(wire.WORKSPACE_MEMBER_ROLES).toEqual(schema.WORKSPACE_MEMBER_ROLES);
     expect(wire.MACHINE_STATES).toEqual(schema.MACHINE_STATES);

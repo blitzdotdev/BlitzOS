@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 import { boxImageDecision, IMAGE_PATHS } from "../scripts/check-box-image.mjs";
 import {
   COMPARED_LISTS,
@@ -38,6 +39,7 @@ const fixturesDirectory = fileURLToPath(
   new URL("../../schema/fixtures/version/", import.meta.url),
 );
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
+const repositoryDirectory = path.resolve(packageDirectory, "../..");
 
 // --- value decoders ---------------------------------------------------------
 
@@ -98,11 +100,30 @@ test("a config generated from the example carries every key", () => {
 test("the example declares deployment metadata and routes /version to the worker", () => {
   const example = readFileSync(path.join(packageDirectory, "wrangler.toml.example"), "utf8");
   assert.match(example, /GIT_COMMIT_SHA/u);
+  assert.match(example, /^BOX_PAYLOAD_REF = ""$/mu);
+  assert.match(example, /^BOX_PAYLOAD_VERSION = ""$/mu);
   assert.match(
     example,
     /CLOUD_WORKSPACE_CREDENTIAL_POLICY = "deployment-fallback"/u,
   );
   assert.match(example, /"\/version"/u);
+});
+
+test("a stale config is repaired with both halves of the payload pin", () => {
+  const example = readFileSync(path.join(packageDirectory, "wrangler.toml.example"), "utf8");
+  const stale = example
+    .replace(/^BOX_PAYLOAD_REF = ""\n/mu, "")
+    .replace(/^BOX_PAYLOAD_VERSION = ""\n/mu, "");
+  assert.deepEqual(missingConfigKeys(example, stale), [
+    "vars.BOX_PAYLOAD_REF",
+    "vars.BOX_PAYLOAD_VERSION",
+  ]);
+  const plan = configRepairPlan(example, stale);
+  assert.deepEqual(plan.filled, [
+    { path: "vars.BOX_PAYLOAD_REF", value: "" },
+    { path: "vars.BOX_PAYLOAD_VERSION", value: "" },
+  ]);
+  assert.deepEqual(plan.unfillable, []);
 });
 
 // --- routing list drift -----------------------------------------------------
@@ -369,6 +390,72 @@ test("an empty derived list is refused rather than written", () => {
   assert.throws(() => runWorkerFirstPatch([]), /every core route would be served the SPA shell/u);
 });
 
+// --- canary workflow --------------------------------------------------------
+
+const canaryWorkflow = parseYaml(readFileSync(
+  path.join(repositoryDirectory, ".github/workflows/canary.yml"),
+  "utf8",
+));
+
+test("the canary payload job takes the image job's inputs, plans, publishes, and exposes in order", () => {
+  const steps = canaryWorkflow.jobs.payload.steps;
+  const positions = [
+    "Take the payload inputs the image job built",
+    "Check the handed-over inputs",
+    "Plan the box-payload release",
+    "Publish the box-payload release",
+    "Expose the box-payload pin",
+  ].map((name) => steps.findIndex((step) => step.name === name));
+  assert.equal(positions.every((position) => position >= 0), true, positions.join(","));
+  assert.deepEqual([...positions].sort((left, right) => left - right), positions);
+
+  // One build, one set of bytes: the image job uploads the daemon archive and
+  // the gateway binary, and this job downloads that artifact by the same name
+  // instead of building again. No Go and no builder step remain here.
+  const upload = canaryWorkflow.jobs.image.steps
+    .find((step) => step.name === "Hand the payload inputs to the payload job");
+  const download = steps[positions[0]];
+  assert.match(upload.uses, /^actions\/upload-artifact@/u);
+  assert.match(download.uses, /^actions\/download-artifact@/u);
+  assert.equal(download.with.name, upload.with.name);
+  assert.equal(steps.some((step) => /go build|build-box-daemon\.mjs/u.test(step.run ?? "")), false);
+  assert.equal(steps.some((step) => /setup-go/u.test(step.uses ?? "")), false);
+
+  const plan = steps[positions[2]];
+  const publish = steps[positions[3]];
+  assert.match(plan.run, /plan-box-payload\.mjs[\s\S]*--daemon "\$DAEMON_ARCHIVE"/u);
+  assert.match(publish.run, /publish-box-payload\.mjs[\s\S]*--daemon "\$DAEMON_ARCHIVE"/u);
+  assert.equal(publish.if, "steps.plan.outputs.published == 'false'");
+  assert.deepEqual(canaryWorkflow.jobs.payload.outputs, {
+    ref: "${{ steps.pin.outputs.ref }}",
+    version: "${{ steps.pin.outputs.version }}",
+  });
+});
+
+test("canary stamps a rebuilt base and deploys the matching payload pin", () => {
+  const image = canaryWorkflow.jobs.image;
+  const payloadPlan = image.steps.find((step) => step.name === "Plan the baked payload version");
+  const imageBuild = image.steps.find((step) => step.name === "Build the box image");
+  assert.match(payloadPlan.run, /--print-version --daemon "\$DAEMON_ARCHIVE"/u);
+  assert.match(imageBuild.run, /--build-arg "BLITZ_PAYLOAD_VERSION=\$PAYLOAD_VERSION"/u);
+  assert.equal(imageBuild.env.PAYLOAD_VERSION, "${{ steps.payload.outputs.version }}");
+  assert.deepEqual(canaryWorkflow.jobs.payload.needs, ["gate", "image"]);
+  assert.deepEqual(canaryWorkflow.jobs.deploy.needs, ["image", "payload"]);
+  const deploy = canaryWorkflow.jobs.deploy.steps.find((step) => step.name === "Deploy");
+  assert.equal(
+    deploy.env.BLITZ_DEPLOY_VAR_BOX_PAYLOAD_REF,
+    "${{ needs.payload.outputs.ref }}",
+  );
+  assert.equal(
+    deploy.env.BLITZ_DEPLOY_VAR_BOX_PAYLOAD_VERSION,
+    "${{ needs.payload.outputs.version }}",
+  );
+  assert.deepEqual(canaryWorkflow.concurrency, {
+    group: "canary-deploy",
+    "cancel-in-progress": false,
+  });
+});
+
 // --- box image decision -----------------------------------------------------
 
 test("no image path changed means no rebuild", () => {
@@ -377,28 +464,44 @@ test("no image path changed means no rebuild", () => {
   assert.deepEqual(decision.paths, []);
 });
 
-test("a box change requires a rebuild", () => {
+test("a base-owned box change requires a rebuild", () => {
   const decision = boxImageDecision("abc1234", [
-    "packages/box/gateway/main.go",
+    "packages/broker/cmd/blitz-cred/main.go",
+    "packages/box/rootfs/usr/local/libexec/blitz-payload",
+    "env.defaults",
     "packages/webapp/src/App.tsx",
   ]);
   assert.equal(decision.rebuild, true);
-  assert.deepEqual(decision.paths, ["packages/box/gateway/main.go"]);
+  assert.deepEqual(decision.paths, [
+    "packages/broker/cmd/blitz-cred/main.go",
+    "packages/box/rootfs/usr/local/libexec/blitz-payload",
+    "env.defaults",
+  ]);
 });
 
-test("a broker change requires a rebuild", () => {
-  assert.equal(boxImageDecision("abc", ["packages/broker/main.go"]).rebuild, true);
+test("adding an s6 service changes the base image release", () => {
+  const decision = boxImageDecision("abc", [
+    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/new-service",
+  ]);
+  assert.equal(decision.rebuild, true);
+  assert.deepEqual(decision.paths, [
+    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/new-service",
+  ]);
 });
 
-test("schema fixtures and env.defaults changes require a rebuild", () => {
-  assert.equal(
-    boxImageDecision("abc", ["packages/schema/fixtures/example.json"]).rebuild,
-    true,
-  );
-  assert.equal(boxImageDecision("abc", ["env.defaults"]).rebuild, true);
+test("payload and daemon inputs do not rebuild the base image", () => {
+  const decision = boxImageDecision("abc", [
+    "packages/box/gateway/main.go",
+    "packages/schema/fixtures/example.json",
+    "packages/box/rootfs/usr/local/bin/blitz",
+    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run",
+    "vendor/lody/UPSTREAM.md",
+  ]);
+  assert.equal(decision.rebuild, false);
+  assert.deepEqual(decision.paths, []);
 });
 
-test("Lody source, adapters, and build scripts require a rebuild", () => {
+test("Lody source, adapters, and build scripts move the payload, not the base image", () => {
   for (const file of [
     "vendor/lody/apps/cli/package.json",
     "vendor/lody-adapters/core/package.json",
@@ -407,7 +510,7 @@ test("Lody source, adapters, and build scripts require a rebuild", () => {
     "scripts/lody-sync-adapters.mjs",
     "scripts/lody-package-manifest.json",
   ]) {
-    assert.equal(boxImageDecision("abc", [file]).rebuild, true, file);
+    assert.equal(boxImageDecision("abc", [file]).rebuild, false, file);
   }
 });
 
@@ -416,19 +519,22 @@ test("a path that merely starts with an image path prefix does not count", () =>
   assert.equal(boxImageDecision("abc", ["packages/boxes/thing.ts"]).rebuild, false);
 });
 
-test("IMAGE_PATHS names every Dockerfile repository input in build order", () => {
-  assert.deepEqual([...IMAGE_PATHS], [
-    "packages/box",
-    "packages/broker",
-    "packages/schema/fixtures",
-    "vendor/lody",
-    "vendor/lody-adapters",
-    "scripts/lody-build-package.mjs",
-    "scripts/lody-npm-shrinkwrap.mjs",
-    "scripts/lody-sync-adapters.mjs",
-    "scripts/lody-package-manifest.json",
+test("IMAGE_PATHS pins the Dockerfile, updater, and s6 service topology", () => {
+  for (const required of [
+    "packages/box/Dockerfile",
+    "packages/box/Dockerfile.dockerignore",
+    "packages/broker/cmd/blitz-cred",
+    "packages/broker/go.mod",
+    "packages/broker/internal",
+    "packages/box/rootfs/usr/local/libexec/blitz-payload",
+    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/payload",
+    "packages/box/rootfs/etc/s6-overlay/s6-rc.d/user",
+    "packages/control-plane/scripts/lib/box-payload-files.mjs",
     "env.defaults",
-  ]);
+  ]) {
+    assert.ok(IMAGE_PATHS.includes(required), required);
+  }
+  assert.equal(new Set(IMAGE_PATHS).size, IMAGE_PATHS.length);
 });
 
 // --- the /version contract, consumer side -----------------------------------

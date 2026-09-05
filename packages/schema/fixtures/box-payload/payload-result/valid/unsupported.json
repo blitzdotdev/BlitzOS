@@ -1,0 +1,6 @@
+{
+  "version": "running-v1",
+  "daemonVersion": "0.88.1+blitz.3",
+  "outcome": "unsupported",
+  "detail": "attempted 20260904T2300Z-1234abcd; manifest requires updater protocol 2"
+}

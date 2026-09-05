@@ -2,6 +2,7 @@ import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
 import { manifestConnectionNames } from "./connections/manifest.js";
 import type {
+  BoxPayloadOutcome,
   MachineState,
   MachineView,
   Phase,
@@ -69,6 +70,11 @@ export interface MachineRow {
   box_image_reported: string | null;
   disk_used_percent: number | null;
   disk_reported_at: number | null;
+  payload_reported: string | null;
+  daemon_reported: string | null;
+  payload_outcome: BoxPayloadOutcome | null;
+  payload_reported_at: number | null;
+  payload_hold: number;
   /** The plane that asked for this machine: a person's session, or an agent's
    * box credential. An agent may destroy only what the agent plane made. */
   created_by_plane: CreatedByPlane;
@@ -136,6 +142,10 @@ export function machineView(row: MachineRow): MachineView {
     machineTypeId: row.machine_type_id,
     volumeId: row.volume_id,
     volumeUsedPercent: volumeUsedPercentForRow(row),
+    payloadVersion: row.payload_reported,
+    daemonVersion: row.daemon_reported,
+    payloadOutcome: row.payload_outcome,
+    payloadReportedAt: row.payload_reported_at,
     membershipId: row.membership_id,
     error: row.error,
     createdAt: row.created_at,

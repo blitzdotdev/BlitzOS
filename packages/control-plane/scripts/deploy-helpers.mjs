@@ -29,6 +29,22 @@ const R2_BUCKET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u;
 // The canonical base64 alphabet accepted by the Worker's atob-based decoder.
 const STANDARD_BASE64_PATTERN =
   /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const PAYLOAD_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/u;
+const PAYLOAD_MANIFEST_URL_PATTERN = /^https?:\/\/[^/\s?#]+(?:[/?][^\s#]*)?$/u;
+
+/** Non-secret deployment settings the hosted workflows may override. Keeping
+ * this list explicit makes a misspelled BLITZ_DEPLOY_VAR_* fail before it can
+ * silently ship the example default. */
+export const DEPLOY_OVERRIDE_VAR_NAMES = Object.freeze([
+  "BOX_IMAGE_REF",
+  "BOX_IMAGE_SHA256",
+  "BOX_IMAGE_TAG",
+  "BOX_PAYLOAD_REF",
+  "BOX_PAYLOAD_VERSION",
+  "CLOUD_WORKSPACE_CREDENTIAL_POLICY",
+  "HETZNER_SERVER_IMAGES",
+  "PAYMENT_URL",
+]);
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -184,6 +200,21 @@ export function configVarProblems(rawConfig) {
       );
     }
   }
+  const payloadRef = String(vars.BOX_PAYLOAD_REF ?? "");
+  const payloadVersion = String(vars.BOX_PAYLOAD_VERSION ?? "");
+  if (payloadRef !== "" && !PAYLOAD_MANIFEST_URL_PATTERN.test(payloadRef)) {
+    problems.push(
+      "BOX_PAYLOAD_REF must be an absolute http(s) manifest URL or empty",
+    );
+  }
+  if (
+    payloadRef !== ""
+    && !PAYLOAD_VERSION_PATTERN.test(payloadVersion)
+  ) {
+    problems.push(
+      "BOX_PAYLOAD_VERSION must be a version token when BOX_PAYLOAD_REF is set",
+    );
+  }
   return problems;
 }
 
@@ -276,10 +307,17 @@ export function missingSecretsMessage(missing) {
  * what lets a workflow name a setting before anyone has decided it. */
 export function overrideVarsFromEnvironment(environment) {
   const prefix = "BLITZ_DEPLOY_VAR_";
+  const known = new Set(DEPLOY_OVERRIDE_VAR_NAMES);
   const vars = {};
   for (const [key, value] of Object.entries(environment)) {
     if (!key.startsWith(prefix) || value === undefined || value === "") continue;
-    vars[key.slice(prefix.length)] = value;
+    const name = key.slice(prefix.length);
+    if (!known.has(name)) {
+      throw new Error(
+        `${key} is not a known deploy override; expected one of ${DEPLOY_OVERRIDE_VAR_NAMES.join(", ")}`,
+      );
+    }
+    vars[name] = value;
   }
   return vars;
 }
@@ -305,7 +343,11 @@ export async function deployControlPlane({
       `${configPath} still holds template placeholder values for: ${placeholders.join(", ")}\nEdit the file (start from wrangler.toml.example) and rerun the deploy.`,
     );
   }
-  const varProblems = configVarProblems(rawConfig);
+  const configuredVars = isRecord(rawConfig.vars) ? rawConfig.vars : {};
+  const varProblems = configVarProblems({
+    ...rawConfig,
+    vars: { ...configuredVars, ...overrideVars },
+  });
   if (varProblems.length > 0) {
     throw new Error(varProblems.join("\n"));
   }

@@ -1,0 +1,34 @@
+{
+  "version": "20260904T2130Z-9f3c1a2b",
+  "createdAt": 1788550000000,
+  "minUpdater": 1,
+  "files": [
+    {
+      "path": "rootfs/usr/local/bin/blitz-box-gateway",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mode": "0755"
+    },
+    {
+      "path": "rootfs/usr/local/libexec/blitz-term",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "mode": "0755"
+    }
+  ],
+  "archive": {
+    "url": "https://cp.example/box-payload/20260904T2130Z-9f3c1a2b/payload.tar.gz",
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "bytes": 1234
+  },
+  "daemon": {
+    "version": "0.88.1+blitz.3",
+    "protocolVersion": 7,
+    "url": "https://cp.example/box-payload/20260904T2130Z-9f3c1a2b/daemon.tar.gz",
+    "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "bytes": 4321
+  },
+  "restart": {
+    "gateway": ["rootfs/usr/local/bin/blitz-box-gateway"],
+    "lody-daemon": [],
+    "ttyd": []
+  }
+}

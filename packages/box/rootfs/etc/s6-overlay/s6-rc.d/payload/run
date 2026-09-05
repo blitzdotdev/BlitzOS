@@ -1,0 +1,5 @@
+#!/command/with-contenv bash
+# The updater and this launcher are base-owned: a payload that failed midway
+# must not be able to replace the recovery mechanism that rolls it back. The
+# node loop fails open on every poll so this longrun never makes s6 spin.
+exec /usr/local/libexec/blitz-payload

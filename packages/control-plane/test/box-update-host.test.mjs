@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { gzipSync } from "node:zlib";
 import { buildBootstrapScript } from "../dist/core/bootstrap.js";
 import { embeddedSection } from "./emitted-script.mjs";
 
@@ -26,6 +28,8 @@ const BOOTSTRAP = buildBootstrapScript({
 
 const RUNNING_REF = "ghcr.io/blitzdotdev/blitz-box:v1";
 const NEXT_REF = "ghcr.io/blitzdotdev/blitz-box:v2";
+const MANIFEST_TAG = "blitz-box:manifest-v2";
+const MANIFEST_PATH = "/box-image/release-v2/manifest.json";
 
 /** The emitted script with the three absolute prefixes it owns repointed at a
  * scratch tree, so a test never reads or writes the machine's own state. The
@@ -33,6 +37,10 @@ const NEXT_REF = "ghcr.io/blitzdotdev/blitz-box:v2";
 function relocate(body, root) {
   return body
     .replaceAll("/usr/local/bin/blitz-box-run", path.join(root, "bin/blitz-box-run"))
+    .replaceAll(
+      "/usr/local/libexec/blitz-box-image-manifest.sh",
+      path.join(root, "libexec/blitz-box-image-manifest.sh"),
+    )
     .replaceAll("/etc/blitz", path.join(root, "etc/blitz"))
     .replaceAll("/var/lib/blitz", path.join(root, "state"))
     .replaceAll("/proc/meminfo", path.join(root, "proc/meminfo"));
@@ -43,7 +51,12 @@ function relocate(body, root) {
  * ownership the updater asks for (a test does not run as root). `refuseRun`
  * names the image refs whose `docker run` fails the way a real one does when
  * the image cannot start — a bad platform, or host port 22 already bound. */
-function scratchHost({ pullStatus = 0, refuseRun = [], runningRef = RUNNING_REF } = {}) {
+function scratchHost({
+  loadedTag = null,
+  pullStatus = 0,
+  refuseRun = [],
+  runningRef = RUNNING_REF,
+} = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "blitz-box-update-"));
   mkdirSync(path.join(root, "bin"), { recursive: true });
   mkdirSync(path.join(root, "state"), { recursive: true });
@@ -54,9 +67,16 @@ function scratchHost({ pullStatus = 0, refuseRun = [], runningRef = RUNNING_REF 
   if (runningRef !== null) {
     writeFileSync(path.join(root, "container.image"), runningRef);
     writeFileSync(path.join(root, "container.running"), "true");
+    writeFileSync(path.join(root, "images"), `${runningRef}\n`);
   }
+  if (loadedTag !== null) writeFileSync(path.join(root, "load-tag"), loadedTag);
   writeFileSync(path.join(root, "bin/blitz-box-run"), relocate(embeddedSection(BOOTSTRAP, "BOX_RUN"), root));
   chmodSync(path.join(root, "bin/blitz-box-run"), 0o755);
+  mkdirSync(path.join(root, "libexec"));
+  writeFileSync(
+    path.join(root, "libexec/blitz-box-image-manifest.sh"),
+    relocate(embeddedSection(BOOTSTRAP, "BOX_IMAGE_MANIFEST_LOADER"), root),
+  );
   writeFileSync(path.join(root, "refuse-run"), `${refuseRun.join("\n")}\n`);
 
   // `docker run --detach` is the container start and its image is the last
@@ -72,6 +92,14 @@ case "$*" in
   "inspect --format {{.State.Running}} blitz-box")
     [ -f "${root}/container.running" ] || exit 1
     cat "${root}/container.running" ;;
+  "image inspect "*) grep -qxF "$3" "${root}/images" ;;
+  "load")
+    cat >"${root}/docker-load.input"
+    [ -s "${root}/load-tag" ] || exit 1
+    [ "$(cat "${root}/docker-load.input")" = "$(cat "${root}/load-tag")" ] || exit 1
+    grep -qxF "$(cat "${root}/load-tag")" "${root}/images" 2>/dev/null ||
+      cat "${root}/load-tag" >>"${root}/images"
+    printf 'Loaded image: %s\\n' "$(cat "${root}/load-tag")" ;;
   "pull "*) exit ${pullStatus} ;;
   "rm -f blitz-box")
     rm -f "${root}/container.image" "${root}/container.running" ;;
@@ -102,13 +130,24 @@ esac
  * with the plane's own origin, so a test can serve either that origin (the
  * steady state) or a different one (the domain move). Every update-result
  * report is recorded with its Authorization header. */
-async function controlPlane(boxConfig) {
+async function controlPlane(boxConfig, assets = new Map()) {
   const reports = [];
+  const assetRequests = [];
   const server = createServer((request, response) => {
     const origin = `http://127.0.0.1:${server.address().port}`;
     if (request.url === "/workspaces/self/box-config") {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(boxConfig(origin)));
+      return;
+    }
+    const asset = assets.get(request.url);
+    if (asset !== undefined) {
+      assetRequests.push(request.url);
+      response.setHeader(
+        "Content-Type",
+        request.url.endsWith(".json") ? "application/json" : "application/octet-stream",
+      );
+      response.end(asset);
       return;
     }
     if (request.url === "/workspaces/self/box-update-result") {
@@ -130,6 +169,7 @@ async function controlPlane(boxConfig) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   return {
     origin: `http://127.0.0.1:${server.address().port}`,
+    assetRequests,
     reports,
     close: () => new Promise((resolve) => server.close(resolve)),
   };
@@ -187,10 +227,39 @@ function readOptional(file) {
   }
 }
 
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** A tiny gzip split into two manifest parts. The docker stand-in consumes
+ * the decompressed tag as its minimal image payload, which proves the real
+ * gunzip/pipe/load path without requiring a docker daemon in the test host. */
+function manifestAssets({ badPartSha = false } = {}) {
+  const archive = gzipSync(Buffer.from(`${MANIFEST_TAG}\n`));
+  const split = Math.floor(archive.byteLength / 2);
+  const parts = [archive.subarray(0, split), archive.subarray(split)];
+  const names = ["image.part-00000", "image.part-00001"];
+  const manifest = {
+    parts: parts.map((part, index) => ({
+      name: names[index],
+      sha256: badPartSha && index === 0 ? "0".repeat(64) : sha256(part),
+    })),
+    totalSha256: sha256(archive),
+    imageTag: MANIFEST_TAG,
+  };
+  return new Map([
+    [MANIFEST_PATH, Buffer.from(JSON.stringify(manifest))],
+    ...parts.map((part, index) => [
+      `${MANIFEST_PATH.slice(0, MANIFEST_PATH.lastIndexOf("/") + 1)}${names[index]}`,
+      part,
+    ]),
+  ]);
+}
+
 /** A scratch host and a live control plane for the length of one body. */
 async function withHost(hostOptions, boxConfig, body) {
   const root = scratchHost(hostOptions);
-  const plane = await controlPlane(boxConfig);
+  const plane = await controlPlane(boxConfig, hostOptions.assets);
   try {
     await body(root, plane, (options) => runUpdater(root, { origin: plane.origin, ...options }));
   } finally {
@@ -321,8 +390,75 @@ test("a requested update to the ref already running clears the flag without pull
   });
 });
 
-test("a tarball ref reports unsupported and still refreshes the origin", async () => {
-  const tarball = "https://cp.example/box-image/manifest.json";
+test("a manifest whose imageTag already runs fetches no parts and reports up-to-date", async () => {
+  await withHost(
+    { assets: manifestAssets(), runningRef: MANIFEST_TAG },
+    (planeOrigin) => configFor(`${planeOrigin}${MANIFEST_PATH}`, planeOrigin),
+    async (root, plane, run) => {
+      const result = await run();
+      const manifestRef = `${plane.origin}${MANIFEST_PATH}`;
+      assert.equal(result.status, 0, result.report);
+      assert.deepEqual(plane.assetRequests, [MANIFEST_PATH]);
+      assert.deepEqual(result.dockerCalls, ["inspect --format {{.Config.Image}} blitz-box"]);
+      assert.equal(result.image, MANIFEST_TAG);
+      assert.equal(plane.reports[0].body, JSON.stringify({ ref: manifestRef, outcome: "up-to-date" }));
+      assert.ok(root);
+    },
+  );
+});
+
+test("a manifest archive loads and replaces the container by imageTag", async () => {
+  await withHost(
+    { assets: manifestAssets(), loadedTag: MANIFEST_TAG },
+    (planeOrigin) => configFor(`${planeOrigin}${MANIFEST_PATH}`, planeOrigin),
+    async (root, plane, run) => {
+      const result = await run();
+      const manifestRef = `${plane.origin}${MANIFEST_PATH}`;
+      assert.equal(result.status, 0, result.report);
+      assert.deepEqual(plane.assetRequests, [
+        MANIFEST_PATH,
+        "/box-image/release-v2/image.part-00000",
+        "/box-image/release-v2/image.part-00001",
+      ]);
+      assert.ok(result.dockerCalls.includes(`image inspect ${MANIFEST_TAG}`));
+      assert.ok(result.dockerCalls.includes("load"));
+      assert.ok(
+        result.dockerCalls.indexOf("load") < result.dockerCalls.indexOf("rm -f blitz-box"),
+        "the manifest image must load before the running container is removed",
+      );
+      assert.equal(readOptional(path.join(root, "docker-load.input")), `${MANIFEST_TAG}\n`);
+      assert.equal(result.image, MANIFEST_TAG);
+      assert.equal(result.running, "true");
+      assert.equal(result.envDefaults, `BLITZ_FROM=${MANIFEST_TAG}\n`);
+      assert.equal(plane.reports[0].body, JSON.stringify({ ref: manifestRef, outcome: "updated" }));
+    },
+  );
+});
+
+test("a manifest part with a bad digest replaces nothing and reports fetch-failed", async () => {
+  await withHost(
+    { assets: manifestAssets({ badPartSha: true }), loadedTag: MANIFEST_TAG },
+    (planeOrigin) => configFor(`${planeOrigin}${MANIFEST_PATH}`, planeOrigin),
+    async (root, plane, run) => {
+      const result = await run();
+      const manifestRef = `${plane.origin}${MANIFEST_PATH}`;
+      assert.equal(result.status, 0, result.report);
+      assert.deepEqual(plane.assetRequests, [
+        MANIFEST_PATH,
+        "/box-image/release-v2/image.part-00000",
+      ]);
+      assert.ok(!result.dockerCalls.includes("load"));
+      assert.ok(!result.dockerCalls.includes("rm -f blitz-box"));
+      assert.equal(result.image, RUNNING_REF);
+      assert.equal(result.running, "true");
+      assert.equal(plane.reports[0].body, JSON.stringify({ ref: manifestRef, outcome: "fetch-failed" }));
+      assert.ok(root);
+    },
+  );
+});
+
+test("a non-manifest URL reports unsupported and still refreshes the origin", async () => {
+  const tarball = "https://cp.example/box-image/image.tar.gz";
   await withHost({}, (planeOrigin) => configFor(tarball, planeOrigin), async (root, plane, run) => {
     const result = await run();
     assert.equal(result.status, 0, result.report);

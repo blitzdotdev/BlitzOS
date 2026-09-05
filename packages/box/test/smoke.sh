@@ -91,7 +91,10 @@ trap 'signal_failure TERM 143' TERM
 trap 'fail "unexpected command failure at line $LINENO"' ERR
 
 if [ -z "${IMAGE:-}" ]; then
+  payload_version=$(node "$repo_root/packages/control-plane/scripts/plan-box-payload.mjs" \
+    --repo "$repo_root" --print-version)
   docker build --progress=plain \
+    --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
     --file "$repo_root/packages/box/Dockerfile" \
     --tag "$image" \
     "$repo_root"
@@ -99,6 +102,7 @@ if [ -z "${IMAGE:-}" ]; then
     -x 'BLITZ_LODY_SESSIONS=0' /etc/blitz/env.defaults
   docker build --progress=plain \
     --build-arg BLITZ_LODY_SESSIONS=1 \
+    --build-arg "BLITZ_PAYLOAD_VERSION=$payload_version" \
     --file "$repo_root/packages/box/Dockerfile" \
     --tag "$lody_sessions_image" \
     "$repo_root"
@@ -184,25 +188,27 @@ done
 [ "$ready" = true ] || fail "enabled Lody services and loopback endpoints did not become ready within 180 seconds"
 
 services=$(docker exec "$container" /command/s6-rc -a list)
-for service in init-state register sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
+for service in init-state register payload sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
-for service in sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
+for service in payload sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
 
-docker exec "$container" test -f /opt/blitz/npm/lib/node_modules/lody/dist/BUILD.json \
+docker exec "$container" test -f /opt/blitz/lody/current/lib/node_modules/lody/dist/BUILD.json \
   || fail "the packaged Lody BUILD.json is missing"
-docker exec "$container" /opt/blitz/npm/bin/lody --help >/dev/null \
+docker exec "$container" /opt/blitz/lody/current/bin/lody --help >/dev/null \
   || fail "the tree-built Lody CLI does not answer --help"
-docker exec "$container" grep -Eq '^[[:space:]]*/opt/blitz/npm/bin/lody start$' \
-  /etc/s6-overlay/s6-rc.d/lody-daemon/run \
-  || fail "the lody daemon service no longer points at /opt/blitz/npm/bin/lody"
+# The image's /etc/s6-overlay/s6-rc.d/lody-daemon/run is a wrapper that execs
+# the payload-owned run script; that script is the one that names the daemon.
+docker exec "$container" grep -Eq '^[[:space:]]*/opt/blitz/lody/current/bin/lody start$' \
+  /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run \
+  || fail "the lody daemon service no longer points at /opt/blitz/lody/current/bin/lody"
 docker exec "$container" node -e '
   const catalog = JSON.parse(process.argv[1]);
   if (!catalog.identity || !Array.isArray(catalog.workspaces) || !catalog.machine) process.exit(1);
 ' "$platform_json" || fail "/lody/platform did not return the local identity/workspace/machine catalog: $platform_json"
-lody_pid=$(docker exec "$container" pgrep -f '/opt/blitz/npm/bin/lody start$' | head -1)
+lody_pid=$(docker exec "$container" pgrep -f '/opt/blitz/lody/current/bin/lody start$' | head -1)
 [ -n "$lody_pid" ] || fail "the enabled Lody daemon process was not found"
 docker exec "$container" sh -c \
   "tr '\\0' '\\n' </proc/$lody_pid/environ | grep -qx 'LODY_MCP_BUILTIN_DISABLED=1'" \
@@ -225,6 +231,47 @@ dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
 docker exec "$container" test ! -e /srv/blitz-files/home \
   || fail "dufs publishes the agent HOME again: /srv/blitz-files/home exists"
 echo "PASS s6 graph and longruns"
+
+docker exec "$container" sh -c 'test "$(readlink /opt/blitz/payload/current)" = baked' \
+  || fail "the baked payload is not current"
+docker exec "$container" sh -c 'test "$(readlink /opt/blitz/lody/current)" = baked' \
+  || fail "the baked lody prefix is not current"
+for payload_path in \
+  /usr/local/bin/blitz \
+  /usr/local/bin/blitz-box-gateway \
+  /usr/local/libexec/blitz-term \
+  /opt/blitz/skel/agent-rules.md; do
+  docker exec "$container" test -L "$payload_path" \
+    || fail "$payload_path is not indirected through the current payload"
+done
+docker exec "$container" grep -qx \
+  'exec /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/gateway/run "$@"' \
+  /etc/s6-overlay/s6-rc.d/gateway/run \
+  || fail "the gateway service does not delegate to the current payload"
+docker exec "$container" test ! -L /usr/local/libexec/blitz-payload \
+  || fail "the base-owned payload updater is indirected through the payload"
+docker exec "$container" test ! -L /usr/local/bin/blitz-cred \
+  || fail "the base-owned credential broker is indirected through the payload"
+docker exec "$container" test -x /usr/local/bin/blitz-cred \
+  || fail "the base-owned credential broker is missing"
+docker exec "$container" test ! -L /etc/blitz/env.defaults \
+  || fail "the base-owned environment defaults are indirected through the payload"
+docker exec "$container" grep -qx 'exec /usr/local/libexec/blitz-payload' \
+  /etc/s6-overlay/s6-rc.d/payload/run \
+  || fail "the payload service does not run the base-owned updater"
+docker exec "$container" sh -c \
+  'test "$(readlink /usr/local/bin/lody)" = /opt/blitz/lody/current/bin/lody' \
+  || fail "the lody PATH entry does not follow the current daemon"
+payload_stamp=$(docker exec "$container" cat /opt/blitz/payload/baked/payload-version)
+[[ "$payload_stamp" =~ ^[a-f0-9]{64}$ ]] || fail "the baked payload has no derived version"
+daemon_stamp=$(docker exec "$container" cat /opt/blitz/lody/baked/daemon-version)
+[[ "$daemon_stamp" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
+  || fail "the baked daemon has no version"
+docker exec "$container" grep -qx '7' /opt/blitz/lody/baked/daemon-protocol-version \
+  || fail "the baked daemon has no protocol version"
+docker exec --user blitz "$container" test -r /var/lib/blitz/payload/log \
+  || fail "the payload updater log is not readable by uid 1000"
+echo "PASS baked payload and daemon indirections"
 
 # ---- the memory boundary ----
 # This is the only gate that runs the real s6 graph, so it is the only place

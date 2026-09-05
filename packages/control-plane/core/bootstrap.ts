@@ -1,3 +1,10 @@
+import {
+  BOX_IMAGE_MANIFEST_LOADER_INSTALL,
+  BOX_IMAGE_MANIFEST_LOADER_PATH,
+} from "./box-image-manifest-loader.js";
+
+export { BOX_IMAGE_MANIFEST_LOADER_INSTALL } from "./box-image-manifest-loader.js";
+
 export interface BootstrapOptions {
   boxImageSha256: string;
   boxImageRef: string;
@@ -102,86 +109,25 @@ export function boxImageSetupScript(options: BoxImageRef): string {
     );
   }
   return isTarball
-    ? String.raw`download() {
-  curl --fail --location --retry 10 --retry-all-errors --retry-delay 3 \
-    --silent --show-error --output "$2" "$1"
-}
-
-verify_sha256() {
-  local path="$1"
-  local expected="$2"
-  local actual
-  actual=$(sha256sum "$path" | cut -d ' ' -f 1)
-  expected=$(printf '%s' "$expected" | tr 'A-F' 'a-f')
-  [ "$actual" = "$expected" ] || fail "SHA-256 mismatch for $path"
-}
-
+    ? String.raw`. ${BOX_IMAGE_MANIFEST_LOADER_PATH}
 if ! docker image inspect "$BOX_IMAGE_TAG" >/dev/null 2>&1; then
-image_tmp_dir=$(mktemp -d /var/lib/blitz/.bootstrap-image.XXXXXX)
-trap 'rm -rf "$image_tmp_dir"' EXIT
-image_archive="$image_tmp_dir/image.tar.gz"
-
 case "$BOX_IMAGE_REF" in
   */manifest.json)
-    manifest_path="$image_tmp_dir/manifest.json"
-    manifest_parts_path="$image_tmp_dir/parts.tsv"
-    manifest_metadata_path="$image_tmp_dir/metadata.tsv"
-    download "$BOX_IMAGE_REF" "$manifest_path"
-    python3 - "$manifest_path" "$manifest_parts_path" >"$manifest_metadata_path" <<'PYTHON'
-import json
-import re
-import sys
-
-manifest_path, parts_path = sys.argv[1:]
-with open(manifest_path, encoding="utf-8") as manifest_file:
-    value = json.load(manifest_file)
-
-parts = value.get("parts")
-total_sha256 = value.get("totalSha256")
-image_tag = value.get("imageTag")
-if not isinstance(parts, list) or not parts:
-    raise ValueError("manifest parts must be a non-empty list")
-if not isinstance(total_sha256, str) or re.fullmatch(r"[a-fA-F0-9]{64}", total_sha256) is None:
-    raise ValueError("manifest totalSha256 must be a SHA-256 digest")
-if not isinstance(image_tag, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*", image_tag) is None:
-    raise ValueError("manifest imageTag is invalid")
-
-with open(parts_path, "w", encoding="utf-8") as parts_file:
-    for part in parts:
-        if not isinstance(part, dict):
-            raise ValueError("manifest part must be an object")
-        name = part.get("name")
-        sha256 = part.get("sha256")
-        if not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None:
-            raise ValueError("manifest part name is invalid")
-        if not isinstance(sha256, str) or re.fullmatch(r"[a-fA-F0-9]{64}", sha256) is None:
-            raise ValueError("manifest part sha256 must be a SHA-256 digest")
-        parts_file.write(f"{name}\t{sha256.lower()}\n")
-
-print(f"{total_sha256.lower()}\t{image_tag}")
-PYTHON
-    IFS=$'\t' read -r manifest_total_sha256 manifest_image_tag <"$manifest_metadata_path"
-    [ "$manifest_image_tag" = "$BOX_IMAGE_TAG" ] || fail "manifest imageTag $manifest_image_tag does not match BOX_IMAGE_TAG $BOX_IMAGE_TAG"
-    manifest_base=${"${BOX_IMAGE_REF%/*}"}
-    : >"$image_archive"
-    while IFS=$'\t' read -r part_name part_sha256; do
-      part_path="$image_tmp_dir/$part_name"
-      download "$manifest_base/$part_name" "$part_path"
-      verify_sha256 "$part_path" "$part_sha256"
-      cat "$part_path" >>"$image_archive"
-      rm -f "$part_path"
-    done <"$manifest_parts_path"
-    verify_sha256 "$image_archive" "$manifest_total_sha256"
+    load_box_image_manifest \
+      "$BOX_IMAGE_REF" "$BOX_IMAGE_TAG" "$BOX_IMAGE_SHA256" "" /var/lib/blitz || \
+      fail "box-image manifest fetch, verification, or load failed"
     ;;
   *)
+    image_tmp_dir=$(mktemp -d /var/lib/blitz/.bootstrap-image.XXXXXX)
+    trap 'rm -rf "$image_tmp_dir"' EXIT
+    image_archive="$image_tmp_dir/image.tar.gz"
     download "$BOX_IMAGE_REF" "$image_archive"
+    verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"
+    gunzip -c "$image_archive" | docker load
+    rm -rf "$image_tmp_dir"
+    trap - EXIT
     ;;
 esac
-
-verify_sha256 "$image_archive" "$BOX_IMAGE_SHA256"
-gunzip -c "$image_archive" | docker load
-rm -rf "$image_tmp_dir"
-trap - EXIT
 fi
 docker image inspect "$BOX_IMAGE_TAG" >/dev/null
 box_image="$BOX_IMAGE_TAG"`
@@ -607,7 +553,7 @@ done
 fi
 blitz_phase sshd-ready
 
-${ZRAM_SETUP}${imageSetup}
+${ZRAM_SETUP}${BOX_IMAGE_MANIFEST_LOADER_INSTALL}${imageSetup}
 blitz_phase box-image-ready
 install -d -m 0755 /etc/blitz
 # The one docker run for the box container, extracted to a host script so
@@ -854,31 +800,47 @@ start_box() {
 }
 
 current_image=$(docker inspect --format '{{.Config.Image}}' blitz-box 2>/dev/null || true)
-if [ "$next_ref" = "$current_image" ]; then
-  log "update requested but the requested ref is already running; clearing the request"
-  report_result "$next_ref" up-to-date
-  exit 0
-fi
+next_image="$next_ref"
 case "$next_ref" in
-  https://*)
-    # Tarball pins ride the bootstrap's manifest download path, which this
-    # updater does not carry. Report it so the flag clears.
-    log "update refused: a tarball ref cannot be pulled in place"
+  http://*/manifest.json|https://*/manifest.json)
+    . ${BOX_IMAGE_MANIFEST_LOADER_PATH}
+    if ! load_box_image_manifest "$next_ref" "" "" "$current_image" "$STATE_DIR" \
+        >>"$UPDATE_LOG" 2>&1; then
+      log "update failed: manifest fetch, verification, or load did not complete; the running container is untouched"
+      report_result "$next_ref" fetch-failed
+      exit 0
+    fi
+    next_image="$BOX_IMAGE_LOADED_TAG"
+    if [ "$BOX_IMAGE_LOAD_ACTION" = up-to-date ]; then
+      log "update requested but the manifest imageTag is already running; clearing the request"
+      report_result "$next_ref" up-to-date
+      exit 0
+    fi
+    ;;
+  *://*)
+    log "update refused: the requested ref is neither a registry ref nor a manifest URL"
     report_result "$next_ref" unsupported
     exit 0
     ;;
+  *)
+    if [ "$next_ref" = "$current_image" ]; then
+      log "update requested but the requested ref is already running; clearing the request"
+      report_result "$next_ref" up-to-date
+      exit 0
+    fi
+    # Pull FIRST: a failed pull must leave the old container running untouched.
+    if ! docker pull "$next_ref" >>"$UPDATE_LOG" 2>&1; then
+      log "update failed: pull did not complete; the running container is untouched"
+      report_result "$next_ref" pull-failed
+      exit 0
+    fi
+    ;;
 esac
 
-log "update start: [$current_image] -> [$next_ref]"
-# Pull FIRST: a failed pull must leave the old container running untouched.
-if ! docker pull "$next_ref" >>"$UPDATE_LOG" 2>&1; then
-  log "update failed: pull did not complete; the running container is untouched"
-  report_result "$next_ref" pull-failed
-  exit 0
-fi
+log "update start: [$current_image] -> [$next_image]"
 docker rm -f blitz-box >>"$UPDATE_LOG" 2>&1 || true
-if start_box "$next_ref"; then
-  log "update complete: blitz-box now runs [$next_ref]"
+if start_box "$next_image"; then
+  log "update complete: blitz-box now runs [$next_image]"
   report_result "$next_ref" updated
   exit 0
 fi

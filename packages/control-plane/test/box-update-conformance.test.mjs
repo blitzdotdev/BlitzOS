@@ -48,7 +48,7 @@ function python3Available() {
 }
 
 test("the emitted host scripts are valid bash", () => {
-  for (const marker of ["BOX_RUN", "BOX_UPDATER"]) {
+  for (const marker of ["BOX_IMAGE_MANIFEST_LOADER", "BOX_RUN", "BOX_UPDATER"]) {
     const result = spawnSync("bash", ["-n"], {
       input: embeddedSection(bootstrap, marker),
       encoding: "utf8",
@@ -69,6 +69,26 @@ test("the updater and the initial start share the one blitz-box-run path", () =>
   );
 });
 
+test("first boot and the updater source one emitted manifest loader", () => {
+  const tarballBootstrap = buildBootstrapScript({
+    boxImageSha256: "a".repeat(64),
+    boxImageRef: "https://cp.example/box-image/release/manifest.json",
+    boxImageTag: "blitz-box:release",
+    phoneHomeUrl: "https://cp.example/workspaces/workspace/phone-home/token",
+    sshPublicKey: "ssh-ed25519 AAAAcaller",
+  });
+  const updater = embeddedSection(tarballBootstrap, "BOX_UPDATER");
+  const loader = embeddedSection(tarballBootstrap, "BOX_IMAGE_MANIFEST_LOADER");
+  assert.equal(tarballBootstrap.match(/^load_box_image_manifest\(\) \{$/gmu)?.length, 1);
+  assert.match(loader, /^load_box_image_manifest\(\) \{$/mu);
+  assert.equal(
+    tarballBootstrap.match(/^\s*\. \/usr\/local\/libexec\/blitz-box-image-manifest\.sh$/gmu)?.length,
+    2,
+  );
+  assert.match(updater, /^\s*\. \/usr\/local\/libexec\/blitz-box-image-manifest\.sh$/mu);
+  assert.match(updater, /https:\/\/\*\/manifest\.json/u);
+});
+
 test("embedded box-config parser matches every config fixture", (context) => {
   if (!python3Available()) {
     context.skip("python3 is missing from PATH");
@@ -77,6 +97,10 @@ test("embedded box-config parser matches every config fixture", (context) => {
   const parser = embeddedSection(bootstrap, "BOX_CONFIG_PARSER");
   const directory = mkdtempSync(path.join(tmpdir(), "blitz-box-config-"));
   const entries = fixtures("config-");
+  assert.ok(
+    entries.some(([name]) => name === "config-valid-payload.json"),
+    "the additive payload config fixture is missing",
+  );
   try {
     for (const [name, fixture] of entries) {
       const responsePath = path.join(directory, name);
@@ -93,6 +117,12 @@ test("embedded box-config parser matches every config fixture", (context) => {
           `${boxImageRef}\t${controlPlaneOrigin}\t${updateRequested}\n`,
           `${name}: parsed TSV mismatch`,
         );
+        if (name === "config-valid-payload.json") {
+          assert.equal(typeof fixture.response.payload, "object");
+          // The host image updater predates in-place payloads and must keep
+          // parsing its original three fields when the additive pin appears.
+          assert.ok(!result.stdout.includes("manifestUrl"));
+        }
       } else {
         assert.notEqual(result.status, 0, `${name} unexpectedly passed`);
       }

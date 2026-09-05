@@ -81,6 +81,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | lody session-control stream | browser `webapp/src/lody/rpc-client.ts` (`sendSessionControl`) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` ↔ the source-built `lody` daemon's `/session-control`. The daemon picks NDJSON-per-response or one buffered envelope from the request's `Accept`; ours is the browser that negotiates and reads it frame by frame, and the bridge decision that carries the negotiation upstream. The FRAME UNION stays Lody's (`vendor/lody/packages/shared/src/node/local-ipc.ts:80`, `{kind:'response'\|'complete'\|'error'}`) — it is not exported and its module is node-only, so `rpc-client.ts` re-states it and the corpus keeps the copy honest | `fixtures/lody-session-control-stream/` (capture provenance and source-built recapture rule are in its README) | `webapp/test/lody-session-control-stream.test.ts` (browser consumer: frames emitted before the promise settles, at adversarial chunk boundaries), `box/guest-tests/test/lody-bridge-control-stream.test.ts` (runs the real bridge against a stand-in daemon that holds its stream open), `webapp/test/lody-acp-authentication.test.ts` (whole chain against a real daemon; skips without the bundle) |
 | lody share claim | Go gateway `box/gateway/main.go` (verifies the webApp ticket's `share` claim and forwards it on `X-Blitz-Lody-Share`, stripping any inbound copy) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` (room ACL on `/sync`, session scoping on `/rpc` and `/project`, `/control` refused, `/platform` narrowed). The claim's OWN wire format is pinned by the webApp-ticket corpus on three runtimes; what this pins is the hand-off and the decisions the bridge makes from it | `fixtures/lody-share-claim/` | `gateway/main_test.go` (producer: the header bytes + the path allowlist), `box/guest-tests/test/lody-bridge-share.test.ts` (consumer: runs the real bridge against a stand-in daemon over the whole decision table) |
 | box config v1 | CP `core/box-config.ts` producer (`GET /workspaces/self/box-config`) and consumer (`POST /workspaces/self/box-update-result`) ↔ host updater bash/python emitted by `core/bootstrap.ts` (`blitz-box-update`) | `fixtures/box-config/` | `test/box-config-conformance.test.ts` (CP), `test/box-update-conformance.test.mjs` (runs real `python3` over the emitted parser/producer, `bash -n` over the emitted scripts), `test/box-update-host.test.mjs` (runs the emitted updater in real bash against a live CP over real curl) |
+| box-payload v1 | `scripts/publish-box-payload.mjs` manifest producer + `core/box-config.ts` pin/result side ↔ box `rootfs/usr/local/libexec/blitz-payload` updater | `fixtures/box-payload/` | `control-plane/test/box-payload-conformance.test.ts` (manifest + CP); `box/guest-tests/test/box-payload-conformance.test.ts` (real updater) |
 | agent API doc | schema types (`packages/schema/src`) + route manifest `core/agent-api-manifest.ts` → generator `control-plane/scripts/generate-agent-api.mjs` (`npm run openapi:generate`; ts-json-schema-generator, no hand-written JSON Schema) → the generated OpenAPI 3.1 document, served verbatim by `core/agent-api.ts` (`GET /agent/api`, box-authed) ↔ agents reading it from a box | `packages/schema/openapi/agent-api.json` (the checked-in artifact IS the fixture) | `test/agent-api-coverage.test.ts` (router ↔ manifest ↔ document, both directions), `test/agent-api-conformance.test.ts` (every `/agent/*` happy-path body against the document's schemas; the served bytes equal the artifact), `test/agent-api-generate.test.mjs` (regenerates in plain Node and demands identical bytes) |
 
 Retired 2026-09-04: the `recipe invocation files` contract. Recipe launches
@@ -98,10 +99,6 @@ Retired 2026-09-05: the Org Drive and usage-capture surfaces. Their D1 tables,
 R2 object flows, WebDAV synchronizer, cron, schemas, routes, and webApp screens
 are deleted. Workspace files still use the box gateway's `/files` surface;
 `FilesSidebar`, `FileEditor`, file drops, and Lody attachments remain.
-
-Retired 2026-09-05: the Firecracker host pool and its agent protocol. The host
-package, provider, registration routes, deploy configuration, tests, and
-documentation are deleted. Hetzner and AWS remain the supported VM providers.
 
 Retired 2026-09-05: template and recipe products. Their schemas, routes,
 database columns, client methods, screens, tests, and dead launch plumbing are
@@ -253,9 +250,21 @@ The four rules a change must not break:
   credential can push to GHCR. Never cut a tag to refresh an image: the same tag
   ships client prod.
 - Every push to `main` makes the `image` job in `.github/workflows/canary.yml`
-  derive a release from the Dockerfile inputs, reuse its valid versioned R2
-  archive or build it with Lody on and publish it, then pass the exact pin to
-  the deploy job. A human does not rebake or edit canary pins.
+  derive a release from the base-owned Dockerfile inputs, reuse its valid
+  versioned R2 archive or build it with Lody on and publish it, then pass the
+  exact pin to the deploy job. Payload-only changes deliberately reuse that
+  base: a fresh box boots the baked copy and converges to the deployment pin.
+- Every push to `main` also publishes or reuses the daemon-inclusive payload at
+  `box-payload/<version>/` and passes `BOX_PAYLOAD_REF` plus
+  `BOX_PAYLOAD_VERSION` to the deploy. The order when a base is absent is:
+  build `daemon.tar.gz`; derive the payload version with `--daemon`; stamp and
+  build the image; publish the payload with that same daemon archive. A reused
+  base may retain its older informational baked stamp; the deployment payload
+  pin is desired state. A human does not rebake or edit canary pins.
+- Client prod does not pin an in-place payload yet: its GHCR image is
+  amd64/arm64 while payload v1 builds amd64 binaries. The architecture contract
+  must be decided before `release.yml` can publish a production payload; see
+  `docs/DEPLOY-RUNBOOK.md`.
 
 ## Hetzner: one project behind both deployments
 
@@ -306,7 +315,15 @@ deployment credential alone (`plans/SUBSCRIPTION-COMPUTE.md`).
 6a. `/agent/api` coverage + conformance tests green (`test/agent-api-coverage.test.ts`,
    `test/agent-api-conformance.test.ts`, `npm run test:openapi -w @blitzos/control-plane`);
    `npm run openapi:generate` must leave `packages/schema/openapi/agent-api.json` unchanged.
-7. Reference counts for comparison (2026-09-02): anti-slop 66
+7. On an untouched `main`, build `daemon.tar.gz` first and run
+   `node packages/control-plane/scripts/plan-box-payload.mjs --print-version --daemon <archive>`
+   with Node 22 and Go 1.26.5. The result must equal canary's pinned
+   `BOX_PAYLOAD_VERSION` from the last successful canary payload job or the
+   deployed Worker vars. `/version` does not expose the payload pin, so a sweep
+   without canary workflow/deployment access must report this comparison as
+   unverified rather than compare against a machine's possibly held or lagging
+   report. Planning without `--daemon` is not the release version.
+8. Reference counts for comparison (2026-09-02): anti-slop 66
    (23/27/12/4), blitz-house 0, max-lines warnings 8. These are the numbers
    a sweep compares against, so lower them in the same change that removes
    findings — a stale reference hides the next regression.

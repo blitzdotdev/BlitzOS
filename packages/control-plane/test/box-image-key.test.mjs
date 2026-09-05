@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,31 +21,15 @@ import {
   boxImageTag,
   readBoxImageInputIds,
 } from "../scripts/box-image-key.mjs";
-import { BOX_IMAGE_INPUTS } from "../scripts/lib/box-image-inputs.mjs";
+import {
+  BOX_IMAGE_INPUTS,
+  BOX_PAYLOAD_SOURCE_INPUTS,
+} from "../scripts/lib/box-image-inputs.mjs";
+import { PAYLOAD_ROOTFS_PATHS } from "../scripts/lib/box-payload-files.mjs";
 
 const scriptPath = fileURLToPath(new URL("../scripts/box-image-key.mjs", import.meta.url));
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const temporaryDirectories = [];
-const NEW_LODY_INPUTS = Object.freeze([
-  "vendor/lody",
-  "vendor/lody-adapters",
-  "scripts/lody-build-package.mjs",
-  "scripts/lody-npm-shrinkwrap.mjs",
-  "scripts/lody-sync-adapters.mjs",
-  "scripts/lody-package-manifest.json",
-]);
-const INPUT_FILES = Object.freeze({
-  "packages/box": "packages/box/Dockerfile",
-  "packages/broker": "packages/broker/main.go",
-  "packages/schema/fixtures": "packages/schema/fixtures/example.json",
-  "vendor/lody": "vendor/lody/package.json",
-  "vendor/lody-adapters": "vendor/lody-adapters/core/package.json",
-  "scripts/lody-build-package.mjs": "scripts/lody-build-package.mjs",
-  "scripts/lody-npm-shrinkwrap.mjs": "scripts/lody-npm-shrinkwrap.mjs",
-  "scripts/lody-sync-adapters.mjs": "scripts/lody-sync-adapters.mjs",
-  "scripts/lody-package-manifest.json": "scripts/lody-package-manifest.json",
-  "env.defaults": "env.defaults",
-});
 
 function temporaryDirectory(prefix) {
   const directory = mkdtempSync(path.join(tmpdir(), prefix));
@@ -61,36 +54,18 @@ function createInputRepository() {
   git(repository, ["init", "-q"]);
   git(repository, ["config", "user.email", "box-image-test@example.com"]);
   git(repository, ["config", "user.name", "Box Image Test"]);
-  const files = new Map([
-    ["packages/box/Dockerfile", "FROM scratch\n"],
-    ["packages/broker/main.go", "package main\n"],
-    ["packages/schema/fixtures/example.json", "{}\n"],
-    ["vendor/lody/package.json", "{}\n"],
-    ["vendor/lody-adapters/core/package.json", "{}\n"],
-    ["scripts/lody-build-package.mjs", "export {};\n"],
-    ["scripts/lody-npm-shrinkwrap.mjs", "export {};\n"],
-    ["scripts/lody-sync-adapters.mjs", "export {};\n"],
-    ["scripts/lody-package-manifest.json", "[]\n"],
-    ["env.defaults", "BLITZ_LODY_SESSIONS=0\n"],
-  ]);
-  for (const [relativePath, contents] of files) {
+  for (const [index, relativePath] of BOX_IMAGE_INPUTS.entries()) {
     const filePath = path.join(repository, relativePath);
     mkdirSync(path.dirname(filePath), { recursive: true });
-    writeFileSync(filePath, contents);
+    writeFileSync(filePath, `base input ${index}\n`);
   }
-  const gitlink = path.join(repository, "vendor/lody/packages/example-adapter");
-  mkdirSync(gitlink, { recursive: true });
-  git(gitlink, ["init", "-q"]);
-  git(gitlink, ["config", "user.email", "box-image-test@example.com"]);
-  git(gitlink, ["config", "user.name", "Box Image Test"]);
-  writeFileSync(path.join(gitlink, "package.json"), "{}\n");
-  git(gitlink, ["add", "package.json"]);
-  git(gitlink, ["commit", "-qm", "gitlink fixture"]);
   git(repository, ["add", "."]);
   git(repository, ["commit", "-qm", "fixture"]);
   return repository;
 }
 
+/** Build-context sources of every COPY instruction; `--from` stages are not
+ * repository inputs and are skipped. */
 function dockerfileCopySources(source) {
   const instructions = source.replaceAll(/\\\r?\n/gu, " ").split(/\r?\n/u);
   const sources = [];
@@ -114,9 +89,21 @@ function dockerfileCopySources(source) {
   return sources;
 }
 
-function inputCoversSource(input, source) {
-  const normalized = source.replace(/^\.\//u, "").replace(/\/$/u, "");
-  return normalized === input || normalized.startsWith(`${input}/`);
+function coveredBy(inputs, relativePath) {
+  return inputs.some((input) => relativePath === input || relativePath.startsWith(`${input}/`));
+}
+
+function filesBelow(directory) {
+  const found = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      found.push(...filesBelow(path.join(directory, entry.name))
+        .map((file) => path.join(entry.name, file)));
+    } else {
+      found.push(entry.name);
+    }
+  }
+  return found;
 }
 
 test("release id hashes the ordered path and object-id records", () => {
@@ -136,10 +123,6 @@ test("release id hashes the ordered path and object-id records", () => {
 
 test("reads real tree and blob ids in Dockerfile input order from a depth-one checkout", async () => {
   const source = createInputRepository();
-  assert.match(
-    git(source, ["ls-tree", "HEAD", "vendor/lody/packages/example-adapter"]),
-    /^160000 commit [a-f0-9]{40}\t/u,
-  );
   const cloneRoot = temporaryDirectory("blitz-box-image-key-clone-");
   const clone = path.join(cloneRoot, "repo");
   git(cloneRoot, ["clone", "-q", "--depth", "1", `file://${source}`, clone]);
@@ -153,52 +136,93 @@ test("reads real tree and blob ids in Dockerfile input order from a depth-one ch
   assert.equal(git(clone, ["rev-list", "--count", "HEAD"]), "1");
 });
 
-test("every build-context Dockerfile COPY source is a release-key input", () => {
+// A COPY source that is neither a base input nor a payload input would bake
+// bytes into the image that no release key names: the image would not rebuild
+// when they change, and no payload would carry them either.
+test("every build-context Dockerfile COPY source is a base input or a payload input", () => {
   const dockerfile = readFileSync(path.join(repositoryRoot, "packages/box/Dockerfile"), "utf8");
-  const uncovered = dockerfileCopySources(dockerfile).filter(
-    (source) => !BOX_IMAGE_INPUTS.some((input) => inputCoversSource(input, source)),
-  );
+  const payloadInputs = [
+    ...BOX_PAYLOAD_SOURCE_INPUTS,
+    ...PAYLOAD_ROOTFS_PATHS.map((relativePath) => `packages/box/rootfs/${relativePath}`),
+  ];
+  const owned = (relativePath) =>
+    coveredBy(BOX_IMAGE_INPUTS, relativePath) || coveredBy(payloadInputs, relativePath);
+  const uncovered = [];
+  for (const source of dockerfileCopySources(dockerfile)) {
+    const normalized = source.replace(/^\.\//u, "").replace(/\/$/u, "");
+    if (owned(normalized)) continue;
+    // A directory split between the two owners (packages/box/rootfs) is
+    // covered when every file below it is.
+    const absolute = path.join(repositoryRoot, normalized);
+    if (!statSync(absolute, { throwIfNoEntry: false })?.isDirectory()) {
+      uncovered.push(normalized);
+      continue;
+    }
+    for (const file of filesBelow(absolute)) {
+      const relative = `${normalized}/${file}`;
+      if (!owned(relative)) uncovered.push(relative);
+    }
+  }
   assert.deepEqual(uncovered, []);
 });
 
-test("a change under every Lody build input moves the release id", async () => {
-  const repository = createInputRepository();
-  const baseline = boxImageReleaseId(
-    await readBoxImageInputIds({ repo: repository, rev: "HEAD" }),
-  );
+// The key reads every declared input's Git object id at the release commit
+// and refuses a missing one. The fixture repositories above are built FROM the
+// list, so only this check notices when a deleted file stays declared: the
+// `enroll` service left the tree in #213 while its two entries stayed here,
+// and the canary image job would have died at the plan step.
+test("every declared input exists in this repository", () => {
+  const missing = [...BOX_IMAGE_INPUTS, ...BOX_PAYLOAD_SOURCE_INPUTS]
+    .filter((input) => !existsSync(path.join(repositoryRoot, input)));
+  assert.deepEqual(missing, []);
+});
 
-  for (const input of NEW_LODY_INPUTS) {
-    const relativePath = INPUT_FILES[input];
-    assert.notEqual(relativePath, undefined);
-    const file = path.join(repository, relativePath);
-    const original = readFileSync(file, "utf8");
-    writeFileSync(file, `${original}changed\n`);
-    git(repository, ["add", relativePath]);
-    git(repository, ["commit", "-qm", `change ${input}`]);
-    const changed = boxImageReleaseId(
-      await readBoxImageInputIds({ repo: repository, rev: "HEAD" }),
-    );
-    assert.notEqual(changed, baseline, input);
-
-    writeFileSync(file, original);
-    git(repository, ["add", relativePath]);
-    git(repository, ["commit", "-qm", `restore ${input}`]);
-    const restored = boxImageReleaseId(
-      await readBoxImageInputIds({ repo: repository, rev: "HEAD" }),
-    );
-    assert.equal(restored, baseline, input);
+test("base inputs and payload source inputs do not overlap", () => {
+  assert.equal(Object.isFrozen(BOX_PAYLOAD_SOURCE_INPUTS), true);
+  for (const input of BOX_PAYLOAD_SOURCE_INPUTS) {
+    assert.equal(coveredBy(BOX_IMAGE_INPUTS, input), false, input);
+  }
+  for (const input of BOX_IMAGE_INPUTS) {
+    assert.equal(coveredBy(BOX_PAYLOAD_SOURCE_INPUTS, input), false, input);
   }
 });
 
 test("a missing input at the requested revision is a hard error", async () => {
   const repository = createInputRepository();
-  git(repository, ["rm", "-q", "env.defaults"]);
+  const missing = "packages/box/rootfs/usr/local/libexec/blitz-payload";
+  git(repository, ["rm", "-q", missing]);
   git(repository, ["commit", "-qm", "remove required input"]);
 
   await assert.rejects(
     () => readBoxImageInputIds({ repo: repository, rev: "HEAD" }),
-    /box-image input is missing at HEAD: env\.defaults/u,
+    new RegExp(`box-image input is missing at HEAD: ${missing}`, "u"),
   );
+});
+
+test("payload and daemon-only commits keep the base image release id", async () => {
+  const repository = createInputRepository();
+  const before = boxImageReleaseId(await readBoxImageInputIds({ repo: repository }));
+  for (const [relativePath, contents] of [
+    ["packages/box/rootfs/usr/local/bin/blitz", "payload edit\n"],
+    ["packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run", "payload run edit\n"],
+    ["packages/box/gateway/main.go", "gateway edit\n"],
+    ["vendor/lody/UPSTREAM.md", "daemon edit\n"],
+    ["vendor/lody-adapters/core/package.json", "adapter edit\n"],
+    ["scripts/lody-build-package.mjs", "build script edit\n"],
+  ]) {
+    const filePath = path.join(repository, relativePath);
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, contents);
+  }
+  git(repository, ["add", "."]);
+  git(repository, ["commit", "-qm", "payload only"]);
+
+  assert.equal(boxImageReleaseId(await readBoxImageInputIds({ repo: repository })), before);
+
+  writeFileSync(path.join(repository, "env.defaults"), "changed base defaults\n");
+  git(repository, ["add", "."]);
+  git(repository, ["commit", "-qm", "base defaults change"]);
+  assert.notEqual(boxImageReleaseId(await readBoxImageInputIds({ repo: repository })), before);
 });
 
 test("CLI prints the contracted JSON and mirrors it to --json", () => {
