@@ -12,9 +12,14 @@ if payload_lab_dry; then
 fi
 
 require_workspace
-mapfile -t machines < <(workspace_json "$WORKSPACE_ID" | jq -r \
+workspace_view=$(workspace_json "$WORKSPACE_ID") \
+  || experiment_fail "could not read the workspace member-machine precondition"
+printf '%s' "$workspace_view" | jq -e '.workspace.members | arrays' >/dev/null \
+  || experiment_fail "workspace view has no member-machine list"
+mapfile -t machines < <(printf '%s' "$workspace_view" | jq -r \
   '.workspace.members[].machine | select(. != null and .state == "running") | .id' | sort -u)
-[ "${#machines[@]}" -ge 2 ] || experiment_fail "workspace needs two running member machines"
+[ "${#machines[@]}" -ge 2 ] \
+  || experiment_skip "requires two running member machines; workspace has ${#machines[@]}"
 first=${machines[0]}
 second=${machines[1]}
 [ "$first" != "$second" ] || experiment_fail "member machines are not independent rows"
@@ -22,7 +27,6 @@ second=${machines[1]}
 publish_variant e14-two-machines
 pin_payload "$PUBLISHED_VERSION"
 # One deployment-wide pin reaches both independently supervised payload loops.
-payload_tick "$WORKSPACE_ID" >/dev/null 2>&1 || experiment_fail "requesting member updater tick failed"
 wait_payload_outcome "$first" "$PUBLISHED_VERSION" applied "$LAB_OUTCOME_TIMEOUT" \
   || experiment_fail "first member machine did not report applied"
 wait_payload_outcome "$second" "$PUBLISHED_VERSION" applied "$LAB_OUTCOME_TIMEOUT" \

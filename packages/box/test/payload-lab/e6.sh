@@ -4,29 +4,36 @@ source "$(dirname "$0")/lib.sh"
 payload_lab_init E6 "$@"
 
 if payload_lab_dry; then
-  dry_command "snapshot previous payload and tmux; begin CP proxy health poll"
+  dry_command "create and snapshot one uniquely named tmux session; begin CP proxy health poll"
   publish_variant e6-crash-gateway
   pin_payload "$PUBLISHED_VERSION"
-  dry_command "run updater; assert rolled-back and proxy recovery <90s, previous serving, terminals reconnect"
+  dry_command "wait for a natural updater tick; assert rolled-back and proxy recovery <90s, previous serving, owned terminal reconnects"
   experiment_pass "dry run: crashing gateway rollback assertions"
 fi
 
 require_workspace
 previous=$(payload_current "$WORKSPACE_ID")
-before_tmux=$(tmux_catalog "$WORKSPACE_ID")
-[ -n "$before_tmux" ] || experiment_fail "no terminal sessions exist to reconnect"
+create_test_terminal "$WORKSPACE_ID"
+before_tmux=$(tmux_session_identity "$WORKSPACE_ID" "$LAB_TEST_TERMINAL_SESSION") \
+  || experiment_fail "the E6 tmux precondition is not running"
 wait_gateway_health "$WORKSPACE_ID" 10 \
   || experiment_fail "previous gateway health was not 2xx before the update"
 publish_variant e6-crash-gateway
-pin_payload "$PUBLISHED_VERSION"
 
 health_log="$LAB_TEMP_ROOT/health.tsv"
 start_health_poll "$WORKSPACE_ID" "$health_log"
 sleep 1
-payload_tick "$WORKSPACE_ID" >"$LAB_TEMP_ROOT/tick.log" 2>&1 \
-  || experiment_fail "updater tick failed"
-wait_payload_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" rolled-back "$LAB_OUTCOME_TIMEOUT" \
+before_report=$(payload_reported_at "$MACHINE_ID" "$WORKSPACE_ID")
+log_offset=$(payload_log_size "$WORKSPACE_ID")
+pin_payload "$PUBLISHED_VERSION"
+wait_payload_failure \
+  "$MACHINE_ID" "$WORKSPACE_ID" "$PUBLISHED_VERSION" rolled-back "$before_report" "$LAB_OUTCOME_TIMEOUT" \
   || experiment_fail "control plane did not record rolled-back"
+payload_log_since "$WORKSPACE_ID" "$log_offset" >"$LAB_TEMP_ROOT/payload.log" \
+  || experiment_fail "rollback updater log was unreadable"
+grep -F "rolled-back $previous: attempted $PUBLISHED_VERSION;" \
+  "$LAB_TEMP_ROOT/payload.log" >/dev/null \
+  || experiment_fail "updater log did not attribute the rollback to the crashing payload"
 wait_gateway_health "$WORKSPACE_ID" 10 \
   || experiment_fail "previous gateway health did not recover after rollback"
 sleep 1
@@ -41,8 +48,11 @@ case "$(gateway_health_code "$WORKSPACE_ID")" in
   2??) ;;
   *) experiment_fail "previous gateway is not serving after rollback" ;;
 esac
-after_tmux=$(tmux_catalog "$WORKSPACE_ID")
-assert_equal "$after_tmux" "$before_tmux" "terminals did not reconnect to intact tmux sessions"
+after_tmux=$(tmux_session_identity "$WORKSPACE_ID" "$LAB_TEST_TERMINAL_SESSION") \
+  || experiment_fail "the E6 tmux session did not survive rollback"
+assert_equal "$after_tmux" "$before_tmux" "the E6 tmux session changed across rollback"
+assert_local_terminal_attach "$WORKSPACE_ID" "$LAB_TEST_TERMINAL_KEY" \
+  || experiment_fail "a fresh gateway/ttyd websocket could not attach to the E6 tmux session"
 assert_payload_state_consistent "$WORKSPACE_ID" || experiment_fail "rollback left inconsistent state"
 assert_no_orphans "$WORKSPACE_ID"
-experiment_pass "rolled back in ${gap}ms; previous gateway serves; terminals reconnected"
+experiment_pass "rolled back in ${gap}ms; previous gateway serves; owned terminal reconnected"

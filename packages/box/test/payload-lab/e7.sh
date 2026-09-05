@@ -4,7 +4,7 @@ source "$(dirname "$0")/lib.sh"
 payload_lab_init E7 "$@"
 
 if payload_lab_dry; then
-  dry_command "publish and pin daemon payload; start updater and wait for .staging/pending"
+  dry_command "publish and pin daemon payload; poll .staging/state every 0.2s for up to 6 minutes"
   publish_variant daemon-e7-reset
   pin_payload "$PUBLISHED_VERSION"
   dry_command "POST Hetzner reset; assert boot is old or new, state consistent, and boot outcome reported"
@@ -17,14 +17,12 @@ old=$(payload_current "$WORKSPACE_ID")
 before_report=$(payload_reported_at "$MACHINE_ID" "$WORKSPACE_ID")
 publish_variant daemon-e7-reset
 pin_payload "$PUBLISHED_VERSION"
-payload_tick "$WORKSPACE_ID" >"$LAB_TEMP_ROOT/tick.log" 2>&1 &
-tick_pid=$!
 
-deadline=$(( $(date +%s) + LAB_OUTCOME_TIMEOUT ))
+staging_started=$(date +%s%3N)
+deadline=$(( $(date +%s) + 360 ))
 mid_apply=false
 while [ "$(date +%s)" -lt "$deadline" ]; do
-  if [ "$(payload_staging_count "$WORKSPACE_ID" 2>/dev/null || true)" != 0 ] \
-    || payload_state "$WORKSPACE_ID" 2>/dev/null | jq -e 'has("pending")' >/dev/null; then
+  if payload_apply_in_progress "$WORKSPACE_ID" 2>/dev/null; then
     mid_apply=true
     break
   fi
@@ -34,7 +32,6 @@ done
 reset_ms=$(date +%s%3N)
 hetzner_reset_machine "$MACHINE_ID" "$WORKSPACE_ID" \
   || experiment_fail "Hetzner reset request failed"
-wait "$tick_pid" 2>/dev/null || true
 wait_box_ssh "$WORKSPACE_ID" false 60 || payload_lab_trace "reset outage was shorter than SSH polling"
 wait_box_ssh "$WORKSPACE_ID" true 240 || experiment_fail "box did not return after reset"
 
@@ -51,4 +48,5 @@ after_report=$(payload_reported_at "$MACHINE_ID" "$WORKSPACE_ID")
 [ "$after_report" -gt "$before_report" ] && [ "$after_report" -ge "$reset_ms" ] \
   || experiment_fail "control plane did not receive a boot-time report"
 assert_no_orphans "$WORKSPACE_ID"
-experiment_pass "reset recovered on $boot_current; state consistent; boot report received"
+staging_wait_ms=$(( reset_ms - staging_started ))
+experiment_pass "reset after ${staging_wait_ms}ms staging wait; recovered on $boot_current; state consistent; boot report received"

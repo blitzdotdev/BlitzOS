@@ -18,9 +18,8 @@ Required for a real run:
   no browser ticket or proxy token.
 - `LAB_SSH_KEY`: the private key installed when the lab machines were
   provisioned. `box_ssh` uses the workspace view's host/port/user. It does not
-  grant VM-host SSH on port 2222. E1-E4 deliberately have no host-access
-  dependency; experiments that explicitly replace the image or force a host
-  action still require a separately provisioned `LAB_HOST_SSH_KEY`.
+  grant VM-host access. No experiment depends on host SSH, the Docker socket,
+  or a forced updater process.
 - A deployable `packages/control-plane/wrangler.toml` for
   `blitz-thinlab`, plus the Cloudflare credentials used by the existing
   publisher and deploy scripts.
@@ -30,14 +29,19 @@ Required for a real run:
   the overlay repo's unique release serial, producing a real daemon version
   and archive-digest change rather than republishing the base payload.
 - `HETZNER_API_TOKEN`: only E7, for the provider-level reset action.
-- `LAB_OLD_CP_ORIGIN`: only E15. It must be an old/no-payload-field fixture
-  deployment that accepts the workspace's existing box bearer.
+- `LAB_OLD_CP_ORIGIN`: only E15. The harness and supplied workspace must
+  already be attached to this old/no-payload-field deployment; the harness
+  never rewrites the box's root-owned origin. E15 prints `SKIP` when that
+  deployment is unavailable.
 - `LAB_401_ORIGIN` and `LAB_5XX_ORIGIN`: only E9. They are fixture origins
   that consistently answer those classes without logging request headers.
+  E9 pins their manifest URLs while keeping the box's real control-plane
+  origin intact.
 
 `LAB_WORKSPACES` is a whitespace-separated list consumed by `run-all.sh`.
 Each E script also accepts `<workspace-id> [machine-id]`. E14 requires two live
-member machines in its workspace. E1-E4 start and track their own Claude turn
+member machines in its workspace and prints `SKIP` when only one exists.
+E1-E4 start and track their own Claude turn
 through `session-driver/drive.mjs`. E1 and E2 hold that exact turn at its own
 permission request until the payload assertion is complete, then allow it and
 require its completion marker. E4 holds its turn only until the updater reports
@@ -69,9 +73,15 @@ that file may instead set all of `LAB_IMAGE_REF`, `LAB_IMAGE_TAG`, and
 `LAB_IMAGE_SHA256`; the helper checks the reported ref/tag and passes all three
 through to the deploy. It never sends only the two payload vars when doing so.
 
-E1-E4 do not force an updater transaction. After a pin, they wait for the
-box's supervised payload service, whose default poll interval is five minutes.
-`LAB_OUTCOME_TIMEOUT` therefore defaults to 420 seconds. Session waits pass
+No experiment forces an updater transaction. After a pin, every experiment
+waits for the box's supervised payload service, whose default poll interval is
+five minutes. Failure attribution comes from the world-readable
+`/var/lib/blitz/payload/log` and `state.json`; a failure result's version names
+what remains running, while `state.failed.version` and the log name the
+attempted target. `LAB_OUTCOME_TIMEOUT` therefore defaults to 420 seconds.
+E8 likewise waits for the host image updater's normal timer after requesting
+`blitz box update`; `LAB_IMAGE_UPDATE_TIMEOUT` defaults to 420 seconds.
+Session waits pass
 `--timeout "$LAB_TURN_TIMEOUT"` to the driver; that value defaults to 900
 seconds. E4 uses separate windows to observe the scheduled deferred report and
 the first idle tick after its 60-second turn.

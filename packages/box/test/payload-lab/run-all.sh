@@ -26,6 +26,7 @@ read -r -a workspaces <<<"$LAB_WORKSPACES"
 } >"$result"
 
 failures=0
+skips=0
 for run in 1 2 3; do
   workspace_index=0
   for workspace in "${workspaces[@]}"; do
@@ -35,12 +36,18 @@ for run in 1 2 3; do
       output="$results_dir/.$timestamp-r$run-w$workspace_index-e$experiment.log"
       if LAB_RUN_ID="$timestamp-r$run-w$workspace_index-e$experiment" \
         "$script_dir/e$experiment.sh" "$workspace" >"$output" 2>&1; then
-        status=PASS
+        final=$(tail -n 1 "$output")
+        if [[ "$final" = E*' SKIP '* ]]; then
+          status=SKIP
+          skips=$((skips + 1))
+        else
+          status=PASS
+        fi
       else
         status=FAIL
         failures=$((failures + 1))
+        final=$(tail -n 1 "$output")
       fi
-      final=$(tail -n 1 "$output")
       printf ' %s |' "$status" >>"$result"
       printf '[run %s workspace %s] %s\n' "$run" "$workspace" "$final" >&2
     done
@@ -49,5 +56,6 @@ for run in 1 2 3; do
 done
 
 printf '\nFailures: %s\n' "$failures" >>"$result"
-printf 'payload-lab matrix: %s (%s failures)\n' "$result" "$failures"
+printf 'Skips: %s\n' "$skips" >>"$result"
+printf 'payload-lab matrix: %s (%s failures, %s skips)\n' "$result" "$failures" "$skips"
 [ "$failures" -eq 0 ]

@@ -9,7 +9,7 @@ if payload_lab_dry; then
     publish_variant "e11-$number"
     pin_payload "$PUBLISHED_VERSION"
   done
-  dry_command "within ten minutes run updater; assert last applied, <=2 versions, and no .staging"
+  dry_command "within ten minutes await natural convergence; assert last applied, <=2 versions, and no .staging"
   experiment_pass "dry run: five-payload convergence assertions"
 fi
 
@@ -25,12 +25,11 @@ for version in "${versions[@]}"; do
   pin_payload "$version"
   sleep "${LAB_BURST_DELAY:-1}"
 done
-elapsed=$(( $(date +%s) - started ))
-[ "$elapsed" -le 600 ] || experiment_fail "five pins took ${elapsed}s (limit 600s)"
 last=${versions[4]}
-payload_tick "$WORKSPACE_ID" >/dev/null 2>&1 || experiment_fail "convergence tick failed"
 wait_payload_outcome "$MACHINE_ID" "$last" applied "$LAB_OUTCOME_TIMEOUT" \
   || experiment_fail "machine did not converge to the fifth payload"
+elapsed=$(( $(date +%s) - started ))
+[ "$elapsed" -le 600 ] || experiment_fail "five pins and convergence took ${elapsed}s (limit 600s)"
 assert_equal "$(payload_current "$WORKSPACE_ID")" "$last" "fifth payload is not current"
 kept=$(payload_version_count "$WORKSPACE_ID")
 [ "$kept" -le 2 ] || experiment_fail "$kept payload versions remain (limit 2)"

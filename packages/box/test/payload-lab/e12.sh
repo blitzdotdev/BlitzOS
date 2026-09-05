@@ -7,17 +7,24 @@ if payload_lab_dry; then
   dry_command "snapshot current payload"
   publish_variant e12-min-updater-99
   pin_payload "$PUBLISHED_VERSION"
-  dry_command "run updater; assert unsupported, current unchanged, and MachineView carries unsupported"
+  dry_command "wait for a natural updater tick; assert unsupported, current unchanged, and MachineView carries unsupported"
   experiment_pass "dry run: minUpdater compatibility assertions"
 fi
 
 require_workspace
 before=$(payload_current "$WORKSPACE_ID")
 publish_variant e12-min-updater-99
+before_report=$(payload_reported_at "$MACHINE_ID" "$WORKSPACE_ID")
+log_offset=$(payload_log_size "$WORKSPACE_ID")
 pin_payload "$PUBLISHED_VERSION"
-payload_tick "$WORKSPACE_ID" >/dev/null 2>&1 || experiment_fail "updater tick failed"
-wait_payload_outcome "$MACHINE_ID" "$PUBLISHED_VERSION" unsupported "$LAB_OUTCOME_TIMEOUT" \
+wait_payload_failure \
+  "$MACHINE_ID" "$WORKSPACE_ID" "$PUBLISHED_VERSION" unsupported "$before_report" "$LAB_OUTCOME_TIMEOUT" \
   || experiment_fail "control plane did not mark machine unsupported/image-update-needed"
+payload_log_since "$WORKSPACE_ID" "$log_offset" >"$LAB_TEMP_ROOT/payload.log" \
+  || experiment_fail "unsupported updater log was unreadable"
+grep -F "unsupported $before: attempted $PUBLISHED_VERSION;" \
+  "$LAB_TEMP_ROOT/payload.log" >/dev/null \
+  || experiment_fail "updater log did not attribute unsupported to the attempted version"
 assert_equal "$(payload_current "$WORKSPACE_ID")" "$before" \
   "unsupported payload changed current"
 machine_outcome=$(machine_json "$MACHINE_ID" "$WORKSPACE_ID" | jq -r .payloadOutcome)

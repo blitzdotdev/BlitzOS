@@ -4,8 +4,8 @@ source "$(dirname "$0")/lib.sh"
 payload_lab_init E9 "$@"
 
 if payload_lab_dry; then
-  dry_command "point box at unreachable, 401, and 5xx fixture origins; run bounded updater tick for each"
-  dry_command "assert current unchanged, updater CPU does not spin, restore origin, and assert reporting resumes"
+  dry_command "pin unreachable, 401, and 5xx manifest URLs while leaving the root-owned box origin untouched"
+  dry_command "wait for natural ticks; assert fetch-failed, current unchanged, one attempt with no tight retry, then restore the healthy pin"
   experiment_pass "dry run: control-plane failure and recovery assertions"
 fi
 
@@ -15,10 +15,10 @@ require_env LAB_5XX_ORIGIN
 for origin in "$LAB_401_ORIGIN" "$LAB_5XX_ORIGIN"; do
   [[ "$origin" =~ ^https://[^/]+$ ]] || experiment_fail "fixture origins must be bare HTTPS origins"
 done
-original_origin=$(box_ssh "$WORKSPACE_ID" 'sed -n "1p" /var/lib/blitz/origin')
-arm_origin_restore "$WORKSPACE_ID" "$original_origin"
 before_current=$(payload_current "$WORKSPACE_ID")
-before_report=$(payload_reported_at "$MACHINE_ID" "$WORKSPACE_ID")
+run_id=${LAB_RUN_ID:-$(date -u +%Y%m%dT%H%M%S)-$$}
+run_id=${run_id//[^A-Za-z0-9._+-]/-}
+durations=()
 
 for pair in \
   "unreachable|https://127.0.0.1:9" \
@@ -26,35 +26,35 @@ for pair in \
   "5xx|$LAB_5XX_ORIGIN"; do
   label=${pair%%|*}
   origin=${pair#*|}
-  _write_box_origin "$WORKSPACE_ID" "$origin"
+  version="e9-$label-$run_id"
+  ref="$origin/box-payload/$version/manifest.json"
+  before_report=$(payload_reported_at "$MACHINE_ID" "$WORKSPACE_ID")
+  log_offset=$(payload_log_size "$WORKSPACE_ID")
+  pin_payload_ref "$version" "$ref"
   started=$(date +%s)
-  payload_tick "$WORKSPACE_ID" >"$LAB_TEMP_ROOT/$label.log" 2>&1 \
-    || experiment_fail "$label tick escaped its fail-open loop"
+  wait_payload_outcome_after \
+    "$MACHINE_ID" "$WORKSPACE_ID" fetch-failed "$before_report" "$LAB_OUTCOME_TIMEOUT" \
+    || experiment_fail "$label manifest failure did not report fetch-failed"
   duration=$(( $(date +%s) - started ))
-  [ "$duration" -le "${LAB_FAILURE_TICK_LIMIT:-75}" ] \
-    || experiment_fail "$label retry path was unbounded (${duration}s)"
+  payload_log_since "$WORKSPACE_ID" "$log_offset" >"$LAB_TEMP_ROOT/$label.log" \
+    || experiment_fail "$label updater log was unreadable"
+  attempt="fetch-failed $before_current: attempted $version;"
+  attempts=$(grep -Fc "$attempt" "$LAB_TEMP_ROOT/$label.log" || true)
+  assert_equal "$attempts" 1 "$label manifest was attempted $attempts times in one scheduled tick"
+  sleep 5
+  payload_log_since "$WORKSPACE_ID" "$log_offset" >"$LAB_TEMP_ROOT/$label-after.log" \
+    || experiment_fail "$label updater log was unreadable after the retry guard window"
+  attempts=$(grep -Fc "$attempt" "$LAB_TEMP_ROOT/$label-after.log" || true)
+  assert_equal "$attempts" 1 "$label manifest entered a tight retry loop ($attempts attempts in 5s)"
   assert_equal "$(payload_current "$WORKSPACE_ID")" "$before_current" \
     "$label failure changed current"
+  durations+=("$label:${duration}s")
 done
 
-ticks_before=$(payload_process_ticks "$WORKSPACE_ID")
-sleep 5
-ticks_after=$(payload_process_ticks "$WORKSPACE_ID")
-tick_delta=$(( ticks_after - ticks_before ))
-[ "$tick_delta" -lt "${LAB_CPU_TICK_LIMIT:-100}" ] \
-  || experiment_fail "payload loop spun CPU during outage ($tick_delta ticks in 5s)"
-
-restore_box_origin
-payload_tick "$WORKSPACE_ID" >/dev/null 2>&1 || experiment_fail "recovery tick failed"
-deadline=$(( $(date +%s) + LAB_OUTCOME_TIMEOUT ))
-after_report=$before_report
-while [ "$(date +%s)" -lt "$deadline" ]; do
-  after_report=$(payload_reported_at "$MACHINE_ID" "$WORKSPACE_ID" 2>/dev/null || printf 0)
-  [ "$after_report" -gt "$before_report" ] && break
-  sleep 2
-done
-[ "$after_report" -gt "$before_report" ] || experiment_fail "box did not report after control plane recovered"
+pin_payload "$before_current"
+wait_payload_outcome "$MACHINE_ID" "$before_current" up-to-date "$LAB_OUTCOME_TIMEOUT" \
+  || experiment_fail "box did not report after the healthy manifest pin was restored"
 assert_equal "$(payload_current "$WORKSPACE_ID")" "$before_current" \
   "recovery changed the current payload"
 assert_no_orphans "$WORKSPACE_ID"
-experiment_pass "unreachable/401/5xx bounded; current kept; CPU delta $tick_delta; reporting recovered"
+experiment_pass "unreachable/401/5xx each attempted once per tick (${durations[*]}); current kept; reporting recovered"

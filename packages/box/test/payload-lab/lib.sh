@@ -14,10 +14,10 @@ PAYLOAD_LAB_REPO=$(realpath "$PAYLOAD_LAB_DIR/../../../..")
 PAYLOAD_LAB_SESSION_DRIVER="$PAYLOAD_LAB_DIR/session-driver/drive.mjs"
 THINLAB_ORIGIN=${THINLAB_ORIGIN:-https://blitz-thinlab.minjunesv0.workers.dev}
 LAB_R2_BUCKET=${LAB_R2_BUCKET:-blitz-thinlab-images}
-LAB_HOST_SSH_PORT=${LAB_HOST_SSH_PORT:-2222}
 LAB_CP_TIMEOUT=${LAB_CP_TIMEOUT:-75}
 LAB_OUTCOME_TIMEOUT=${LAB_OUTCOME_TIMEOUT:-420}
 LAB_PAYLOAD_INTERVAL=${LAB_PAYLOAD_INTERVAL:-300}
+LAB_IMAGE_UPDATE_TIMEOUT=${LAB_IMAGE_UPDATE_TIMEOUT:-420}
 LAB_TURN_TIMEOUT=${LAB_TURN_TIMEOUT:-900}
 LAB_HEALTH_PATH=${LAB_HEALTH_PATH:-/healthz}
 
@@ -26,8 +26,6 @@ WORKSPACE_ID=
 MACHINE_ID=
 LAB_FINAL_LINE=false
 LAB_TEMP_ROOT=
-LAB_RESTORE_ORIGIN_WORKSPACE=
-LAB_RESTORE_ORIGIN_VALUE=
 LAB_REMOTE_CLEANUP_WORKSPACE=
 LAB_REMOTE_CLEANUP_COMMAND=
 LAB_SESSION_CLEANUP_WORKSPACE=
@@ -59,10 +57,6 @@ _payload_lab_cleanup() {
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done < <(jobs -pr)
-  if [ -n "$LAB_RESTORE_ORIGIN_WORKSPACE" ] && [ -n "$LAB_RESTORE_ORIGIN_VALUE" ]; then
-    _write_box_origin "$LAB_RESTORE_ORIGIN_WORKSPACE" "$LAB_RESTORE_ORIGIN_VALUE" \
-      >/dev/null 2>&1 || true
-  fi
   if [ -n "$LAB_REMOTE_CLEANUP_WORKSPACE" ] && [ -n "$LAB_REMOTE_CLEANUP_COMMAND" ]; then
     box_ssh "$LAB_REMOTE_CLEANUP_WORKSPACE" "$LAB_REMOTE_CLEANUP_COMMAND" \
       >/dev/null 2>&1 || true
@@ -109,6 +103,13 @@ experiment_fail() {
   LAB_FINAL_LINE=true
   printf '%s FAIL %s\n' "$EXPERIMENT_ID" "$reason"
   exit 1
+}
+
+experiment_skip() {
+  local reason=${1//$'\n'/ }
+  LAB_FINAL_LINE=true
+  printf '%s SKIP %s\n' "$EXPERIMENT_ID" "$reason"
+  exit 0
 }
 
 require_env() {
@@ -192,6 +193,12 @@ machine_json() {
   fi
   workspace_json "$workspace_id" | jq -ec --arg machine "$machine_id" \
     '.workspace.members[].machine | select(. != null and .id == $machine)'
+}
+
+machine_type_json() {
+  local machine_type_id=$1
+  cp_api GET /machine-types | jq -ec --arg machine_type "$machine_type_id" \
+    '.machineTypes[] | select(.id == $machine_type)'
 }
 
 _ssh_target() {
@@ -359,10 +366,12 @@ cancel_turn() {
 # tmux fallback keeps the gateway-restart assertion usable on an older image
 # whose unprivileged cgroup helper cannot create the leaf.
 create_test_terminal() {
-  local workspace_id=$1 run_id session
+  local workspace_id=$1 run_id session experiment_slug
   run_id=${LAB_RUN_ID:-$(date -u +%Y%m%dT%H%M%S)-$$}
   run_id=${run_id//[^A-Za-z0-9_-]/-}
-  LAB_TEST_TERMINAL_KEY="lab-e2-$run_id"
+  experiment_slug=${EXPERIMENT_ID,,}
+  experiment_slug=${experiment_slug//[^a-z0-9_-]/-}
+  LAB_TEST_TERMINAL_KEY="lab-$experiment_slug-$run_id"
   session="term-$LAB_TEST_TERMINAL_KEY"
   LAB_TEST_TERMINAL_SESSION=$session
   LAB_REMOTE_CLEANUP_WORKSPACE=$workspace_id
@@ -386,47 +395,6 @@ tmux_session_identity() {
   box_ssh "$1" "tmux display-message -p -t '=$2' '#{session_id}:#{session_created}'"
 }
 
-# Host-only experiments require a separately provisioned root key. The
-# workspace key reaches the box and is not accepted by the host sshd on 2222.
-host_ssh() {
-  local workspace_id=$1 command=$2
-  if payload_lab_dry; then
-    dry_command "ssh root@<workspace-host:$workspace_id>:$LAB_HOST_SSH_PORT $command"
-    return 0
-  fi
-  require_env LAB_HOST_SSH_KEY
-  local host key
-  host=$(_ssh_target "$workspace_id" host)
-  key=$LAB_HOST_SSH_KEY
-  local options=()
-  mapfile -t options < <(_ssh_options "$key")
-  ssh "${options[@]}" -p "$LAB_HOST_SSH_PORT" "root@$host" "$command"
-}
-
-_write_box_origin() {
-  local workspace_id=$1 origin=$2 quoted
-  printf -v quoted '%q' "$origin"
-  box_ssh "$workspace_id" "printf '%s\\n' $quoted > /var/lib/blitz/origin"
-}
-
-arm_origin_restore() {
-  LAB_RESTORE_ORIGIN_WORKSPACE=$1
-  LAB_RESTORE_ORIGIN_VALUE=$2
-}
-
-restore_box_origin() {
-  _write_box_origin "$LAB_RESTORE_ORIGIN_WORKSPACE" "$LAB_RESTORE_ORIGIN_VALUE"
-  LAB_RESTORE_ORIGIN_WORKSPACE=
-  LAB_RESTORE_ORIGIN_VALUE=
-}
-
-payload_tick() {
-  local workspace_id=$1
-  payload_lab_trace "running one supervised updater transaction on $workspace_id"
-  host_ssh "$workspace_id" \
-    "docker exec blitz-box bash -c 'set -e; printf \"%s\\n\" \"\$\$\" > /sys/fs/cgroup/blitz-system.slice/cgroup.procs; exec env BLITZ_PAYLOAD_ONCE=1 /usr/local/libexec/blitz-payload'"
-}
-
 wait_payload_outcome() {
   local machine_id=$1 version=$2 outcome=$3 timeout=$4
   local workspace_id deadline now observed
@@ -447,6 +415,79 @@ wait_payload_outcome() {
     }
     sleep 2
   done
+}
+
+# Failure reports name the payload that remains running, not the attempted
+# target. Pair the newer control-plane report with state.json's failed record
+# so a stale outcome or a different failed pin cannot satisfy the assertion.
+wait_payload_failure() {
+  local machine_id=$1 workspace_id=$2 version=$3 outcome=$4 after=$5 timeout=$6
+  local deadline view state observed reported_at failed_version failed_outcome
+  deadline=$(( $(date +%s) + timeout ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    view=$(machine_json "$machine_id" "$workspace_id" 2>/dev/null) || view=
+    observed=$(printf '%s' "$view" | jq -r '.payloadOutcome // "null"' 2>/dev/null) \
+      || observed=unavailable
+    reported_at=$(printf '%s' "$view" | jq -r '.payloadReportedAt // 0' 2>/dev/null) \
+      || reported_at=0
+    state=$(payload_state "$workspace_id" 2>/dev/null) || state=
+    failed_version=$(printf '%s' "$state" | jq -r '.failed.version // "none"' 2>/dev/null) \
+      || failed_version=unavailable
+    failed_outcome=$(printf '%s' "$state" | jq -r '.failed.outcome // "none"' 2>/dev/null) \
+      || failed_outcome=unavailable
+    if [ "$observed" = "$outcome" ] && [ "$reported_at" -gt "$after" ] \
+        && [ "$failed_version" = "$version" ] && [ "$failed_outcome" = "$outcome" ]; then
+      return 0
+    fi
+    sleep 2
+  done
+  payload_lab_trace \
+    "last failure was report=$observed@$reported_at state=$failed_outcome/$failed_version"
+  return 1
+}
+
+# Fetch failures are deliberately retried on later scheduled ticks and do not
+# populate state.failed. A timestamp newer than the pre-pin snapshot proves
+# this outcome belongs to the current experiment.
+wait_payload_outcome_after() {
+  local machine_id=$1 workspace_id=$2 outcome=$3 after=$4 timeout=$5
+  local deadline view observed reported_at
+  deadline=$(( $(date +%s) + timeout ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    view=$(machine_json "$machine_id" "$workspace_id" 2>/dev/null) || view=
+    observed=$(printf '%s' "$view" | jq -r '.payloadOutcome // "null"' 2>/dev/null) \
+      || observed=unavailable
+    reported_at=$(printf '%s' "$view" | jq -r '.payloadReportedAt // 0' 2>/dev/null) \
+      || reported_at=0
+    if [ "$observed" = "$outcome" ] && [ "$reported_at" -gt "$after" ]; then
+      return 0
+    fi
+    sleep 2
+  done
+  payload_lab_trace "last outcome was $observed@$reported_at, wanted $outcome after $after"
+  return 1
+}
+
+wait_payload_any_outcome_after() {
+  local machine_id=$1 workspace_id=$2 after=$3 timeout=$4
+  shift 4
+  local deadline view observed reported_at expected
+  deadline=$(( $(date +%s) + timeout ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    view=$(machine_json "$machine_id" "$workspace_id" 2>/dev/null) || view=
+    observed=$(printf '%s' "$view" | jq -r '.payloadOutcome // "null"' 2>/dev/null) \
+      || observed=unavailable
+    reported_at=$(printf '%s' "$view" | jq -r '.payloadReportedAt // 0' 2>/dev/null) \
+      || reported_at=0
+    if [ "$reported_at" -gt "$after" ]; then
+      for expected in "$@"; do
+        [ "$observed" = "$expected" ] && return 0
+      done
+    fi
+    sleep 2
+  done
+  payload_lab_trace "last outcome was $observed@$reported_at after $after"
+  return 1
 }
 
 wait_payload_any_outcome() {
@@ -488,6 +529,19 @@ wait_payload_deferred() {
 
 payload_state() {
   box_ssh "$1" 'cat /var/lib/blitz/payload/state.json'
+}
+
+payload_log_size() {
+  box_ssh "$1" 'wc -c </var/lib/blitz/payload/log'
+}
+
+payload_log_since() {
+  local workspace_id=$1 offset=$2
+  box_ssh "$workspace_id" "tail -c +$((offset + 1)) /var/lib/blitz/payload/log"
+}
+
+payload_apply_in_progress() {
+  box_ssh "$1" 'test -n "$(find /var/lib/blitz/payload/versions /opt/blitz/lody -mindepth 1 -maxdepth 1 -name "*.staging" -print -quit 2>/dev/null)" || jq -e '\''has("pending")'\'' /var/lib/blitz/payload/state.json >/dev/null'
 }
 
 payload_current() {
@@ -798,9 +852,12 @@ require_thinlab_deploy_config() {
 }
 
 pin_payload() {
-  require_thinlab_deploy_config
-  local version=$1 version_report deployed_ref deployed_tag configured_ref configured_tag
-  local ref="$THINLAB_ORIGIN/box-payload/$version/manifest.json"
+  local version=$1
+  pin_payload_ref "$version" "$THINLAB_ORIGIN/box-payload/$version/manifest.json"
+}
+
+pin_payload_ref() {
+  local version=$1 ref=$2 version_report deployed_ref deployed_tag configured_ref configured_tag
   local image_overrides=()
   payload_lab_trace "pinning payload $version"
   if payload_lab_dry; then
