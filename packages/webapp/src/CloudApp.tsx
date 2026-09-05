@@ -1745,9 +1745,10 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
         )}
         onConnected={(request) => {
           // The workspace may pull it now, so the request that asked is
-          // answered and the poll refreshes the allow-list this shell holds.
+          // answered and the records are re-read for the allow-list this
+          // shell holds.
           void resolveWorkspaceRequest(request, 'approve');
-          refreshWorkspacesNow();
+          void refreshWorkspaceRecords();
         }}
       />
     )}

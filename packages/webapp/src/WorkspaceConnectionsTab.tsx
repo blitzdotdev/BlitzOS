@@ -102,7 +102,6 @@ export function WorkspaceConnectionsTab({
   connections,
   readOnly,
   focusProvider = null,
-  onChanged,
 }: {
   client: ConnectionsTabClient;
   workspaceId: string;
@@ -114,9 +113,6 @@ export function WorkspaceConnectionsTab({
   /** The provider the box pointed at, when a `connections-focus` marker opened
    * this dialog. A fresh `at` re-points the row for the same provider. */
   focusProvider?: ConnectionsFocus | null;
-  /** A settled write; the host runs the workspace poll so the allow-list this
-   * tab draws from catches up with what the server holds. */
-  onChanged?: () => void;
 }) {
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
   const [grants, setGrants] = useState<UserGrantView[]>([]);
@@ -164,8 +160,10 @@ export function WorkspaceConnectionsTab({
     try {
       if (next) await client.mintWorkspaceConnection(workspaceId, row.name);
       else await client.disconnectWorkspaceConnection(workspaceId, row.name);
+      // The row answers from local state; the workspace poll is what
+      // reconciles the allow-list this tab was handed (#205's direction — no
+      // ad-hoc refresh beside the store's own).
       noteConnected(row.name, next);
-      onChanged?.();
     } catch (caught) {
       setError(caughtErrorMessage(caught, next ? 'Connect failed.' : 'Disconnect failed.'));
     } finally {

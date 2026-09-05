@@ -292,7 +292,6 @@ export function WorkspaceDetailsDialog({
               connections={workspace.connections}
               readOnly={workspace.accessRole === 'viewer'}
               focusProvider={focusProvider}
-              onChanged={refreshWorkspaces}
             />
           )}
           {tab === 'credentials' && (
