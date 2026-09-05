@@ -16,10 +16,10 @@ const subjects: AccessSubjects = {
     { id: 'ws-5', name: 'docs site' },
   ],
   members: [
-    { id: 'membership-1', name: 'Ada Owner', email: 'ada@example.com' },
-    { id: 'membership-2', name: 'Dana Reyes', email: 'dana@example.com' },
-    { id: 'membership-3', name: 'Priya N', email: 'priya@example.com' },
-    { id: 'membership-4', name: '', email: 'rio@example.com' },
+    { id: 'membership-1', name: 'Ada Owner', email: 'ada@example.com', avatarUrl: null },
+    { id: 'membership-2', name: 'Dana Reyes', email: 'dana@example.com', avatarUrl: 'https://lh3.googleusercontent.com/photo' },
+    { id: 'membership-3', name: 'Priya N', email: 'priya@example.com', avatarUrl: null },
+    { id: 'membership-4', name: '', email: 'rio@example.com', avatarUrl: null },
   ],
 };
 
@@ -157,6 +157,35 @@ describe('AccessFaces', () => {
     const open = view.container.querySelector<HTMLButtonElement>('.org-access-chevron');
     expect(open?.getAttribute('aria-expanded')).toBe('true');
     expect(open?.getAttribute('aria-label')).toBe('Hide who has access to STRIPE_API_KEY');
+    await view.unmount();
+  });
+
+  it('wears the marks the product already draws for each subject', async () => {
+    // The rail draws a workspace as its sigil and the signed-in account as its
+    // photo; a credential's audience is read with the same two glyphs, and
+    // initials are what is left when an account has no picture.
+    const view = await render(
+      <AccessFaces
+        grants={[
+          { subjectKind: 'workspace', subjectId: 'ws-1', access: 'read' },
+          { subjectKind: 'membership', subjectId: 'membership-2', access: 'read' },
+          { subjectKind: 'membership', subjectId: 'membership-3', access: 'read' },
+        ]}
+        subjects={subjects}
+        expanded={false}
+        onToggle={() => undefined}
+        credentialName="STRIPE_API_KEY"
+      />,
+    );
+
+    const workspace = view.container.querySelector('.org-access-face--workspace');
+    expect(workspace?.querySelector('svg')).not.toBeNull();
+    const faces = [...view.container.querySelectorAll('.org-access-face--member')];
+    // Dana has a photo; Priya has none and keeps her initials.
+    const photo = faces.find((face) => face.querySelector('img') !== null);
+    expect(photo?.querySelector('img')?.getAttribute('src')).toContain('=s128-c');
+    const lettered = faces.find((face) => face.querySelector('img') === null);
+    expect(lettered?.textContent).toBe('PN');
     await view.unmount();
   });
 
