@@ -781,7 +781,24 @@ publish_variant() {
   _mutate_published_variant "$name"
 }
 
+# Every deploy the lab performs targets the self-hosted Worker and nothing
+# else. The deploy script reads packages/control-plane/wrangler.toml, and a
+# checkout whose config was regenerated from the template names the canary
+# Worker `blitz-control-plane` in the SAME Cloudflare account: on 2026-09-05
+# three harness deploys from such checkouts replaced canary's Worker and
+# applied migrations to canary's database. So the deploy runs from
+# LAB_DEPLOY_REPO (default: the repo the harness lives in) and refuses any
+# config whose name is not blitz-thinlab.
+LAB_DEPLOY_REPO=${LAB_DEPLOY_REPO:-$PAYLOAD_LAB_REPO}
+require_thinlab_deploy_config() {
+  local config="$LAB_DEPLOY_REPO/packages/control-plane/wrangler.toml"
+  [ -r "$config" ] || experiment_fail "no wrangler.toml at $config; refusing to deploy"
+  grep -qE '^name = "blitz-thinlab"' "$config" \
+    || experiment_fail "$config does not name blitz-thinlab; refusing to deploy anywhere else"
+}
+
 pin_payload() {
+  require_thinlab_deploy_config
   local version=$1 version_report deployed_ref deployed_tag configured_ref configured_tag
   local ref="$THINLAB_ORIGIN/box-payload/$version/manifest.json"
   local image_overrides=()
