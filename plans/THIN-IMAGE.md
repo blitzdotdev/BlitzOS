@@ -107,7 +107,7 @@ same node major as the image (22).
 /opt/blitz/payload/baked/…            image layer, the payload built into this image
 /opt/blitz/payload/current -> …       symlink; baked at first boot
 /var/lib/blitz/payload/versions/<v>/  downloaded, verified payloads (volume; survives VM replace)
-/var/lib/blitz/payload/state.json     { current, previous, lastOutcome, lastAttemptAt, failed? }
+/var/lib/blitz/payload/state.json     { current, previous, pending?, failed?, unsentResult? }
 /opt/blitz/lody/baked/, /opt/blitz/lody/current -> …, /var/lib/blitz/daemon/versions/<v>/
 /usr/local/bin/<x> -> /opt/blitz/payload/current/rootfs/usr/local/bin/<x>   (every payload-owned entry)
 ```
@@ -137,7 +137,9 @@ Loop every `BLITZ_PAYLOAD_INTERVAL` (default 300 s; first tick 60 s after boot):
    f. health: within 60 s the gateway answers `127.0.0.1:7445/healthz` AND (if
       the daemon was restarted) the probe socket answers. Otherwise **rollback**:
       re-point `current` to `previous`, restart the same services, health again.
-   g. `POST /workspaces/self/payload-result` `{version, daemonVersion, outcome, detail}`
+   g. `POST /workspaces/self/payload-result` `{version, daemonVersion, outcome, detail}`;
+      both versions name the unit running after the attempt, and a failure
+      names the attempted payload version in `detail`
       with outcome ∈ `booted | applied | rolled-back | unsupported | fetch-failed | verify-failed | start-failed | up-to-date`.
       Report `booted` on every boot (so the control plane learns the baked
       version); reserve `up-to-date` for a later tick whose pin already runs.
@@ -145,7 +147,7 @@ Loop every `BLITZ_PAYLOAD_INTERVAL` (default 300 s; first tick 60 s after boot):
 
 Failed target versions are locally rate-limited. `verify-failed`, `rolled-back`,
 `start-failed`, and `unsupported` persist
-`failed: {version, outcome, at, attempts}` in `state.json`; the same pin is not
+`failed: {version, outcome, at}` in `state.json`; the same pin is not
 attempted or reported again for six hours. A different pin is attempted at
 once, and returning the pin to the running version clears the failure.
 

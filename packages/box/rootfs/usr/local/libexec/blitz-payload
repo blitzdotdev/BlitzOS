@@ -340,6 +340,12 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function testKillAt(stage) {
+  if (process.env.BLITZ_PAYLOAD_TEST_KILL_AT === stage) {
+    process.kill(process.pid, 'SIGKILL');
+  }
+}
+
 function runCommand(command, args, timeoutMs) {
   return new Promise((resolve, reject) => {
     childProcess.execFile(
@@ -522,88 +528,13 @@ async function removeStaging(config) {
   }
 }
 
-async function recoverPendingDaemon(config, state) {
-  if (state.pendingDaemon === null || typeof state.pendingDaemon !== 'object') return state;
-  const pending = state.pendingDaemon;
-  const daemonLink = path.join(config.lodyRoot, 'current');
-  const actualDaemon = await linkInfo(daemonLink);
-  let recovered = { ...state };
-  if (
-    typeof pending.target === 'string'
-    && typeof pending.version === 'string'
-    && actualDaemon.target === pending.target
-    && actualDaemon.exists
-  ) {
-    recovered = {
-      ...recovered,
-      daemonVersion: pending.version,
-      daemonTarget: pending.target,
-      daemonProtocolVersion: Number.isSafeInteger(pending.protocolVersion)
-        ? pending.protocolVersion
-        : null,
-      previousDaemonVersion: state.daemonVersion,
-      previousDaemonTarget: state.daemonTarget,
-      previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
-        ? state.daemonProtocolVersion
-        : null,
-    };
-  } else if (typeof state.daemonTarget === 'string') {
-    await atomicLink(daemonLink, state.daemonTarget);
-  }
-  delete recovered.pendingDaemon;
-  await writeState(config, recovered);
-  return recovered;
-}
-
 async function recoverPending(config, state) {
-  state = await recoverPendingDaemon(config, state);
   if (state.pending === null || typeof state.pending !== 'object') return state;
-  const pending = state.pending;
-  const nextPayload = pending.payload;
-  const nextDaemon = pending.daemon;
-  const currentLink = path.join(config.payloadRoot, 'current');
-  const daemonLink = path.join(config.lodyRoot, 'current');
-  const actualPayload = await linkInfo(currentLink);
-  const canComplete = nextPayload !== null
-    && typeof nextPayload === 'object'
-    && typeof nextPayload.target === 'string'
-    && typeof nextPayload.version === 'string'
-    && actualPayload.target === nextPayload.target
-    && actualPayload.exists;
-  if (canComplete) {
-    if (
-      nextDaemon !== null
-      && typeof nextDaemon === 'object'
-      && typeof nextDaemon.target === 'string'
-    ) {
-      await atomicLink(daemonLink, nextDaemon.target);
-    }
-    const completed = {
-      ...state,
-      current: nextPayload.version,
-      currentTarget: nextPayload.target,
-      previous: state.current,
-      previousTarget: state.currentTarget,
-      daemonVersion: nextDaemon.version,
-      daemonTarget: nextDaemon.target,
-      daemonProtocolVersion: Number.isSafeInteger(nextDaemon.protocolVersion)
-        ? nextDaemon.protocolVersion
-        : null,
-      previousDaemonVersion: state.daemonVersion,
-      previousDaemonTarget: state.daemonTarget,
-      previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
-        ? state.daemonProtocolVersion
-        : null,
-    };
-    delete completed.pending;
-    await writeState(config, completed);
-    return completed;
-  }
   if (typeof state.currentTarget === 'string') {
-    await atomicLink(currentLink, state.currentTarget);
+    await atomicLink(path.join(config.payloadRoot, 'current'), state.currentTarget);
   }
   if (typeof state.daemonTarget === 'string') {
-    await atomicLink(daemonLink, state.daemonTarget);
+    await atomicLink(path.join(config.lodyRoot, 'current'), state.daemonTarget);
   }
   const restored = { ...state };
   delete restored.pending;
@@ -1024,11 +955,18 @@ async function switchRelease(config, state, nextPayload, nextDaemon) {
     payload: nextPayload,
     daemon: nextDaemon,
   };
-  await writeState(config, { ...state, pending });
+  const switching = { ...state, pending };
+  await writeState(config, switching);
   if (nextDaemon.target !== state.daemonTarget) {
     await atomicLink(path.join(config.lodyRoot, 'current'), nextDaemon.target);
   }
   await atomicLink(path.join(config.payloadRoot, 'current'), nextPayload.target);
+  return switching;
+}
+
+async function commitRelease(config, state) {
+  const nextPayload = state.pending.payload;
+  const nextDaemon = state.pending.daemon;
   const committed = {
     ...state,
     current: nextPayload.version,
@@ -1051,25 +989,17 @@ async function switchRelease(config, state, nextPayload, nextDaemon) {
   return committed;
 }
 
-async function switchDaemonRelease(config, state, nextDaemon) {
-  await writeState(config, { ...state, pendingDaemon: nextDaemon });
-  await atomicLink(path.join(config.lodyRoot, 'current'), nextDaemon.target);
-  const committed = {
-    ...state,
-    daemonVersion: nextDaemon.version,
-    daemonTarget: nextDaemon.target,
-    daemonProtocolVersion: Number.isSafeInteger(nextDaemon.protocolVersion)
-      ? nextDaemon.protocolVersion
-      : null,
-    previousDaemonVersion: state.daemonVersion,
-    previousDaemonTarget: state.daemonTarget,
-    previousDaemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
-      ? state.daemonProtocolVersion
-      : null,
-  };
-  delete committed.pendingDaemon;
-  await writeState(config, committed);
-  return committed;
+async function restorePendingRelease(config, state) {
+  if (typeof state.currentTarget === 'string') {
+    await atomicLink(path.join(config.payloadRoot, 'current'), state.currentTarget);
+  }
+  if (typeof state.daemonTarget === 'string') {
+    await atomicLink(path.join(config.lodyRoot, 'current'), state.daemonTarget);
+  }
+  const restored = { ...state };
+  delete restored.pending;
+  await writeState(config, restored);
+  return restored;
 }
 
 async function restartOrdinaryService(service, config) {
@@ -1317,52 +1247,42 @@ async function waitForHealth(checkDaemon, config) {
   return last;
 }
 
-async function recordOutcome(config, state, outcome, detail) {
-  const reportVersion = typeof state.reportVersion === 'string'
-    ? state.reportVersion
-    : state.current;
-  const persistent = { ...state };
-  delete persistent.reportVersion;
+async function recordOutcome(config, state, outcome, detail, attemptedVersion = null) {
   const recordedAt = Date.now();
-  const next = {
-    ...persistent,
-    lastOutcome: outcome,
-    lastAttemptAt: recordedAt,
-  };
-  if (FAILED_OUTCOMES.has(outcome)) {
-    const previous = failedRelease(next);
+  const next = { ...state };
+  const reportedDetail = attemptedVersion === null || attemptedVersion === state.current
+    ? detail
+    : `attempted ${attemptedVersion}; ${detail}`;
+  if (FAILED_OUTCOMES.has(outcome) && attemptedVersion !== null) {
     next.failed = {
-      version: reportVersion,
+      version: attemptedVersion,
       outcome,
       at: recordedAt,
-      attempts: previous !== null && previous.version === reportVersion
-        ? previous.attempts + 1
-        : 1,
     };
   } else if (outcome === 'applied') {
     delete next.failed;
   }
   if (outcome === 'booted') {
-    log(`booted ${reportVersion} daemon ${next.daemonVersion}`);
+    log(`booted ${next.current} daemon ${next.daemonVersion}`);
   } else if (outcome === 'up-to-date') {
     const quiet = quietLogRecord(next.quietLog);
     if (
       quiet === null
-      || quiet.version !== reportVersion
+      || quiet.version !== next.current
       || recordedAt - quiet.at >= QUIET_LOG_INTERVAL_MS
     ) {
-      log(`tick: up-to-date ${reportVersion}`);
-      next.quietLog = { version: reportVersion, at: recordedAt };
+      log(`tick: up-to-date ${next.current}`);
+      next.quietLog = { version: next.current, at: recordedAt };
     }
   } else {
-    log(`${outcome} ${reportVersion}: ${detail}`);
+    log(`${outcome} ${next.current}: ${reportedDetail}`);
   }
   await writeState(config, next);
   return { state: next, result: {
-    version: reportVersion,
+    version: next.current,
     daemonVersion: next.daemonVersion,
     outcome,
-    detail,
+    detail: reportedDetail,
   } };
 }
 
@@ -1375,8 +1295,6 @@ function failedRelease(state) {
     || !FAILED_OUTCOMES.has(failed.outcome)
     || !Number.isSafeInteger(failed.at)
     || failed.at < 0
-    || !Number.isSafeInteger(failed.attempts)
-    || failed.attempts < 1
   ) return null;
   return failed;
 }
@@ -1407,9 +1325,15 @@ async function reconcileFailedPin(config, state, pin) {
 }
 
 async function applyPayload(pin, manifest, config, initialState) {
-  let state = { ...initialState, reportVersion: pin.version };
+  let state = { ...initialState };
   if (manifest.version !== pin.version) {
-    return recordOutcome(config, state, 'verify-failed', 'manifest version does not match pin');
+    return recordOutcome(
+      config,
+      state,
+      'verify-failed',
+      'manifest version does not match pin',
+      pin.version,
+    );
   }
   if (manifest.minUpdater > UPDATER_VERSION) {
     return recordOutcome(
@@ -1417,6 +1341,7 @@ async function applyPayload(pin, manifest, config, initialState) {
       state,
       'unsupported',
       `manifest requires updater protocol ${manifest.minUpdater}`,
+      pin.version,
     );
   }
   let payloadTarget;
@@ -1428,20 +1353,11 @@ async function applyPayload(pin, manifest, config, initialState) {
     if (daemonChanged) daemonTarget = await extractDaemon(manifest.daemon, config);
   } catch (error) {
     const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
-    return recordOutcome(config, state, outcome, errorMessage(error));
+    return recordOutcome(config, state, outcome, errorMessage(error), pin.version);
   }
 
   const changed = await changedPayloadPaths(state, manifest);
   const services = servicesToRestart(manifest, changed, daemonChanged);
-  const previous = {
-    version: state.current,
-    target: state.currentTarget,
-    daemonVersion: state.daemonVersion,
-    daemonTarget: state.daemonTarget,
-    daemonProtocolVersion: Number.isSafeInteger(state.daemonProtocolVersion)
-      ? state.daemonProtocolVersion
-      : null,
-  };
   try {
     state = await switchRelease(
       config,
@@ -1455,10 +1371,16 @@ async function applyPayload(pin, manifest, config, initialState) {
           : state.daemonProtocolVersion,
       },
     );
+    testKillAt('after-switch');
   } catch (error) {
     state = await initialiseState(config);
-    state.reportVersion = pin.version;
-    return recordOutcome(config, state, 'start-failed', `atomic switch failed: ${errorMessage(error)}`);
+    return recordOutcome(
+      config,
+      state,
+      'start-failed',
+      `atomic switch failed: ${errorMessage(error)}`,
+      pin.version,
+    );
   }
 
   let activationFailure = null;
@@ -1466,6 +1388,7 @@ async function applyPayload(pin, manifest, config, initialState) {
   const daemonRestarted = services.includes('lody-daemon');
   try {
     daemonRestartDetail = await restartServices(services, config);
+    testKillAt('before-health');
   } catch (error) {
     activationFailure = `service restart failed: ${errorMessage(error)}`;
   }
@@ -1478,7 +1401,13 @@ async function applyPayload(pin, manifest, config, initialState) {
     health = await waitForHealth(false, config);
   }
   if (activationFailure === null) {
-    state.reportVersion = pin.version;
+    try {
+      state = await commitRelease(config, state);
+    } catch (error) {
+      activationFailure = `state commit failed: ${errorMessage(error)}`;
+    }
+  }
+  if (activationFailure === null) {
     const detail = [
       services.length === 0
         ? 'healthy; no service restart required'
@@ -1494,67 +1423,29 @@ async function applyPayload(pin, manifest, config, initialState) {
     );
   }
 
-  if (daemonChanged && health.gatewayHealthy) {
-    try {
-      state = await switchDaemonRelease(config, state, {
-        version: previous.daemonVersion,
-        target: previous.daemonTarget,
-        protocolVersion: previous.daemonProtocolVersion,
-      });
-      await restartLodyDaemon(config, false);
-      const rollbackHealth = await waitForHealth(true, config);
-      if (!rollbackHealth.gatewayHealthy || !rollbackHealth.daemonHealthy) {
-        throw new Error('previous daemon health check failed');
-      }
-    } catch (error) {
-      state.reportVersion = pin.version;
-      return recordOutcome(
-        config,
-        state,
-        'start-failed',
-        `${activationFailure}; daemon-only rollback failed: ${errorMessage(error)}; payload kept`,
-      );
-    }
-    state.reportVersion = pin.version;
-    return recordOutcome(
-      config,
-      state,
-      'rolled-back',
-      `${activationFailure}; daemon protocol ${manifest.daemon.protocolVersion} rolled back; payload kept`,
-    );
-  }
-
   try {
-    state = await switchRelease(
-      config,
-      state,
-      { version: previous.version, target: previous.target },
-      {
-        version: previous.daemonVersion,
-        target: previous.daemonTarget,
-        protocolVersion: previous.daemonProtocolVersion,
-      },
-    );
+    state = await restorePendingRelease(config, state);
     await restartServices(services, config, false);
     const rollbackHealth = await waitForHealth(daemonRestarted, config);
     if (!rollbackHealth.gatewayHealthy || !rollbackHealth.daemonHealthy) {
       throw new Error('previous release health check failed');
     }
   } catch (error) {
-    state.reportVersion = pin.version;
+    state = await initialiseState(config);
     return recordOutcome(
       config,
       state,
       'start-failed',
       `${activationFailure}; rollback failed: ${errorMessage(error)}`,
+      pin.version,
     );
   }
-  state.reportVersion = pin.version;
   return recordOutcome(
     config,
     state,
     'rolled-back',
     `${activationFailure}; previous payload restored`,
+    pin.version,
   );
 }
 
@@ -1616,7 +1507,7 @@ async function tick(config) {
   } catch (error) {
     const failure = await recordOutcome(
       config,
-      { ...state, reportVersion: state.current },
+      state,
       'fetch-failed',
       errorMessage(error),
     );
@@ -1634,7 +1525,7 @@ async function tick(config) {
         : 'boot report; payload update pending';
     const boot = await recordOutcome(
       config,
-      { ...state, reportVersion: state.current },
+      state,
       'booted',
       bootDetail,
     );
@@ -1652,7 +1543,7 @@ async function tick(config) {
     if (!reportedBoot) {
       const current = await recordOutcome(
         config,
-        { ...state, reportVersion: state.current },
+        state,
         'up-to-date',
         'payload pin is already current',
       );
@@ -1685,9 +1576,10 @@ async function tick(config) {
     const outcome = error instanceof FetchFailure ? 'fetch-failed' : 'verify-failed';
     applied = await recordOutcome(
       config,
-      { ...state, reportVersion: pin.version },
+      state,
       outcome,
       errorMessage(error),
+      pin.version,
     );
   }
   state = applied.state;

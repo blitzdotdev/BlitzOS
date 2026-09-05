@@ -88,7 +88,9 @@ export const BOX_PAYLOAD_OUTCOMES = [
 
 export type BoxPayloadOutcome = (typeof BOX_PAYLOAD_OUTCOMES)[number];
 
-/** The updater's body for `POST /workspaces/self/payload-result`. */
+/** The updater's body for `POST /workspaces/self/payload-result`. Versions
+ * identify the running unit after the attempt; failure detail names the pin
+ * that was attempted. */
 export interface BoxPayloadResultRequest {
   version: string;
   daemonVersion: string;

@@ -1,6 +1,6 @@
 {
-  "version": "20260904T2130Z-9f3c1a2b",
+  "version": "running-v1",
   "daemonVersion": "0.88.1+blitz.3",
   "outcome": "rolled-back",
-  "detail": "gateway health check failed; previous payload restored"
+  "detail": "attempted 20260904T2130Z-9f3c1a2b; gateway health check failed; previous payload restored"
 }

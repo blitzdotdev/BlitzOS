@@ -47,7 +47,6 @@ interface FailedPayloadState {
   version: string;
   outcome: string;
   at: number;
-  attempts: number;
 }
 
 interface PayloadState {
@@ -618,12 +617,13 @@ describe("blitz-payload", () => {
     const harness = setup();
     await harness.start();
 
-    await expectOneOutcome(harness, expected);
+    const result = await expectOneOutcome(harness, expected);
+    expect(result.version).toBe(BAKED_PAYLOAD_VERSION);
+    expect(result.detail).toContain(`attempted ${harness.options.release?.version};`);
     const failedAfterAttempt = harness.state().failed;
     expect(failedAfterAttempt).toMatchObject({
       version: harness.options.release?.version,
       outcome: expected,
-      attempts: 1,
     });
     expect(failedAfterAttempt?.at).toEqual(expect.any(Number));
     const manifestRequests = harness.requests.filter((request) => request === "GET /manifest.json");
@@ -655,7 +655,8 @@ describe("blitz-payload", () => {
     await expectOneOutcome(harness, "verify-failed");
 
     expect(harness.results.filter((result) => result.outcome === "verify-failed")).toHaveLength(2);
-    expect(harness.state().failed).toMatchObject({ attempts: 2, outcome: "verify-failed" });
+    expect(harness.state().failed).toMatchObject({ outcome: "verify-failed" });
+    expect(harness.state().failed?.at).toBeGreaterThan(state.failed.at);
   });
 
   it("a different pin is attempted immediately after a failed version", async () => {
@@ -808,6 +809,28 @@ describe("blitz-payload", () => {
     expect(harness.calls(harness.credentialLog)).toEqual(["api-token"]);
     expect(harness.requests).toContain("POST /workspaces/self/payload-result");
     expect(existsSync(path.join(harness.root, "box-credential.json"))).toBe(false);
+  });
+
+  it.each([
+    { stage: "after-switch", label: "between the symlink switch and service restart" },
+    { stage: "before-health", label: "after restart and before health verification" },
+  ])("restores the recorded release after a kill $label", async ({ stage }) => {
+    const release = makePayloadArchive([
+      { path: "rootfs/usr/local/bin/tool", content: "new\n" },
+    ]);
+    const harness = new Harness({ release });
+    await harness.start();
+
+    const killed = await runUpdater(harness, 3000, { BLITZ_PAYLOAD_TEST_KILL_AT: stage });
+    expect(killed.signal).toBe("SIGKILL");
+    expect(harness.currentTarget()).toBe(path.join(harness.payloadState, "versions/v2"));
+
+    harness.options.pinVersion = null;
+    await expectOneOutcome(harness, "booted");
+
+    expect(harness.currentTarget()).toBe(path.join(harness.payloadRoot, "baked"));
+    expect(harness.currentContent()).toBe("old\n");
+    expect(harness.state()).toMatchObject({ current: BAKED_PAYLOAD_VERSION });
   });
 
   it("installs and switches a daemon archive before restarting lody-daemon", async () => {

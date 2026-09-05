@@ -47,6 +47,7 @@ interface PayloadState {
   daemonVersion: string;
   daemonProtocolVersion: number | null;
   previousDaemonProtocolVersion?: number | null;
+  failed?: { version: string; outcome: string; at: number };
 }
 
 interface RunResult {
@@ -122,6 +123,7 @@ class DaemonHarness {
   readonly daemonSocket = path.join(this.root, "run/lody-probe.sock");
   readonly missingControlSocket = path.join(this.root, "run/missing-control.sock");
   readonly results: PayloadResult[] = [];
+  readonly requests: string[] = [];
   readonly stateRequestsAt: number[] = [];
   readonly payloadArchive: Archive;
   readonly daemonArchive: Archive;
@@ -221,6 +223,7 @@ class DaemonHarness {
   }
 
   private handleControlPlane(request: IncomingMessage, response: ServerResponse): void {
+    this.requests.push(`${request.method ?? ""} ${request.url ?? ""}`);
     if (request.url === "/healthz") {
       response.writeHead(200);
       response.end();
@@ -413,23 +416,36 @@ describe("blitz-payload daemon activation", () => {
     expect(harness.stateRequestsAt).toHaveLength(4);
   });
 
-  it("rolls back only the daemon when its replacement never answers the probe", async () => {
+  it("rolls payload and daemon back as one unit and suppresses the failed pin", async () => {
     const harness = new DaemonHarness({ activeCounts: [0], failNewDaemonHealth: true });
 
     const result = await apply(harness);
 
-    expect(result.outcome).toBe("rolled-back");
-    expect(result.detail).toContain("daemon health check failed");
-    expect(result.detail).toContain("daemon protocol 7 rolled back; payload kept");
+    expect(result).toMatchObject({
+      version: BAKED_PAYLOAD_VERSION,
+      daemonVersion: BAKED_DAEMON_VERSION,
+      outcome: "rolled-back",
+    });
+    expect(result.detail).toContain("attempted v2; daemon health check failed");
+    expect(result.detail).toContain("previous payload restored");
     expect(readFileSync(path.join(harness.payloadRoot, "current/rootfs/usr/local/bin/tool"), "utf8"))
-      .toBe("new\n");
+      .toBe("old\n");
     expect(harness.currentDaemon()).toBe("baked");
     expect(harness.state()).toMatchObject({
-      current: "v2",
+      current: BAKED_PAYLOAD_VERSION,
       daemonVersion: BAKED_DAEMON_VERSION,
       daemonProtocolVersion: 7,
-      previousDaemonProtocolVersion: 7,
+      failed: { version: "v2", outcome: "rolled-back" },
     });
+
+    const failed = harness.state().failed;
+    const manifestRequests = harness.requests.filter((entry) => entry === "GET /manifest.json");
+    const second = await runUpdater(harness);
+    expect(second.status, second.stderr).toBe(0);
+    expect(harness.requests.filter((entry) => entry === "GET /manifest.json"))
+      .toHaveLength(manifestRequests.length);
+    expect(harness.results.filter((entry) => entry.outcome === "rolled-back")).toHaveLength(1);
+    expect(harness.state().failed).toEqual(failed);
   });
 
   it("treats an absent control socket as idle", async () => {

@@ -32,6 +32,8 @@ invalid.
 Unknown object members are tolerated for forward compatibility. The
 payload-result outcomes are `booted`, `applied`, `rolled-back`, `unsupported`,
 `fetch-failed`, `verify-failed`, `start-failed`, and `up-to-date`.
+Its `version` and `daemonVersion` identify the unit running after the attempt;
+failed attempts keep that identity and name the attempted payload in `detail`.
 
 Producer/control-plane conformance is
 `packages/control-plane/test/box-payload-conformance.test.ts`. Consumer

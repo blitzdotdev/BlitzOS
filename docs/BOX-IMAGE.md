@@ -384,7 +384,9 @@ current deployment pin.
 
 Read fleet state from the authenticated `GET /workspaces/<workspace-id>`
 response. Each `workspace.members[].machine` reports `id`, `payloadVersion`,
-`daemonVersion`, `payloadOutcome`, and `payloadReportedAt`; a null version means
+`daemonVersion`, `payloadOutcome`, and `payloadReportedAt`; the versions name
+what is running after the attempt, while a failure's detail names its target.
+A null version means
 that machine has not reported since the payload channel shipped. Compare each
 `payloadVersion` with `BOX_PAYLOAD_VERSION`, and inspect the outcome/time before
 declaring a rollout complete.
