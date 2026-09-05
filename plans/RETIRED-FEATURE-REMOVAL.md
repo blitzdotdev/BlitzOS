@@ -16,7 +16,8 @@ Status: implemented on 2026-09-05.
 - Keep the R2 binding for box image archives.
 - Purge only keys below `org/` after deployment.
 - Keep dufs and the gateway `/files` surface.
-- Keep `FilesSidebar`, `FileEditor`, file drops, and Lody attachments.
+- Keep the workspace file browser, file drops, and Lody attachments.
+- The browser reads the guest WebDAV surface directly. It never used Drive.
 
 ## Compute
 
