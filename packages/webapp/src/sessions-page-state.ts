@@ -133,7 +133,7 @@ export type AppRoute =
 const HOME: AppRoute = { workspaceId: null, page: 'home' };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|credentials|compute|requests))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|credentials|compute|requests|usage))?\/?$/u);
   if (settings) {
     return {
       workspaceId: null,

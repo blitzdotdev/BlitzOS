@@ -180,7 +180,9 @@ describe('the seat paywall', () => {
     expect(text(view.container)).toContain(canonical.email);
     expect(view.container.querySelector<HTMLInputElement>('[aria-label="Invite link"]')?.value)
       .toContain('one-time');
-    expect(email.value).toBe('');
+    // The row collapses on a settled mint, so the field is gone rather than
+    // blank — this page draws the invite fields only while one is being made.
+    expect(view.container.querySelector('input[type="email"]')).toBeNull();
     expect(listInvites).toHaveBeenCalledOnce();
     await view.unmount();
   });

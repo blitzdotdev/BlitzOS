@@ -67,8 +67,9 @@ export function MembersPanel({
   client: ControlPlaneClient;
   admin: boolean;
   orgName: string;
-  /** Called after the server has removed the caller from the org. The session
-   * is now bound elsewhere, or to no org at all, so the caller reloads. */
+  /** Starts the shell-level leave once this panel has confirmed it. The call,
+   * its loading state and its rollback are the shell's (#205); the panel only
+   * asks the question. */
   onLeft: () => void;
 }) {
   const [members, setMembers] = useState<MemberView[]>([]);
@@ -84,7 +85,6 @@ export function MembersPanel({
   const [refusal, setRefusal] = useState<SeatRefusal | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
-  const [leaving, setLeaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -368,9 +368,9 @@ export function MembersPanel({
           <button
             className="cfg-danger-action"
             type="button"
-            disabled={soleMember || leaving}
+            disabled={soleMember}
             onClick={() => setConfirmLeave(true)}
-          >{leaving ? 'Leaving\u2026' : 'Leave'}</button>
+          >Leave</button>
         </div>
       </section>
       {confirmLeave && (
@@ -382,11 +382,7 @@ export function MembersPanel({
           onCancel={() => setConfirmLeave(false)}
           onConfirm={() => {
             setConfirmLeave(false);
-            setLeaving(true);
-            void client.leaveOrg().then(onLeft).catch((caught: Error) => {
-              setLeaving(false);
-              setError(caught.message);
-            });
+            onLeft();
           }}
         />
       )}
