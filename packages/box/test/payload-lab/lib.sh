@@ -17,6 +17,7 @@ LAB_R2_BUCKET=${LAB_R2_BUCKET:-blitz-thinlab-images}
 LAB_HOST_SSH_PORT=${LAB_HOST_SSH_PORT:-2222}
 LAB_CP_TIMEOUT=${LAB_CP_TIMEOUT:-75}
 LAB_OUTCOME_TIMEOUT=${LAB_OUTCOME_TIMEOUT:-420}
+LAB_PAYLOAD_INTERVAL=${LAB_PAYLOAD_INTERVAL:-300}
 LAB_TURN_TIMEOUT=${LAB_TURN_TIMEOUT:-900}
 LAB_HEALTH_PATH=${LAB_HEALTH_PATH:-/healthz}
 
@@ -465,6 +466,23 @@ wait_payload_any_outcome() {
     sleep 2
   done
   payload_lab_trace "last outcome for $machine_id/$version was $observed"
+  return 1
+}
+
+wait_payload_deferred() {
+  local machine_id=$1 workspace_id=$2 version=$3 timeout=$4 deadline outcome staged
+  deadline=$(( $(date +%s) + timeout ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    outcome=$(machine_json "$machine_id" "$workspace_id" | jq -r '.payloadOutcome // "null"') \
+      || outcome=unavailable
+    staged=$(payload_state "$workspace_id" | jq -r '.deferred.version // "none"') \
+      || staged=unavailable
+    if [ "$outcome" = deferred ] && [ "$staged" = "$version" ]; then
+      return 0
+    fi
+    sleep 2
+  done
+  payload_lab_trace "last deferred state for $machine_id was outcome=$outcome staged=$staged"
   return 1
 }
 

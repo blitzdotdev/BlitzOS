@@ -64,6 +64,7 @@ const manifestValidPaths = [
 const resultValidPaths = [
   "payload-result/valid/applied.json",
   "payload-result/valid/booted.json",
+  "payload-result/valid/deferred.json",
   "payload-result/valid/fetch-failed.json",
   "payload-result/valid/rolled-back.json",
   "payload-result/valid/start-failed.json",
@@ -91,7 +92,7 @@ describe("box-payload v1 fixture conformance", () => {
     }
   });
 
-  it("accepts all eight payload-result outcomes", () => {
+  it("accepts all nine payload-result outcomes", () => {
     const entries = fixtureEntries("payload-result/valid/");
     expect(entries.map(([fixturePath]) => fixturePath)).toEqual(resultValidPaths);
     const outcomes = entries.map(([, source]) =>

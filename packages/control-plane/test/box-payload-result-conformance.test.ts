@@ -102,6 +102,7 @@ describe("box-payload result control-plane conformance", () => {
     expect(fixtureEntries("valid").map(([name]) => name)).toEqual([
       "applied.json",
       "booted.json",
+      "deferred.json",
       "fetch-failed.json",
       "rolled-back.json",
       "start-failed.json",

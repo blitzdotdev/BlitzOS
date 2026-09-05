@@ -71,6 +71,7 @@ export interface BoxPayloadConfig {
 export const BOX_PAYLOAD_OUTCOMES = [
   "booted",
   "applied",
+  "deferred",
   "rolled-back",
   "unsupported",
   "fetch-failed",
@@ -82,8 +83,8 @@ export const BOX_PAYLOAD_OUTCOMES = [
 export type BoxPayloadOutcome = (typeof BOX_PAYLOAD_OUTCOMES)[number];
 
 /** The updater's body for `POST /workspaces/self/payload-result`. Versions
- * identify the running unit after the attempt; failure detail names the pin
- * that was attempted. */
+ * identify the running unit after the attempt; deferred and failure detail
+ * name the pin that is waiting or was attempted. */
 export interface BoxPayloadResultRequest {
   version: string;
   daemonVersion: string;

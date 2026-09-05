@@ -218,11 +218,11 @@ export function addBoxConfigRoutes(
     return context.body(null, 204);
   });
 
-  // The in-box updater's last verdict. Its versions name what is running after
-  // the attempt, never an unverified or rolled-back target; failure detail
-  // names the attempted pin. This is an idempotent projection onto the machine
-  // row: retrying the same report creates nothing and returns the same success,
-  // while refreshing when the plane last heard it.
+  // The in-box updater's last status. Its versions name what is running after
+  // the attempt, never an unverified, deferred, or rolled-back target; detail
+  // names a staged or attempted pin. This is an idempotent projection onto the
+  // machine row: retrying the same report creates nothing and returns the same
+  // success, while refreshing when the plane last heard it.
   router.post("/workspaces/self/payload-result", async (context) => {
     const box = await requireWorkspaceBox(context, runtimeFactory);
     const input = parseBoxPayloadResult(await readJson(context.req.raw, 4 * 1024));

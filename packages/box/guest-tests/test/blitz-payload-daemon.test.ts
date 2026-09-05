@@ -26,6 +26,12 @@ import { afterEach, describe, expect, it } from "vitest";
 const updater = fileURLToPath(
   new URL("../../rootfs/usr/local/libexec/blitz-payload", import.meta.url),
 );
+const deferredFixture = fileURLToPath(
+  new URL(
+    "../../../schema/fixtures/box-payload/payload-result/valid/deferred.json",
+    import.meta.url,
+  ),
+);
 const BAKED_PAYLOAD_VERSION = "baked-payload-v1";
 const BAKED_DAEMON_VERSION = "0.88.1+blitz.3";
 
@@ -47,6 +53,7 @@ interface PayloadState {
   daemonVersion: string;
   daemonProtocolVersion: number | null;
   previousDaemonProtocolVersion?: number | null;
+  deferred?: { version: string; daemonVersion: string; readyAt: number };
   failed?: { version: string; outcome: string; at: number };
 }
 
@@ -129,6 +136,7 @@ class DaemonHarness {
   readonly daemonArchive: Archive;
   readonly options: DaemonOptions;
   origin = "";
+  pinVersion = "v2";
 
   constructor(options: DaemonOptions = {}) {
     this.options = options;
@@ -231,7 +239,7 @@ class DaemonHarness {
     }
     if (request.url === "/workspaces/self/box-config") {
       sendJson(response, 200, {
-        payload: { version: "v2", manifestUrl: `${this.origin}/manifest.json` },
+        payload: { version: this.pinVersion, manifestUrl: `${this.origin}/manifest.json` },
       });
       return;
     }
@@ -399,35 +407,109 @@ describe("blitz-payload daemon activation", () => {
     const result = await apply(harness);
 
     expect(result).toMatchObject({ outcome: "applied", daemonVersion: "daemon-v2" });
-    expect(result.detail).toContain("restarted with 0 sessions running after 0s wait");
+    expect(result.detail).toContain("daemon restarted at idle after");
     expect(result.detail).toContain("daemon protocol 7");
     expect(harness.state()).toMatchObject({ daemonProtocolVersion: 7 });
   });
 
-  it("polls every interval and restarts when a busy session becomes idle", async () => {
+  it("defers across three busy ticks and switches the whole release on the idle tick", async () => {
     const harness = new DaemonHarness({ activeCounts: [1, 1, 1, 0] });
+    await harness.start();
+    // SAFETY: this checked-in fixture is parsed only for the four string fields
+    // asserted immediately below.
+    const fixture = JSON.parse(readFileSync(deferredFixture, "utf8")) as PayloadResult;
+    let readyAt: number | undefined;
 
-    const result = await apply(harness);
-
-    expect(result.outcome).toBe("applied");
-    expect(result.detail).toContain("restarted with 0 sessions running after 0.045s wait");
-    expect(harness.stateRequestsAt).toHaveLength(4);
-    const firstRequestAt = harness.stateRequestsAt[0];
-    const lastRequestAt = harness.stateRequestsAt[3];
-    if (firstRequestAt === undefined || lastRequestAt === undefined) {
-      throw new Error("idle polling did not make four state requests");
+    for (let tick = 0; tick < 3; tick += 1) {
+      const run = await runUpdater(harness, { daemonIdleWaitMs: 60_000 });
+      expect(run.status, run.stderr).toBe(0);
+      const result = harness.results.at(-1);
+      expect(result).toMatchObject({
+        version: fixture.version,
+        daemonVersion: fixture.daemonVersion,
+        outcome: fixture.outcome,
+      });
+      expect(result?.detail).toContain("whole-release activation deferred with 1 active turn");
+      expect(harness.currentDaemon()).toBe("baked");
+      expect(readFileSync(
+        path.join(harness.payloadRoot, "current/rootfs/usr/local/bin/tool"),
+        "utf8",
+      )).toBe("old\n");
+      expect(harness.calls()).toEqual([]);
+      const deferred = harness.state().deferred;
+      expect(deferred).toMatchObject({ version: "v2", daemonVersion: "daemon-v2" });
+      if (readyAt === undefined) readyAt = deferred?.readyAt;
+      else expect(deferred?.readyAt).toBe(readyAt);
     }
-    expect(lastRequestAt - firstRequestAt).toBeGreaterThanOrEqual(35);
+
+    const idleRun = await runUpdater(harness, { daemonIdleWaitMs: 60_000 });
+    expect(idleRun.status, idleRun.stderr).toBe(0);
+    const result = harness.results.at(-1);
+
+    expect(result?.outcome).toBe("applied");
+    expect(result?.detail).toContain("daemon restarted at idle after");
+    expect(harness.currentDaemon()).toBe("daemon-v2");
+    expect(readFileSync(
+      path.join(harness.payloadRoot, "current/rootfs/usr/local/bin/tool"),
+      "utf8",
+    )).toBe("new\n");
+    expect(harness.state().deferred).toBeUndefined();
+    expect(harness.stateRequestsAt).toHaveLength(4);
+    expect(harness.requests.filter((entry) => entry === "GET /payload.tar.gz")).toHaveLength(1);
+    expect(harness.requests.filter((entry) => entry === "GET /daemon.tar.gz")).toHaveLength(1);
   });
 
-  it("restarts with the running-session count when the idle cap expires", async () => {
+  it("forces activation with explicit detail when a busy release passes the cap", async () => {
     const harness = new DaemonHarness({ activeCounts: [2] });
+    await harness.start();
+    const deferredRun = await runUpdater(harness, { daemonIdleWaitMs: 60_000 });
+    expect(deferredRun.status, deferredRun.stderr).toBe(0);
+    expect(harness.results.at(-1)?.outcome).toBe("deferred");
+    expect(harness.currentDaemon()).toBe("baked");
+    const state = harness.state();
+    if (state.deferred === undefined) throw new Error("release was not persisted as deferred");
+    state.deferred.readyAt = Date.now() - 100;
+    writeFileSync(
+      path.join(harness.payloadState, "state.json"),
+      `${JSON.stringify(state)}\n`,
+    );
 
-    const result = await apply(harness, { daemonIdleWaitMs: 45 });
+    const forcedRun = await runUpdater(harness, { daemonIdleWaitMs: 45 });
+    expect(forcedRun.status, forcedRun.stderr).toBe(0);
+    const result = harness.results.at(-1);
 
-    expect(result.outcome).toBe("applied");
-    expect(result.detail).toContain("restarted with 2 sessions running after 0.045s wait");
-    expect(harness.stateRequestsAt).toHaveLength(4);
+    expect(result?.outcome).toBe("applied");
+    expect(result?.detail).toContain("forced daemon restart with 2 active turns");
+    expect(result?.detail).toContain("idle-wait cap reached");
+    expect(result?.detail).toContain("agent_disconnected");
+    expect(forcedRun.elapsedMs).toBeLessThan(1000);
+    expect(harness.currentDaemon()).toBe("daemon-v2");
+    expect(harness.stateRequestsAt).toHaveLength(2);
+  });
+
+  it("drops a deferred release and evaluates a changed pin immediately", async () => {
+    const harness = new DaemonHarness({ activeCounts: [1, 0] });
+    await harness.start();
+    const first = await runUpdater(harness, { daemonIdleWaitMs: 60_000 });
+    expect(first.status, first.stderr).toBe(0);
+    expect(harness.results.at(-1)?.outcome).toBe("deferred");
+    expect(harness.state().deferred?.version).toBe("v2");
+
+    harness.pinVersion = "v3";
+    const changed = await runUpdater(harness, { daemonIdleWaitMs: 60_000 });
+    expect(changed.status, changed.stderr).toBe(0);
+
+    expect(harness.results.at(-1)).toMatchObject({
+      version: BAKED_PAYLOAD_VERSION,
+      daemonVersion: BAKED_DAEMON_VERSION,
+      outcome: "verify-failed",
+    });
+    expect(harness.results.at(-1)?.detail).toContain("attempted v3; manifest version does not match pin");
+    expect(harness.state().deferred).toBeUndefined();
+    expect(harness.currentDaemon()).toBe("baked");
+    expect(harness.calls()).toEqual([]);
+    expect(harness.requests.filter((entry) => entry === "GET /manifest.json")).toHaveLength(2);
+    expect(existsSync(path.join(harness.payloadState, "versions/v2"))).toBe(false);
   });
 
   it("rolls payload and daemon back as one unit and suppresses the failed pin", async () => {
@@ -468,7 +550,7 @@ describe("blitz-payload daemon activation", () => {
     const result = await apply(harness);
 
     expect(result.outcome).toBe("applied");
-    expect(result.detail).toContain("restarted with 0 sessions running after 0s wait");
+    expect(result.detail).toContain("daemon restarted at idle after");
     expect(harness.stateRequestsAt).toEqual([]);
   });
 

@@ -133,6 +133,8 @@ Loop every `BLITZ_PAYLOAD_INTERVAL` (default 300 s; first tick 60 s after boot):
       verify every file sha256 and mode; rename to `versions/<v>/` (atomic).
       Daemon archive only if `daemon.version` differs from the running one.
    c. compute the changed set vs `current`; from `restart`, the services to restart.
+      If activation requires a daemon restart, apply the whole-release idle
+      policy in §3.3 before changing either live symlink.
    d. `ln -sfn` the new version onto `current` via a temp link + `rename(2)`.
    e. restart affected services with `s6-svc -r`; for `lody-daemon` see §3.3.
    f. health: within 60 s the gateway answers `127.0.0.1:7445/healthz` AND (if
@@ -141,9 +143,11 @@ Loop every `BLITZ_PAYLOAD_INTERVAL` (default 300 s; first tick 60 s after boot):
    g. `POST /workspaces/self/payload-result` `{version, daemonVersion, outcome, detail}`;
       both versions name the unit running after the attempt, and a failure
       names the attempted payload version in `detail`
-      with outcome ∈ `booted | applied | rolled-back | unsupported | fetch-failed | verify-failed | start-failed | up-to-date`.
+      with outcome ∈ `booted | applied | deferred | rolled-back | unsupported | fetch-failed | verify-failed | start-failed | up-to-date`.
       Report `booted` on every boot (so the control plane learns the baked
       version); reserve `up-to-date` for a later tick whose pin already runs.
+      `deferred` reports the still-running old versions and names the fully
+      staged target and wait state in `detail`.
 3. Keep `current` and `previous`; delete older `versions/*` and `.staging` leftovers.
 
 Failed target versions are locally rate-limited. `verify-failed`, `rolled-back`,
@@ -169,12 +173,32 @@ idles on baked forever.
 ### 3.3 Daemon in place
 
 Restarting the daemon kills its agent children (stdio; the sandbox `cgroup.kill`s
-their leaves) and the daemon re-dispatches in-flight turns on resume. So:
+their leaves). E4 on the real box disproved the original re-dispatch assumption
+for the daemon version pinned here: restarting a Claude session parked in
+`requestPermission` ended its turn with `agent_disconnected`; daemon resume
+logged `Failed to create session`, and the member had to re-send the turn.
 
-- Prefer an idle moment: ask the daemon over its control socket for the session
-  list (`session-control`, the same door `blitz-lody-bridge` proxies); "idle" =
-  no session in a running turn. Wait up to `BLITZ_PAYLOAD_DAEMON_IDLE_WAIT`
-  (default 10 min), polling; then restart anyway and say so in `detail`.
+Payload and daemon are one compatibility unit. The manifest carries both, and
+payload-owned bridge or gateway code may require the new daemon protocol, so
+"payload now, daemon later" is not accepted. When a verified release requires
+a daemon restart, the updater defers the **whole activation**:
+
+- Download, extract, and verify the payload and changed daemon first, then
+  persist `{version, daemonVersion, readyAt}` without moving either `current`
+  symlink. Report `deferred`, with the old running versions in the version
+  fields, so the control plane can distinguish a waiting box from an
+  up-to-date or failed box. A changed or removed pin drops that deferral and is
+  evaluated immediately.
+- On each normal updater tick, ask the daemon's bounded local `/state` probe
+  once. Lody's `activeSessionCount` covers turns whose status is `running`,
+  `requestPermission`, or `initializing`. Zero activates the whole release on
+  that tick. A failed probe is treated as busy; an absent control socket is
+  treated as idle.
+- Do not block or internally poll the updater loop. If the box stays busy until
+  `BLITZ_PAYLOAD_DAEMON_IDLE_WAIT` has elapsed since `readyAt` (default 4 h),
+  activate and restart anyway. The `applied` detail calls this a forced daemon
+  restart, includes the active-turn count and elapsed deferral, and warns that
+  an in-flight turn may end `agent_disconnected` and need re-sending.
 - The switch is `/opt/blitz/lody/current` + `s6-svc -r lody-daemon` (with the
   watchdog's SIGKILL escalation if the loop is blocked — reuse `restart_daemon`
   from `lody-watchdog`, or call the same sequence).
@@ -183,6 +207,11 @@ their leaves) and the daemon re-dispatches in-flight turns on resume. So:
   publisher records `daemon.protocolVersion` in the manifest; the control plane
   refuses to pin a payload whose value differs from the webapp's constant
   (`vendor/lody/packages/shared/src/local-loro-data-plane.ts`).
+
+Follow-up for Lody upstream, not part of this plan's updater change: determine
+why Claude ACP resume fails with `Failed to create session` after a daemon
+restart and whether it can gain the resume behavior observed from a Codex
+session in the same experiment family.
 
 ### 3.4 What the watchdog, stats and rules become
 
@@ -228,7 +257,7 @@ drive the machine API and ssh into the boxes with the lab key.
 | E1 | script-only payload while a turn is in flight | turn completes; new tab uses new script; outcome `applied`; nothing restarted but the services whose files changed |
 | E2 | gateway binary changed | websockets reconnect < 10 s; tmux sessions intact; turn unaffected |
 | E3 | daemon bundle changed, sessions idle | restart at once; sessions resume; no turn lost |
-| E4 | daemon bundle changed, turn in flight | waits for idle up to the cap, then restarts; the turn is re-dispatched; measured gap reported |
+| E4 | daemon bundle changed, turn in flight | fully stages but reports `deferred`; neither payload nor daemon switches while the turn runs; after the turn completes, both switch within one updater tick, the daemon restarts, and the session remains intact. Forced-cap behavior is guest-tested because the live box env knob cannot be changed. Measured prior behavior: forcing a Claude restart mid-turn ended it `agent_disconnected` and required a member re-send |
 | E5 | archive sha mismatch / file sha mismatch / bad manifest | `verify-failed`; `current` unchanged; nothing restarted |
 | E6 | gateway that crashes on start | `rolled-back` within 90 s; previous version serving; terminals reconnect |
 | E7 | VM reset mid-apply (Hetzner `reset`) | comes up on old or new, never half; state.json consistent; reports on boot |

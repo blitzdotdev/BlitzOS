@@ -63,6 +63,7 @@ export interface BoxPayloadConfig {
 export const BOX_PAYLOAD_OUTCOMES = [
   "booted",
   "applied",
+  "deferred",
   "rolled-back",
   "unsupported",
   "fetch-failed",

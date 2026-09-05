@@ -38,12 +38,14 @@ Required for a real run:
 `LAB_WORKSPACES` is a whitespace-separated list consumed by `run-all.sh`.
 Each E script also accepts `<workspace-id> [machine-id]`. E14 requires two live
 member machines in its workspace. E1-E4 start and track their own Claude turn
-through `session-driver/drive.mjs`. E1, E2, and E4 hold that exact turn at its
-own permission request until the payload assertion is complete, then allow it
-and require its completion marker; this is stable for a ten-minute idle wait
-where an agent-launched `sleep` may be backgrounded. Their default prompts use
-a harmless, self-removing file under `/tmp`, because read-only shell commands
-can run in Manual mode without asking. E2 also creates one
+through `session-driver/drive.mjs`. E1 and E2 hold that exact turn at its own
+permission request until the payload assertion is complete, then allow it and
+require its completion marker. E4 holds its turn only until the updater reports
+the daemon-changing release as `deferred`, then allows a `sleep 60` command and
+asserts that neither half switches while it runs; the idle tick after completion
+must apply both halves while preserving the completed session. Their default
+prompts use a harmless, self-removing file under `/tmp` so Manual mode reliably
+requests permission before the experiment releases its turn. E2 also creates one
 uniquely named tmux session, puts its pane in the same `user/tab-*` cgroup placement as
 `blitz-term`, and removes only that session on exit. If the box image cannot
 create the unprivileged cgroup leaf, E2 records and uses the permitted plain
@@ -71,19 +73,21 @@ E1-E4 do not force an updater transaction. After a pin, they wait for the
 box's supervised payload service, whose default poll interval is five minutes.
 `LAB_OUTCOME_TIMEOUT` therefore defaults to 420 seconds. Session waits pass
 `--timeout "$LAB_TURN_TIMEOUT"` to the driver; that value defaults to 900
-seconds, long enough for E4's ten-minute idle cap plus restart and resync. E4
-uses separate 420-second windows to observe the scheduled poll and the final
-reported outcome around the idle wait.
+seconds. E4 uses separate windows to observe the scheduled deferred report and
+the first idle tick after its 60-second turn.
 
-Useful tuning variables are `LAB_OUTCOME_TIMEOUT`, `LAB_DAEMON_IDLE_CAP`,
+Useful tuning variables are `LAB_OUTCOME_TIMEOUT`, `LAB_PAYLOAD_INTERVAL`,
 `LAB_TURN_TIMEOUT`, `LAB_TURN_AGENT`, `LAB_TURN_PROJECT`, `LAB_E1_PROMPT`,
 `LAB_E2_PROMPT`, `LAB_E3_PROMPT`, `LAB_E4_PROMPT`, their matching
 `LAB_E*_EXPECTED_TEXT` values, `LAB_E13_COMMAND`, and `LAB_HEALTH_PATH`.
 Experiments that use the control-plane proxy default `LAB_HEALTH_PATH` to
 `/healthz`; changing it to `/diag` is useful only while bringing up a
 deployment that has not exposed the specified health path.
-`LAB_DAEMON_IDLE_CAP` must equal the box's
-`BLITZ_PAYLOAD_DAEMON_IDLE_WAIT`; it defaults to the design's 600 seconds.
+`LAB_PAYLOAD_INTERVAL` is the live box's configured updater interval and
+defaults to the design's 300 seconds; E4 allows that interval plus restart
+slack after the turn becomes idle. The forced four-hour cap is covered by the
+real-script guest test because the live box's
+`BLITZ_PAYLOAD_DAEMON_IDLE_WAIT` cannot be changed by this harness.
 
 The headless driver uses one persistent SSH stream-local forward to the box's
 existing Lody bridge. `open` prints the daemon's local user, workspace, and

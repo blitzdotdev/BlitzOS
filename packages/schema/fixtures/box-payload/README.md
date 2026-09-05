@@ -30,10 +30,11 @@ the neighboring manifest corpora classify parser input only as valid or
 invalid.
 
 Unknown object members are tolerated for forward compatibility. The
-payload-result outcomes are `booted`, `applied`, `rolled-back`, `unsupported`,
-`fetch-failed`, `verify-failed`, `start-failed`, and `up-to-date`.
-Its `version` and `daemonVersion` identify the unit running after the attempt;
-failed attempts keep that identity and name the attempted payload in `detail`.
+payload-result outcomes are `booted`, `applied`, `deferred`, `rolled-back`,
+`unsupported`, `fetch-failed`, `verify-failed`, `start-failed`, and
+`up-to-date`. Its `version` and `daemonVersion` identify the unit currently
+running; a `deferred` report therefore keeps the old identity and names the
+fully staged pin in `detail`, as failed attempts do.
 
 Producer/control-plane conformance is
 `packages/control-plane/test/box-payload-conformance.test.ts`. Consumer

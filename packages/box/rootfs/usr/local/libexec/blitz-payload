@@ -12,8 +12,11 @@
 // of these paths is payload-owned; the gateway deliberately remains payload.
 //
 // DAEMON IDLE DOOR. The updater reads `activeSessionCount` from the daemon's
-// bounded local `/state` probe. An absent control socket is idle; a failed
-// probe remains busy until the idle cap rather than guessing from CPU use.
+// bounded local `/state` probe. Lody holds that count above zero for running,
+// requestPermission, and initializing turns. An absent control socket is idle;
+// a failed probe remains busy until the idle cap rather than guessing from CPU
+// use. Busy releases stay fully staged and are reconsidered on the next updater
+// tick; this process never sleeps waiting for a turn to end.
 
 const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
@@ -277,8 +280,7 @@ function settings() {
       path.join(stateRoot, 'lody/run/lody-oss-control.sock'),
     ),
     daemonIdleWaitMs: configured('daemonIdleWaitMs',
-      positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_WAIT', 600)),
-    daemonIdlePollMs: configured('daemonIdlePollMs', 15_000),
+      positiveSeconds('BLITZ_PAYLOAD_DAEMON_IDLE_WAIT', 4 * 60 * 60)),
     daemonIdleProbeTimeoutMs: configured('daemonIdleProbeTimeoutMs', 2000),
     daemonKillGraceMs: configured('daemonKillGraceMs', 30_000),
     daemonKillPollMs: configured('daemonKillPollMs', 5000),
@@ -1036,21 +1038,6 @@ async function daemonActiveSessionCount(config) {
   }
 }
 
-async function waitForDaemonIdle(config) {
-  let waitedMs = 0;
-  let runningSessions = await daemonActiveSessionCount(config);
-  while (runningSessions > 0 && waitedMs < config.daemonIdleWaitMs) {
-    const pause = Math.min(config.daemonIdlePollMs, config.daemonIdleWaitMs - waitedMs);
-    await sleep(pause);
-    waitedMs += pause;
-    runningSessions = await daemonActiveSessionCount(config);
-  }
-  return {
-    runningSessions,
-    detail: `restarted with ${runningSessions} sessions running after ${waitedMs / 1000}s wait`,
-  };
-}
-
 async function daemonPid(config) {
   try {
     const output = await runCommand(
@@ -1065,17 +1052,14 @@ async function daemonPid(config) {
   }
 }
 
-async function restartLodyDaemon(config, waitForIdle) {
-  const idle = waitForIdle
-    ? await waitForDaemonIdle(config)
-    : { runningSessions: 0, detail: 'restarted without an idle wait during rollback' };
+async function restartLodyDaemon(config, activationDetail) {
   const before = await daemonPid(config);
   await restartOrdinaryService('lody-daemon', config);
-  if (before === null) return idle.detail;
+  if (before === null) return activationDetail;
   let waitedMs = 0;
   while (waitedMs < config.daemonKillGraceMs) {
     const after = await daemonPid(config);
-    if (after === null || after !== before) return idle.detail;
+    if (after === null || after !== before) return activationDetail;
     const pause = Math.min(config.daemonKillPollMs, config.daemonKillGraceMs - waitedMs);
     await sleep(pause);
     waitedMs += pause;
@@ -1086,14 +1070,17 @@ async function restartLodyDaemon(config, waitForIdle) {
     ['-k', path.join(config.serviceRoot, 'lody-daemon')],
     config.requestTimeoutMs,
   );
-  return idle.detail;
+  return activationDetail;
 }
 
-async function restartServices(services, config, waitForDaemonIdleBeforeRestart = true) {
+async function restartServices(services, config, daemonActivationDetail = null) {
   let daemonDetail = null;
   for (const service of services) {
     if (service === 'lody-daemon') {
-      daemonDetail = await restartLodyDaemon(config, waitForDaemonIdleBeforeRestart);
+      daemonDetail = await restartLodyDaemon(
+        config,
+        daemonActivationDetail ?? 'restarted without an idle check during rollback',
+      );
     } else await restartOrdinaryService(service, config);
   }
   return daemonDetail;
@@ -1213,6 +1200,77 @@ function quietLogRecord(value) {
   return value;
 }
 
+function deferredRelease(value) {
+  if (
+    value === null
+    || typeof value !== 'object'
+    || typeof value.version !== 'string'
+    || typeof value.daemonVersion !== 'string'
+    || !Number.isSafeInteger(value.readyAt)
+    || value.readyAt < 0
+  ) return null;
+  return value;
+}
+
+function durationSeconds(milliseconds) {
+  return Number((milliseconds / 1000).toFixed(3)).toString();
+}
+
+async function prepareDaemonActivation(config, state, payloadVersion, daemonVersion) {
+  const existing = deferredRelease(state.deferred);
+  let next = state;
+  if (
+    existing === null
+    || existing.version !== payloadVersion
+    || existing.daemonVersion !== daemonVersion
+  ) {
+    next = {
+      ...state,
+      deferred: { version: payloadVersion, daemonVersion, readyAt: Date.now() },
+    };
+    await writeState(config, next);
+  }
+  const ready = deferredRelease(next.deferred);
+  if (ready === null) throw new Error('deferred release state was not persisted');
+  const activeTurns = await daemonActiveSessionCount(config);
+  const elapsedMs = Math.max(0, Date.now() - ready.readyAt);
+  const elapsed = durationSeconds(elapsedMs);
+  if (activeTurns > 0 && elapsedMs < config.daemonIdleWaitMs) {
+    const noun = activeTurns === 1 ? 'turn' : 'turns';
+    return {
+      state: next,
+      deferred: true,
+      detail: `whole-release activation deferred with ${activeTurns} active ${noun}; `
+        + `ready for ${elapsed}s; idle-wait cap ${durationSeconds(config.daemonIdleWaitMs)}s`,
+    };
+  }
+  if (activeTurns > 0) {
+    const noun = activeTurns === 1 ? 'turn' : 'turns';
+    return {
+      state: next,
+      deferred: false,
+      detail: `forced daemon restart with ${activeTurns} active ${noun} after ${elapsed}s `
+        + 'deferral; idle-wait cap reached; in-flight turns may end agent_disconnected '
+        + 'and must be re-sent',
+    };
+  }
+  return {
+    state: next,
+    deferred: false,
+    detail: `daemon restarted at idle after ${elapsed}s deferral`,
+  };
+}
+
+async function reconcileDeferredPin(config, state, pin) {
+  const deferred = deferredRelease(state.deferred);
+  if (deferred === null || (pin !== null && pin.version === deferred.version)) return state;
+  const next = { ...state };
+  delete next.deferred;
+  await writeState(config, next);
+  log(`dropped deferred ${deferred.version}: pin is ${pin === null ? 'none' : pin.version}`);
+  return next;
+}
+
 async function reconcileFailedPin(config, state, pin) {
   const failed = failedRelease(state);
   if (
@@ -1261,6 +1319,28 @@ async function applyPayload(pin, manifest, config, initialState) {
 
   const changed = await changedPayloadPaths(state, manifest);
   const services = servicesToRestart(manifest, changed, daemonChanged);
+  let daemonActivationDetail = null;
+  if (services.includes('lody-daemon')) {
+    const decision = await prepareDaemonActivation(
+      config,
+      state,
+      manifest.version,
+      daemonChanged ? manifest.daemon.version : state.daemonVersion,
+    );
+    state = decision.state;
+    if (decision.deferred) {
+      return recordOutcome(
+        config,
+        state,
+        'deferred',
+        decision.detail,
+        pin.version,
+      );
+    }
+    daemonActivationDetail = decision.detail;
+    state = { ...state };
+    delete state.deferred;
+  }
   try {
     state = await switchRelease(
       config,
@@ -1290,7 +1370,7 @@ async function applyPayload(pin, manifest, config, initialState) {
   let daemonRestartDetail = null;
   const daemonRestarted = services.includes('lody-daemon');
   try {
-    daemonRestartDetail = await restartServices(services, config);
+    daemonRestartDetail = await restartServices(services, config, daemonActivationDetail);
     testKillAt(config, 'before-health');
   } catch (error) {
     activationFailure = `service restart failed: ${errorMessage(error)}`;
@@ -1325,7 +1405,7 @@ async function applyPayload(pin, manifest, config, initialState) {
 
   try {
     state = await restorePendingRelease(config, state);
-    await restartServices(services, config, false);
+    await restartServices(services, config);
     const rollbackHealth = await waitForHealth(daemonRestarted, config);
     if (!rollbackHealth.gatewayHealthy || !rollbackHealth.daemonHealthy) {
       throw new Error('previous release health check failed');
@@ -1350,7 +1430,8 @@ async function applyPayload(pin, manifest, config, initialState) {
 }
 
 async function garbageCollect(config, state) {
-  const payloadKeep = new Set([state.current, state.previous].filter((item) =>
+  const deferred = deferredRelease(state.deferred);
+  const payloadKeep = new Set([state.current, state.previous, deferred?.version].filter((item) =>
     typeof item === 'string'));
   const versionsRoot = path.join(config.payloadState, 'versions');
   for (const entry of await fsp.readdir(versionsRoot, { withFileTypes: true })) {
@@ -1363,6 +1444,7 @@ async function garbageCollect(config, state) {
     'current',
     state.daemonVersion,
     state.previousDaemonVersion,
+    deferred?.daemonVersion,
   ].filter((item) => typeof item === 'string'));
   for (const entry of await fsp.readdir(config.lodyRoot, { withFileTypes: true })) {
     if (!daemonKeep.has(entry.name)) {
@@ -1445,6 +1527,7 @@ async function tick(config) {
       return;
     }
   }
+  state = await reconcileDeferredPin(config, state, pin);
   state = await reconcileFailedPin(config, state, pin);
   if (pin === null) {
     await garbageCollect(config, state);
