@@ -1,5 +1,5 @@
 {
-  "anti-slop/no-unknown-parameters": 12,
+  "anti-slop/no-unknown-parameters": 11,
   "anti-slop/no-runtime-typeof": 21,
   "anti-slop/no-unsafe-dictionary-type": 8,
   "anti-slop/no-unknown-returns": 2,

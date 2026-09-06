@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 /** Drives the real `blitz-credential-refresh` one-shot with only blitz-cred
  * replaced. The stand-in records its argv, proving the script delegates token
- * validity and rotation to the broker instead of growing a second refresh
+ * validity and rotation to blitz-cred instead of growing a second refresh
  * implementation. */
 
 const scriptPath = fileURLToPath(

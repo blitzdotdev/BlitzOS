@@ -29,7 +29,7 @@ const runCode = runScript
 describe("remote-control s6 service", () => {
   it("is a longrun registered in the user bundle", () => {
     expect(read("type").trim()).toBe("longrun");
-    expect(read("dependencies.d/register")).toBeDefined();
+    expect(read("dependencies.d/init-state")).toBeDefined();
     const bundleEntry = fileURLToPath(
       new URL("../user/contents.d/remote-control", serviceDirectory),
     );
@@ -56,7 +56,7 @@ describe("remote-control s6 service", () => {
 
   it("bypasses the PATH shim and strips injected tokens", () => {
     // Remote Control rejects CLAUDE_CODE_OAUTH_TOKEN outright: "Long-lived
-    // tokens are limited to inference-only". /usr/local/bin/claude injects it.
+    // tokens are limited to inference-only". Remove any supplied value.
     expect(runCode).toMatch(/\/opt\/blitz\/npm\/bin\/claude rc/u);
     expect(runCode).not.toMatch(/\/usr\/local\/bin\/claude/u);
     for (const variable of [

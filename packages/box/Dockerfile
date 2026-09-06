@@ -3,10 +3,10 @@
 FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm@sha256:53eeac89074db483fdf0ab3be1df32bf6e47562263d2d0d6baa7f26acb4957dd AS cred-build
 
 ARG TARGETARCH
-WORKDIR /src/packages/broker
-COPY packages/broker/go.mod ./
-COPY packages/broker/cmd/blitz-cred ./cmd/blitz-cred
-COPY packages/broker/internal ./internal
+WORKDIR /src/packages/box/credential-helper
+COPY packages/box/credential-helper/go.mod ./
+COPY packages/box/credential-helper/cmd/blitz-cred ./cmd/blitz-cred
+COPY packages/box/credential-helper/internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -buildvcs=false -trimpath -ldflags="-s -w" -o /out/blitz-cred ./cmd/blitz-cred
 
 FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm@sha256:53eeac89074db483fdf0ab3be1df32bf6e47562263d2d0d6baa7f26acb4957dd AS gateway-build
@@ -194,11 +194,9 @@ RUN set -eux; \
     ln -s /workspace /srv/blitz-files/workspace; \
     chown -R blitz:blitz /opt/blitz/npm
 
-# /usr/local/bin comes FIRST, ahead of the npm prefix, so the PATH shims at
-# /usr/local/bin/claude and /usr/local/bin/codex win over the real binaries they
-# exec — and so a copy a member installs into their own writable prefix cannot
-# shadow them. That shadowing is the single most common way a terminal ends up
-# signed out while the same box holds a valid credential.
+# /usr/local/bin comes first, so the stable Claude and Codex entry points win.
+# The Codex shim selects native login paths.
+# The Claude shim starts the native CLI without changing authentication.
 #
 # THE VENDOR CLIs UPDATE THEMSELVES, and that is the point. A new Anthropic
 # model reaches the Lody composer only when the `claude` binary is new enough to
@@ -206,7 +204,7 @@ RUN set -eux; \
 # (docs/LODY-MODELS.md). Holding the CLI at a build-time version therefore held
 # the model list at build time too, and made a box-image rebake the delivery
 # mechanism for models. It no longer is: `DISABLE_AUTOUPDATER` is gone from the
-# image, the shims, the profile and the broker, and codex's shim now leaves its
+# image, the shims, and the profile. Codex's shim now leaves its
 # startup update check on.
 #
 # What still protects the shims is the PATH order above, not a pin: an update

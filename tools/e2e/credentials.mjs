@@ -487,7 +487,7 @@ try {
   await runStep("A", "build-box-cli", async () => {
     mkdirSync(workDir, { recursive: true, mode: 0o700 });
     const built = spawnSync("go", ["build", "-o", cliPath, "./cmd/blitz-cred"], {
-      cwd: join(repoRoot, "packages/broker"),
+      cwd: join(repoRoot, "packages/box/credential-helper"),
       encoding: "utf8",
       timeout: 180_000,
       env: childEnvironment({ GOOS: "linux", GOARCH: "amd64" }),

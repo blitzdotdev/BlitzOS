@@ -368,7 +368,7 @@ INOTIFY`;
     expect(userData).not.toContain("term-3");
   });
 
-  it("pokes registration after both enrollment files are installed with a bounded logged best-effort command", () => {
+  it("does not invoke removed credential helper verbs after provisioning", () => {
     const userData = registryUserData();
 
     const credential = userData.indexOf(
@@ -382,51 +382,15 @@ INOTIFY`;
       "chmod 0644 /var/lib/blitz/origin",
       origin,
     );
-    const registerStart = userData.indexOf(
-      'echo "blitz bootstrap: credential registration poke start outer_timeout_seconds=40 inner_timeout_seconds=30"',
-      originMode,
-    );
-    const outerTimeout = userData.indexOf(
-      "timeout --foreground --kill-after=5s 40s",
-      registerStart,
-    );
-    const dockerExec = userData.indexOf("docker exec", outerTimeout);
-    const containerUser = userData.indexOf("--user 1000:1000", dockerExec);
-    const homeEnv = userData.indexOf(
-      "--env HOME=/var/lib/blitz/home",
-      containerUser,
-    );
-    const userEnv = userData.indexOf("--env USER=blitz", homeEnv);
-    const container = userData.indexOf("blitz-box", userEnv);
-    const innerTimeout = userData.indexOf(
-      "timeout --foreground --kill-after=5s 30s",
-      container,
-    );
-    const register = userData.indexOf("blitz-cred register", innerTimeout);
     const completed = userData.indexOf('echo "blitz bootstrap completed"');
-    const registerBlock = userData.slice(registerStart, completed);
 
     expect(credential).toBeGreaterThan(-1);
     expect(origin).toBeGreaterThan(credential);
     expect(originMode).toBeGreaterThan(origin);
-    expect(registerStart).toBeGreaterThan(originMode);
-    expect(outerTimeout).toBeGreaterThan(registerStart);
-    expect(dockerExec).toBeGreaterThan(outerTimeout);
-    expect(containerUser).toBeGreaterThan(dockerExec);
-    expect(homeEnv).toBeGreaterThan(containerUser);
-    expect(userEnv).toBeGreaterThan(homeEnv);
-    expect(container).toBeGreaterThan(userEnv);
-    expect(innerTimeout).toBeGreaterThan(container);
-    expect(register).toBeGreaterThan(innerTimeout);
-    expect(completed).toBeGreaterThan(register);
-    expect(registerBlock).toContain(
-      "credential registration poke",
-    );
-    expect(registerBlock).toContain(
-      "continuing bootstrap because registration poke is best-effort",
-    );
-    expect(registerBlock).not.toContain("watch will retry");
-    expect(userData.slice(register, completed)).toMatch(/\|\|[\s\S]*true/u);
+    expect(completed).toBeGreaterThan(originMode);
+    expect(userData).not.toContain("blitz-cred register");
+    expect(userData).not.toContain("blitz-cred token");
+    expect(userData).not.toContain("blitz-cred watch");
   });
 
   // ---- box update path (blitz-box-run + host updater) ----
@@ -453,7 +417,7 @@ INOTIFY`;
     expect(userData).toContain("box_image=${1:?usage: blitz-box-run <image-ref>}");
   });
 
-  it("installs the host-side updater with its timer after enrollment lands", () => {
+  it("installs the host-side updater after machine credentials land", () => {
     const userData = registryUserData();
 
     const originInstall = userData.indexOf(
@@ -463,13 +427,13 @@ INOTIFY`;
     const service = userData.indexOf("cat >/etc/systemd/system/blitz-box-update.service", updater);
     const timer = userData.indexOf("cat >/etc/systemd/system/blitz-box-update.timer", service);
     const enable = userData.indexOf("systemctl enable --now blitz-box-update.timer", timer);
-    const poke = userData.indexOf("credential registration poke start", enable);
+    const completed = userData.indexOf('echo "blitz bootstrap completed"', enable);
     expect(originInstall).toBeGreaterThan(-1);
     expect(updater).toBeGreaterThan(originInstall);
     expect(service).toBeGreaterThan(updater);
     expect(timer).toBeGreaterThan(service);
     expect(enable).toBeGreaterThan(timer);
-    expect(poke).toBeGreaterThan(enable);
+    expect(completed).toBeGreaterThan(enable);
     expect(userData).toContain("OnUnitActiveSec=5min");
     expect(userData).toContain('"$current_origin/workspaces/self/box-config"');
     expect(userData).toContain("/workspaces/self/box-update-result");
@@ -536,7 +500,7 @@ INOTIFY`;
     );
   });
 
-  it("persists exactly the three broker credential fields", () => {
+  it("persists exactly the three machine credential fields", () => {
     const userData = registryUserData();
     const projection = userData.match(
       /credential = \{\n(?<fields>(?:    "[^"]+": response\["[^"]+"\],\n)+)\}/u,

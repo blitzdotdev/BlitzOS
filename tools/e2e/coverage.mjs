@@ -17,7 +17,6 @@ const SELECTABLE_SUITE_NAMES = Object.freeze([
   "quota-seam",
   "volumes",
   "destroy-while-creating",
-  "broker-best-effort",
 ]);
 const SUITE_ENVIRONMENT_VARIABLE = "COVERAGE_SUITE";
 
@@ -146,16 +145,6 @@ const details = {
   quota: null,
   volumePersistence: null,
   destroyWhileCreating: null,
-  broker: {
-    build: "not attempted",
-    container: "not created",
-    enrollment: "not attempted",
-    approvalStatus: null,
-    stateProof: null,
-    deregistration: "not attempted",
-    transcript: [],
-    gap: null,
-  },
   teardown: null,
 };
 
@@ -683,239 +672,6 @@ function processError(result) {
   return output.length > 0 ? output : `exit=${result.status ?? "unknown"}; signal=${result.signal ?? "none"}`;
 }
 
-async function brokerEnrollment(containerName, advertisedPort) {
-  const child = spawn(
-    "docker",
-    [
-      "exec",
-      containerName,
-      "blitz-broker",
-      "enroll",
-      "--origin",
-      cpUrl,
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(advertisedPort),
-    ],
-    { cwd: repoRoot, env: dockerEnvironment(), stdio: ["ignore", "pipe", "pipe"] },
-  );
-  let stdout = "";
-  let stderr = "";
-  let instructionsResolved = false;
-  let resolveInstructions;
-  const instructions = new Promise((resolveValue) => { resolveInstructions = resolveValue; });
-  const inspectInstructions = () => {
-    if (instructionsResolved) return;
-    const lines = stdout.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
-    const verificationUri = lines.find((line) => /^https?:\/\//u.test(line));
-    const userCode = lines.find((line) => /^[A-F0-9]{4}-[A-F0-9]{4}$/u.test(line));
-    if (verificationUri !== undefined && userCode !== undefined) {
-      instructionsResolved = true;
-      resolveInstructions({ verificationUri, userCode });
-    }
-  };
-  child.stdout.on("data", (chunk) => {
-    stdout = appendCapped(stdout, chunk);
-    inspectInstructions();
-  });
-  child.stderr.on("data", (chunk) => { stderr = appendCapped(stderr, chunk); });
-  const closed = new Promise((resolveClose) => {
-    child.once("error", (error) => resolveClose({ status: null, signal: null, error }));
-    child.once("close", (status, signal) => resolveClose({ status, signal, error: null }));
-  });
-  const first = await Promise.race([
-    instructions.then((value) => ({ kind: "instructions", value })),
-    closed.then((value) => ({ kind: "closed", value })),
-    new Promise((resolveTimeout) => {
-      const timer = setTimeout(() => resolveTimeout({ kind: "timeout" }), 60_000);
-      instructions.finally(() => clearTimeout(timer));
-      closed.finally(() => clearTimeout(timer));
-    }),
-  ]);
-  let approvalStatus = null;
-  let verificationUri = null;
-  if (first.kind === "instructions") {
-    verificationUri = first.value.verificationUri;
-    const expectedUri = `${cpUrl}/oauth/device/approve`;
-    assert(verificationUri === expectedUri, `broker returned unexpected verification URI ${verificationUri}`);
-    const { response, body } = await controlPlane("/oauth/device/approve", {
-      method: "POST",
-      body: JSON.stringify({ user_code: first.value.userCode }),
-    });
-    approvalStatus = response.status;
-    if (response.status !== 204) {
-      child.kill("SIGTERM");
-      throw new Error(`POST /oauth/device/approve HTTP ${response.status}; expected 204${apiError(body)}`);
-    }
-  } else if (first.kind === "timeout") {
-    child.kill("SIGTERM");
-    throw new Error("broker enroll emitted no device instructions within 60s");
-  }
-  let result;
-  if (first.kind === "closed") {
-    result = first.value;
-  } else {
-    let closeTimer;
-    result = await Promise.race([
-      closed.finally(() => clearTimeout(closeTimer)),
-      new Promise((resolveTimeout) => {
-        closeTimer = setTimeout(() => {
-          child.kill("SIGTERM");
-          resolveTimeout({ status: null, signal: "timeout", error: null });
-        }, 120_000);
-      }),
-    ]);
-  }
-  return { ...result, stdout, stderr, approvalStatus, verificationUri };
-}
-
-async function deregisterBroker(containerName) {
-  const script = String.raw`
-const { readFile } = await import("node:fs/promises");
-const credential = JSON.parse(await readFile("/var/lib/blitz-broker/box-credential.json", "utf8"));
-const response = await fetch(process.argv[1] + "/boxes/" + encodeURIComponent(credential.box_id) + "/broker", {
-  method: "DELETE",
-  headers: { Authorization: "Bearer " + credential.access_token },
-});
-console.log("HTTP " + response.status);
-if (response.status !== 204) process.exit(1);
-`;
-  return runCommand(
-    "docker",
-    ["exec", containerName, "node", "--input-type=module", "--eval", script, cpUrl],
-    { env: dockerEnvironment(), timeoutMs: 30_000 },
-  );
-}
-
-async function runBrokerSuite() {
-  const image = `blitz-broker:coverage-${runToken}`;
-  const containerName = `blitz-coverage-broker-${runToken}`;
-  const volumeName = `blitz-coverage-broker-state-${runToken}`;
-  let containerCreated = false;
-  let volumeCreated = false;
-  let enrolled = false;
-  let primaryError = null;
-  try {
-    console.log(`EVIDENCE broker build image=${image}; Dockerfile=packages/broker/Dockerfile`);
-    const build = await runCommand(
-      "docker",
-      ["build", "--progress=plain", "--file", "packages/broker/Dockerfile", "--tag", image, "packages/broker"],
-      { env: dockerEnvironment(), timeoutMs: 1_200_000, heartbeatLabel: "broker build running" },
-    );
-    if (build.status !== 0) {
-      details.broker.gap = `local image build failed: ${processError(build)}`;
-      throw new Error(details.broker.gap);
-    }
-    details.broker.build = `PASS in ${Math.round(build.durationMs / 1_000)}s`;
-
-    const volumeCreate = await runCommand(
-      "docker",
-      ["volume", "create", "--label", `blitz.coverage.run=${runLabel}`, volumeName],
-      { env: dockerEnvironment(), timeoutMs: 30_000 },
-    );
-    assert(volumeCreate.status === 0, `docker volume create failed: ${processError(volumeCreate)}`);
-    volumeCreated = true;
-
-    const run = await runCommand(
-      "docker",
-      [
-        "run",
-        "--detach",
-        "--name",
-        containerName,
-        "--label",
-        `blitz.coverage.run=${runLabel}`,
-        "--publish",
-        "127.0.0.1::22",
-        "--volume",
-        `${volumeName}:/var/lib/blitz-broker`,
-        image,
-      ],
-      { env: dockerEnvironment(), timeoutMs: 60_000 },
-    );
-    assert(run.status === 0, `docker run failed: ${processError(run)}`);
-    containerCreated = true;
-    details.broker.container = "PASS running with labeled state volume";
-    await sleep(2_000);
-    const portResult = await runCommand(
-      "docker",
-      ["port", containerName, "22/tcp"],
-      { env: dockerEnvironment(), timeoutMs: 30_000 },
-    );
-    assert(portResult.status === 0, `docker port failed: ${processError(portResult)}`);
-    const portMatch = portResult.stdout.trim().match(/:(\d+)$/u);
-    assert(portMatch !== null, `docker port returned an invalid mapping: ${redact(portResult.stdout)}`);
-
-    const enrollment = await brokerEnrollment(containerName, Number(portMatch[1]));
-    details.broker.approvalStatus = enrollment.approvalStatus;
-    details.broker.transcript = [
-      ...enrollment.stdout.split(/\r?\n/u),
-      ...enrollment.stderr.split(/\r?\n/u).map((line) => (line === "" ? "" : `stderr: ${line}`)),
-      `exit=${enrollment.status ?? "null"}; signal=${enrollment.signal ?? "none"}`,
-    ].filter(Boolean).map((line) => redact(line, 1_000));
-    if (enrollment.status !== 0) {
-      const reason = redact(enrollment.stderr || enrollment.stdout, 2_000).replace(/\s+/gu, " ");
-      details.broker.gap = `enrollment stopped after device authorization${enrollment.approvalStatus === 204 ? " and approval" : ""}: ${reason || `exit=${enrollment.status}`}`;
-      throw new Error(details.broker.gap);
-    }
-    enrolled = true;
-    details.broker.enrollment = "PASS device authorization, operator approval, token exchange, and PUT /boxes/:id/broker";
-
-    const state = await runCommand(
-      "docker",
-      [
-        "exec",
-        containerName,
-        "sh",
-        "-c",
-        "test -s /var/lib/blitz-broker/origin && test -s /var/lib/blitz-broker/box-credential.json && stat -c 'credential_mode=%a credential_bytes=%s' /var/lib/blitz-broker/box-credential.json",
-      ],
-      { env: dockerEnvironment(), timeoutMs: 30_000 },
-    );
-    assert(state.status === 0, `broker state proof failed: ${processError(state)}`);
-    assert(/^credential_mode=600 credential_bytes=\d+$/u.test(state.stdout.trim()), `unexpected credential proof: ${redact(state.stdout)}`);
-    details.broker.stateProof = state.stdout.trim();
-    details.broker.gap = null;
-    return `image built; container ran; enroll exit=0; approval HTTP 204; ${state.stdout.trim()}; registry endpoint accepted broker`;
-  } catch (error) {
-    primaryError = error;
-    if (details.broker.gap === null) details.broker.gap = shortError(error);
-    throw error;
-  } finally {
-    const cleanupErrors = [];
-    if (enrolled && containerCreated) {
-      const deregister = await deregisterBroker(containerName);
-      if (deregister.status === 0 && deregister.stdout.trim() === "HTTP 204") {
-        details.broker.deregistration = "PASS DELETE /boxes/:id/broker HTTP 204";
-      } else {
-        details.broker.deregistration = `FAIL ${processError(deregister)}`;
-        cleanupErrors.push(`broker deregistration failed: ${processError(deregister)}`);
-      }
-    }
-    if (containerCreated) {
-      const removed = await runCommand("docker", ["rm", "--force", containerName], {
-        env: dockerEnvironment(),
-        timeoutMs: 30_000,
-      });
-      if (removed.status !== 0) cleanupErrors.push(`container cleanup failed: ${processError(removed)}`);
-    }
-    if (volumeCreated) {
-      const removed = await runCommand("docker", ["volume", "rm", "--force", volumeName], {
-        env: dockerEnvironment(),
-        timeoutMs: 30_000,
-      });
-      if (removed.status !== 0) cleanupErrors.push(`Docker volume cleanup failed: ${processError(removed)}`);
-    }
-    if (primaryError === null && cleanupErrors.length > 0) {
-      throw new Error(cleanupErrors.join("; "));
-    }
-    if (cleanupErrors.length > 0) {
-      console.log(`FAIL broker-cleanup: ${redact(cleanupErrors.join("; "))}`);
-    }
-  }
-}
-
 let preflightOk = false;
 try {
   const preflight = await runSuite("preflight", async () => {
@@ -1156,12 +912,9 @@ try {
       }
     });
 
-    if (selectedSuiteNames.has("broker-best-effort")) {
-      await runSuite("broker-best-effort", runBrokerSuite, { required: false });
-    }
   } else {
     for (const name of options.selectedSuiteNames) {
-      suites.push({ name, ok: false, required: name !== "broker-best-effort", durationMs: 0, evidence: "preflight prerequisite failed" });
+      suites.push({ name, ok: false, required: true, durationMs: 0, evidence: "preflight prerequisite failed" });
       console.log(`FAIL ${name}: preflight prerequisite failed`);
     }
   }
@@ -1287,7 +1040,6 @@ try {
 
 console.log("EVIDENCE volume-persistence " + redact(JSON.stringify(details.volumePersistence), 8_000));
 console.log("EVIDENCE destroy-timeline " + redact(JSON.stringify(details.destroyWhileCreating), 8_000));
-console.log("EVIDENCE broker-transcript " + redact(JSON.stringify(details.broker), 8_000));
 console.log("EVIDENCE teardown-proof " + redact(JSON.stringify(details.teardown), 8_000));
 
 const requiredFailures = suites.filter((suite) => suite.required && !suite.ok);

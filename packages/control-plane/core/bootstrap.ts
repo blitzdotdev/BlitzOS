@@ -258,10 +258,10 @@ export function buildBootstrapScript(options: BootstrapOptions): string {
   // one detached best-effort retry loop inside the box: each pass skips
   // repos that already have a .git (idempotent across reboots), falls back
   // from Git's negotiated HTTP/2 to HTTP/1.1, and retries every 5s for up to
-  // 10 minutes, because cloning can only succeed once registration completes
-  // and the baked /etc/gitconfig credential helper (`blitz-git-credential`,
-  // CP-direct) can mint. `|| true` overall: a failed clone never fails the
-  // boot; output lands in /var/lib/blitz/repo-clone.log.
+  // 10 minutes. Cloning needs the provisioned machine credential.
+  // The baked /etc/gitconfig helper uses it through the control plane.
+  // `|| true` prevents a failed clone from stopping boot.
+  // Output goes to /var/lib/blitz/repo-clone.log.
   const repos = options.repos ?? [];
   for (const repo of repos) {
     // The save-time validator is the real gate; this re-check keeps the
@@ -489,9 +489,8 @@ systemctl enable --now blitz-volume-shutdown.service
 mkdir -p /var/lib/blitz/workspace
 ${sshPublicKeyProvisioning}
 # A retained volume belongs to the previous box identity. Its token family is
-# revoked when that workspace is destroyed, and allowing the box init to see
-# those files makes its register one-shot fail before sshd can start. The new
-# credentials are installed after this VM proves its host key to phone-home.
+# revoked when that workspace is destroyed. Remove those unusable credentials.
+# New credentials arrive after this VM proves its host key to phone-home.
 rm -f /var/lib/blitz/box-credential.json /var/lib/blitz/origin
 
 port_22_free() {
@@ -693,8 +692,8 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$UPDATE_LOG"
 }
 
-# A box that has not registered yet has neither file; that is the normal
-# pre-enrollment state, not an error.
+# A box without provisioned machine credentials has neither file.
+# This state is not an error.
 [ -s "$CREDENTIAL_PATH" ] || exit 0
 [ -s "$ORIGIN_PATH" ] || exit 0
 current_origin=$(sed -n '1p' "$ORIGIN_PATH")
@@ -880,25 +879,6 @@ BOX_UPDATE_TIMER
 systemctl daemon-reload
 systemctl enable --now blitz-box-update.timer
 # ---- end host-side box updater ----
-
-echo "blitz bootstrap: credential registration poke start outer_timeout_seconds=40 inner_timeout_seconds=30"
-register_status=0
-timeout --foreground --kill-after=5s 40s \
-  docker exec \
-    --user 1000:1000 \
-    --env HOME=/var/lib/blitz/home \
-    --env USER=blitz \
-    blitz-box \
-    timeout --foreground --kill-after=5s 30s \
-    blitz-cred register ||
-  {
-    register_status=$?
-    echo "blitz bootstrap: credential registration poke failed or timed out (exit $register_status); continuing bootstrap because registration poke is best-effort"
-    true
-  }
-if (( register_status == 0 )); then
-  echo "blitz bootstrap: credential registration poke complete"
-fi
 
 trap - ERR
 echo "blitz bootstrap completed"

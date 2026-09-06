@@ -52,7 +52,7 @@ npx wrangler deployments list --config packages/control-plane/wrangler.toml
 A `v*` tag is the only path. `.github/workflows/release.yml` holds the
 credentials and does the whole job, in this order:
 
-1. Builds and pushes the box and broker images for amd64 and arm64.
+1. Builds and pushes the box image for amd64 and arm64.
 2. Waits for a human to approve the `production` environment.
 3. Writes the deployment config from a repository secret.
 4. Pins the box image digest it just built.

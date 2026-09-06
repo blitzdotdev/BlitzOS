@@ -23,38 +23,20 @@ set -euo pipefail
 # lists --device-auth, --with-api-key and --with-access-token, and nothing
 # else), so a wrapper is the only place the choice can be made.
 #
-# WHO IT IS FOR: a box with no credential broker and no API key — the
-# self-hosted `docker run` install. On a hosted workspace all three probes
-# below fall through and this region does nothing at all.
+# WHO IT IS FOR: a signed-out box with no API key.
+# Authenticated boxes skip this offer.
 
 # codex_authenticated reports whether codex can already reach a model.
 #
-# It must probe all three ways this box authenticates codex, because
-# `codex login status` alone answers only for the third and reports
-# "Not logged in" for the other two. Verified against codex-cli 0.147.0:
-# a config.toml carrying the broker block and no auth.json prints
-# "Not logged in" and exits 1, and so does OPENAI_API_KEY on its own.
-# Gating on status alone therefore hijacks every working hosted tab into a
-# device prompt, which is the failure this function exists to prevent.
+# It probes both native authentication paths.
+# `codex login status` ignores API keys, so the environment check runs first.
 codex_authenticated() {
-  local codex_home=${CODEX_HOME:-${HOME:-}/.codex}
-
-  # 1. The credential broker. `blitz-cred register` writes an auth hook into
-  #    config.toml and deliberately writes NO auth.json — codex pulls its own
-  #    token every refresh_interval_ms. The hook's path is the signal.
-  if [ -r "$codex_home/config.toml" ] &&
-    grep -Fq '/usr/local/bin/blitz-cred-codex' "$codex_home/config.toml"; then
-    return 0
-  fi
-
-  # 2. A plain API key the member exported themselves. codex reads these
-  #    itself; its own status check ignores them
-  #    (enable_codex_api_key_env is false there).
+  # A supplied API key is native input. Codex's status command ignores it.
   if [ -n "${CODEX_API_KEY:-}" ] || [ -n "${OPENAI_API_KEY:-}" ]; then
     return 0
   fi
 
-  # 3. A ChatGPT sign-in codex stored itself, which is what status reads.
+  # The status command reads Codex's native ChatGPT login.
   codex login status >/dev/null 2>&1
 }
 

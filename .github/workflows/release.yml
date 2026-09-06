@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       box-digest: ${{ steps.box.outputs.digest }}
-      broker-digest: ${{ steps.broker.outputs.digest }}
       image-owner: ${{ steps.namespace.outputs.owner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -62,19 +61,6 @@ jobs:
           tags: |
             ghcr.io/${{ env.IMAGE_OWNER }}/blitz-box:${{ github.ref_name }}
             ghcr.io/${{ env.IMAGE_OWNER }}/blitz-box:latest
-
-      - name: Build and push broker
-        id: broker
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          file: packages/broker/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: true
-          tags: |
-            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-broker:${{ github.ref_name }}
-            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-broker:latest
 
   # Deploys the control plane pinned to the box image this run just pushed, so
   # a version tag is a complete release with no manual publish step. Opt-in via
@@ -217,7 +203,6 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BOX_DIGEST: ${{ needs.images.outputs.box-digest }}
-      BROKER_DIGEST: ${{ needs.images.outputs.broker-digest }}
       IMAGE_OWNER: ${{ needs.images.outputs.image-owner }}
     steps:
       - name: Create or update release notes
@@ -239,6 +224,5 @@ jobs:
             printf '%s\n\n' "$kept"
             printf '## Container image digests\n\n'
             printf -- '- `ghcr.io/%s/blitz-box:%s` — `%s`\n' "$IMAGE_OWNER" "$tag" "$BOX_DIGEST"
-            printf -- '- `ghcr.io/%s/blitz-broker:%s` — `%s`\n' "$IMAGE_OWNER" "$tag" "$BROKER_DIGEST"
           } >"$RUNNER_TEMP/release-notes.md"
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/release-notes.md"

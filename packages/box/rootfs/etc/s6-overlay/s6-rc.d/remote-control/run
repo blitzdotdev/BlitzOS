@@ -15,10 +15,8 @@
 # writes, so the cheap file test is the login detector. There is deliberately
 # no deadline: the member may log in an hour after the box boots.
 #
-# WHY NOT THE PATH SHIM: /usr/local/bin/claude injects CLAUDE_CODE_OAUTH_TOKEN
-# from the broker. Remote Control rejects it outright ("Long-lived tokens are
-# limited to inference-only"), so call the pinned binary and unset the three
-# token variables a template environment could also set.
+# WHY THE NATIVE BINARY: Remote Control rejects long-lived token inputs.
+# Call the native CLI and remove the three token variables.
 #
 # WHY A PTY: Remote Control opens an interactive session. `script` supplies the
 # pty without involving tmux, so this can never own the box's tmux server.

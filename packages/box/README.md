@@ -3,7 +3,7 @@
 One OCI image provides one agent workspace.
 s6 starts key-only SSH, ttyd, dufs, the gateway, Docker, and control-plane helpers.
 It also initializes persistent state and the optional cgroup boundary.
-Control-plane helpers register broker keys, refresh the bearer, sync rules, and deposit agent logins.
+Control-plane helpers refresh the machine bearer and sync agent rules.
 Other longruns provide Claude Remote Control and payload updates.
 The optional Lody set contains the daemon, Unix bridge, project registrar, and watchdog.
 ttyd uses tmux for named, persistent terminal, Claude, and Codex sessions.
@@ -15,7 +15,7 @@ cloudflared connects hosted browser traffic after provisioning supplies its toke
 Docker-in-Docker starts only when the container is privileged.
 
 The payload owns the complete s6 service tree and its launchers.
-The base image owns the payload updater and `blitz-cred`.
+The base image owns the payload updater and the box-owned `blitz-cred api-token` helper.
 `/var/lib/blitz` keeps SSH keys, agent HOME, Docker data, Lody data, tokens, and credentials.
 `/workspace` is a caller-owned bind mount.
 
@@ -233,8 +233,8 @@ The payload channel changes a running container in place.
 It updates payload-owned commands, service helpers, the gateway, agent rules, and the Lody daemon.
 It also updates `/etc/blitz/sshd_config`, `/etc/gitconfig`, `/etc/profile.d/blitz-npm.sh`, and `/etc/tmux.conf`.
 It can add, remove, or redefine s6 services.
-It rejects live changes to four recovery service definitions.
-Those services are `cgroups`, `init-state`, `register`, and `payload`.
+It rejects live changes to three recovery service definitions.
+Those services are `cgroups`, `init-state`, and `payload`.
 An update that restarts Lody waits while the daemon reports active turns.
 The default wait cap is four hours.
 At that cap, it forces the restart and may disconnect those turns.
