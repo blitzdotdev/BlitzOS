@@ -35,6 +35,7 @@ import { AccessApprovalDialog } from './AccessApprovalDialog';
 import { useAccessProposals } from './use-access-proposals';
 import type { ConnectionsFocus, WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
 import { ShellNav } from './shell/ShellNav';
+import { routeShowsMobileRail } from './shell/mobile-rail';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
@@ -283,9 +284,10 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
     if (!mobileWebApp) setDrawerOpen(false);
   }, [mobileWebApp]);
 
+  const railIsWorkspaceScreen = routeShowsMobileRail(route);
   useEffect(() => {
-    setDrawerOpen(false);
-  }, [route.page, route.workspaceId]);
+    setDrawerOpen(mobileWebApp && railIsWorkspaceScreen);
+  }, [mobileWebApp, railIsWorkspaceScreen, route.workspaceId]);
 
   useEffect(() => {
     if (!mobileWebApp) return;
@@ -1685,7 +1687,10 @@ function CloudAppContent({ client, resolver }: CloudAppProps) {
         if (mobileWebApp) setDrawerOpen(false);
         setDetails({ workspaceId, tab: 'members', focusAddMember: true });
       }}
-      onCreateWorkspace={() => setShowCreateWorkspace(true)}
+      onCreateWorkspace={() => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setShowCreateWorkspace(true);
+      }}
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
       onCloseSession={closeTtydSession}

@@ -1314,6 +1314,59 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("opens mobile workspace navigation on the workspace landing", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running/chat");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+    });
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(navigationExpanded(view.container)).toBe("true");
+    await view.unmount();
+  });
+
+  it("closes mobile workspace navigation before opening create workspace", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running/chat");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+    });
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+    expect(navigationExpanded(view.container)).toBe("true");
+
+    await click(view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Create workspace"]',
+    ));
+    await settle();
+
+    expect(navigationExpanded(view.container)).toBe("false");
+    expect(view.container.querySelector('form[aria-label="Create workspace"]')).not.toBeNull();
+    await view.unmount();
+  });
+
   it("resizes the side pane by dragging its handle, no narrower than the default", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [

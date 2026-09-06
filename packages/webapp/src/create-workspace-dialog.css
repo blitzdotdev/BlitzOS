@@ -491,16 +491,23 @@
     width: 100%;
     height: 100dvh;
     min-height: 0;
+    overflow-y: auto;
     border: 0;
   }
 
   .create-workspace-main {
+    flex: none;
     gap: 24px;
     padding: 18px 14px;
+    overflow: visible;
   }
 
   .create-workspace-header {
+    position: sticky;
+    z-index: 1;
+    top: 0;
     padding-left: 12px;
+    background: var(--surface-2);
   }
 
   .create-workspace-header__title {
@@ -525,6 +532,7 @@
 
   .create-workspace-actions {
     display: grid;
+    justify-content: stretch;
     gap: 9px;
     padding: 12px 14px;
   }}
