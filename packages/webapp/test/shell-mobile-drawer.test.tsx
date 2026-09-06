@@ -6,8 +6,8 @@
  * the rail's list with a portal host, and the risk that buys is structural: a
  * host handed over by ref could plausibly be created outside the drawer, or the
  * drawer could stop opening because the rail no longer renders rows. So this
- * asserts the whole path — open, host present INSIDE the drawer, scrim, close —
- * at mobile width, in both rail shapes.
+ * asserts the whole path — open, host present INSIDE the drawer, close — at
+ * mobile width, in both rail shapes.
  *
  * The breakpoint is read out of `strip-rail.css` rather than repeated here: a
  * test that hard-codes 899 keeps passing after somebody moves the media query.
@@ -73,7 +73,7 @@ function nav(overrides: Partial<Parameters<typeof ShellNav>[0]> = {}) {
 }
 
 describe("the mobile navigation drawer", () => {
-  it("opens, scrims and closes with the vendored zone inside it", async () => {
+  it("opens and closes with the vendored zone inside it", async () => {
     const breakpoint = drawerBreakpoint();
     // jsdom does not lay out, so the width is asserted rather than measured:
     // what this test proves is the DOM and the callbacks, and the CSS above is
@@ -96,21 +96,22 @@ describe("the mobile navigation drawer", () => {
     expect(drawer?.contains(seen.host)).toBe(true);
     expect(seen.host?.className).toContain("session-list--vendor");
 
-    const scrim = view.container.querySelector<HTMLButtonElement>(".shell-nav-scrim");
-    expect(scrim?.className).toContain("shell-nav-scrim--open");
-    await act(async () => scrim?.click());
+    // The nav fills the screen, so there is no scrim behind it. The strip's own
+    // close button is what dismisses it.
+    expect(view.container.querySelector(".shell-nav-scrim")).toBeNull();
+    const close = drawer?.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close workspace navigation"]',
+    );
+    await act(async () => close?.click());
     expect(onCloseDrawer).toHaveBeenCalledTimes(1);
 
     await view.unmount();
   });
 
-  it("closes the drawer and drops the scrim with the flag off", async () => {
+  it("keeps the drawer closed with the flag off", async () => {
     window.innerWidth = drawerBreakpoint() - 99;
     const view = await render(nav({ drawerOpen: false }));
     expect(view.container.querySelector(".shell-nav")?.className).not.toContain("shell-nav--open");
-    expect(view.container.querySelector(".shell-nav-scrim")?.className).not.toContain(
-      "shell-nav-scrim--open",
-    );
     // Flag off: the rail is still the native list, drawer or not.
     expect(view.container.querySelector(".session-list .shell-s")).not.toBeNull();
     expect(view.container.querySelector(".session-list--vendor")).toBeNull();

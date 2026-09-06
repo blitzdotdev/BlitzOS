@@ -48,7 +48,9 @@ export type ShellNavProps = {
 
 /** Columns one and two of the shell. Above the mobile breakpoint this is
  * `display: contents`, so the strip and the rail are real grid children of the
- * shell; below it the wrapper becomes the off-canvas drawer and carries both. */
+ * shell; below it the wrapper becomes the workspace's own full-width screen and
+ * carries both. It covers the whole viewport there, so there is no scrim: the
+ * strip's own close button and the Escape key are what dismiss it. */
 export function ShellNav({
   workspaces,
   viewer,
@@ -81,49 +83,40 @@ export function ShellNav({
   onCloseDrawer,
 }: ShellNavProps) {
   return (
-    <>
-      <div className={`shell-nav${drawerOpen ? ' shell-nav--open' : ''}`}>
-        <WorkspaceStrip
-          workspaces={workspaces}
-          viewer={viewer}
-          activeWorkspaceId={activeWorkspaceId}
-          onSelectWorkspace={onSelectWorkspace}
-          onRenameWorkspace={onRenameWorkspace}
-          onOpenWorkspaceSettings={onOpenWorkspaceSettings}
-          onInviteToWorkspace={onInviteToWorkspace}
-          onCreateWorkspace={onCreateWorkspace}
-          onOpenSettings={onOpenSettings}
-          onCloseDrawer={onCloseDrawer}
-        />
-        {showRail && (
-          <SessionRail
-            workspace={activeWorkspace}
-            sessions={sessions}
-            activeSessionId={activeSessionId}
-            livePorts={livePorts}
-            previewLinks={previewLinks}
-            {...(onVendorHost === undefined ? {} : { onVendorHost })}
-            {...(sessionsNeedNewerMachine === undefined ? {} : { sessionsNeedNewerMachine })}
-            {...(sessionsNeedMachine === undefined ? {} : { sessionsNeedMachine })}
-            {...(sessionsStalled === undefined ? {} : { sessionsStalled })}
-            onSelectSession={onSelectSession}
-            onCloseSession={onCloseSession}
-            onSpawnSession={onSpawnSession}
-            onOpenPreview={onOpenPreview}
-            onOpenPreviewLink={onOpenPreviewLink}
-            onOpenMembers={onOpenWorkspaceMembers}
-            onOpenDetails={onOpenWorkspaceDetails}
-            onOpenMachine={onOpenWorkspaceMachine}
-          />
-        )}
-      </div>
-      <button
-        className={`shell-nav-scrim${drawerOpen ? ' shell-nav-scrim--open' : ''}`}
-        type="button"
-        aria-label="Close navigation"
-        tabIndex={-1}
-        onClick={onCloseDrawer}
+    <div className={`shell-nav${drawerOpen ? ' shell-nav--open' : ''}`}>
+      <WorkspaceStrip
+        workspaces={workspaces}
+        viewer={viewer}
+        activeWorkspaceId={activeWorkspaceId}
+        onSelectWorkspace={onSelectWorkspace}
+        onRenameWorkspace={onRenameWorkspace}
+        onOpenWorkspaceSettings={onOpenWorkspaceSettings}
+        onInviteToWorkspace={onInviteToWorkspace}
+        onCreateWorkspace={onCreateWorkspace}
+        onOpenSettings={onOpenSettings}
+        onCloseDrawer={onCloseDrawer}
       />
-    </>
+      {showRail && (
+        <SessionRail
+          workspace={activeWorkspace}
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          livePorts={livePorts}
+          previewLinks={previewLinks}
+          {...(onVendorHost === undefined ? {} : { onVendorHost })}
+          {...(sessionsNeedNewerMachine === undefined ? {} : { sessionsNeedNewerMachine })}
+          {...(sessionsNeedMachine === undefined ? {} : { sessionsNeedMachine })}
+          {...(sessionsStalled === undefined ? {} : { sessionsStalled })}
+          onSelectSession={onSelectSession}
+          onCloseSession={onCloseSession}
+          onSpawnSession={onSpawnSession}
+          onOpenPreview={onOpenPreview}
+          onOpenPreviewLink={onOpenPreviewLink}
+          onOpenMembers={onOpenWorkspaceMembers}
+          onOpenDetails={onOpenWorkspaceDetails}
+          onOpenMachine={onOpenWorkspaceMachine}
+        />
+      )}
+    </div>
   );
 }

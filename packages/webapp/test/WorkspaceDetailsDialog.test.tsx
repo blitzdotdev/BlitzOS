@@ -223,6 +223,12 @@ describe('WorkspaceDetailsDialog', () => {
     // The machine state chip, and the type select on the member who holds one.
     expect(view.container.textContent).toContain('running');
     expect(view.container.querySelector('[aria-label="Machine type for Ada Owner"]')).not.toBeNull();
+    const machineBand = view.container.querySelector('.workspace-member-machine');
+    expect(machineBand, 'member machine controls must share one mobile band').not.toBeNull();
+    expect(machineBand?.querySelector('.machine-chip')).not.toBeNull();
+    expect(machineBand?.querySelector('[aria-label="Machine type for Ada Owner"]')).not.toBeNull();
+    expect(machineBand?.querySelector('[role="meter"]')).not.toBeNull();
+    expect(machineBand?.querySelector('[aria-label="Machine actions for Ada Owner"]')).not.toBeNull();
     // A viewer never holds a machine (§2.2), so no type select and no menu.
     expect(view.container.querySelector('[aria-label="Machine type for Grace Viewer"]')).toBeNull();
     expect(view.container.querySelector('[aria-label="Machine actions for Grace Viewer"]')).toBeNull();

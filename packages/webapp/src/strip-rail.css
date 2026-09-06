@@ -8,7 +8,6 @@
    rail are real children of the shell grid. Below it, it is the drawer. */
 .shell-nav { display: contents; }
 
-.shell-nav-scrim,
 .shell-strip__close { display: none; }
 
 /* --------------------------------------------------------------- column 1 */
@@ -543,7 +542,7 @@
     top: var(--mobile-viewport-top, 0);
     left: 0;
     display: flex;
-    width: min(88vw, 348px);
+    width: 100%;
     height: var(--mobile-viewport-height, 100dvh);
     background: var(--paper);
     transform: translateX(-102%);
@@ -578,17 +577,6 @@
 
   .shell-new,
   .shell-s { min-height: 40px; }
-
-  .shell-nav-scrim {
-    position: fixed;
-    z-index: 380;
-    inset: 0;
-    display: none;
-    border: 0;
-    background: color-mix(in oklab, var(--paper) 68%, transparent);
-  }
-
-  .shell-nav-scrim--open { display: block; }
 }
 
 @media (prefers-reduced-motion: reduce) {

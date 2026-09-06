@@ -248,47 +248,49 @@ function MemberRow({
           }}
         />
       )}
-      {showMachine && <MachineStateChip machine={machine} pendingAction={pendingAction} />}
-      {showMachine && (
-        <MachineTypeSelect
-          machines={machines}
-          value={machineTypeId}
-          defaultMachineTypeId={defaultMachineTypeId}
-          volumeLocation={machineLocation(machine, machines)}
-          ariaLabel={`Machine type for ${name}`}
-          disabled={rowBusy}
-          onChange={onMachineTypeChange}
-        />
-      )}
-      {showVolume && (machine === null ? (
-        <label className="workspace-member-volume">
-          <input
-            type="checkbox"
-            aria-label={`Persistent volume for ${name}`}
-            checked={persistentVolume}
+      <div className="workspace-member-machine">
+        {showMachine && <MachineStateChip machine={machine} pendingAction={pendingAction} />}
+        {showMachine && (
+          <MachineTypeSelect
+            machines={machines}
+            value={machineTypeId}
+            defaultMachineTypeId={defaultMachineTypeId}
+            volumeLocation={machineLocation(machine, machines)}
+            ariaLabel={`Machine type for ${name}`}
             disabled={rowBusy}
-            onChange={(event) => onPersistentVolumeChange(event.currentTarget.checked)}
+            onChange={onMachineTypeChange}
           />
-          <span>Persistent volume</span>
-        </label>
-      ) : (
-        // The disk exists, so the row reports it instead of offering a choice
-        // this route cannot make: how full it is, or that there is none.
-        <VolumeMeter volumeId={machine.volumeId} usedPercent={machine.volumeUsedPercent} />
-      ))}
-      {showMachine && actions.length > 0 && (
-        <WebAppSelectMenu
-          ariaLabel={`Machine actions for ${name}`}
-          className="workspace-member-actions"
-          value=""
-          prefix="⋯"
-          options={actions.map((action) => ({ value: action, label: MACHINE_ACTION_LABELS[action] }))}
-          onChange={(next) => {
-            // SAFETY: the options are exactly the MachineAction values above.
-            onMachineAction?.(next as MachineAction);
-          }}
-        />
-      )}
+        )}
+        {showVolume && (machine === null ? (
+          <label className="workspace-member-volume">
+            <input
+              type="checkbox"
+              aria-label={`Persistent volume for ${name}`}
+              checked={persistentVolume}
+              disabled={rowBusy}
+              onChange={(event) => onPersistentVolumeChange(event.currentTarget.checked)}
+            />
+            <span>Persistent volume</span>
+          </label>
+        ) : (
+          // The disk exists, so the row reports it instead of offering a choice
+          // this route cannot make: how full it is, or that there is none.
+          <VolumeMeter volumeId={machine.volumeId} usedPercent={machine.volumeUsedPercent} />
+        ))}
+        {showMachine && actions.length > 0 && (
+          <WebAppSelectMenu
+            ariaLabel={`Machine actions for ${name}`}
+            className="workspace-member-actions"
+            value=""
+            prefix="⋯"
+            options={actions.map((action) => ({ value: action, label: MACHINE_ACTION_LABELS[action] }))}
+            onChange={(next) => {
+              // SAFETY: the options are exactly the MachineAction values above.
+              onMachineAction?.(next as MachineAction);
+            }}
+          />
+        )}
+      </div>
       {!readOnly && !pinned && (
         <button
           className="workspace-member-remove"
