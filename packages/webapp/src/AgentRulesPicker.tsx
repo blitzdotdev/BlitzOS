@@ -76,48 +76,66 @@ export function AgentRulesPicker({
     });
   };
 
-  const save = async () => {
+  const save = () => {
     if (draft === null || busy) return;
     const name = draft.name.trim();
     if (name === '' || draft.content.trim() === '') return;
+    const precedingRules = rules;
+    const precedingValue = value;
+    const precedingDraft = draft;
+    const id = draft.id ?? crypto.randomUUID();
+    const optimistic: AgentRuleView = {
+      id,
+      name,
+      content: draft.content,
+      updatedAt: Date.now(),
+      builtIn: false,
+    };
     setBusy(true);
     setError(null);
-    try {
-      const id = draft.id ?? crypto.randomUUID();
-      // The PUT returns the canonical row, so the list is updated from it
-      // rather than re-fetched: one round trip, and no window where the save
-      // succeeded but the select cannot name what it just selected.
-      const { rule } = await client.putAgentRule(id, { name, content: draft.content });
-      setRules((current) => current.some((entry) => entry.id === rule.id)
-        ? current.map((entry) => entry.id === rule.id ? rule : entry)
-        : [...current, rule]);
-      onChange(rule.id);
-      setDraft(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The rule could not be saved.');
-    } finally {
-      setBusy(false);
-    }
+    setRules((current) => current.some((entry) => entry.id === id)
+      ? current.map((entry) => entry.id === id ? optimistic : entry)
+      : [...current, optimistic]);
+    onChange(id);
+    setDraft(null);
+    void client.putAgentRule(id, { name, content: draft.content })
+      .then(({ rule }) => {
+        // The route answers with the normalized row, so the placeholder never
+        // becomes a second source of truth.
+        setRules((current) => current.map((entry) => entry.id === id ? rule : entry));
+        onChange(rule.id);
+      })
+      .catch((caught) => {
+        setRules(precedingRules);
+        onChange(precedingValue);
+        setDraft(precedingDraft);
+        setError(caught instanceof Error ? caught.message : 'The rule could not be saved.');
+      })
+      .finally(() => setBusy(false));
   };
 
-  const remove = async () => {
+  const remove = () => {
     if (draft === null || draft.id === null || busy) return;
+    const precedingRules = rules;
+    const precedingValue = value;
+    const precedingDraft = draft;
+    const removed = draft.id;
     setBusy(true);
     setError(null);
-    // The confirmation has done its job; a failure is reported in the editor
-    // behind it, not under a dialog still asking the same question.
+    // The confirmation has done its job; a rejection reopens the editor with
+    // its exact draft instead of leaving the destructive prompt on screen.
     setConfirmingDelete(false);
-    try {
-      const removed = draft.id;
-      await client.deleteAgentRule(removed);
-      setRules((current) => current.filter((entry) => entry.id !== removed));
-      if (value === removed) onChange(null);
-      setDraft(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The rule could not be deleted.');
-    } finally {
-      setBusy(false);
-    }
+    setRules((current) => current.filter((entry) => entry.id !== removed));
+    if (value === removed) onChange(null);
+    setDraft(null);
+    void client.deleteAgentRule(removed)
+      .catch((caught) => {
+        setRules(precedingRules);
+        onChange(precedingValue);
+        setDraft(precedingDraft);
+        setError(caught instanceof Error ? caught.message : 'The rule could not be deleted.');
+      })
+      .finally(() => setBusy(false));
   };
 
   return (
@@ -137,7 +155,7 @@ export function AgentRulesPicker({
           id={selectId}
           aria-label="Agent rules document"
           value={value ?? ''}
-          disabled={disabled}
+          disabled={disabled || busy}
           onChange={(event) => {
             const next = event.currentTarget.value;
             if (next === NEW_RULE_OPTION) {
@@ -156,7 +174,7 @@ export function AgentRulesPicker({
         <button
           className="webapp-action blueprint-agent-rules-edit"
           type="button"
-          disabled={disabled}
+          disabled={disabled || busy}
           onClick={() => openDraft(selected ?? builtIn)}
         >
           Edit
