@@ -89,7 +89,7 @@ test("the payload inventory owns the complete s6 tree and every eligible rootfs 
   assert.equal(new Set(PAYLOAD_FILES).size, PAYLOAD_FILES.length);
   assert.deepEqual(PAYLOAD_FILES, [...PAYLOAD_FILES].sort());
   assert.ok(!PAYLOAD_FILES.includes("rootfs/etc/blitz/env.defaults"));
-  for (const service of ["cgroups", "init-state", "register", "rules"]) {
+  for (const service of ["cgroups", "init-state", "rules"]) {
     assert.ok(PAYLOAD_FILES.includes(`rootfs/etc/s6-overlay/s6-rc.d/${service}/up`));
   }
 });
@@ -107,9 +107,9 @@ test("restart dependencies come from service sources plus the narrow override ta
   assert.ok(restart["lody-bridge"].includes("rootfs/usr/local/libexec/blitz-lody-bridge"));
   assert.ok(restart.sshd.includes("rootfs/etc/blitz/sshd_config"));
   assert.equal(restart["machine-stats"], undefined);
-  assert.equal(restart.watch.includes("rootfs/usr/local/bin/blitz-cred"), false);
+  assert.equal(restart.watch, undefined);
   assert.equal(restart.ttyd.includes("rootfs/usr/local/libexec/blitz-term"), false);
-  for (const oneshot of ["cgroups", "init-state", "register", "rules"]) {
+  for (const oneshot of ["cgroups", "init-state", "rules"]) {
     assert.equal(restart[oneshot], undefined);
   }
   for (const dependencies of Object.values(restart)) {

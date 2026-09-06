@@ -56,7 +56,6 @@ export const CORE_MANIFEST = Object.freeze([
   "core/org-credential-import.ts", "core/org-credential-routes.ts",
   "core/org-credentials.ts",
   "core/principals.ts",
-  "core/registry.ts",
   "core/session-shares.ts",
   "core/sessions.ts",
   "core/version.ts",
@@ -233,7 +232,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
     },
     // One VM per (workspace, member). The volume is the durable half: a type
     // change destroys the VM and keeps the disk.
-    { name: "machines", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('provisioning', 'running', 'stopped', 'error', 'destroying', 'destroyed')" }, { name: "machine_type_id", type: "text", sqlType: "text", notNull: true }, { name: "compute_credential_source", type: "text", sqlType: "text", notNull: true, default: { l: "deployment" }, check: "compute_credential_source IN ('org', 'deployment')" }, { name: "vm_id", type: "text", sqlType: "text" }, { name: "volume_id", type: "text", sqlType: "text" }, { name: "ssh_host", type: "text", sqlType: "text" }, { name: "ssh_port", type: "integer", sqlType: "integer" }, { name: "ssh_user", type: "text", sqlType: "text" }, { name: "ssh_host_public_key", type: "text", sqlType: "text" }, { name: "phone_home_hash", type: "text", sqlType: "text" }, { name: "phone_home_used", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "phone_home_used IN (0, 1)" }, { name: "tunnel_id", type: "text", sqlType: "text" }, { name: "tunnel_hostname", type: "text", sqlType: "text" }, { name: "dns_record_id", type: "text", sqlType: "text" }, { name: "broker_box_id", type: "text", sqlType: "text", foreignKey: { table: "broker_boxes", column: "box_id", onDelete: "SET NULL" } }, { name: "box_update_requested", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "box_update_requested IN (0, 1)" }, { name: "box_image_reported", type: "text", sqlType: "text" }, { name: "disk_used_percent", type: "integer", sqlType: "integer", check: "disk_used_percent IS NULL OR (disk_used_percent BETWEEN 0 AND 100)" }, { name: "disk_reported_at", type: "integer", sqlType: "integer" }, { name: "payload_reported", type: "text", sqlType: "text" }, { name: "daemon_reported", type: "text", sqlType: "text" }, { name: "payload_outcome", type: "text", sqlType: "text", check: "payload_outcome IS NULL OR payload_outcome IN ('booted', 'applied', 'deferred', 'rolled-back', 'unsupported', 'fetch-failed', 'verify-failed', 'start-failed', 'up-to-date')" }, { name: "payload_reported_at", type: "integer", sqlType: "integer" }, { name: "payload_hold", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "payload_hold IN (0, 1)" }, { name: "created_by_plane", type: "text", sqlType: "text", notNull: true, default: { l: "session" }, check: "created_by_plane IN ('session', 'machine')" }, { name: "destroy_keeps_row", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "destroy_keeps_row IN (0, 1)" }, { name: "error", type: "text", sqlType: "text" }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "membership_id"] }, { name: "workspace", fields: ["workspace_id", "created_at"] }, { name: "state", fields: ["state", "updated_at"] }], extensions: [DENY_ALL_RULES] },
+    { name: "machines", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('provisioning', 'running', 'stopped', 'error', 'destroying', 'destroyed')" }, { name: "machine_type_id", type: "text", sqlType: "text", notNull: true }, { name: "compute_credential_source", type: "text", sqlType: "text", notNull: true, default: { l: "deployment" }, check: "compute_credential_source IN ('org', 'deployment')" }, { name: "vm_id", type: "text", sqlType: "text" }, { name: "volume_id", type: "text", sqlType: "text" }, { name: "ssh_host", type: "text", sqlType: "text" }, { name: "ssh_port", type: "integer", sqlType: "integer" }, { name: "ssh_user", type: "text", sqlType: "text" }, { name: "ssh_host_public_key", type: "text", sqlType: "text" }, { name: "phone_home_hash", type: "text", sqlType: "text" }, { name: "phone_home_used", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "phone_home_used IN (0, 1)" }, { name: "tunnel_id", type: "text", sqlType: "text" }, { name: "tunnel_hostname", type: "text", sqlType: "text" }, { name: "dns_record_id", type: "text", sqlType: "text" }, { name: "box_update_requested", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "box_update_requested IN (0, 1)" }, { name: "box_image_reported", type: "text", sqlType: "text" }, { name: "disk_used_percent", type: "integer", sqlType: "integer", check: "disk_used_percent IS NULL OR (disk_used_percent BETWEEN 0 AND 100)" }, { name: "disk_reported_at", type: "integer", sqlType: "integer" }, { name: "payload_reported", type: "text", sqlType: "text" }, { name: "daemon_reported", type: "text", sqlType: "text" }, { name: "payload_outcome", type: "text", sqlType: "text", check: "payload_outcome IS NULL OR payload_outcome IN ('booted', 'applied', 'deferred', 'rolled-back', 'unsupported', 'fetch-failed', 'verify-failed', 'start-failed', 'up-to-date')" }, { name: "payload_reported_at", type: "integer", sqlType: "integer" }, { name: "payload_hold", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "payload_hold IN (0, 1)" }, { name: "created_by_plane", type: "text", sqlType: "text", notNull: true, default: { l: "session" }, check: "created_by_plane IN ('session', 'machine')" }, { name: "destroy_keeps_row", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "destroy_keeps_row IN (0, 1)" }, { name: "error", type: "text", sqlType: "text" }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "membership_id"] }, { name: "workspace", fields: ["workspace_id", "created_at"] }, { name: "state", fields: ["state", "updated_at"] }], extensions: [DENY_ALL_RULES] },
     { name: "workspace_members", fields: [{ name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('admin', 'member', 'viewer')" }, { name: "added_by_membership_id", type: "text", sqlType: "text", foreignKey: { table: "memberships", column: "id" } }, { name: "added_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "membership_id"] }, { name: "membership", fields: ["membership_id", "workspace_id"] }], extensions: [DENY_ALL_RULES] },
     // Sealed org-scoped statics (plans/ORG-CREDENTIALS.md §5). The live-name
     // partial unique index and the grant-subject expression index live in the
@@ -292,12 +291,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
         { name: "principal_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
         { name: "workspace_id", type: "text", sqlType: "text", unique: true, foreignKey: { table: "workspaces", column: "id" } },
-        { name: "broker_box_id", type: "text", sqlType: "text", foreignKey: { table: "broker_boxes", column: "box_id", onDelete: "SET NULL" } },
-        { name: "is_broker", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "is_broker IN (0, 1)" },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
       ],
       indexes: [
-        { name: "broker", fields: "broker_box_id" },
         { name: "principal", fields: "principal_id" },
       ],
       extensions: [DENY_ALL_RULES],
@@ -313,39 +309,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
       ],
       extensions: [DENY_ALL_RULES],
     },
-    // The workspace guest's credential. `box_token_families` above is what is
-    // left of the old table: brokers and device-code enrolments.
+    // The workspace guest uses a machine token. Device-code boxes use the
+    // separate family above, so each identity keeps its existing token path.
     { name: "machine_token_families", fields: [{ name: "machine_id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid", foreignKey: { table: "machines", column: "id", onDelete: "CASCADE" } }, { name: "vm_id", type: "text", sqlType: "text" }, { name: "access_hash", type: "text", sqlType: "text", notNull: true, unique: true }, { name: "refresh_hash", type: "text", sqlType: "text", notNull: true, unique: true }, { name: "previous_refresh_hash", type: "text", sqlType: "text" }, { name: "previous_rotated_at", type: "integer", sqlType: "integer" }, { name: "access_issued_at", type: "integer", sqlType: "integer", notNull: true }, { name: "generation", type: "integer", sqlType: "integer", notNull: true }], indexes: [], extensions: [DENY_ALL_RULES] },
-    {
-      name: "broker_boxes",
-      fields: [
-        { name: "box_id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid", foreignKey: { table: "boxes", column: "id", onDelete: "CASCADE" } },
-        { name: "host", type: "text", sqlType: "text", notNull: true },
-        { name: "port", type: "integer", sqlType: "integer", notNull: true },
-        { name: "ssh_host_public_key", type: "text", sqlType: "text", notNull: true },
-        { name: "member_cap", type: "integer", sqlType: "integer", notNull: true, default: { l: 25 }, check: "member_cap > 0" },
-      ],
-      extensions: [DENY_ALL_RULES],
-    },
-    {
-      name: "broker_keys",
-      fields: [
-        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
-        { name: "machine_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "machines", column: "id", onDelete: "CASCADE" } },
-        { name: "pubkey", type: "text", sqlType: "text", notNull: true },
-        { name: "operation", type: "text", sqlType: "text", notNull: true, check: "operation IN ('mint', 'deposit')" },
-      ],
-      indexes: [
-        { name: "machine", fields: "machine_id" },
-        { name: "identity", unique: true, fields: ["machine_id", "pubkey", "operation"] },
-      ],
-      extensions: [DENY_ALL_RULES],
-    },
-    // Written flat, unlike its neighbours: this file is 13 lines under the
-    // 700-line max-lines warn and the expanded form crosses it. CLAUDE.md's
-    // drift runbook reads that warn list as a ratchet, so a new table pays for
-    // its own room here rather than growing the list.
-    { name: "broker_members", fields: [{ name: "principal_id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid", foreignKey: { table: "principals", column: "id", onDelete: "CASCADE" } }, { name: "broker_box_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "broker_boxes", column: "box_id", onDelete: "CASCADE" } }, { name: "unix_name", type: "text", sqlType: "text", notNull: true }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "box", fields: "broker_box_id" }, { name: "identity", unique: true, fields: ["broker_box_id", "unix_name"] }], extensions: [DENY_ALL_RULES] },
     {
       name: "connections",
       fields: [

@@ -8,9 +8,9 @@
 // are the base-owned rootfs files: the payload updater. The complete s6
 // service tree and ordinary box configuration belong to the payload.
 export const BOX_IMAGE_INPUTS = Object.freeze([
-  "packages/broker/cmd/blitz-cred",
-  "packages/broker/go.mod",
-  "packages/broker/internal",
+  "packages/box/credential-helper/cmd/blitz-cred",
+  "packages/box/credential-helper/go.mod",
+  "packages/box/credential-helper/internal",
   "packages/box/Dockerfile",
   "packages/box/Dockerfile.dockerignore",
   "packages/box/rootfs/usr/local/libexec/blitz-payload",

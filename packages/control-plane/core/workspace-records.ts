@@ -65,7 +65,6 @@ export interface MachineRow {
   tunnel_id: string | null;
   tunnel_hostname: string | null;
   dns_record_id: string | null;
-  broker_box_id: string | null;
   box_update_requested: number;
   box_image_reported: string | null;
   disk_used_percent: number | null;

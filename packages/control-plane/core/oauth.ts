@@ -48,7 +48,6 @@ interface BoxTokenRow {
   principal_id: string;
   workspace_id: string | null;
   membership_id: string | null;
-  is_broker: number;
   platform_operator: number;
 }
 
@@ -138,9 +137,8 @@ async function refreshGrant(
   const db = runtimeFactory(context).db;
   const oldHash = await hashSecret(refreshToken);
   const now = Date.now();
-  // A machine and a box present the same kind of token, so both families are
-  // asked. The machine family is the workspace guest; `box_token_families` is
-  // what is left of the old table — brokers and device-code enrolments.
+  // A machine and a device-code box present the same token type. Both token
+  // families must support the same refresh and crash-recovery rules.
   const row = await machineRefreshRow(db, oldHash) ?? await boxRefreshRow(db, oldHash);
   const slot = row === null ? null : await refreshSlot(refreshToken, row, now);
   if (row === null || slot === null) return oauthError(context, "invalid_grant");
@@ -209,7 +207,7 @@ async function machineRefreshRow(db: Db, hash: string): Promise<RefreshRow | nul
     q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
                f.previous_refresh_hash, f.previous_rotated_at,
                'machine' AS family, m.id, m.workspace_id, m.membership_id,
-               ms.user_id AS principal_id, 0 AS is_broker,
+               ms.user_id AS principal_id,
                COALESCE(u.platform_operator, 0) AS platform_operator
         FROM machine_token_families f
         JOIN machines m ON m.id = f.machine_id
@@ -225,7 +223,7 @@ async function boxRefreshRow(db: Db, hash: string): Promise<RefreshRow | null> {
     q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
                f.previous_refresh_hash, f.previous_rotated_at,
                'box' AS family, b.id, b.principal_id, b.workspace_id,
-               NULL AS membership_id, b.is_broker,
+               NULL AS membership_id,
                COALESCE(u.platform_operator, 0) AS platform_operator
         FROM box_token_families f
         JOIN boxes b ON b.id = f.box_id
@@ -245,7 +243,7 @@ export async function authenticateBox(
   const hash = await hashSecret(token);
   const row = await first<BoxTokenRow>(db, {
     q: `SELECT f.access_hash, f.access_issued_at, m.id, m.workspace_id,
-               m.membership_id, ms.user_id AS principal_id, 0 AS is_broker,
+               m.membership_id, ms.user_id AS principal_id,
                COALESCE(u.platform_operator, 0) AS platform_operator
         FROM machine_token_families f
         JOIN machines m ON m.id = f.machine_id
@@ -255,7 +253,7 @@ export async function authenticateBox(
     v: [hash],
   }) ?? await first<BoxTokenRow>(db, {
     q: `SELECT f.access_hash, f.access_issued_at, b.id, b.principal_id,
-               b.workspace_id, NULL AS membership_id, b.is_broker,
+               b.workspace_id, NULL AS membership_id,
                COALESCE(u.platform_operator, 0) AS platform_operator
         FROM box_token_families f
         JOIN boxes b ON b.id = f.box_id
@@ -272,7 +270,6 @@ export async function authenticateBox(
     principalId: row.principal_id,
     workspaceId: row.workspace_id,
     membershipId: row.membership_id,
-    isBroker: row.is_broker === 1,
     platformOperator: row.platform_operator === 1,
   };
 }
@@ -321,9 +318,8 @@ export function machinePrincipal(
  * may destroy, its own box's included; the token is the member's, and it is not
  * pretended to be less.
  *
- * Null on any break in that chain (no bearer, unknown token, a broker box with
- * no membership, a membership that is no longer active), so the caller falls
- * through to the next authentication source rather than through a hole.
+ * Null on any break in that chain. This includes a missing bearer, an unknown
+ * token, or an inactive membership. The caller then tries the next source.
  */
 export async function authenticateMachinePrincipal(
   request: Request,

@@ -66,15 +66,6 @@ export interface PollResponse {
   workspaces: WorkspaceView[];
 }
 
-export interface RegisterKeysResponse {
-  memberUnixName: string;
-  broker: {
-    host: string;
-    port: number;
-    sshHostPublicKey: string;
-  };
-}
-
 export interface ApiError {
   error: string;
   retryAction: RetryAction;

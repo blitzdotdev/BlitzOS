@@ -52,7 +52,7 @@ function sha256(bytes) {
 
 const V1_RESTART_SERVICES = new Set([
   "box-credential", "cloudflared", "dockerd", "dufs", "gateway", "lody-bridge",
-  "lody-daemon", "lody-projects", "lody-watchdog", "remote-control", "sshd", "ttyd", "watch",
+  "lody-daemon", "lody-projects", "lody-watchdog", "remote-control", "sshd", "ttyd",
 ]);
 
 // Frozen protocol 1 grammar. Unknown top-level fields are deliberately ignored.
@@ -203,7 +203,7 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
     manifest.restart.ttyd.includes("rootfs/usr/local/libexec/blitz-term"),
     false,
   );
-  for (const oneshot of ["cgroups", "init-state", "register", "rules"]) {
+  for (const oneshot of ["cgroups", "init-state", "rules"]) {
     assert.equal(manifest.restart[oneshot], undefined);
   }
 });

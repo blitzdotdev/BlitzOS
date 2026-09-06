@@ -148,9 +148,8 @@ describe("blitz-term carries no credential", () => {
   });
 
   it("ignores a creds/env.d left behind by an older box image", async () => {
-    // The broker no longer writes this directory, but a box that boots on an
-    // upgraded image still has yesterday's file on its state volume. Sourcing
-    // it would re-export a value the workspace may already have revoked.
+    // An upgraded box can retain this directory from an older image.
+    // Sourcing it would restore a value the workspace already revoked.
     const box = makeTermBox();
     const envDir = join(box.stateDir, "creds", "env.d");
     mkdirSync(envDir, { recursive: true });

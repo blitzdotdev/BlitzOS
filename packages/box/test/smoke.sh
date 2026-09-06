@@ -170,8 +170,13 @@ done
 [ "$ready" = true ] || fail "enabled Lody services and loopback endpoints did not become ready within 180 seconds"
 
 services=$(docker exec "$container" /command/s6-rc -a list)
-for service in init-state register payload sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
+for service in init-state payload sshd ttyd dufs gateway dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
+done
+for removed_service in register watch; do
+  if grep -qx "$removed_service" <<<"$services"; then
+    fail "s6 graph still contains $removed_service"
+  fi
 done
 if grep -qx machine-stats <<<"$services"; then
   fail "machine-stats remains in the live service set"
@@ -200,7 +205,7 @@ user2_entry=$(docker exec "$container" sh -c \
   'find /opt/blitz/payload/current/rootfs/etc/s6-overlay/s6-rc.d/user2/contents.d -mindepth 1 -maxdepth 1 -print -quit')
 [ -z "$user2_entry" ] || fail "the user2 bundle contents.d directory is not empty"
 echo "PASS the user2 bundle has an empty contents.d directory"
-for service in payload sshd ttyd dufs gateway watch dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
+for service in payload sshd ttyd dufs gateway dockerd lody-daemon lody-bridge lody-watchdog lody-projects; do
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
 
@@ -274,9 +279,9 @@ done
 docker exec "$container" test ! -L /usr/local/libexec/blitz-payload \
   || fail "the base-owned payload updater is indirected through the payload"
 docker exec "$container" test ! -L /usr/local/bin/blitz-cred \
-  || fail "the base-owned credential broker is indirected through the payload"
+  || fail "the base-owned credential helper is indirected through the payload"
 docker exec "$container" test -x /usr/local/bin/blitz-cred \
-  || fail "the base-owned credential broker is missing"
+  || fail "the base-owned credential helper is missing"
 docker exec "$container" test ! -L /etc/blitz/env.defaults \
   || fail "the base-owned environment defaults are indirected through the payload"
 docker exec "$container" grep -qx 'exec /usr/local/libexec/blitz-payload' \
@@ -677,10 +682,9 @@ if [ "${LODY_BOOT_ONLY:-0}" = 1 ]; then
 fi
 
 docker logs "$container" >"$test_dir/container.log" 2>&1
-grep -q 'register: skipped (no control-plane origin)' "$test_dir/container.log" || fail "register did not skip cleanly"
-grep -q 'watch: waiting for broker config' "$test_dir/container.log" || fail "watch did not wait cleanly"
-docker exec "$container" test ! -e /var/lib/blitz/broker.json || fail "no-CP mode created broker config"
-echo "PASS no-CP skips"
+grep -q 'blitz-credential-refresh: skipped (no control-plane origin)' "$test_dir/container.log" \
+  || fail "credential refresh did not skip cleanly"
+echo "PASS no-CP credential refresh skip"
 
 # Terminal delivery: the shim must WIN the PATH over the pinned binary it execs,
 # in a plain login shell as well as in the image environment. A member-installed
@@ -690,14 +694,16 @@ resolved=$(docker exec "$container" /bin/sh -lc 'command -v claude')
 [ "$resolved" = '/usr/local/bin/claude' ] || fail "login-shell claude resolves to $resolved, not the shim"
 resolved=$(docker exec "$container" /bin/sh -c 'command -v claude')
 [ "$resolved" = '/usr/local/bin/claude' ] || fail "claude resolves to $resolved, not the shim"
-docker exec "$container" grep -q 'CLAUDE_CODE_OAUTH_TOKEN' /usr/local/bin/claude ||
-  fail "the claude shim does not export CLAUDE_CODE_OAUTH_TOKEN"
+docker exec "$container" grep -q 'exec /opt/blitz/npm/bin/claude' /usr/local/bin/claude ||
+  fail "the claude shim does not run the native CLI"
+if docker exec "$container" grep -q 'blitz-cred' /usr/local/bin/claude; then
+  fail "the claude shim still calls the credential helper"
+fi
 docker exec "$container" test ! -e /etc/claude-code/managed-settings.json ||
   fail "managed settings exist; a managed apiKeyHelper hangs claude when a token is also set"
-# Signed out is fine; a dead command is not. With no broker the shim must still
-# reach the real binary.
+# Signed out is fine. The shim must still reach the native binary.
 docker exec "$container" /bin/sh -lc 'claude --version' >/dev/null ||
-  fail "the claude shim does not run with no broker configured"
+  fail "the claude shim does not run the native binary"
 echo "PASS terminal delivery shim"
 
 listeners=$(docker exec "$container" ss -ltnH)
