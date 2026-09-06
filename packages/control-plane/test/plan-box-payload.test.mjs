@@ -269,7 +269,7 @@ test("base edits stay stable while service graphs and source modes move the payl
   assert.notEqual(withService, afterServiceEdit);
 
   mkdirSync(path.join(serviceRoot, "dependencies.d"));
-  writeFileSync(path.join(serviceRoot, "dependencies.d/register"), "");
+  writeFileSync(path.join(serviceRoot, "dependencies.d/init-state"), "");
   const withDependency = await buildPlannedPayload({ repo: repository, binariesDirectory });
   assert.notEqual(withDependency, withService);
   rmSync(path.join(serviceRoot, "dependencies.d"), { recursive: true });

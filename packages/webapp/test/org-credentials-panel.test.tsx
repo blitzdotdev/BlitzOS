@@ -210,6 +210,85 @@ describe('OrgCredentialsPanel', () => {
     await view.unmount();
   });
 
+  it('refuses an existing name inside the add form without writing', async () => {
+    const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
+    const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
+    await settle();
+    const form = field<HTMLFormElement>(view.container, 'form[aria-label="Add a credential"]');
+
+    await act(async () => {
+      typeInto(field(form, '[aria-label="Credential name"]'), ' STRIPE_API_KEY ');
+      typeInto(field(form, '[aria-label="Credential value"]'), 'replacement');
+    });
+    await act(async () => buttonNamed(form, 'Save credential').click());
+
+    expect(putOrgCredential).not.toHaveBeenCalled();
+    expect(field<HTMLElement>(form, '[role="alert"]').textContent).toBe(
+      'A credential named STRIPE_API_KEY already exists; use Rotate on its row to change its value.',
+    );
+    await view.unmount();
+  });
+
+  it('clears an add collision and saves a case-distinct name', async () => {
+    const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
+    const view = await render(
+      <OrgCredentialsPanel client={client({ putOrgCredential })} viewer={adminViewer} />,
+    );
+    await settle();
+    const form = field<HTMLFormElement>(view.container, 'form[aria-label="Add a credential"]');
+
+    await act(async () => {
+      typeInto(field(form, '[aria-label="Credential name"]'), 'SENTRY_DSN');
+      typeInto(field(form, '[aria-label="Credential value"]'), 'replacement');
+    });
+    await act(async () => buttonNamed(form, 'Save credential').click());
+    expect(field<HTMLElement>(form, '[role="alert"]').textContent).toContain('SENTRY_DSN');
+
+    await act(async () => typeInto(field(form, '[aria-label="Credential name"]'), 'sentry_dsn'));
+    expect(form.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => buttonNamed(form, 'Save credential').click());
+
+    expect(putOrgCredential).toHaveBeenCalledOnce();
+    expect(putOrgCredential).toHaveBeenCalledWith({
+      name: 'sentry_dsn',
+      value: 'replacement',
+      grants: [],
+    });
+    await view.unmount();
+  });
+
+  it('keeps rotation available after refusing an add collision', async () => {
+    const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
+    const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
+    await settle();
+    const addForm = field<HTMLFormElement>(view.container, 'form[aria-label="Add a credential"]');
+
+    await act(async () => {
+      typeInto(field(addForm, '[aria-label="Credential name"]'), 'STRIPE_API_KEY');
+      typeInto(field(addForm, '[aria-label="Credential value"]'), 'wrong-path');
+    });
+    await act(async () => buttonNamed(addForm, 'Save credential').click());
+    await settle();
+
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Rotate STRIPE_API_KEY"]',
+    ).click());
+    const rotateForm = field<HTMLFormElement>(
+      view.container, 'form[aria-label="Rotate STRIPE_API_KEY"]',
+    );
+    await act(async () => typeInto(
+      field(rotateForm, '[aria-label="Credential value"]'), 'sk_live_new',
+    ));
+    await act(async () => buttonNamed(rotateForm, 'Rotate').click());
+
+    expect(putOrgCredential).toHaveBeenCalledOnce();
+    expect(putOrgCredential).toHaveBeenCalledWith({
+      name: 'STRIPE_API_KEY',
+      value: 'sk_live_new',
+    });
+    await view.unmount();
+  });
+
   it('rotates with a write-only value field and touches neither comment nor access', async () => {
     const putOrgCredential = vi.fn().mockResolvedValue({ credential: stripe });
     const view = await render(<OrgCredentialsPanel client={client({ putOrgCredential })} viewer={viewer} />);
@@ -243,6 +322,53 @@ describe('OrgCredentialsPanel', () => {
     expect(revokeOrgCredential).not.toHaveBeenCalled();
     await act(async () => buttonNamed(document.body, 'Revoke credential').click());
     expect(revokeOrgCredential).toHaveBeenCalledWith('STRIPE_API_KEY');
+    await view.unmount();
+  });
+
+  it('keeps a refused revoke open, shows its error in the dialog, and keeps the credential listed', async () => {
+    const message = 'Credential revocation was refused.';
+    const revokeOrgCredential = vi.fn().mockRejectedValue(new Error(message));
+    const view = await render(<OrgCredentialsPanel client={client({ revokeOrgCredential })} viewer={viewer} />);
+    await settle();
+
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Revoke STRIPE_API_KEY"]').click());
+    await act(async () => buttonNamed(document.body, 'Revoke credential').click());
+    await settle();
+
+    const dialog = field<HTMLElement>(document.body, '[role="dialog"]');
+    expect(field<HTMLElement>(dialog, '.webapp-confirmation-error').textContent).toBe(message);
+    expect(view.container.textContent).toContain('STRIPE_API_KEY');
+    await view.unmount();
+  });
+
+  it('clears a refused revoke before another credential succeeds', async () => {
+    const message = 'Credential revocation was refused.';
+    const revokeOrgCredential = vi.fn()
+      .mockRejectedValueOnce(new Error(message))
+      .mockResolvedValueOnce(undefined);
+    const view = await render(<OrgCredentialsPanel client={client({ revokeOrgCredential })} viewer={adminViewer} />);
+    await settle();
+
+    await act(async () => field<HTMLButtonElement>(
+      view.container, 'button[aria-label="Revoke STRIPE_API_KEY"]').click());
+    await act(async () => buttonNamed(document.body, 'Revoke credential').click());
+    await settle();
+    const failedDialog = field<HTMLElement>(document.body, '[role="dialog"]');
+    expect(field<HTMLElement>(failedDialog, '.webapp-confirmation-error').textContent).toBe(message);
+
+    await act(async () => buttonNamed(failedDialog, 'No').click());
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => field<HTMLButtonElement>(view.container, 'button[aria-label="Revoke SENTRY_DSN"]').click());
+    const nextDialog = field<HTMLElement>(document.body, '[role="dialog"]');
+    expect(nextDialog.querySelector('.webapp-confirmation-error')).toBeNull();
+    await act(async () => buttonNamed(document.body, 'Revoke credential').click());
+    await settle();
+
+    expect(revokeOrgCredential).toHaveBeenCalledTimes(2);
+    expect(revokeOrgCredential).toHaveBeenNthCalledWith(1, 'STRIPE_API_KEY');
+    expect(revokeOrgCredential).toHaveBeenNthCalledWith(2, 'SENTRY_DSN');
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     await view.unmount();
   });
 

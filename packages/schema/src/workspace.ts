@@ -1,14 +1,5 @@
 import type { BoxPayloadOutcome } from "./box-payload.js";
 
-export interface WorkspaceEnvironment {
-  env: Record<string, string>;
-  startupScript: string | null;
-}
-
-export interface WorkspaceEnvironmentResponse extends WorkspaceEnvironment {
-  filesReady: boolean;
-}
-
 export const PHASES = [
   "creating",
   "ready",

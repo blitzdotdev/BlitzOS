@@ -32,9 +32,6 @@ const expectedTables = [
   "boxes",
   "box_token_families",
   "machine_token_families",
-  "broker_boxes",
-  "broker_keys",
-  "broker_members",
   "connections",
   "user_oauth_grants",
   "provider_health",
@@ -63,9 +60,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
   });
 
-  it("contains the thirty domain tables plus the deny-all file support table", () => {
+  it("contains the twenty-seven domain tables plus the file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(31);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(28);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -189,8 +186,8 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
         expect.objectContaining({ name: "access", check: "access IN ('read','write')" }),
       ]),
     });
-    // The machine's own credential. `box_token_families` beside it is what is
-    // left of the old table: brokers and device-code enrolments.
+    // Machine and device-code credentials use separate token families. This
+    // preserves each existing authentication path.
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "machine_token_families")).toMatchObject({
       fields: expect.arrayContaining([
         expect.objectContaining({
@@ -308,12 +305,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       "idx_org_credentials_org",
       "idx_org_credential_grants_credential",
       "idx_webapp_state_identity",
-      "idx_boxes_broker",
       "idx_boxes_principal",
-      "idx_broker_keys_machine",
-      "idx_broker_keys_identity",
-      "idx_broker_members_box",
-      "idx_broker_members_identity",
       "idx_connections_org_name",
       "idx_connections_org",
       "idx_user_oauth_grants_live",

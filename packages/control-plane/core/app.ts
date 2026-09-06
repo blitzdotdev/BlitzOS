@@ -4,7 +4,6 @@ import { addAgentRuleLibraryRoutes, addAgentRulesRoutes } from "./agent-rules.js
 import { addBoxConfigRoutes } from "./box-config.js";
 import { addBoxImageRoutes } from "./box-images.js";
 import { addCredentialRoutes } from "./connections/mint.js";
-import { addWorkspaceEnvironmentRoutes } from "./environment.js";
 import { addEntitlementsRoutes, SeatLimitReached, seatLimitEnvelope } from "./entitlements.js";
 import { frameworkHttpError, HttpError } from "./http.js";
 import { addMachineRoutes } from "./machines.js";
@@ -16,7 +15,6 @@ import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-t
 import type { Principal } from "./principals.js";
 import { addOrgComputeCredentialRoutes } from "./compute/org-credentials.js";
 import { addGrantProposalRoutes } from "./grant-proposals.js";
-import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import { addSessionRoutes } from "./sessions.js";
 import { addVersionRoutes } from "./version.js";
@@ -97,9 +95,6 @@ export function installControlPlaneRoutes(
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addAgentRuleLibraryRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  // Box-authenticated, so it is registered ahead of the session-authenticated
-  // /workspaces/:id routes it shares a prefix with.
-  addWorkspaceEnvironmentRoutes(router, runtimeFactory);
   // Mostly box-authenticated (/workspaces/self/*), registered ahead for the
   // same reason. Its session routes arm whole-workspace image updates and set
   // one machine's payload hold; neither collides with later registrations.
@@ -131,8 +126,6 @@ export function installControlPlaneRoutes(
   addMachineRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addVolumeRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  addRegistryRoutes(router, runtimeFactory);
-
   router.get("/machine-types", async (context) => {
     const principal = await requireMembershipPrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");

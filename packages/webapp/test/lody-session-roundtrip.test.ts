@@ -211,7 +211,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 2: a session round-trips against 
       // TODO(lody-phase3): with no usable agent credential this asserts only
       // that the daemon ACCEPTED the dispatch, not that an adapter launched and
       // streamed. Canary must prove the rest: one turn through
-      // `/usr/local/bin/claude` with `blitz-cred-claude` minting the token,
+      // `/usr/local/bin/claude` with a valid native login,
       // asserting an assistant entry appears in the same session doc and the
       // daemon log shows the ACP spawn (plans/evidence/lody-phase1.md blocker 5).
       return;

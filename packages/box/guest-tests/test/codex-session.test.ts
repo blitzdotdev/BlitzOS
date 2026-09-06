@@ -18,11 +18,6 @@ const launcherPath = fileURLToPath(
   new URL("../../rootfs/usr/local/libexec/blitz-codex-session", import.meta.url),
 );
 
-/** The path the broker writes into config.toml as codex's auth hook. The
- * launcher greps for exactly this, so the test has to name the same string the
- * broker does (packages/broker/internal/workspace/harness.go). */
-const brokerAuthCommand = "/usr/local/bin/blitz-cred-codex";
-
 const directories: string[] = [];
 
 afterEach(() => {
@@ -46,8 +41,6 @@ interface LaunchOptions {
   /** Device auth dies FROM SIGINT, which is what Ctrl-C actually does. */
   deviceSignal?: boolean;
   args?: string[];
-  /** Write a broker-style config.toml carrying the auth hook. */
-  brokerWired?: boolean;
   /** Set an API key in the environment. */
   apiKey?: string;
 }
@@ -58,7 +51,6 @@ async function runLauncher(options: LaunchOptions = {}): Promise<RunResult> {
     deviceExit = 0,
     deviceSignal = false,
     args = [],
-    brokerWired = false,
     apiKey,
   } = options;
 
@@ -70,17 +62,6 @@ async function runLauncher(options: LaunchOptions = {}): Promise<RunResult> {
   mkdirSync(join(home, ".codex"), { recursive: true });
   const callsPath = join(directory, "calls");
   writeFileSync(callsPath, "");
-
-  if (brokerWired) {
-    writeFileSync(join(home, ".codex", "config.toml"), [
-      'model_provider = "blitz"',
-      "",
-      "[model_providers.blitz.auth]",
-      `command = "${brokerAuthCommand}"`,
-      "refresh_interval_ms = 300000",
-      "",
-    ].join("\n"));
-  }
 
   // `kill -INT 0` signals the whole process group, the way a pty delivers
   // Ctrl-C. The launcher is spawned detached below so that group contains only
@@ -150,19 +131,6 @@ describe("blitz-codex-session", () => {
       ["codex", "login", "status"],
       ["codex", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-test", "hello"],
     ]);
-  });
-
-  it("starts Codex directly on a broker-wired box, without consulting login status", async () => {
-    // The broker authenticates codex through an auth hook in config.toml and
-    // deliberately writes no auth.json, so `codex login status` reports "Not
-    // logged in" on a workspace that works. Gating on status alone would
-    // hijack every hosted codex tab into a device prompt.
-    const result = await runLauncher({ brokerWired: true, statusExit: 1 });
-    expect(result.status).toBe(0);
-    expect(result.calls).toEqual([
-      ["codex", "--dangerously-bypass-approvals-and-sandbox"],
-    ]);
-    expect(result.stderr).not.toContain("Starting device authentication");
   });
 
   it("starts Codex directly when an API key is present", async () => {

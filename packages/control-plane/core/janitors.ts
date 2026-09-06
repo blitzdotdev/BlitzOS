@@ -112,7 +112,6 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
       const transition = await transaction(runtime.db, [
         revokeMachineLeasesQuery(row.id),
         { q: "DELETE FROM machine_token_families WHERE machine_id = ?1", v: [row.id] },
-        { q: "DELETE FROM broker_keys WHERE machine_id = ?1", v: [row.id] },
         {
           q: `UPDATE machines
               SET state = ?1, destroy_keeps_row = 0, vm_id = NULL, ssh_host = NULL,
@@ -123,7 +122,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
           v: [finalState, Date.now(), row.id],
         },
       ]);
-      if (transition[3]?.length !== 1) continue;
+      if (transition[2]?.length !== 1) continue;
     } else {
       await rows(runtime.db, {
         q: "UPDATE machines SET vm_id = NULL WHERE id = ?1",

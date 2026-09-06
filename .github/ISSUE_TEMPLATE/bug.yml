@@ -10,7 +10,6 @@ body:
         - control-plane
         - webapp
         - box
-        - broker
         - schema / fixtures
         - deploy tooling
         - docs

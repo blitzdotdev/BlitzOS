@@ -9,7 +9,7 @@ CLAUDE.md wins.
 ## Setup
 
 - Node.js 22.13 or newer (`engines` in the root `package.json`) and npm.
-- Go 1.26+ for the Go components (broker and box gateway).
+- Go 1.26+ for the box credential helper and gateway.
 - Docker for box-image work.
 
 ```sh
@@ -50,11 +50,11 @@ pin which boundary, and which tests enforce them — is in
 
 ## Go components
 
-Two Go modules sit outside the npm workspace graph and are not touched by
-`npm test`. Test them directly:
+Two Go modules sit outside the npm workspace graph. `npm test` does not run them.
+Test them directly:
 
 ```sh
-(cd packages/broker && go test ./...)
+(cd packages/box/credential-helper && go test ./...)
 (cd packages/box/gateway && go test ./...)
 ```
 
@@ -81,13 +81,13 @@ subsystem when one applies.
 `.github/workflows/ci.yml`, on every push and pull request:
 
 - **JavaScript**: `npm ci`, then the three gates.
-- **Go broker**: `go test ./...` in `packages/broker`.
+- **Go box credential helper**: `go test ./...` in `packages/box/credential-helper`.
 - **Box image**: an amd64 `docker build` of `packages/box/Dockerfile` as a
   build check (no push).
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds and
-publishes the box and broker images for amd64 **and** arm64 — so an
-amd64-only CI pass does not guarantee the arm64 release build.
+Pushing a `v*` tag runs `.github/workflows/release.yml`.
+It builds the box image for amd64 and arm64.
+An amd64-only CI pass does not guarantee the arm64 release build.
 
 ## Design records
 

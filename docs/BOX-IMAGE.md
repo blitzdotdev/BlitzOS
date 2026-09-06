@@ -116,7 +116,7 @@ the `canary` environment:
 
 The base release id deliberately excludes payload-owned files, the gateway
 binary, the daemon, and the repository `env.defaults`. It includes the
-base-owned credential broker sources. The Dockerfile owns the box defaults and
+base-owned credential helper sources. The Dockerfile owns the box defaults and
 writes a comment-only `/etc/blitz/env.defaults` for deployed hosts that still
 pass it with `--env-file`. A payload-only merge therefore reuses the current image. Its baked stamp
 names only the bytes in the baked payload and may name the payload current when
@@ -194,9 +194,9 @@ Hetzner types only. Adding an arm type means revisiting this.
 
 ## Mode A: publish to a registry
 
-Pushing a git tag `v*` runs `.github/workflows/release.yml`, which builds
-`blitz-box` (and `blitz-broker`) for `linux/amd64` and `linux/arm64` and
-pushes them to GHCR under your repository owner:
+Pushing a git tag `v*` runs `.github/workflows/release.yml`.
+It builds `blitz-box` for `linux/amd64` and `linux/arm64`.
+It pushes the image to GHCR under your repository owner:
 
 ```sh
 git tag v0.1.0
