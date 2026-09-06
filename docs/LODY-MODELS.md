@@ -125,20 +125,18 @@ vendored static list was never consulted.
 
 ### What was blocking it (removed 2026-09-01)
 
-`DISABLE_AUTOUPDATER=1` had been set in four places — the image-wide `ENV` in
+`DISABLE_AUTOUPDATER=1` had been set in four places.
+Three box places were the image-wide `ENV` in
 `packages/box/Dockerfile`, the PATH shim `rootfs/usr/local/bin/claude`,
-`rootfs/etc/profile.d/blitz-npm.sh`, and `broker/internal/vendor/vendor.go`,
-which stripped any inbound value and force-appended `=1` (asserted by a test in
-`roaming_test.go`). Four sites because they are four different process-spawn
-paths: s6 daemons inherit the image ENV, login shells rebuild from
-`/etc/profile`, the shim covers any invocation, and the broker constructs the
-child environment from scratch rather than inheriting it.
+and `rootfs/etc/profile.d/blitz-npm.sh`.
+These sites cover s6 daemons, login shells, and direct commands.
+The now-retired broker set the fourth site in its spawn environment.
 
 The flag gated the **background** update check only — the explicit `claude
 update` subcommand ignored it, which is why the run above worked with the flag
 live in the environment.
 
-All four are gone, `codex`'s shim now passes
+All four are gone. `codex`'s shim now passes
 `-c check_for_update_on_startup=true`, and `@anthropic-ai/claude-code` is
 installed `@latest` at build time rather than pinned. Nothing holds a CLI
 version anymore.

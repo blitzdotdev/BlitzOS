@@ -55,7 +55,6 @@ Follow the [self-host guide](docs/SELF-HOST.md).
 - [`box`](packages/box/README.md) the complete workspace runtime: SSH, Docker, agent harnesses, terminal, files, and previews.
 - [`control-plane`](packages/control-plane/README.md) workspaces, member machines, roles, credential injection, volumes, and compute providers.
 - [`webApp`](packages/webapp/README.md) the browser webApp for creating, configuring, sharing, and working inside workspaces.
-- [`broker`](packages/broker/README.md) short-lived Claude and Codex credential delivery for workspace fleets.
 - [`schema`](packages/schema/README.md) shared wire types and cross-runtime conformance fixtures.
 
 ## Docs
@@ -65,7 +64,7 @@ Follow the [self-host guide](docs/SELF-HOST.md).
 - [Box image](docs/BOX-IMAGE.md) build, publish, and upgrade the workspace image.
 - [Contributing](CONTRIBUTING.md) the three gates, the lint ratchet, fixtures, commit style.
 - [Security](SECURITY.md) reporting, secret blast radius, the workspace trust model.
-- Packages: [box](packages/box/README.md) · [control-plane](packages/control-plane/README.md) · [webapp](packages/webapp/README.md) · [broker](packages/broker/README.md) · [schema](packages/schema/README.md)
+- Packages: [box](packages/box/README.md) · [control-plane](packages/control-plane/README.md) · [webapp](packages/webapp/README.md) · [schema](packages/schema/README.md)
 
 ## Roadmap
 

@@ -29,6 +29,20 @@ const shimPath = (name: string) =>
 
 const shim = (name: string) => readFileSync(shimPath(name), "utf8");
 
+/**
+ * The shim with its comments removed.
+ *
+ * The absence assertions below are about what the shim DOES. A comment that
+ * names the thing the shim no longer touches is the file explaining itself, and
+ * reading the whole file would fail on it — which is exactly what happened when
+ * the broker mint left and the shim said so.
+ */
+const shimCode = (name: string) =>
+  shim(name)
+    .split("\n")
+    .filter((row) => !row.trimStart().startsWith("#"))
+    .join("\n");
+
 describe("vendor CLI PATH shims", () => {
   it.each(["claude", "codex"])("%s execs the pinned binary, not the name again", (name) => {
     // /usr/local/bin comes first on PATH, so a bare `exec claude` would
@@ -47,7 +61,13 @@ describe("vendor CLI PATH shims", () => {
     // holding the CLI version held the model list with it. Assert the absence,
     // so re-adding it anywhere in this shim is a test failure and not a quiet
     // regression back to a stale model picker.
-    expect(shim("claude")).not.toContain("DISABLE_AUTOUPDATER");
+    expect(shimCode("claude")).not.toContain("DISABLE_AUTOUPDATER");
+  });
+
+  it("leaves supplied Claude authentication inputs unchanged", () => {
+    // The shim does not inspect, replace, or remove native authentication.
+    expect(shimCode("claude")).not.toContain("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(shimCode("claude")).not.toContain("blitz-cred");
   });
 
   it("leaves codex's startup update check on", () => {

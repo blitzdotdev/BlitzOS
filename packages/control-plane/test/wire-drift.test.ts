@@ -45,19 +45,6 @@ const volume: SharedShape<wire.Volume, schema.Volume> = {
   attachedTo: "workspace",
 };
 
-const environment: SharedShape<
-  wire.WorkspaceEnvironment,
-  schema.WorkspaceEnvironment
-> = {
-  env: { API_ORIGIN: "https://api.example" },
-  startupScript: "npm install\n",
-};
-
-const environmentResponse: SharedShape<
-  wire.WorkspaceEnvironmentResponse,
-  schema.WorkspaceEnvironmentResponse
-> = { ...environment, filesReady: true };
-
 const agentRulesResponse: SharedShape<
   wire.AgentRulesResponse,
   schema.AgentRulesResponse
@@ -609,18 +596,6 @@ const pollResponse: SharedShape<wire.PollResponse, schema.PollResponse> = {
   workspaces: [workspace],
 };
 
-const registerKeysResponse: SharedShape<
-  wire.RegisterKeysResponse,
-  schema.RegisterKeysResponse
-> = {
-  memberUnixName: "operator",
-  broker: {
-    host: "broker.example",
-    port: 2222,
-    sshHostPublicKey: "ssh-ed25519 AAAAbroker",
-  },
-};
-
 const apiError: SharedShape<wire.ApiError, schema.ApiError> = {
   error: "workspace is still creating",
   retryAction: "poll",
@@ -681,22 +656,6 @@ const deleteVolumeResponse: SharedShape<
   wire.DeleteVolumeResponse,
   schema.DeleteVolumeResponse
 > = { id: volume.id };
-
-const feedKey: SharedShape<wire.FeedKey, schema.FeedKey> = {
-  pubkey: "ssh-ed25519 AAAAkey",
-  op: "mint",
-};
-
-const feedMember: SharedShape<wire.FeedMember, schema.FeedMember> = {
-  unixName: "operator",
-  harnesses: ["claude", "codex"],
-  keys: [feedKey],
-};
-
-const feedResponse: SharedShape<wire.FeedResponse, schema.FeedResponse> = {
-  version: "version",
-  members: [feedMember],
-};
 
 // The credential module keeps its own copy of the same views in
 // core/connections/types.ts. It is the second hand-mirrored wire in the
@@ -849,8 +808,6 @@ const fullFieldValues = [
   pricedMachineType,
   machineTypeFailure,
   volume,
-  environment,
-  environmentResponse,
   agentRulesResponse,
   payloadFile,
   payloadArchive,
@@ -883,7 +840,6 @@ const fullFieldValues = [
   createWorkspaceRequest,
   createWorkspaceResponse,
   pollResponse,
-  registerKeysResponse,
   apiError,
   seatLimitError,
   entitlementsRequest,
@@ -894,9 +850,6 @@ const fullFieldValues = [
   createVolumeResponse,
   listVolumesResponse,
   deleteVolumeResponse,
-  feedKey,
-  feedMember,
-  feedResponse,
   catalogAdminForm,
   catalogEntry,
   userGrant,
@@ -960,8 +913,6 @@ describe("local wire copies", () => {
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
     expectTypeOf<wire.Volume>().toEqualTypeOf<schema.Volume>();
-    expectTypeOf<wire.WorkspaceEnvironment>().toEqualTypeOf<schema.WorkspaceEnvironment>();
-    expectTypeOf<wire.WorkspaceEnvironmentResponse>().toEqualTypeOf<schema.WorkspaceEnvironmentResponse>();
     expectTypeOf<wire.AgentRulesResponse>().toEqualTypeOf<schema.AgentRulesResponse>();
     expectTypeOf<wire.BoxPayloadFile>().toEqualTypeOf<schema.BoxPayloadFile>();
     expectTypeOf<wire.BoxPayloadArchive>().toEqualTypeOf<schema.BoxPayloadArchive>();
@@ -1001,7 +952,6 @@ describe("local wire copies", () => {
     expectTypeOf<wire.CreateWorkspaceRequest>().toEqualTypeOf<schema.CreateWorkspaceRequest>();
     expectTypeOf<wire.CreateWorkspaceResponse>().toEqualTypeOf<schema.CreateWorkspaceResponse>();
     expectTypeOf<wire.PollResponse>().toEqualTypeOf<schema.PollResponse>();
-    expectTypeOf<wire.RegisterKeysResponse>().toEqualTypeOf<schema.RegisterKeysResponse>();
     expectTypeOf<wire.ApiError>().toEqualTypeOf<schema.ApiError>();
     expectTypeOf<wire.EntitlementsRequest>().toEqualTypeOf<schema.EntitlementsRequest>();
     expectTypeOf<wire.OrgUsageResponse>().toEqualTypeOf<schema.OrgUsageResponse>();
@@ -1010,9 +960,6 @@ describe("local wire copies", () => {
     expectTypeOf<wire.CreateVolumeResponse>().toEqualTypeOf<schema.CreateVolumeResponse>();
     expectTypeOf<wire.ListVolumesResponse>().toEqualTypeOf<schema.ListVolumesResponse>();
     expectTypeOf<wire.DeleteVolumeResponse>().toEqualTypeOf<schema.DeleteVolumeResponse>();
-    expectTypeOf<wire.FeedResponse>().toEqualTypeOf<schema.FeedResponse>();
-    expectTypeOf<wire.FeedMember>().toEqualTypeOf<schema.FeedMember>();
-    expectTypeOf<wire.FeedKey>().toEqualTypeOf<schema.FeedKey>();
   });
 
   it("keeps the credential module's copies exactly equal to @blitzos/schema", () => {
@@ -1033,8 +980,6 @@ describe("local wire copies", () => {
   });
 
   it("keeps every duplicated constant and every field-bearing JSON shape covered", () => {
-    expect(wire.FEED_MAX_BYTES).toBe(schema.FEED_MAX_BYTES);
-    expect(wire.HARNESSES).toEqual(schema.HARNESSES);
     expect(wire.AGENT_PROVIDERS).toEqual(schema.AGENT_PROVIDERS);
     expect(wire.AGENT_MODELS).toEqual(schema.AGENT_MODELS);
     expect(wire.AGENT_EFFORTS).toEqual(schema.AGENT_EFFORTS);

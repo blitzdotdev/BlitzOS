@@ -1331,7 +1331,6 @@ async function verifyServiceFloor(currentRoot, nextRoot, manifest) {
   await Promise.all([
     requireServiceType(nextRoot, 'cgroups', null),
     requireServiceType(nextRoot, 'init-state', null),
-    requireServiceType(nextRoot, 'register', null),
     requireServiceType(nextRoot, 'payload', 'longrun'),
     requireServiceType(nextRoot, 'user', 'bundle'),
     requireServiceType(nextRoot, 'user2', 'bundle'),
@@ -1352,12 +1351,11 @@ async function verifyServiceFloor(currentRoot, nextRoot, manifest) {
       throw new VerifyFailure(`manifest.restart service is not a tree longrun: ${service}`);
     }
   }
-  // s6-rc-update would re-run a changed oneshot and take every dependent down
-  // with it. register has nine dependents; init-state and cgroups have the
-  // whole graph. A changed payload definition would restart the updater in
-  // the middle of its own switch. Their bodies live in payload libexec
-  // scripts, which can still change freely.
-  for (const service of ['cgroups', 'init-state', 'register', 'payload']) {
+  // s6-rc-update would rerun a changed oneshot and stop all dependents.
+  // init-state and cgroups have the whole graph.
+  // A changed payload definition would restart its updater during the switch.
+  // Their bodies use payload libexec scripts, which can still change.
+  for (const service of ['cgroups', 'init-state', 'payload']) {
     await compareFrozenService(currentRoot, nextRoot, service);
   }
 }

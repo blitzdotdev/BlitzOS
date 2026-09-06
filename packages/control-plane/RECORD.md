@@ -41,31 +41,9 @@ Decisions: `plans/PORT-DESIGN.md` (the original session notes are not in this re
   Passkeys DELETED (2026-08-11, implementation review): operator-key login
   only. Sessions stay opaque hashed rows; the principal seam admits passkey/SSO
   later without core changes.
-- Credential broker registry. Purpose: a subscription account can auth agents in
-  every workspace its owner spawns.
-  - Core holds pubkeys + routing only. Never a credential.
-  - A workspace registers mint/deposit pubkeys. The owner comes from the
-    authenticated box row. Never from the body.
-  - Broker boxes PULL their member/key list. Feed auth = the box OAuth access
-    token (2026-08-11: one token family; the separate pull token is deleted).
-    ETag/304. The pull shape stops one rogue box from listing the fleet.
-  - Mint = forced-command SSH on the broker box.
-  - Members use the sessions principal seam.
-  - No key ceiling (founder, 2026-08-11). `expires_at` leaves the schema. A key
-    is valid while the feed serves it. Revocation = ON DELETE CASCADE + the feed.
-  - Enrollment API: register/remove a broker box (host, port, SSH host pubkey)
-    + set the broker role flag. A broker box is a box: it enrolls through the
-    same device flow; no separate pull token exists. This replaces raw D1
-    inserts. `blitz-broker enroll` calls it.
-  - Registration auth = the box OAuth token (fixed 2026-08-11; the earlier
-    keypair line contradicted box decision 2). Rule: HTTP plane = tokens.
-    SSH plane = keypairs.
-  - Broker fleet ops stay closed. The Go daemon is open. Record:
-    `packages/broker/RECORD.md`.
 - Box identity: device-flow enrollment endpoints + box OAuth tokens.
   Short-lived access + rotating refresh. Opaque hashed rows, constant-time
-  compare. ONE token family serves every box→CP call: registry registration,
-  the broker pull feed (2026-08-11).
+  compare. One token family serves each device-code box call.
 - Readiness: cloud-init `phone_home`, one shot (decided 2026-08-11). The POST
   carries "boot finished" + the SSH host public keys. Target = a single-use
   capability URL, minted per provision. User-data is readable inside the VM,

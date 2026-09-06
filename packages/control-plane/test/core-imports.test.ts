@@ -77,7 +77,6 @@ const expected = [
   "compute/workspace-placement.ts",
   "compute/registry.ts",
   "compute/types.ts",
-  "registry.ts",
   "runtime.ts",
   "session-shares.ts",
   "sessions.ts",
@@ -123,6 +122,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(98);
+    expect(expected).toHaveLength(97);
   });
 });
