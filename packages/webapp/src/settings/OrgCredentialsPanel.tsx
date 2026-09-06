@@ -161,6 +161,7 @@ export function OrgCredentialsPanel({
   const [accessDraft, setAccessDraft] = useState<AccessDraft | null>(null);
   const [savingAccess, setSavingAccess] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<OrgCredentialView | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
 
@@ -255,16 +256,18 @@ export function OrgCredentialsPanel({
 
   const revoke = async (credential: OrgCredentialView) => {
     if (revoking !== null) return;
-    setRevokeTarget(null);
     setRevoking(credential.name);
-    setError(null);
+    setRevokeError(null);
     try {
       await client.revokeOrgCredential(credential.name);
       if (accessDraft?.name === credential.name) setAccessDraft(null);
       if (rotating === credential.name) setRotating(null);
       await reload();
+      // THE DIALOG CLOSES ONLY ON SUCCESS. A failure draws inside it, beside
+      // the button that caused it.
+      setRevokeTarget(null);
     } catch (caught) {
-      setError(caughtErrorMessage(caught, 'Revoke failed.'));
+      setRevokeError(caughtErrorMessage(caught, 'Revoke failed.'));
     } finally {
       setRevoking(null);
     }
@@ -308,7 +311,10 @@ export function OrgCredentialsPanel({
               onDraftChange={(grants) => setAccessDraft({ name: credential.name, grants })}
               onSaveAccess={() => { void saveAccess(); }}
               onRotate={() => setRotating(credential.name)}
-              onRevoke={() => setRevokeTarget(credential)}
+              onRevoke={() => {
+                setRevokeError(null);
+                setRevokeTarget(credential);
+              }}
             />
           ))}
         </div>
@@ -366,7 +372,12 @@ export function OrgCredentialsPanel({
           title="Revoke this credential?"
           description={`Revoke ${revokeTarget.name} for the whole organization? Every machine that pulls it is refused on the next ask.`}
           confirmLabel="Revoke credential"
-          onCancel={() => setRevokeTarget(null)}
+          busy={revoking === revokeTarget.name}
+          error={revokeError}
+          onCancel={() => {
+            setRevokeError(null);
+            setRevokeTarget(null);
+          }}
           onConfirm={() => { void revoke(revokeTarget); }}
         />
       )}
