@@ -104,7 +104,6 @@ const expected = [
   "core/org-credential-routes.ts",
   "core/org-credentials.ts",
   "core/principals.ts",
-  "core/registry.ts",
   "core/session-shares.ts",
   "core/sessions.ts",
   "core/version.ts",
@@ -150,7 +149,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(102);
+    expect(first.files).toHaveLength(101);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
