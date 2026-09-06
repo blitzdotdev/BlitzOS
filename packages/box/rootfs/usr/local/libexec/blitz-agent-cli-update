@@ -1,7 +1,7 @@
 #!/command/with-contenv bash
-# Keep the vendor agent CLIs current without waiting for an interactive TUI.
-# The npm prefix belongs to blitz. A root update would leave root-owned files
-# there and block every later update, so root is refused before any file write.
+# Keep vendor agent CLIs current without waiting for an interactive TUI.
+# The npm prefix belongs to blitz. Root updates leave files that block later updates.
+# Refuse root before any file write.
 set -uo pipefail
 
 current_uid=$(/usr/bin/id -u)
@@ -24,15 +24,16 @@ USER=blitz
 NPM_CONFIG_PREFIX=/opt/blitz/npm
 export HOME USER NPM_CONFIG_PREFIX
 
-update_dir=${BLITZ_AGENT_CLI_UPDATE_DIR:-/opt/blitz/npm/.blitz-agent-cli-update}
-# BLITZ_AGENT_CLI_UPDATE_DIR is a test-only seam. Production uses the literal
-# path above, which stays writable by blitz after an npm update.
+default_update_dir="$state_dir/agent-cli-update"
+update_dir=${BLITZ_AGENT_CLI_UPDATE_DIR:-$default_update_dir}
+# BLITZ_AGENT_CLI_UPDATE_DIR is a test-only seam.
+# State stays outside the npm prefix. Matching versions do not write there.
 case "$update_dir" in
 	/*) ;;
-	*) update_dir=/opt/blitz/npm/.blitz-agent-cli-update ;;
+	*) update_dir=$default_update_dir ;;
 esac
 if [ "$update_dir" = / ]; then
-	update_dir=/opt/blitz/npm/.blitz-agent-cli-update
+	update_dir=$default_update_dir
 fi
 
 if ! mkdir -p "$update_dir" 2>/dev/null || ! chmod 0755 "$update_dir" 2>/dev/null; then
@@ -96,22 +97,110 @@ shift
 chmod 0644 "$lock_file" 2>/dev/null || true
 rotate_log
 
+version_pattern='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?'
+quiet_log_interval_seconds=3600
+
+parse_installed_version() {
+	local cli=$1 output=$2
+	case "$cli" in
+		codex)
+			if [[ $output =~ ^codex-cli[[:space:]]+($version_pattern)$ ]]; then
+				printf '%s\n' "${BASH_REMATCH[1]}"
+				return 0
+			fi
+			;;
+		claude)
+			if [[ $output =~ ^($version_pattern)[[:space:]]+\(Claude[[:space:]]Code\)$ ]]; then
+				printf '%s\n' "${BASH_REMATCH[1]}"
+				return 0
+			fi
+			;;
+	esac
+	return 1
+}
+
+parse_published_version() {
+	local output=$1
+	if [[ $output =~ ^($version_pattern)$ ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	return 1
+}
+
+valid_epoch() {
+	local value=$1
+	case "$value" in
+		'' | *[!0-9]*) return 1 ;;
+	esac
+	[ "${#value}" -le 10 ]
+}
+
+log_unchanged() {
+	local cli=$1 version=$2 quiet_file now quiet_version quiet_at elapsed
+	quiet_file="$update_dir/quiet-$cli"
+	now=$(date +%s 2>/dev/null)
+	if ! valid_epoch "$now"; then
+		log "$cli is up to date at $version; clock probe failed"
+		return
+	fi
+	quiet_version=
+	quiet_at=
+	read -r quiet_version quiet_at < "$quiet_file" 2>/dev/null || true
+	if [ "$quiet_version" = "$version" ] && valid_epoch "$quiet_at"; then
+		elapsed=$((now - quiet_at))
+		if [ "$elapsed" -lt "$quiet_log_interval_seconds" ]; then
+			return
+		fi
+	fi
+	log "$cli is up to date at $version"
+	if printf '%s %s\n' "$version" "$now" > "$quiet_file" 2>/dev/null; then
+		chmod 0644 "$quiet_file" 2>/dev/null || true
+	else
+		log "$cli quiet log state failed"
+	fi
+}
+
 update_cli() {
-	local cli=$1 status
+	local cli=$1 package=$2 status installed_output installed_version
+	local published_output published_version
 	if ! command -v "$cli" >/dev/null 2>&1; then
 		log "$cli is missing; skipped"
 		return
 	fi
-	log "$cli update started"
+	installed_output=$("$cli" --version 2>/dev/null)
+	status=$?
+	if [ "$status" -ne 0 ]; then
+		log "$cli installed version probe failed (exit $status); skipped"
+		return
+	fi
+	if ! installed_version=$(parse_installed_version "$cli" "$installed_output"); then
+		log "$cli installed version parse failed; skipped"
+		return
+	fi
+	published_output=$(npm view "$package" version 2>/dev/null)
+	status=$?
+	if [ "$status" -ne 0 ]; then
+		log "$cli published version probe failed for $package (exit $status); skipped"
+		return
+	fi
+	if ! published_version=$(parse_published_version "$published_output"); then
+		log "$cli published version parse failed for $package; skipped"
+		return
+	fi
+	if [ "$installed_version" = "$published_version" ]; then
+		log_unchanged "$cli" "$installed_version"
+		return
+	fi
+	log "$cli update started: $installed_version -> $published_version"
 	if "$cli" update >> "$log_file" 2>&1; then
-		log "$cli update completed"
+		log "$cli update completed: $installed_version -> $published_version"
 	else
 		status=$?
-		log "$cli update failed (exit $status)"
+		log "$cli update failed: $installed_version -> $published_version (exit $status)"
 	fi
 }
 
-update_cli codex
-update_cli claude
-log 'tick completed'
+update_cli codex '@openai/codex'
+update_cli claude '@anthropic-ai/claude-code'
 exit 0

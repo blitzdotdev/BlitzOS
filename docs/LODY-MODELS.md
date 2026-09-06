@@ -149,10 +149,16 @@ updated Codex from 0.147.0 to 0.153.4 and Claude Code from 2.1.228 to 2.1.261.
 ## 5. Path forward
 
 **Done 2026-09-05: a payload-owned periodic updater.** The
-`agent-cli-update` longrun waits briefly after boot and then runs explicit
-`codex update` and `claude update` commands every six hours. It runs as blitz,
-uses the blitz-owned npm prefix, and logs failures without stopping its loop.
+`agent-cli-update` longrun waits briefly after boot and checks npm every five
+minutes, matching the box payload poll. It runs an explicit `codex update` or
+`claude update` only when that CLI's published version differs from its
+installed version. It runs as blitz, uses the blitz-owned npm prefix, and logs
+failures without stopping its loop. Unchanged states are logged at most hourly.
 Both packages also use `@latest` when a fresh image is built.
+
+The updater does not defer for active sessions. Measured in place, a running
+`codex app-server` kept serving after its package changed. New sessions started
+with the new binary.
 
 The shadow-copy fear the old comments cited is handled independently:
 `rootfs/etc/profile.d/blitz-npm.sh` force-moves `/usr/local/bin` to the FRONT of

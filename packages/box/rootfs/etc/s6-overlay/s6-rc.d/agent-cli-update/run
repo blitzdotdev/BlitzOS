@@ -1,10 +1,11 @@
 #!/command/with-contenv bash
-# Run both vendor update commands as blitz. The initial delay lets boot traffic
-# settle. Every outcome reaches the sleep, so a network failure cannot spin s6.
+# Check both vendor CLIs as blitz. Update only when npm reports a change.
+# Poll every five minutes, matching the box payload updater.
+# Every outcome reaches the sleep, so a network failure cannot spin s6.
 set -uo pipefail
 
 state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
-interval=${BLITZ_AGENT_CLI_UPDATE_INTERVAL:-21600}
+interval=${BLITZ_AGENT_CLI_UPDATE_INTERVAL:-300}
 boot_delay=${BLITZ_AGENT_CLI_UPDATE_BOOT_DELAY:-30}
 
 valid_seconds() {
@@ -16,8 +17,8 @@ valid_seconds() {
 }
 
 if ! valid_seconds "$interval" 1; then
-	echo 'agent-cli-update: invalid interval; using 21600 seconds'
-	interval=21600
+	echo 'agent-cli-update: invalid interval; using 300 seconds'
+	interval=300
 fi
 if ! valid_seconds "$boot_delay" 0; then
 	echo 'agent-cli-update: invalid boot delay; using 30 seconds'

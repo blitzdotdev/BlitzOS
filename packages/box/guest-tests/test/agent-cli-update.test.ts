@@ -77,6 +77,16 @@ class Harness {
       [
         "#!/bin/sh",
         "printf 'npm|%s|%s|%s|%s\\n' \"$*\" \"$HOME\" \"$USER\" \"$NPM_CONFIG_PREFIX\" >>\"$BLITZ_TEST_CALLS\"",
+        "case \"$*\" in",
+        "  'view @openai/codex version')",
+        "    if [ \"${BLITZ_TEST_FAIL_NPM_CODEX:-0}\" = 1 ]; then exit 29; fi",
+        "    printf '%s\\n' \"${BLITZ_TEST_PUBLISHED_CODEX:-0.153.4}\"",
+        "    ;;",
+        "  'view @anthropic-ai/claude-code version')",
+        "    if [ \"${BLITZ_TEST_FAIL_NPM_CLAUDE:-0}\" = 1 ]; then exit 29; fi",
+        "    printf '%s\\n' \"${BLITZ_TEST_PUBLISHED_CLAUDE:-2.1.261}\"",
+        "    ;;",
+        "esac",
         "exit 0",
         "",
       ].join("\n"),
@@ -93,8 +103,19 @@ class Harness {
           `  touch "$BLITZ_TEST_${upper}_READY"`,
           `  while [ ! -e "$BLITZ_TEST_${upper}_RELEASE" ]; do sleep 0.02; done`,
           "fi",
-          `if [ "\${BLITZ_TEST_FAIL_${upper}:-0}" = 1 ]; then exit 23; fi`,
-          `npm ${cli} "$@"`,
+          "if [ \"$1\" = --version ]; then",
+          `  if [ "\${BLITZ_TEST_FAIL_${upper}_VERSION:-0}" = 1 ]; then exit 23; fi`,
+          cli === "codex"
+            ? "  printf '%s\\n' \"${BLITZ_TEST_CODEX_VERSION_OUTPUT:-codex-cli 0.153.4}\""
+            : "  printf '%s\\n' \"${BLITZ_TEST_CLAUDE_VERSION_OUTPUT:-2.1.261 (Claude Code)}\"",
+          "  exit 0",
+          "fi",
+          "if [ \"$1\" = update ]; then",
+          `  if [ "\${BLITZ_TEST_FAIL_${upper}:-0}" = 1 ]; then exit 23; fi`,
+          `  npm ${cli} "$@"`,
+          "  exit $?",
+          "fi",
+          "exit 64",
           "",
         ].join("\n"),
       );
@@ -183,6 +204,8 @@ describe("agent CLI updater", () => {
     expect(rootGuard).toBeGreaterThan(0);
     expect(source.indexOf("exit 77", rootGuard)).toBeLessThan(source.indexOf("mkdir -p"));
     expect(source).toContain("current_uid=$(/usr/bin/id -u)");
+    expect(source).toContain('default_update_dir="$state_dir/agent-cli-update"');
+    expect(source).not.toContain("/opt/blitz/npm/.blitz-agent-cli-update");
   });
 
   it("is a registered longrun that drops to blitz and sleeps after every tick", () => {
@@ -200,7 +223,7 @@ describe("agent CLI updater", () => {
       .toBe(true);
     expect(statSync(path.join(serviceRoot, "user/contents.d/agent-cli-update")).isFile())
       .toBe(true);
-    expect(code).toContain("BLITZ_AGENT_CLI_UPDATE_INTERVAL:-21600");
+    expect(code).toContain("BLITZ_AGENT_CLI_UPDATE_INTERVAL:-300");
     expect(code).toContain("BLITZ_AGENT_CLI_UPDATE_BOOT_DELAY:-30");
     expect(code).toContain("s6-setuidgid blitz");
     expect(code).toContain("HOME=\"$state_dir/home\" USER=blitz NPM_CONFIG_PREFIX=/opt/blitz/npm");
@@ -210,43 +233,122 @@ describe("agent CLI updater", () => {
     );
   });
 
-  it("runs both explicit update commands with the owned npm environment", () => {
+  it("does not update when installed and published versions match", () => {
     const harness = new Harness();
     const result = runUpdater(harness);
 
     expect(result.status, result.stderr).toBe(0);
     expect(harness.callLines()).toEqual([
-      `codex|update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
-      `npm|codex update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
-      `claude|update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
-      `npm|claude update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `codex|--version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `npm|view @openai/codex version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `claude|--version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `npm|view @anthropic-ai/claude-code version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
     ]);
+    expect(harness.callLines().some((line) => line.includes("|update|"))).toBe(false);
+    const log = readFileSync(path.join(harness.updateDir, "log"), "utf8");
+    expect(log).toContain("codex is up to date at 0.153.4");
+    expect(log).toContain("claude is up to date at 2.1.261");
     expect(statSync(harness.updateDir).mode & 0o777).toBe(0o755);
     expect(statSync(path.join(harness.updateDir, "log")).mode & 0o777).toBe(0o644);
   });
 
+  it("parses both real formats and updates changed versions", () => {
+    const harness = new Harness();
+    const result = runUpdater(harness, {
+      BLITZ_TEST_CODEX_VERSION_OUTPUT: "codex-cli 0.153.4",
+      BLITZ_TEST_CLAUDE_VERSION_OUTPUT: "2.1.261 (Claude Code)",
+      BLITZ_TEST_PUBLISHED_CODEX: "0.154.0",
+      BLITZ_TEST_PUBLISHED_CLAUDE: "2.1.262",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(harness.callLines()).toEqual([
+      `codex|--version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `npm|view @openai/codex version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `codex|update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `npm|codex update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `claude|--version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `npm|view @anthropic-ai/claude-code version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `claude|update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+      `npm|claude update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+    ]);
+    const log = readFileSync(path.join(harness.updateDir, "log"), "utf8");
+    expect(log).toContain("codex update completed: 0.153.4 -> 0.154.0");
+    expect(log).toContain("claude update completed: 2.1.261 -> 2.1.262");
+  });
+
   it("runs claude after codex fails", () => {
     const harness = new Harness();
-    const result = runUpdater(harness, { BLITZ_TEST_FAIL_CODEX: "1" });
+    const result = runUpdater(harness, {
+      BLITZ_TEST_FAIL_CODEX: "1",
+      BLITZ_TEST_PUBLISHED_CODEX: "0.154.0",
+      BLITZ_TEST_PUBLISHED_CLAUDE: "2.1.262",
+    });
 
     expect(result.status, result.stderr).toBe(0);
     expect(harness.callLines().filter((line) => !line.startsWith("npm|")))
       .toEqual([
+        `codex|--version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
         `codex|update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
+        `claude|--version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
         `claude|update|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
       ]);
     expect(readFileSync(path.join(harness.updateDir, "log"), "utf8"))
-      .toContain("codex update failed (exit 23)");
+      .toContain("codex update failed: 0.153.4 -> 0.154.0 (exit 23)");
   });
 
   it("survives a missing CLI and still runs the other one", () => {
     const harness = new Harness({ missing: "codex" });
-    const result = runUpdater(harness);
+    const result = runUpdater(harness, { BLITZ_TEST_PUBLISHED_CLAUDE: "2.1.262" });
 
     expect(result.status, result.stderr).toBe(0);
     expect(harness.callLines().some((line) => line.startsWith("claude|update|"))).toBe(true);
     expect(readFileSync(path.join(harness.updateDir, "log"), "utf8"))
       .toContain("codex is missing; skipped");
+  });
+
+  it("skips a failed npm view and still exits zero", () => {
+    const harness = new Harness();
+    const result = runUpdater(harness, {
+      BLITZ_TEST_FAIL_NPM_CODEX: "1",
+      BLITZ_TEST_PUBLISHED_CLAUDE: "2.1.262",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(harness.callLines().some((line) => line.startsWith("codex|update|"))).toBe(false);
+    expect(harness.callLines().some((line) => line.startsWith("claude|update|"))).toBe(true);
+    expect(readFileSync(path.join(harness.updateDir, "log"), "utf8"))
+      .toContain("codex published version probe failed for @openai/codex (exit 29); skipped");
+  });
+
+  it("skips an unparseable version and still checks the other CLI", () => {
+    const harness = new Harness();
+    const result = runUpdater(harness, {
+      BLITZ_TEST_CODEX_VERSION_OUTPUT: "codex 0.153.4",
+      BLITZ_TEST_PUBLISHED_CLAUDE: "2.1.262",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(harness.callLines().some((line) => line.startsWith("codex|update|"))).toBe(false);
+    expect(harness.callLines().some((line) => line.startsWith("claude|update|"))).toBe(true);
+    expect(readFileSync(path.join(harness.updateDir, "log"), "utf8"))
+      .toContain("codex installed version parse failed; skipped");
+  });
+
+  it("rate-limits unchanged logs to once per hour", () => {
+    const harness = new Harness();
+    const first = runUpdater(harness);
+    const second = runUpdater(harness);
+
+    expect(first.status, first.stderr).toBe(0);
+    expect(second.status, second.stderr).toBe(0);
+    const unchanged = readFileSync(path.join(harness.updateDir, "log"), "utf8")
+      .split("\n")
+      .filter((line) => line.includes("is up to date at"));
+    expect(unchanged).toEqual([
+      "blitz-agent-cli-update: codex is up to date at 0.153.4",
+      "blitz-agent-cli-update: claude is up to date at 2.1.261",
+    ]);
   });
 
   it("serializes concurrent ticks with one flock", async () => {
