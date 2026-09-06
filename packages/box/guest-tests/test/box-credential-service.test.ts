@@ -52,6 +52,10 @@ describe("box-credential service", () => {
       "#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$BLITZ_TEST_CHOWN_LOG\"\n",
     );
     writeExecutable(
+      path.join(bin, "stat"),
+      "#!/bin/sh\nprintf '%s:%s\\n' \"$BLITZ_TEST_CURRENT_UID\" \"$BLITZ_TEST_CURRENT_GID\"\n",
+    );
+    writeExecutable(
       path.join(bin, "s6-setuidgid"),
       "#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$BLITZ_TEST_REFRESH_LOG\"\n",
     );
@@ -68,6 +72,8 @@ describe("box-credential service", () => {
         BLITZ_GID: String(expectedGid),
         BLITZ_CREDENTIAL_REFRESH_ONCE: "1",
         BLITZ_TEST_CHOWN_LOG: chownLog,
+        BLITZ_TEST_CURRENT_UID: String(currentUid),
+        BLITZ_TEST_CURRENT_GID: String(currentGid),
         BLITZ_TEST_REFRESH_LOG: refreshLog,
       },
     });

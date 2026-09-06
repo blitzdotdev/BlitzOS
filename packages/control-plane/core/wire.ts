@@ -2,8 +2,6 @@ import type { BoxPayloadConfig } from "./wire-box-payload.js";
 
 export * from "./wire-box-payload.js";
 
-export const FEED_MAX_BYTES = 1_048_576;
-export const HARNESSES = ["claude", "codex"] as const;
 export const FILES_MULTIPART_CHUNK_BYTES = 32 * 1024 * 1024;
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
@@ -14,15 +12,6 @@ export interface JsonObject {
 
 export interface CredentialManifest {
   integrations: Record<string, JsonObject>;
-}
-
-export interface WorkspaceEnvironment {
-  env: Record<string, string>;
-  startupScript: string | null;
-}
-
-export interface WorkspaceEnvironmentResponse extends WorkspaceEnvironment {
-  filesReady: boolean;
 }
 
 /** The envelope `GET /workspaces/self/agent-rules` returns to a box.
@@ -367,12 +356,12 @@ export interface CheckGithubRepositoriesResponse {
  *
  * It mirrors the per-provider model and effort lists the pinned harness CLIs
  * accept; "default" is expressed by omitting the model or effort, so it is not
- * listed. The providers are the TUI harness list (`HARNESSES` above) — one
- * constant, derived, never re-spelled. The canonical copy lives in
+ * listed. The provider tuple is defined here with the catalog it governs.
+ * The canonical copy lives in
  * `packages/schema/src/agent-catalog.ts` (core code may not import packages);
  * `test/wire-drift.test.ts` holds the two together. Extend both copies in the
  * same change. */
-export const AGENT_PROVIDERS = HARNESSES;
+export const AGENT_PROVIDERS = ["claude", "codex"] as const;
 
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
 
@@ -469,15 +458,6 @@ export interface PollResponse {
   workspaces: WorkspaceView[];
 }
 
-export interface RegisterKeysResponse {
-  memberUnixName: string;
-  broker: {
-    host: string;
-    port: number;
-    sshHostPublicKey: string;
-  };
-}
-
 export interface ApiError {
   error: string;
   retryAction: RetryAction;
@@ -539,19 +519,3 @@ export interface DeleteVolumeResponse {
 }
 
 export const INVITE_TTL_DAYS = 7;
-
-export interface FeedResponse {
-  version: string;
-  members: FeedMember[];
-}
-
-export interface FeedMember {
-  unixName: string;
-  harnesses: string[];
-  keys: FeedKey[];
-}
-
-export interface FeedKey {
-  pubkey: string;
-  op: "mint" | "deposit";
-}

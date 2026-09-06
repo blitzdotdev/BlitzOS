@@ -15,14 +15,10 @@
  * and spawns our binary: the box's own `claude`, which keeps itself current and
  * so decides which models this composer can offer (docs/LODY-MODELS.md).
  *
- * AND WHICH BINARY. `/usr/local/bin/claude` is the box's PATH SHIM, not the
- * vendor CLI: it mints a fresh OAuth token through `blitz-cred-claude` and execs
- * `/opt/blitz/npm/bin/claude`. Pointing the override at the vendor binary
- * directly would hand the adapter an unauthenticated CLI, because nothing else
- * in the daemon's environment carries `CLAUDE_CODE_OAUTH_TOKEN`. Credentials
- * therefore stay on the existing box path and never enter `config.env` — that
- * row is a synced CRDT, and `session/create.env` is the per-turn escape hatch
- * phase 6 uses instead.
+ * AND WHICH BINARY. `/usr/local/bin/claude` is the box's PATH shim.
+ * It executes `/opt/blitz/npm/bin/claude` without changing authentication.
+ * The native HOME store remains the only login source.
+ * Credentials never enter `config.env`, which is a synced CRDT row.
  *
  * `kimi` and `grok` are never registered: they are managed-runtime-only and
  * there is no override to pin them with. `deepseek` is a builtin agent but not a
@@ -34,7 +30,7 @@ import { resyncMachineFlockRows } from "@lody/components/hooks/use-machine-flock
 import { runStartupAcpCapabilitiesRefresh } from "@lody/components/providers/startup-acp-capabilities-refresh";
 import type { LodyAtomStore, LodyWorkspaceRuntime } from "./runtime.js";
 
-/** The shim, not `/opt/blitz/npm/bin/claude`; see the module comment. */
+/** The PATH shim keeps native authentication and update behavior consistent. */
 export const BLITZ_CLAUDE_EXECUTABLE = "/usr/local/bin/claude";
 export const BLITZ_CODEX_PATH = "/usr/local/bin/codex";
 

@@ -2162,6 +2162,50 @@ the same file fallback and limit rule.
 hunks. If the landing gains the prop itself, keep only the host wiring. If
 image and file limits merge, preserve file access when cloud upload is absent.
 
+### 28. A host may name its own builtin default mode (declared 2026-09-05)
+
+**One idea, two hunks, one file.** Lody chooses `auto` for new builtin Claude
+sessions. BlitzOS requires `bypassPermissions` for those sessions. Without this
+seam, the Lody table overrides the host's agent configuration.
+
+`packages/shared/src/ai.ts`
+
+| # | File | Line (at `f4b1ba25`) | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/shared/src/ai.ts` | 405 | immediately after the `BUILTIN_DEFAULT_MODE_IDS` object | declares an optional host override on `globalThis` |
+| 2 | same | 412 | the builtin branch in `getBuiltinDefaultModeId` | prefers the host value before the Lody value |
+
+The override is optional. An absent value preserves every upstream default.
+The BlitzOS bridge publishes one Claude override. Its guarded disposer removes
+that override during the existing bridge hand-over.
+
+Open upstream as "allow an embedding host to name builtin mode defaults".
+
+### 29. An unsent run-config pick survives leaving the session (declared 2026-09-05)
+
+**One idea, four hunks, one file.** A session picker stores unsent run
+configuration only in mounted React state. Leaving the session unmounts that
+state. Without this seam, returning restores only the latest sent turn.
+
+`packages/components/src/hooks/use-acp-session-config-selection.ts`
+
+| # | File | Line (at `f4b1ba25`) | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/components/src/hooks/use-acp-session-config-selection.ts` | 1 | the React hook import | imports `useEffect` for cleanup only |
+| 2 | same | 74 | after `AcpSessionConfigSelectionHandle` | adds a bounded cache for non-empty unsent edits |
+| 3 | same | 92 | the render-phase target fence | stashes the outgoing edits, then seeds the incoming target from the cache |
+| 4 | same | 101 | after the fence, above the preference-stabilizing refs | holds the latest fence in a ref, and stashes it from one cleanup-only effect |
+
+Only callers passing `preserveUnsentUserEdits: true` use the cache. Other
+callers keep the upstream behavior. The cache retains eight targets and evicts
+the oldest target first. Incoming edits pass through the existing fence. The
+fence drops a pick when durable preferences capture it.
+
+The cleanup writes only the module cache. It cannot update or oscillate React
+state.
+
+Open upstream as "retain opted-in unsent run configuration across session mounts".
+
 ## Retired compiled-bundle patches
 
 | Retired script | Disposition | Evidence |

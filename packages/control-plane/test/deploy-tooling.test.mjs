@@ -490,13 +490,13 @@ test("no image path changed means no rebuild", () => {
 
 test("a base-owned box change requires a rebuild", () => {
   const decision = boxImageDecision("abc1234", [
-    "packages/broker/cmd/blitz-cred/main.go",
+    "packages/box/credential-helper/cmd/blitz-cred/main.go",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
     "packages/webapp/src/App.tsx",
   ]);
   assert.equal(decision.rebuild, true);
   assert.deepEqual(decision.paths, [
-    "packages/broker/cmd/blitz-cred/main.go",
+    "packages/box/credential-helper/cmd/blitz-cred/main.go",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
   ]);
 });
@@ -547,9 +547,9 @@ test("IMAGE_PATHS pins the Dockerfile and updater but excludes s6 service topolo
   for (const required of [
     "packages/box/Dockerfile",
     "packages/box/Dockerfile.dockerignore",
-    "packages/broker/cmd/blitz-cred",
-    "packages/broker/go.mod",
-    "packages/broker/internal",
+    "packages/box/credential-helper/cmd/blitz-cred",
+    "packages/box/credential-helper/go.mod",
+    "packages/box/credential-helper/internal",
     "packages/box/rootfs/usr/local/libexec/blitz-payload",
     "packages/control-plane/scripts/lib/box-payload-files.mjs",
   ]) {

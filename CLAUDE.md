@@ -32,15 +32,15 @@ npm test              # control-plane, box guest tests, ui, guest node:test,
 
 ## Known debt (as of 2026-08-18)
 
-- 66 anti-slop findings remain, all Tier C: external-boundary code that
-  needs real parsers (23 no-unknown-parameters, 27 no-runtime-typeof in
-  plain JS, 12 no-unsafe-dictionary-type, 4 no-unknown-returns). The counts
-  fell from 74 (31/27/12/4) on 2026-09-02 when the box credential wire and
-  the workspace credential store were deleted (plans/ORG-CREDENTIALS.md),
-  and before that from 102 (47/27/22/6) on 2026-08-29 when the native-chat
-  surface and the box actor were deleted; the baseline moved with them. Fixing one
-  requires characterization tests FIRST — these fixes can change accepted
-  inputs. Plan and history: GitHub issue #1.
+- 42 anti-slop findings remain. All are Tier C external boundaries that need
+  real parsers (11 no-unknown-parameters, 21 no-runtime-typeof in plain JS,
+  8 no-unsafe-dictionary-type, 2 no-unknown-returns).
+  The count fell from 43 when the control-plane broker registry was deleted.
+  Earlier credential changes lowered the count from 74 on 2026-09-02.
+  Native chat deletion lowered it from 102 on 2026-08-29.
+  The baseline moved with each change. Add characterization tests before a
+  fix because these fixes can change accepted inputs.
+  Plan and history: GitHub issue #1.
 - 6 `TODO(deslop-tier-c):` markers flag type assertions whose invariant is
   not actually enforced today (latent-bug candidates). Grep for the marker.
 - `TODO(house-canon):` markers flag direct fetch/console sites awaiting
@@ -93,7 +93,17 @@ tests are deleted. Restoring recipes means rebuilding that delivery, not
 just remounting the routes. The box's device-code `enroll` service and the
 `blitz-cred enroll` verb went in the same change: every provisioned box gets
 its credential from phone-home before the container starts, so the service
-had no path left to run (the broker VM keeps the shared device-flow client).
+had no path left to run.
+
+Retired 2026-09-05: the credential broker. Its daemon, image release, SSH
+custody, and box `register`, `token`, and `watch` paths are deleted.
+The control-plane registry routes and broker wire types are also deleted.
+Migration 0053 drops `broker_keys`, `broker_members`, and `broker_boxes`.
+It also drops `boxes.is_broker`, `boxes.broker_box_id`, and
+`machines.broker_box_id`.
+Claude and Codex now use their native authentication stores.
+The box-owned `blitz-cred api-token` survives with machine token families and
+the `/agent/*` plane. Restoring the broker means rebuilding it, not re-enabling it.
 
 Retired 2026-09-05: the Org Drive and usage-capture surfaces. Their D1 tables,
 R2 object flows, WebDAV synchronizer, cron, schemas, routes, and webApp screens
@@ -107,8 +117,10 @@ deleted. Workspace repository cloning remains under workspace-repository names.
 Retired 2026-09-05: permissive create-workspace and phone-home compatibility.
 Create requests now reject legacy machine, template, SSH, environment, and
 folder fields. Phone-home accepts canonical fields and returns only box and
-token fields. Deployed-box token families, `/boxes/:id/feed`, the constant
-workspace environment route, box-config v1, tunnel access, and port 7444 remain.
+token fields. Deployed-box token families, box-config v1, tunnel access and
+port 7444 remain. `/boxes/:id/feed` and the constant workspace environment
+route were still listed here on 2026-09-05; the credential-broker retirement
+below deleted both, because the broker was the only caller of either.
 
 Retired 2026-09-05: the `/integrations` API and `/settings/integrations` UI
 aliases. Canonical connection routes remain.
@@ -185,17 +197,11 @@ agent must not undo:
   that used to hold it pinned the workspace owner, and that is the bug the
   structure now prevents.
 
-Three compatibility surfaces are load-bearing and have no expiry date yet:
-`GET /boxes/:id/feed` (served from `machines`),
-`GET /workspaces/:id/environment` (a constant `{env:{}, startupScript:null,
-filesReady:true}`, because deployed brokers poll it every second at boot and
-wait for exactly those three fields), and the token families migration 0041
-copied hash-for-hash so no deployed guest had to re-enrol.
+The token families migration 0041 copied each hash without changes.
+This kept deployed guests enrolled during the member-machines change.
 
-The `workspace environment` cross-runtime contract is retired with its fixtures
-and both conformance tests: no runtime reads the route any more, so what remains
-is that constant three-field shim, pinned alone by
-`control-plane/test/workspace-environment.test.ts`.
+The workspace environment contract, route, fixtures, and conformance tests are
+deleted. No live box needs that compatibility path.
 
 Every field of `WorkspaceView` is required, including `members`,
 `credentials`, `myRole`, `defaultMachineTypeId` and `autoProvision`. The only

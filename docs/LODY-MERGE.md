@@ -441,7 +441,7 @@ cd ../..
 npm run typecheck
 npm run lint:gate
 npm test
-( cd packages/broker && go test ./... )
+( cd packages/box/credential-helper && go test ./... )
 ( cd packages/box/gateway && test -z "$(gofmt -l .)" && go test ./... )
 git diff --check
 ```

@@ -24,19 +24,19 @@ reserved for boxes already in the field. Successor plan:
 - Claude and Codex run as official CLIs inside tmux. A payload-owned service
   updates both in place. They read
   the native HOME files on the state volume (`claude login` over ssh, once).
-- `blitz-cred` (register/token/watch) comes from the open broker module. This
-  repo keeps no second shell implementation.
-- One state volume at `/var/lib/blitz`: identity keypair + enrollment, SSH host
-  keys, authorized_keys, broker client state, HOME. The
+- The box-owned `blitz-cred api-token` helper refreshes machine credentials.
+  It carries no agent or control-plane API schema.
+- One state volume at `/var/lib/blitz`: identity keypair, machine credentials,
+  SSH host keys, authorized_keys, and HOME. The
   workspace directory is a caller bind mount at `/workspace`.
 - One unprivileged `blitz` user runs the work. Root does init, sshd, and UID
   mapping only. No password login. No root login.
-- Supervision: pinned s6-overlay. Service graph: init-state →
-  `blitz-cred register` → sshd · ttyd · dufs · HTTP gateway ·
-  `blitz-cred watch`. No CP config on the volume → register and watch are
-  SKIPPED (2026-08-11). The box runs alone: `docker run` → working box,
-  zero accounts; agent credentials = native HOME files (`claude login` over
-  ssh, once). The CP + broker are an opt-in overlay.
+- Supervision: pinned s6-overlay. Service graph: cgroups → init-state →
+  sshd · ttyd · dufs · HTTP gateway · Docker · agent services.
+  The credential refresher and rules sync also start after init-state.
+  The `agent-cli-update` longrun also starts after init-state.
+  The box runs alone with native HOME credentials.
+  The control plane remains an optional overlay.
 - Image contents use pinned digests or versions except for the two agent CLIs:
   `node:22-bookworm-slim` base
   (Node stays: the agent CLIs are Node; NodeSource dies),
@@ -65,17 +65,12 @@ reserved for boxes already in the field. Successor plan:
     Never curl|sh.
   - Mac docs: Colima (decided 2026-08-11). Free, OSS. Other docker-compatible
     runtimes work, undocumented.
-- Enrollment: the box never enrolls itself (device-code `enroll` service and
-  `blitz-cred enroll` deleted 2026-09-04). Hosted provisioning writes the
-  origin and `box-credential.json` from the phone-home answer before the
-  container starts; the broker image keeps the shared device-flow client.
-  The paragraph below is history: Skipped when a
-  credential already exists (hosted: phone_home delivered it) or no CP is
-  configured.
+- Enrollment: the box never enrolls itself.
+  Hosted provisioning writes the origin and `box-credential.json` before the container starts.
 - Proof on later CP calls (decided 2026-08-11): the device-flow OAuth tokens.
   Short-lived access + rotating refresh. Opaque, hashed rows, constant-time
   compare. No mTLS, no request signing. The keypair serves the SSH surfaces.
-  `blitz-cred register` authenticates with this token (2026-08-11 record fix).
+  `blitz-cred api-token` refreshes this token for later agent-plane calls.
 - Docker in the box (decided 2026-08-11): DinD. The image ships an inner
   dockerd; the container runs privileged. Isolation boundary = the
   single-tenant VM (hosted) or the user's machine (BYOM), as before.
@@ -154,7 +149,7 @@ report.
    OAuth tokens. Use them: short-lived access + rotating refresh, opaque,
    hashed rows, constant-time compare — the pattern the CP already uses for
    sessions. No mTLS. No DPoP. No request signing. The keypair serves the SSH
-   surfaces (broker mint/deposit).
+   surfaces.
 2. Golden: thin snapshot. Bake = container runtime + the open image
    pre-pulled by digest. Boot ≈ 1 min. Clean-base-and-pull adds ~1–1.5 min
    (docker install + 1–2 GB pull) and puts the registry in the boot path.
@@ -174,7 +169,7 @@ report.
    `scp` a key, or pipe `gh auth token` over ssh. The docs show the pattern.
    Prefer per-repo deploy keys over copying a main identity.
 6. Second pass, cross-package synthesis (2026-08-11): the box runs with no
-   control plane (register/watch skipped; HOME credentials) · hosted
+   control plane (broker services absent; HOME credentials) · hosted
    enrollment = the phone_home response delivers the credential, no human ·
    no enrollment code on the box since 2026-09-04 · the
    cross-runtime conformance fixtures live in the shared `schema` package and

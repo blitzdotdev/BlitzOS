@@ -125,14 +125,12 @@ vendored static list was never consulted.
 
 ### Background checks do not install headless
 
-`DISABLE_AUTOUPDATER=1` had been set in four places — the image-wide `ENV` in
+`DISABLE_AUTOUPDATER=1` had been set in four places.
+Three box places were the image-wide `ENV` in
 `packages/box/Dockerfile`, the PATH shim `rootfs/usr/local/bin/claude`,
-`rootfs/etc/profile.d/blitz-npm.sh`, and `broker/internal/vendor/vendor.go`,
-which stripped any inbound value and force-appended `=1` (asserted by a test in
-`roaming_test.go`). Four sites because they are four different process-spawn
-paths: s6 daemons inherit the image ENV, login shells rebuild from
-`/etc/profile`, the shim covers any invocation, and the broker constructs the
-child environment from scratch rather than inheriting it.
+and `rootfs/etc/profile.d/blitz-npm.sh`.
+These sites cover s6 daemons, login shells, and direct commands.
+The now-retired broker set the fourth site in its spawn environment.
 
 The flag gated the **background** update check only. Removing it restored the
 vendor check, not unattended installation. The explicit `claude update`
@@ -165,9 +163,8 @@ The shadow-copy fear the old comments cited is handled independently:
 PATH on every login shell, ahead of `/opt/blitz/npm/bin` (verified: a box login
 shell gets `/usr/local/bin:/opt/blitz/npm/bin:…`). So a second copy in the npm
 prefix cannot shadow the shim, and the native installer's `~/.local/bin` /
-`~/.claude/local` are not on the box PATH at all. **Rewrite those comments when
-the flag goes** — they are the justification the next agent will read, and they
-will be wrong.
+`~/.claude/local` are not on the box PATH at all. The Dockerfile, profile, and
+shims now describe that PATH and update-service split directly.
 
 Still outstanding:
 

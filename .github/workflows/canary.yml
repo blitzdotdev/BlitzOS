@@ -165,7 +165,7 @@ jobs:
 
       # Feature flags are deployment config, not image inputs. The repository
       # root remains the build context because the Dockerfile also copies the
-      # broker and schema fixtures.
+      # credential helper and schema fixtures.
       - name: Build the box image
         if: steps.plan.outputs.published == 'false'
         env:

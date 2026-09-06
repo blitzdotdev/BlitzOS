@@ -9,6 +9,10 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: "./wrangler.toml" },
         miniflare: {
+          d1Databases: {
+            MIGRATION_FRESH: "migration-fresh",
+            MIGRATION_UPGRADED: "migration-upgraded",
+          },
           bindings: {
             TEST_MIGRATIONS: migrations,
             CRED_MASTER_KEY: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",

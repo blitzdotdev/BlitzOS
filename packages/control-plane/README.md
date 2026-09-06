@@ -18,9 +18,6 @@ Self-hosters set `APP_URL` to their Worker origin.
   credential, so hosted enrollment needs no human.
 - Sessions: Google OAuth → HttpOnly session cookie. Signup policy is set by
   the `SIGNUP_MODE` and `ALLOWED_EMAIL_DOMAINS` vars.
-- The broker registry: pubkeys and routing only, never a credential. Broker
-  boxes pull their own member slice; no box can list the fleet.
-
 ## Standalone deployment
 
 Use a dedicated Hetzner project: janitor operations must never share a project
