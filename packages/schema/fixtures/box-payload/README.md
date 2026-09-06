@@ -28,6 +28,8 @@ Restart keys name longruns in the manifest's service tree.
 Each key requires matching `run` and `type` files.
 The updater verifies that each extracted type reads `longrun`.
 Protocol 2 has no fixed restart vocabulary.
+The full manifest carries the payload-owned `agent-cli-update` longrun.
+It pins the service tree, bundle entry, and updater executable together.
 
 The service tree lives under `rootfs/etc/s6-overlay/s6-rc.d/`.
 Protocol 2 manifests require updater protocol 2.

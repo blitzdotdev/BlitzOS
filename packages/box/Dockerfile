@@ -37,22 +37,21 @@ RUN --mount=type=cache,id=lody-pnpm-node22-pnpm10.20,target=/root/.local/share/p
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS vendors
 
-# Agents install into a prefix the runtime user owns, so `claude` can
-# auto-update and users can `npm install -g` without root.
+# Agents install into a prefix the runtime user owns. The periodic updater and
+# users can change global packages without root.
 #
-# `claude` is deliberately UNPINNED. Its version decides which models the Lody
-# composer can offer (docs/LODY-MODELS.md), it updates itself on every box, and
-# a build-time pin therefore only decided how stale a fresh box was on its first
-# boot — it never held a version, because the first update moved it. Taking
-# `@latest` at build time costs the reproducibility of this layer and buys a box
-# that is current the moment it starts. `codex` stays pinned; Lody is installed
-# into its independently switchable prefix in the next stage.
+# Both CLIs are deliberately unpinned. The payload-owned agent-cli-update
+# service runs their explicit update commands on existing boxes. Taking
+# `@latest` here also makes a fresh box current when it starts.
+# `vendor/lody-adapters/codex/package.json` declares
+# `@openai/codex@^0.151.0`. The old 0.147.0 pin was below that contract. Lody
+# uses its independent prefix in the next stage.
 ENV NPM_CONFIG_PREFIX=/opt/blitz/npm
 # `ws` carries no binary: it is the only dependency of
 # /usr/local/libexec/blitz-lody-bridge, which reaches it through NODE_PATH.
 RUN npm install --global --omit=dev \
       @anthropic-ai/claude-code@latest \
-      @openai/codex@0.147.0 \
+      @openai/codex@latest \
       ws@8.21.0 \
     && npm cache clean --force
 
@@ -198,14 +197,11 @@ RUN set -eux; \
 # The Codex shim selects native login paths.
 # The Claude shim starts the native CLI without changing authentication.
 #
-# THE VENDOR CLIs UPDATE THEMSELVES, and that is the point. A new Anthropic
-# model reaches the Lody composer only when the `claude` binary is new enough to
-# report it in its ACP `initialize` response — every layer above is passthrough
-# (docs/LODY-MODELS.md). Holding the CLI at a build-time version therefore held
-# the model list at build time too, and made a box-image rebake the delivery
-# mechanism for models. It no longer is: `DISABLE_AUTOUPDATER` is gone from the
-# image, the shims, and the profile. Codex's shim now leaves its
-# startup update check on.
+# THE PERIODIC SERVICE UPDATES BOTH VENDOR CLIs. A new Anthropic model reaches
+# the Lody composer only when `claude` is new enough to report it in its ACP
+# `initialize` response (docs/LODY-MODELS.md). The vendor background checks do
+# not install an update in a headless process. The payload-owned
+# agent-cli-update service runs both explicit update commands instead.
 #
 # What still protects the shims is the PATH order above, not a pin: an update
 # rewrites /opt/blitz/npm in place, and /usr/local/bin sits ahead of it, so the

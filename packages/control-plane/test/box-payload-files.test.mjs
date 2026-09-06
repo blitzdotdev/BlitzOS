@@ -103,6 +103,7 @@ test("restart dependencies come from service sources plus the narrow override ta
   for (const service of Object.keys(restart)) {
     assert.ok(servicesWithPayloadScripts.includes(service), service);
   }
+  assert.equal(restart["agent-cli-update"], undefined);
   assert.ok(restart.gateway.includes("rootfs/usr/local/bin/blitz-box-gateway"));
   assert.ok(restart["lody-bridge"].includes("rootfs/usr/local/libexec/blitz-lody-bridge"));
   assert.ok(restart.sshd.includes("rootfs/etc/blitz/sshd_config"));

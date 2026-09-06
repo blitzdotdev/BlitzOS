@@ -1,0 +1,127 @@
+#!/command/with-contenv bash
+# Keep vendor agent CLIs current without waiting for an interactive TUI.
+# The npm prefix belongs to blitz. Root updates leave files that block later updates.
+# Refuse root before any file write.
+set -uo pipefail
+
+current_uid=$(/usr/bin/id -u)
+if [ "$current_uid" -eq 0 ]; then
+	printf '%s\n' 'blitz-agent-cli-update: refusing to run as root' >&2
+	exit 77
+fi
+
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+
+HOME="$state_dir/home"
+USER=blitz
+NPM_CONFIG_PREFIX=/opt/blitz/npm
+export HOME USER NPM_CONFIG_PREFIX
+
+update_dir="$state_dir/agent-cli-update"
+
+if ! mkdir -p "$update_dir" 2>/dev/null || ! chmod 0755 "$update_dir" 2>/dev/null; then
+	printf 'blitz-agent-cli-update: cannot prepare %s; skipping tick\n' "$update_dir" >&2
+	exit 0
+fi
+
+log_file="$update_dir/log"
+lock_file="$update_dir/lock"
+if ! touch "$log_file" 2>/dev/null || ! chmod 0644 "$log_file" 2>/dev/null; then
+	printf 'blitz-agent-cli-update: cannot prepare %s; skipping tick\n' "$log_file" >&2
+	exit 0
+fi
+log() {
+	local line="blitz-agent-cli-update: $*"
+	printf '%s\n' "$line" >&2
+	printf '%s\n' "$line" >> "$log_file" 2>/dev/null || true
+}
+
+if [ "${1:-}" != '__blitz-agent-cli-update-locked' ]; then
+	if ! command -v flock >/dev/null 2>&1; then
+		log 'flock is missing; skipping tick'
+		exit 0
+	fi
+	flock -w 300 "$lock_file" "$0" '__blitz-agent-cli-update-locked'
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		exit 0
+	fi
+	log "lock failed (exit $status); skipping tick"
+	exit 0
+fi
+shift
+
+chmod 0644 "$lock_file" 2>/dev/null || true
+
+version_pattern='[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?'
+
+parse_installed_version() {
+	local cli=$1 output=$2
+	case "$cli" in
+		codex)
+			if [[ $output =~ ^codex-cli[[:space:]]+($version_pattern)$ ]]; then
+				printf '%s\n' "${BASH_REMATCH[1]}"
+				return 0
+			fi
+			;;
+		claude)
+			if [[ $output =~ ^($version_pattern)[[:space:]]+\(Claude[[:space:]]Code\)$ ]]; then
+				printf '%s\n' "${BASH_REMATCH[1]}"
+				return 0
+			fi
+			;;
+	esac
+	return 1
+}
+
+parse_published_version() {
+	local output=$1
+	if [[ $output =~ ^($version_pattern)$ ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	return 1
+}
+
+update_cli() {
+	local cli=$1 package=$2 status installed_output installed_version
+	local published_output published_version
+	if ! command -v "$cli" >/dev/null 2>&1; then
+		log "$cli is missing; skipped"
+		return
+	fi
+	installed_output=$("$cli" --version 2>/dev/null)
+	status=$?
+	if [ "$status" -ne 0 ]; then
+		log "$cli installed version probe failed (exit $status); skipped"
+		return
+	fi
+	if ! installed_version=$(parse_installed_version "$cli" "$installed_output"); then
+		log "$cli installed version parse failed; skipped"
+		return
+	fi
+	published_output=$(npm view "$package" version 2>/dev/null)
+	status=$?
+	if [ "$status" -ne 0 ]; then
+		log "$cli published version probe failed for $package (exit $status); skipped"
+		return
+	fi
+	if ! published_version=$(parse_published_version "$published_output"); then
+		log "$cli published version parse failed for $package; skipped"
+		return
+	fi
+	if [ "$installed_version" = "$published_version" ]; then
+		return
+	fi
+	log "$cli update started: $installed_version -> $published_version"
+	if "$cli" update >> "$log_file" 2>&1; then
+		log "$cli update completed: $installed_version -> $published_version"
+	else
+		status=$?
+		log "$cli update failed: $installed_version -> $published_version (exit $status)"
+	fi
+}
+
+update_cli codex '@openai/codex'
+update_cli claude '@anthropic-ai/claude-code'
+exit 0

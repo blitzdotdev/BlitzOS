@@ -7,9 +7,10 @@
 # it untouched.
 #
 # IT STILL EXISTS BECAUSE CALLERS NAME IT. The Lody adapter points at this exact
-# path (`packages/webapp/src/lody/agent-configs.ts`), and the auto-updater
+# path (`packages/webapp/src/lody/agent-configs.ts`), and the periodic updater
 # rewrites the npm prefix in place, so a stable name is what those callers pin.
 #
-# The auto-updater stays on. New CLI versions bring new models with no rebake.
+# The background update check stays enabled. The agent-cli-update service runs
+# `claude update` explicitly because headless checks do not install updates.
 
 exec /opt/blitz/npm/bin/claude "$@"
