@@ -1,13 +1,12 @@
 #!/bin/sh
-# PATH shim for the Codex CLI. Every terminal `codex` comes through here, turns
-# the startup update check ON, and execs the vendor binary.
+# PATH shim for the Codex CLI. Every terminal `codex` comes through here,
+# enables the startup update check, and execs the vendor binary.
 #
-# WHY IT IS ON. Both vendor CLIs are meant to update themselves on the box: a
-# build-time version is a floor, not a pin, and for claude the version is what
-# decides which models the Lody composer can offer (docs/LODY-MODELS.md). This
-# shim used to pass `false` to hold codex at the image's version; it no longer
-# does, and the value is stated explicitly rather than left to the default so
-# the intent is legible and a vendor default flip cannot silently reverse it.
+# WHY IT IS ON. The check records whether a newer version exists. It never
+# installs one in Lody's headless `codex app-server` process. The payload-owned
+# agent-cli-update service runs the explicit `codex update` command that does
+# install it. This shim states the check value so a vendor default change does
+# not silently disable version discovery.
 #
 # WHY A CONFIG OVERRIDE AND NOT AN ENVIRONMENT VARIABLE: codex has no
 # environment variable for this. The setting is a config key, so `-c key=value`
@@ -15,10 +14,9 @@
 # `codex doctor --json` reports `"check for update on startup": "true"` by
 # default, and honours either value passed this way.
 #
-# WHAT AN UPDATE DOES: `npm install -g @openai/codex` into NPM_CONFIG_PREFIX,
-# which is /opt/blitz/npm — rewritten in place, and /usr/local/bin sits ahead of
-# that prefix on PATH, so the updated binary is what this shim execs rather than
-# something that shadows it.
+# WHAT AN EXPLICIT UPDATE DOES: it rewrites the package in NPM_CONFIG_PREFIX,
+# which is /opt/blitz/npm. /usr/local/bin stays ahead of that prefix on PATH,
+# so this shim execs the updated binary.
 #
 # WHY THE FLAG GOES FIRST: codex accepts `-c` more than once and the last one
 # wins, so a caller that really wants a different value keeps the last word.

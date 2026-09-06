@@ -1,0 +1,117 @@
+#!/command/with-contenv bash
+# Keep the vendor agent CLIs current without waiting for an interactive TUI.
+# The npm prefix belongs to blitz. A root update would leave root-owned files
+# there and block every later update, so root is refused before any file write.
+set -uo pipefail
+
+current_uid=$(/usr/bin/id -u)
+if [ "$current_uid" -eq 0 ]; then
+	printf '%s\n' 'blitz-agent-cli-update: refusing to run as root' >&2
+	exit 77
+fi
+
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+case "$state_dir" in
+	/*) ;;
+	*) state_dir=/var/lib/blitz ;;
+esac
+if [ "$state_dir" = / ]; then
+	state_dir=/var/lib/blitz
+fi
+
+HOME="$state_dir/home"
+USER=blitz
+NPM_CONFIG_PREFIX=/opt/blitz/npm
+export HOME USER NPM_CONFIG_PREFIX
+
+update_dir=${BLITZ_AGENT_CLI_UPDATE_DIR:-/opt/blitz/npm/.blitz-agent-cli-update}
+# BLITZ_AGENT_CLI_UPDATE_DIR is a test-only seam. Production uses the literal
+# path above, which stays writable by blitz after an npm update.
+case "$update_dir" in
+	/*) ;;
+	*) update_dir=/opt/blitz/npm/.blitz-agent-cli-update ;;
+esac
+if [ "$update_dir" = / ]; then
+	update_dir=/opt/blitz/npm/.blitz-agent-cli-update
+fi
+
+if ! mkdir -p "$update_dir" 2>/dev/null || ! chmod 0755 "$update_dir" 2>/dev/null; then
+	printf 'blitz-agent-cli-update: cannot prepare %s; skipping tick\n' "$update_dir" >&2
+	exit 0
+fi
+
+log_file="$update_dir/log"
+lock_file="$update_dir/lock"
+if ! touch "$log_file" 2>/dev/null || ! chmod 0644 "$log_file" 2>/dev/null; then
+	printf 'blitz-agent-cli-update: cannot prepare %s; skipping tick\n' "$log_file" >&2
+	exit 0
+fi
+
+rotate_log() {
+	local bytes
+	bytes=$(wc -c < "$log_file" 2>/dev/null || printf '0')
+	case "$bytes" in
+		'' | *[!0-9]*) bytes=0 ;;
+	esac
+	if [ "$bytes" -ge 1048576 ]; then
+		rm -f "$log_file.1" 2>/dev/null || true
+		if mv "$log_file" "$log_file.1" 2>/dev/null; then
+			chmod 0644 "$log_file.1" 2>/dev/null || true
+			: > "$log_file"
+			chmod 0644 "$log_file" 2>/dev/null || true
+		fi
+	fi
+}
+
+log() {
+	local line="blitz-agent-cli-update: $*"
+	printf '%s\n' "$line" >&2
+	rotate_log
+	printf '%s\n' "$line" >> "$log_file" 2>/dev/null || true
+	chmod 0644 "$log_file" 2>/dev/null || true
+}
+
+if [ "${1:-}" != '__blitz-agent-cli-update-locked' ]; then
+	lock_wait=${BLITZ_AGENT_CLI_UPDATE_LOCK_WAIT:-300}
+	case "$lock_wait" in
+		'' | *[!0-9]* | 0) lock_wait=300 ;;
+	esac
+	if [ "${#lock_wait}" -gt 9 ] || [ "$lock_wait" -eq 0 ]; then
+		lock_wait=300
+	fi
+	if ! command -v flock >/dev/null 2>&1; then
+		log 'flock is missing; skipping tick'
+		exit 0
+	fi
+	flock -w "$lock_wait" "$lock_file" "$0" '__blitz-agent-cli-update-locked'
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		exit 0
+	fi
+	log "lock failed (exit $status); skipping tick"
+	exit 0
+fi
+shift
+
+chmod 0644 "$lock_file" 2>/dev/null || true
+rotate_log
+
+update_cli() {
+	local cli=$1 status
+	if ! command -v "$cli" >/dev/null 2>&1; then
+		log "$cli is missing; skipped"
+		return
+	fi
+	log "$cli update started"
+	if "$cli" update >> "$log_file" 2>&1; then
+		log "$cli update completed"
+	else
+		status=$?
+		log "$cli update failed (exit $status)"
+	fi
+}
+
+update_cli codex
+update_cli claude
+log 'tick completed'
+exit 0

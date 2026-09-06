@@ -682,7 +682,7 @@ grep -q 'watch: waiting for broker config' "$test_dir/container.log" || fail "wa
 docker exec "$container" test ! -e /var/lib/blitz/broker.json || fail "no-CP mode created broker config"
 echo "PASS no-CP skips"
 
-# Terminal delivery: the shim must WIN the PATH over the pinned binary it execs,
+# Terminal delivery: the shim must WIN the PATH over the managed binary it execs,
 # in a plain login shell as well as in the image environment. A member-installed
 # copy landing in the writable npm prefix and shadowing it is the single most
 # common way a terminal ends up signed out while the box holds a credential.

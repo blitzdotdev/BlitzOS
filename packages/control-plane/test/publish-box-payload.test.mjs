@@ -196,6 +196,7 @@ test("stages a deterministic payload archive and a self-verifying manifest", asy
     assert.equal(statSync(extractedPath).mode & 0o777, 0o755, directory);
     assert.deepEqual(readdirSync(extractedPath), [], directory);
   }
+  assert.equal(manifest.restart["agent-cli-update"], undefined);
   assert.ok(manifest.restart.gateway.includes("rootfs/usr/local/bin/blitz-box-gateway"));
   assert.ok(manifest.restart.sshd.includes("rootfs/etc/blitz/sshd_config"));
   assert.equal(manifest.restart["machine-stats"], undefined);

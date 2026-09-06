@@ -16,6 +16,9 @@ export const PAYLOAD_ROOTFS_PATHS = Object.freeze([
   "etc/blitz/sshd_config",
   "etc/gitconfig",
   "etc/profile.d/blitz-npm.sh",
+  "etc/s6-overlay/s6-rc.d/agent-cli-update/dependencies.d/init-state",
+  "etc/s6-overlay/s6-rc.d/agent-cli-update/run",
+  "etc/s6-overlay/s6-rc.d/agent-cli-update/type",
   "etc/s6-overlay/s6-rc.d/box-credential/dependencies.d/register",
   "etc/s6-overlay/s6-rc.d/box-credential/run",
   "etc/s6-overlay/s6-rc.d/box-credential/type",
@@ -66,6 +69,7 @@ export const PAYLOAD_ROOTFS_PATHS = Object.freeze([
   "etc/s6-overlay/s6-rc.d/ttyd/dependencies.d/register",
   "etc/s6-overlay/s6-rc.d/ttyd/run",
   "etc/s6-overlay/s6-rc.d/ttyd/type",
+  "etc/s6-overlay/s6-rc.d/user/contents.d/agent-cli-update",
   "etc/s6-overlay/s6-rc.d/user/contents.d/box-credential",
   "etc/s6-overlay/s6-rc.d/user/contents.d/cgroups",
   "etc/s6-overlay/s6-rc.d/user/contents.d/cloudflared",
@@ -98,6 +102,7 @@ export const PAYLOAD_ROOTFS_PATHS = Object.freeze([
   "usr/local/bin/blitz-rules",
   "usr/local/bin/claude",
   "usr/local/bin/codex",
+  "usr/local/libexec/blitz-agent-cli-update",
   "usr/local/libexec/blitz-codex-session",
   "usr/local/libexec/blitz-credential-refresh",
   "usr/local/libexec/blitz-git-credential",
@@ -129,12 +134,13 @@ const NON_SERVICE_PAYLOAD_ROOTFS_PATHS = Object.freeze(PAYLOAD_ROOTFS_PATHS
   .filter((relativePath) => !relativePath.startsWith("etc/s6-overlay/s6-rc.d/")));
 
 // Most executable dependencies can be read directly from the service source.
-// These three are the exceptions worth spelling out. The gateway binary is
-// generated rather than present under rootfs; the bridge override documents
-// its service boundary explicitly; and blitz-term is resolved by ttyd for each
-// new connection, so changing it must NOT bounce ttyd or existing terminals.
+// These are the exceptions worth spelling out. The gateway binary is generated
+// rather than present under rootfs. The bridge override documents its service
+// boundary explicitly. blitz-term and the agent updater are resolved for each
+// new invocation, so changing either must not bounce a longrun.
 export const PAYLOAD_SERVICE_OVERRIDES = Object.freeze({
   "rootfs/usr/local/bin/blitz-box-gateway": Object.freeze(["gateway"]),
+  "rootfs/usr/local/libexec/blitz-agent-cli-update": Object.freeze([]),
   "rootfs/usr/local/libexec/blitz-lody-bridge": Object.freeze(["lody-bridge"]),
   "rootfs/usr/local/libexec/blitz-term": Object.freeze([]),
 });

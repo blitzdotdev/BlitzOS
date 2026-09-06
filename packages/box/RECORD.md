@@ -16,12 +16,13 @@ reserved for boxes already in the field. Successor plan:
 
 - One Linux OCI image. Platforms: `linux/amd64` + `linux/arm64`. Published
   immutably. Run by digest. Mac runs the same Linux image. This replaces both
-  native installers (~1,275 duplicate lines), curl|sh, the host tarball,
-  NodeSource, and self-update.
+  native installers (~1,275 duplicate lines), curl|sh, the host tarball, and
+  NodeSource.
 - Three externally reachable surfaces: key-only sshd · ttyd+tmux · the files
   HTTP origin, which carries WebDAV, port discovery, and preview proxying. No
   heartbeat. No exec jobs. No activity. No layout REST. No volume API.
-- Claude and Codex run as their pinned official CLIs inside tmux. They read
+- Claude and Codex run as official CLIs inside tmux. A payload-owned service
+  updates both in place. They read
   the native HOME files on the state volume (`claude login` over ssh, once).
 - `blitz-cred` (register/token/watch) comes from the open broker module. This
   repo keeps no second shell implementation.
@@ -36,7 +37,8 @@ reserved for boxes already in the field. Successor plan:
   SKIPPED (2026-08-11). The box runs alone: `docker run` → working box,
   zero accounts; agent credentials = native HOME files (`claude login` over
   ssh, once). The CP + broker are an opt-in overlay.
-- Image contents, all pinned by digest or version: `node:22-bookworm-slim` base
+- Image contents use pinned digests or versions except for the two agent CLIs:
+  `node:22-bookworm-slim` base
   (Node stays: the agent CLIs are Node; NodeSource dies),
   openssh, tmux, git, ttyd (checksummed release), dufs 0.46.0 (checksummed
   release), Claude Code, `@openai/codex`, static `blitz-cred`, and the

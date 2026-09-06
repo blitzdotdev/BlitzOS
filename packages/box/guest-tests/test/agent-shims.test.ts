@@ -8,12 +8,11 @@ import { describe, expect, it } from "vitest";
  * or `codex` enters here first and the shim decides what the vendor CLI is
  * allowed to do before execing the vendor binary.
  *
- * BOTH CLIs UPDATE THEMSELVES, and that is intended: claude's version is what
- * decides which models the Lody composer can offer (docs/LODY-MODELS.md), so a
- * held version held the model list too. An update runs `npm install -g` into
- * NPM_CONFIG_PREFIX — /opt/blitz/npm, owned by uid 1000 — which rewrites the
- * copy the shim execs IN PLACE. The PATH order is what makes that safe rather
- * than shadowing, and it is asserted below.
+ * The shims do not install updates. Codex's flag only enables its startup
+ * check, and neither vendor background path installs during a headless run.
+ * The payload-owned agent-cli-update service runs both explicit update
+ * commands. They rewrite NPM_CONFIG_PREFIX in place as uid 1000. The PATH
+ * order keeps the shims ahead of those updated binaries.
  *
  * codex has no environment variable for the check: checked against
  * @openai/codex@0.147.0, `codex doctor --json` reports
@@ -30,7 +29,7 @@ const shimPath = (name: string) =>
 const shim = (name: string) => readFileSync(shimPath(name), "utf8");
 
 describe("vendor CLI PATH shims", () => {
-  it.each(["claude", "codex"])("%s execs the pinned binary, not the name again", (name) => {
+  it.each(["claude", "codex"])("%s execs the managed binary, not the name again", (name) => {
     // /usr/local/bin comes first on PATH, so a bare `exec claude` would
     // re-enter this shim and loop until the box runs out of processes.
     expect(shim(name)).toContain(`exec /opt/blitz/npm/bin/${name} `);
@@ -42,7 +41,7 @@ describe("vendor CLI PATH shims", () => {
     expect(statSync(shimPath(name)).mode & 0o755).toBe(0o755);
   });
 
-  it("leaves claude's auto-updater on", () => {
+  it("leaves claude's background update check on", () => {
     // The flag used to be exported here and in three other places. It is gone:
     // holding the CLI version held the model list with it. Assert the absence,
     // so re-adding it anywhere in this shim is a test failure and not a quiet

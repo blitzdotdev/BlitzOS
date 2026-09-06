@@ -1,0 +1,33 @@
+#!/command/with-contenv bash
+# Run both vendor update commands as blitz. The initial delay lets boot traffic
+# settle. Every outcome reaches the sleep, so a network failure cannot spin s6.
+set -uo pipefail
+
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+interval=${BLITZ_AGENT_CLI_UPDATE_INTERVAL:-21600}
+boot_delay=${BLITZ_AGENT_CLI_UPDATE_BOOT_DELAY:-30}
+
+valid_seconds() {
+	local value=$1 minimum=$2
+	case "$value" in
+		'' | *[!0-9]*) return 1 ;;
+	esac
+	[ "${#value}" -le 9 ] && [ "$value" -ge "$minimum" ]
+}
+
+if ! valid_seconds "$interval" 1; then
+	echo 'agent-cli-update: invalid interval; using 21600 seconds'
+	interval=21600
+fi
+if ! valid_seconds "$boot_delay" 0; then
+	echo 'agent-cli-update: invalid boot delay; using 30 seconds'
+	boot_delay=30
+fi
+
+sleep "$boot_delay"
+while true; do
+	/command/s6-setuidgid blitz /usr/bin/env \
+		HOME="$state_dir/home" USER=blitz NPM_CONFIG_PREFIX=/opt/blitz/npm \
+		/usr/local/libexec/blitz-agent-cli-update || true
+	sleep "$interval"
+done

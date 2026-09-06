@@ -9,8 +9,9 @@ model picker". The short answer: **model discovery is already dynamic and
 nothing in BlitzOS or Lody needs a per-model edit — the only ceiling is the
 `@anthropic-ai/claude-code` version the box is running.** §4 measures the whole
 path end to end: a `claude update` on a live box put Fable 5.1 in the composer
-with no rebake, no code change and no vendor bump. What is missing is only the
-trigger — the automatic updater is off in four places.
+with no rebake, no code change and no vendor bump. Vendor background checks do
+not install updates in headless runs. The payload-owned `agent-cli-update`
+service now supplies the missing trigger.
 
 ## 1. The discovery chain (dynamic, end to end)
 
@@ -51,8 +52,8 @@ either. `CLAUDE_MODEL_CONFIG` parses to the same two keys
 
 ## 3. What actually blocks Fable 5.1
 
-`packages/box/Dockerfile:36` pins `@anthropic-ai/claude-code@2.1.228`.
-That binary has no `claude-fable-5-1` string at all (it knows
+The measured box ran `@anthropic-ai/claude-code@2.1.228`.
+That binary had no `claude-fable-5-1` string at all (it knew
 `claude-fable-5`, `claude-opus-5`, `claude-sonnet-5`, `claude-mythos-5`,
 `claude-haiku-4-5`), so step 1 above never reports it.
 
@@ -111,8 +112,7 @@ vendored static list was never consulted.
   Lody launches through `BLITZ_CLAUDE_EXECUTABLE`. The `~/.local/bin` shadow
   copy the Dockerfile comment warns about is what the **native** installer
   produces; the npm-global path does not take it. `NPM_CONFIG_PREFIX` being
-  owned by uid 1000 is what makes the in-place rewrite possible — and the
-  Dockerfile says that ownership exists so `claude` *can* auto-update.
+  owned by uid 1000 is what makes the explicit in-place update possible.
 - **The browser half re-probes unconditionally.**
   `runStartupAcpCapabilitiesRefresh` has no staleness check, no version compare
   and no cache: it refreshes every config every time it is called.
@@ -123,7 +123,7 @@ vendored static list was never consulted.
   per runtime mount, i.e. once per load of the Lody surface.** A member who
   reloads the tab after an update gets the new list.
 
-### What was blocking it (removed 2026-09-01)
+### Background checks do not install headless
 
 `DISABLE_AUTOUPDATER=1` had been set in four places — the image-wide `ENV` in
 `packages/box/Dockerfile`, the PATH shim `rootfs/usr/local/bin/claude`,
@@ -134,21 +134,25 @@ paths: s6 daemons inherit the image ENV, login shells rebuild from
 `/etc/profile`, the shim covers any invocation, and the broker constructs the
 child environment from scratch rather than inheriting it.
 
-The flag gated the **background** update check only — the explicit `claude
-update` subcommand ignored it, which is why the run above worked with the flag
-live in the environment.
+The flag gated the **background** update check only. Removing it restored the
+vendor check, not unattended installation. The explicit `claude update`
+subcommand ignored the flag, which is why the run above worked while the flag
+was still present.
 
-All four are gone, `codex`'s shim now passes
-`-c check_for_update_on_startup=true`, and `@anthropic-ai/claude-code` is
-installed `@latest` at build time rather than pinned. Nothing holds a CLI
-version anymore.
+Measured on 2026-09-05, Codex 0.147.0 wrote `latest_version`,
+`last_checked_at`, and `dismissed_version`, but did not install an update.
+Lody starts `codex app-server`, which never enters the TUI or accepts the
+update keypress. Claude Code 2.1.228 also stayed at 2.1.228 across three
+headless runs. Explicit commands with `NPM_CONFIG_PREFIX=/opt/blitz/npm`
+updated Codex from 0.147.0 to 0.153.4 and Claude Code from 2.1.228 to 2.1.261.
 
 ## 5. Path forward
 
-**Done 2026-09-01: the vendor's own auto-update path.** The flag is removed
-from all four sites, codex's startup check is on, and the claude build pin is
-`@latest`. An s6 oneshot driving `claude update` was considered and rejected as
-redundant once the vendor updater is simply left alone.
+**Done 2026-09-05: a payload-owned periodic updater.** The
+`agent-cli-update` longrun waits briefly after boot and then runs explicit
+`codex update` and `claude update` commands every six hours. It runs as blitz,
+uses the blitz-owned npm prefix, and logs failures without stopping its loop.
+Both packages also use `@latest` when a fresh image is built.
 
 The shadow-copy fear the old comments cited is handled independently:
 `rootfs/etc/profile.d/blitz-npm.sh` force-moves `/usr/local/bin` to the FRONT of
@@ -161,18 +165,15 @@ will be wrong.
 
 Still outstanding:
 
-1. **Land the image change on `main`.** The automatic canary `image` job
+1. **Land the change on `main`.** The automatic canary `image` job
    described in
    [BOX-IMAGE.md](BOX-IMAGE.md#automatic-canary-image-publish) publishes and
-   pins the matching versioned R2 archive. There is no separate manual image
-   step; running boxes update their CLI in place, while fresh boxes start from
-   the newly pinned image.
+   pins the matching versioned R2 archive. The payload job delivers the updater
+   service to running boxes. Fresh boxes also start with current CLI packages.
 2. **`@latest` costs this layer its reproducibility.** Two builds a week apart
-   ship different CLIs. That is the deliberate trade — the pin never held a
-   version in practice, because the first self-update moved it — but it means
-   the box image is no longer bit-reproducible from the Dockerfile alone.
-   `codex` stays pinned. Lody is independent: its daemon is identified by the
-   vendored upstream commit and build stamp.
+   can ship different CLIs. This means the box image is not bit-reproducible
+   from the Dockerfile alone. Lody is independent: its daemon is identified by
+   the vendored upstream commit and build stamp.
 
 With no pin deciding which models exist, these four
 `2.1.228` assertions need re-basing on a range or a probe rather than a

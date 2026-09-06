@@ -8,8 +8,8 @@ esac
 
 # ...and then put /usr/local/bin back in FRONT of it. The order is
 # load-bearing, not cosmetic: /usr/local/bin/claude is the shim that mints a
-# token and execs the pinned binary, and /opt/blitz/npm/bin/claude is that
-# pinned binary. Leaving the npm prefix first means every terminal `claude`
+# token and execs the managed binary, and /opt/blitz/npm/bin/claude is that
+# vendor binary. Leaving the npm prefix first means every terminal `claude`
 # skips the shim and runs signed out, which is exactly what a stray
 # `PATH=/opt/blitz/npm/bin:$PATH` did before this block existed.
 case ":$PATH:" in
@@ -17,9 +17,7 @@ case ":$PATH:" in
 	*) PATH="/usr/local/bin:$PATH" ;;
 esac
 
-# NOTE: the PATH order above is what keeps a self-updated copy from shadowing
-# the shims, and it is the only thing that does. The vendor CLIs update
-# themselves on purpose — claude's version decides which models the Lody
-# composer can offer (docs/LODY-MODELS.md) — and an update rewrites
-# /opt/blitz/npm in place, which /usr/local/bin already sits ahead of.
+# The PATH order keeps an updated vendor binary from shadowing the shims. The
+# agent-cli-update service rewrites /opt/blitz/npm in place, and
+# /usr/local/bin already sits ahead of it.
 export PATH

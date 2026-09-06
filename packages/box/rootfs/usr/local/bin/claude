@@ -1,6 +1,6 @@
 #!/bin/sh
 # PATH shim for Claude Code. Every terminal `claude` comes through here, picks
-# up a freshly minted token, and execs the pinned binary.
+# up a freshly minted token, and execs the managed vendor binary.
 #
 # WHY AN ENVIRONMENT VARIABLE, and specifically this one: the broker mints an
 # OAuth access token (`sk-ant-oat01-…`). `CLAUDE_CODE_OAUTH_TOKEN` is the OAuth
@@ -20,11 +20,10 @@
 #
 # An already-set token is left alone, so a caller can override.
 #
-# THE AUTO-UPDATER IS LEFT ON, deliberately. claude's version is what decides
-# which models the Lody composer can offer (docs/LODY-MODELS.md), so holding it
-# held the model list too. An update rewrites /opt/blitz/npm in place, and
-# /usr/local/bin sits ahead of that prefix on PATH, so the updated binary is
-# what this shim execs — not something that shadows it.
+# The background update check stays enabled. It does not install during a
+# headless run. The agent-cli-update service runs `claude update` explicitly.
+# That command rewrites /opt/blitz/npm in place. /usr/local/bin stays ahead of
+# the prefix, so this shim execs the updated binary.
 
 if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -x /usr/local/bin/blitz-cred-claude ]; then
 	token="$(/usr/local/bin/blitz-cred-claude 2>/dev/null || true)"
