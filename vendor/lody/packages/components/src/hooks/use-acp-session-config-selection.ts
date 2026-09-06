@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AcpConfigOptionValue } from '@lody/shared';
 import {
   areAcpSessionConfigPreferencesEqual,
@@ -74,6 +74,21 @@ export type AcpSessionConfigSelectionHandle = {
   replaceConfigOptions: (values: Record<string, AcpConfigOptionValue>) => void;
 };
 
+// Blitz seam 29: see vendor/lody/BLITZ-PATCHES.md.
+const retainedUnsentUserEdits = new Map<string, AcpSessionUserConfigEdits>();
+
+function retainUnsentUserEdits(targetKey: string | null, edits: AcpSessionUserConfigEdits): void {
+  if (targetKey === null) return;
+  retainedUnsentUserEdits.delete(targetKey);
+  if (!edits.mode && !edits.model && Object.keys(edits.configOptions).length === 0) return;
+  retainedUnsentUserEdits.set(targetKey, edits);
+  if (retainedUnsentUserEdits.size <= 8) return;
+  for (const oldestTargetKey of retainedUnsentUserEdits.keys()) {
+    retainedUnsentUserEdits.delete(oldestTargetKey);
+    break;
+  }
+}
+
 export function useAcpSessionConfigSelectionState({
   enabled = true,
   targetKey,
@@ -92,16 +107,36 @@ export function useAcpSessionConfigSelectionState({
     enabled &&
     (fence.targetKey !== targetKey || fence.preferenceRevision !== preferenceRevision)
   ) {
+    const targetChanged = fence.targetKey !== targetKey;
+    if (targetChanged && preserveUnsentUserEdits) {
+      retainUnsentUserEdits(fence.targetKey, fence.edits);
+    }
+    const seededEdits =
+      targetChanged && preserveUnsentUserEdits
+        ? targetKey === null
+          ? EMPTY_ACP_SESSION_USER_CONFIG_EDITS
+          : (retainedUnsentUserEdits.get(targetKey) ?? EMPTY_ACP_SESSION_USER_CONFIG_EDITS)
+        : fence.edits;
     setFence({
       targetKey,
       preferenceRevision,
-      edits: fenceAcpSessionUserEdits(fence.edits, {
-        targetChanged: fence.targetKey !== targetKey,
+      edits: fenceAcpSessionUserEdits(seededEdits, {
+        targetChanged: targetChanged && !preserveUnsentUserEdits,
         preserveUnsentUserEdits,
         preferences,
       }),
     });
   }
+
+  const latestFenceRef = useRef({ fence, preserveUnsentUserEdits });
+  latestFenceRef.current = { fence, preserveUnsentUserEdits };
+  useEffect(() => () => {
+    const latest = latestFenceRef.current;
+    if (latest.preserveUnsentUserEdits) {
+      retainUnsentUserEdits(latest.fence.targetKey, latest.fence.edits);
+    }
+    // This cleanup only writes the module cache, so it cannot oscillate React state.
+  }, []);
 
   /* VALUE-stabilize the preference inputs. `preferences`/`runtimePreferences`
      are object literals resolved from `sessionDoc.history`, and the doc mirror

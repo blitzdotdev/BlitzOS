@@ -1,7 +1,7 @@
 /**
- * The two window globals the Lody local bridge owns.
+ * The three window globals the Lody local bridge owns.
  *
- * `vendor/lody/packages/components/src/window-globals.d.ts` declares both, but
+ * The vendored components declare `ipc` and `__LODY_LOCAL_BRIDGE__`, but
  * `vendor-modules.d.ts` deliberately keeps the vendor tree out of our
  * typecheck, so its ambient declarations never reach us. These are the BlitzOS
  * side of the same seam, and they are narrower on purpose: `ipc` is exactly the
@@ -30,6 +30,7 @@ declare global {
       send: (channel: string, payload?: LodyIpcSendPayload) => void;
     };
     __LODY_LOCAL_BRIDGE__?: true;
+    __BLITZ_BUILTIN_DEFAULT_MODE_IDS__?: { claude?: string };
   }
 }
 
