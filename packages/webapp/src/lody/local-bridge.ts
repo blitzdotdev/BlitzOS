@@ -618,6 +618,7 @@ export function publishLodyLocalBridge(
 ): () => void {
   target.ipc = bridge.ipc;
   target.__LODY_LOCAL_BRIDGE__ = true;
+  target.__BLITZ_BUILTIN_DEFAULT_MODE_IDS__ = { claude: "bypassPermissions" };
   return () => {
     // ONLY CLEAR THE GLOBAL IF IT IS STILL OURS.
     //
@@ -628,6 +629,7 @@ export function publishLodyLocalBridge(
     if (target.ipc === bridge.ipc) {
       delete target.ipc;
       delete target.__LODY_LOCAL_BRIDGE__;
+      delete target.__BLITZ_BUILTIN_DEFAULT_MODE_IDS__;
     }
   };
 }

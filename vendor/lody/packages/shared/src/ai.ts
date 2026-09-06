@@ -404,6 +404,13 @@ const BUILTIN_DEFAULT_MODE_IDS: Record<BuiltinAgentType, string> = {
   deepseek: 'workspace-write',
 };
 
+declare global {
+  // Blitz seam 28: see vendor/lody/BLITZ-PATCHES.md.
+  var __BLITZ_BUILTIN_DEFAULT_MODE_IDS__:
+    | Partial<Record<BuiltinAgentType, string>>
+    | undefined;
+}
+
 /**
  * Lody-owned mode default for builtin agents when a turn has no
  * persisted selection. Capability-aware callers should use it only when the
@@ -414,7 +421,8 @@ export const getBuiltinDefaultModeId = (
   agentType: AgentType | null | undefined
 ): string | undefined =>
   cliType === 'builtin' && agentType && isBuiltinAgentType(agentType)
-    ? BUILTIN_DEFAULT_MODE_IDS[agentType]
+    ? (globalThis.__BLITZ_BUILTIN_DEFAULT_MODE_IDS__?.[agentType] ??
+      BUILTIN_DEFAULT_MODE_IDS[agentType])
     : undefined;
 
 const DEEPSEEK_HARNESS_CONFIG_OPTIONS: AcpConfigOptionSummary[] = [
