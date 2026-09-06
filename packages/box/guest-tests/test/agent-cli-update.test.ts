@@ -41,7 +41,7 @@ class Harness {
   readonly bin = path.join(this.root, "bin");
   readonly calls = path.join(this.root, "calls");
   readonly stateDir = path.join(this.root, "state");
-  readonly updateDir = path.join(this.root, "update");
+  readonly updateDir = path.join(this.stateDir, "agent-cli-update");
 
   constructor(options: { missing?: "codex" | "claude" } = {}) {
     temporaryDirectories.push(this.root);
@@ -127,8 +127,6 @@ class Harness {
       ...process.env,
       PATH: `${this.bin}:/usr/bin:/bin`,
       BLITZ_STATE_DIR: this.stateDir,
-      BLITZ_AGENT_CLI_UPDATE_DIR: this.updateDir,
-      BLITZ_AGENT_CLI_UPDATE_LOCK_WAIT: "5",
       BLITZ_TEST_CALLS: this.calls,
       ...extra,
     };
@@ -204,7 +202,7 @@ describe("agent CLI updater", () => {
     expect(rootGuard).toBeGreaterThan(0);
     expect(source.indexOf("exit 77", rootGuard)).toBeLessThan(source.indexOf("mkdir -p"));
     expect(source).toContain("current_uid=$(/usr/bin/id -u)");
-    expect(source).toContain('default_update_dir="$state_dir/agent-cli-update"');
+    // State belongs under the state dir, never in the npm prefix an update rewrites.
     expect(source).not.toContain("/opt/blitz/npm/.blitz-agent-cli-update");
   });
 
@@ -245,9 +243,7 @@ describe("agent CLI updater", () => {
       `npm|view @anthropic-ai/claude-code version|${harness.stateDir}/home|blitz|/opt/blitz/npm`,
     ]);
     expect(harness.callLines().some((line) => line.includes("|update|"))).toBe(false);
-    const log = readFileSync(path.join(harness.updateDir, "log"), "utf8");
-    expect(log).toContain("codex is up to date at 0.153.4");
-    expect(log).toContain("claude is up to date at 2.1.261");
+    expect(readFileSync(path.join(harness.updateDir, "log"), "utf8")).toBe("");
     expect(statSync(harness.updateDir).mode & 0o777).toBe(0o755);
     expect(statSync(path.join(harness.updateDir, "log")).mode & 0o777).toBe(0o644);
   });
@@ -335,20 +331,17 @@ describe("agent CLI updater", () => {
       .toContain("codex installed version parse failed; skipped");
   });
 
-  it("rate-limits unchanged logs to once per hour", () => {
+  it("does not invoke CLI updates or append logs for an up-to-date tick", () => {
     const harness = new Harness();
-    const first = runUpdater(harness);
-    const second = runUpdater(harness);
+    mkdirSync(harness.updateDir, { recursive: true });
+    const logPath = path.join(harness.updateDir, "log");
+    const initialLog = "previous update\n";
+    writeFileSync(logPath, initialLog);
+    const result = runUpdater(harness);
 
-    expect(first.status, first.stderr).toBe(0);
-    expect(second.status, second.stderr).toBe(0);
-    const unchanged = readFileSync(path.join(harness.updateDir, "log"), "utf8")
-      .split("\n")
-      .filter((line) => line.includes("is up to date at"));
-    expect(unchanged).toEqual([
-      "blitz-agent-cli-update: codex is up to date at 0.153.4",
-      "blitz-agent-cli-update: claude is up to date at 2.1.261",
-    ]);
+    expect(result.status, result.stderr).toBe(0);
+    expect(harness.callLines().some((line) => line.includes("|update|"))).toBe(false);
+    expect(readFileSync(logPath, "utf8")).toBe(initialLog);
   });
 
   it("serializes concurrent ticks with one flock", async () => {
